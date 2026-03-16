@@ -6,10 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.api.access import apply_vehicle_scope
 from app.api.deps import get_current_active_user, get_current_admin, get_db
-from app.models.enums import UserRole, VehicleType
+from app.models.enums import VehicleType
 from app.models.user import User
-from app.models.vehicle import Vehicle, VehicleAssignmentHistory, VehicleLinkHistory
+from app.models.vehicle import Vehicle, VehicleLinkHistory
 from app.schemas.vehicle import (
     VehicleDetailResponse,
     VehicleImportRequest,
@@ -25,26 +26,6 @@ from app.scripts.import_vehicles import (
 
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
-
-
-def apply_vehicle_scope(stmt, current_user: User):
-    if current_user.role == UserRole.ADMIN:
-        return stmt
-
-    today = date.today()
-    assigned_vehicle_ids = (
-        select(VehicleAssignmentHistory.vehicle_id)
-        .where(
-            VehicleAssignmentHistory.user_id == current_user.id,
-            VehicleAssignmentHistory.starts_at <= today,
-            or_(
-                VehicleAssignmentHistory.ends_at.is_(None),
-                VehicleAssignmentHistory.ends_at >= today,
-            ),
-        )
-        .distinct()
-    )
-    return stmt.where(Vehicle.id.in_(assigned_vehicle_ids))
 
 
 @router.get("", response_model=VehicleListResponse)

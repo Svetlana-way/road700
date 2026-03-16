@@ -545,6 +545,7 @@ export default function App() {
   const [bootLoading, setBootLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
+  const [attachDocumentLoading, setAttachDocumentLoading] = useState(false);
   const [repairLoading, setRepairLoading] = useState(false);
   const [reprocessLoading, setReprocessLoading] = useState(false);
   const [reviewActionLoading, setReviewActionLoading] = useState(false);
@@ -552,6 +553,8 @@ export default function App() {
   const [documentOpenLoadingId, setDocumentOpenLoadingId] = useState<number | null>(null);
   const [saveRepairLoading, setSaveRepairLoading] = useState(false);
   const [checkComments, setCheckComments] = useState<Record<number, string>>({});
+  const [attachedDocumentNotes, setAttachedDocumentNotes] = useState("");
+  const [attachedDocumentFile, setAttachedDocumentFile] = useState<File | null>(null);
   const [reviewActionComment, setReviewActionComment] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -643,6 +646,8 @@ export default function App() {
       .then((payload) => {
         setSelectedRepair(payload);
         setCheckComments({});
+        setAttachedDocumentNotes("");
+        setAttachedDocumentFile(null);
         if (!isEditingRepair) {
           setRepairDraft(createRepairDraft(payload));
         }
@@ -736,6 +741,8 @@ export default function App() {
     try {
       const payload = await apiRequest<RepairDetail>(`/repairs/${repairId}`, { method: "GET" }, token);
       setSelectedRepair(payload);
+      setAttachedDocumentNotes("");
+      setAttachedDocumentFile(null);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load repair");
     } finally {
@@ -793,6 +800,42 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Failed to open document");
     } finally {
       setDocumentOpenLoadingId(null);
+    }
+  }
+
+  async function handleAttachDocumentToRepair() {
+    if (!token || !selectedRepair || !attachedDocumentFile) {
+      setErrorMessage("Select a file before uploading");
+      return;
+    }
+
+    setAttachDocumentLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const body = new FormData();
+      body.append("repair_id", String(selectedRepair.id));
+      body.append("notes", attachedDocumentNotes);
+      body.append("file", attachedDocumentFile);
+
+      const result = await apiRequest<{ document: { id: number }; message: string }>(
+        "/documents/upload-to-repair",
+        {
+          method: "POST",
+          body,
+        },
+        token,
+      );
+
+      setSuccessMessage(result.message);
+      setAttachedDocumentNotes("");
+      setAttachedDocumentFile(null);
+      await loadWorkspace(token);
+      await openRepairByIds(result.document.id, selectedRepair.id);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to upload document to repair");
+    } finally {
+      setAttachDocumentLoading(false);
     }
   }
 
@@ -1882,6 +1925,53 @@ export default function App() {
 
                             <Stack spacing={1}>
                               <Typography variant="h6">Документы ремонта</Typography>
+                              <Paper className="repair-line" elevation={0}>
+                                <Stack spacing={1.5}>
+                                  <Typography className="muted-copy">
+                                    Добавьте повторный скан, корректирующий файл или дополнительный документ в текущий ремонт.
+                                  </Typography>
+                                  <TextField
+                                    label="Примечание к новому документу"
+                                    value={attachedDocumentNotes}
+                                    onChange={(event) => setAttachedDocumentNotes(event.target.value)}
+                                    fullWidth
+                                    multiline
+                                    minRows={2}
+                                  />
+                                  <Stack
+                                    direction={{ xs: "column", sm: "row" }}
+                                    spacing={1}
+                                    justifyContent="space-between"
+                                    alignItems={{ xs: "flex-start", sm: "center" }}
+                                  >
+                                    <Button component="label" variant="outlined">
+                                      Выбрать файл
+                                      <input
+                                        hidden
+                                        type="file"
+                                        accept=".pdf,image/*"
+                                        onChange={(event) =>
+                                          setAttachedDocumentFile(event.target.files?.[0] ?? null)
+                                        }
+                                      />
+                                    </Button>
+                                    <Typography className="muted-copy">
+                                      {attachedDocumentFile ? attachedDocumentFile.name : "Файл не выбран"}
+                                    </Typography>
+                                  </Stack>
+                                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                    <Button
+                                      variant="contained"
+                                      disabled={attachDocumentLoading || !attachedDocumentFile}
+                                      onClick={() => {
+                                        void handleAttachDocumentToRepair();
+                                      }}
+                                    >
+                                      {attachDocumentLoading ? "Загрузка..." : "Добавить документ"}
+                                    </Button>
+                                  </Stack>
+                                </Stack>
+                              </Paper>
                               {selectedRepair.documents.length > 0 ? (
                                 selectedRepair.documents.map((document) => (
                                   <Paper className="repair-line" key={document.id} elevation={0}>

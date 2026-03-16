@@ -45,6 +45,17 @@ def get_visible_vehicle(
     return db.scalar(stmt)
 
 
+def get_visible_repair(
+    db: Session,
+    current_user: User,
+    repair_id: int,
+) -> Optional[Repair]:
+    stmt = select(Repair).where(Repair.id == repair_id)
+    if current_user.role != UserRole.ADMIN:
+        stmt = stmt.where(Repair.vehicle_id.in_(get_allowed_vehicle_ids_query(current_user)))
+    return db.scalar(stmt)
+
+
 def serialize_document(document: Document) -> DocumentRead:
     if document.repair is None or document.repair.vehicle is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document relation is incomplete")
@@ -226,6 +237,89 @@ def upload_document(
                 },
                 field_confidence_map={},
                 change_summary="Initial upload",
+            )
+        )
+        db.commit()
+        created_document_id = document.id
+    except Exception:
+        db.rollback()
+        if destination.exists():
+            destination.unlink()
+        raise
+    finally:
+        file.file.close()
+
+    if created_document_id is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")
+
+    processing_result = process_document(db, created_document_id)
+    created_document = load_document_with_relations(db, created_document_id)
+    if created_document is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")
+
+    return DocumentUploadResponse(
+        document=serialize_document(created_document),
+        message=processing_result.message,
+    )
+
+
+@router.post("/upload-to-repair", response_model=DocumentUploadResponse)
+def upload_document_to_repair(
+    repair_id: int = Form(...),
+    notes: Optional[str] = Form(default=None),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> DocumentUploadResponse:
+    repair = get_visible_repair(db, current_user, repair_id)
+    if repair is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
+
+    source_type = detect_source_type(file)
+    storage_key = build_storage_key(file.filename or "document")
+    destination = LOCAL_STORAGE_ROOT / storage_key
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    created_document_id = None
+    try:
+        with destination.open("wb") as target:
+            shutil.copyfileobj(file.file, target)
+
+        existing_documents_total = db.scalar(
+            select(func.count(Document.id)).where(Document.repair_id == repair.id)
+        ) or 0
+
+        document = Document(
+            repair_id=repair.id,
+            uploaded_by_user_id=current_user.id,
+            original_filename=file.filename or "document",
+            storage_key=storage_key,
+            mime_type=file.content_type,
+            source_type=source_type,
+            status=DocumentStatus.UPLOADED,
+            is_primary=existing_documents_total == 0,
+            review_queue_priority=100,
+            notes=notes,
+        )
+        db.add(document)
+        db.flush()
+
+        if repair.source_document_id is None:
+            repair.source_document_id = document.id
+
+        db.add(
+            DocumentVersion(
+                document_id=document.id,
+                version_number=1,
+                storage_key=storage_key,
+                parsed_payload={
+                    "pipeline": "uploaded_to_repair",
+                    "ocr_status": "queued",
+                    "uploaded_by_user_id": current_user.id,
+                    "repair_id": repair.id,
+                },
+                field_confidence_map={},
+                change_summary="Attached to existing repair",
             )
         )
         db.commit()

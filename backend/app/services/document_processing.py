@@ -52,20 +52,20 @@ VIN_PATTERNS = [
     r"\b([A-HJ-NPR-Z0-9]{17})\b",
 ]
 SERVICE_PATTERNS = [
-    r"(?:^|[\n\r])\s*(?:сервис|сто|исполнитель|подрядчик)\b\s*[:№]?\s*([^\n\r]{3,120})",
+    r"(?:сервис|сто|исполнитель|подрядчик)\b\s*[:№]?\s*([^\n\r]{3,120})",
 ]
 TOTAL_PATTERNS = {
     "work_total": [
-        r"(?:^|[\n\r])\s*(?:работы\s+итого|стоимость\s+работ|итого\s+работ)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)",
+        r"(?:работы\s+итого|стоимость\s+работ|итого\s+работ)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)(?=\s*(?:запчаст|материал|ндс|итого|сервис|сто|$))",
     ],
     "parts_total": [
-        r"(?:^|[\n\r])\s*(?:запчасти\s+итого|материалы\s+итого|стоимость\s+запчастей|запчасти|материалы)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)",
+        r"(?:запчасти\s+итого|материалы\s+итого|стоимость\s+запчастей|стоимость\s+материалов|запчасти|материалы)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)(?=\s*(?:ндс|итого|сервис|сто|$))",
     ],
     "vat_total": [
-        r"(?:^|[\n\r])\s*(?:ндс)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)",
+        r"(?:ндс)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)(?=\s*(?:итого|сервис|сто|$))",
     ],
     "grand_total": [
-        r"(?:^|[\n\r])\s*(?:итого\s+к\s+оплате|к\s+оплате|итого|всего)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)",
+        r"(?:итого\s+к\s+оплате|к\s+оплате|итого|всего)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)(?=\s*(?:сервис|сто|$))",
     ],
 }
 LINE_ITEM_PATTERN = re.compile(
@@ -87,6 +87,20 @@ PART_LINE_WITH_ARTICLE_PATTERN = re.compile(
 )
 WORK_SECTION_MARKERS = ("работы", "услуги", "работа:")
 PART_SECTION_MARKERS = ("запчасти", "материалы", "запчасть:")
+TEXT_KEYWORD_PATTERN = re.compile(
+    r"(заказ|наряд|дата|госномер|пробег|работ|запчаст|итого|сервис|ндс)",
+    re.IGNORECASE,
+)
+TEXT_CHAR_REPLACEMENTS = str.maketrans(
+    {
+        "\xa0": " ",
+        "¹": "№",
+        "–": "-",
+        "—": "-",
+        "«": '"',
+        "»": '"',
+    }
+)
 
 
 @dataclass
@@ -107,14 +121,51 @@ def normalize_text(text: str) -> str:
 def score_text_quality(text: str) -> tuple[int, int, int]:
     cyrillic_count = len(re.findall(r"[А-Яа-я]", text))
     alnum_count = len(re.findall(r"[А-Яа-яA-Za-z0-9]", text))
-    keyword_hits = len(
-        re.findall(
-            r"(заказ|наряд|дата|госномер|пробег|работ|запчаст|итого|сервис)",
-            text,
-            re.IGNORECASE,
-        )
-    )
+    keyword_hits = len(TEXT_KEYWORD_PATTERN.findall(text))
     return (keyword_hits, cyrillic_count, alnum_count)
+
+
+def clean_text_lines(text: str) -> str:
+    text = text.translate(TEXT_CHAR_REPLACEMENTS).replace("\r\n", "\n").replace("\r", "\n")
+    return "\n".join(normalize_line(line) for line in text.splitlines() if normalize_line(line))
+
+
+def generate_text_variants(text: str) -> list[str]:
+    base = clean_text_lines(text)
+    variants: list[str] = [base]
+    seen = {base}
+
+    for source_encoding, target_encoding in (
+        ("latin1", "cp1251"),
+        ("cp1252", "cp1251"),
+        ("latin1", "utf-8"),
+        ("cp1252", "utf-8"),
+    ):
+        try:
+            repaired = base.encode(source_encoding, errors="ignore").decode(target_encoding, errors="ignore")
+        except (LookupError, UnicodeError):
+            continue
+        cleaned = clean_text_lines(repaired)
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            variants.append(cleaned)
+
+    return variants
+
+
+def select_best_text_variant(text: str) -> str:
+    variants = generate_text_variants(text)
+    if not variants:
+        return ""
+
+    best_variant = variants[0]
+    best_score = score_text_quality(best_variant)
+    for candidate in variants[1:]:
+        candidate_score = score_text_quality(candidate)
+        if candidate_score > best_score:
+            best_variant = candidate
+            best_score = candidate_score
+    return best_variant
 
 
 def is_vision_ocr_available() -> bool:
@@ -360,7 +411,7 @@ def extract_image_text(path: Path) -> str:
     temp_dir, processed_path = preprocess_image_for_ocr(path)
     try:
         ocr_results = run_vision_ocr([processed_path])
-        return normalize_text(ocr_results.get(processed_path.as_posix(), ""))
+        return select_best_text_variant(ocr_results.get(processed_path.as_posix(), ""))
     finally:
         temp_dir.cleanup()
 
@@ -396,7 +447,7 @@ def extract_scanned_pdf_text(path: Path) -> str:
     temp_dir, image_paths = render_pdf_pages_for_ocr(path)
     try:
         ocr_results = run_vision_ocr(image_paths)
-        chunks = [normalize_text(ocr_results.get(image_path.as_posix(), "")) for image_path in image_paths]
+        chunks = [select_best_text_variant(ocr_results.get(image_path.as_posix(), "")) for image_path in image_paths]
         return "\n".join(filter(None, chunks)).strip()
     finally:
         temp_dir.cleanup()
@@ -409,7 +460,7 @@ def extract_document_text(path: Path, source_type: str) -> tuple[str, str, Optio
         text = extract_image_text(path)
         return text, "image_vision_ocr", None if text else "image_text_not_found"
 
-    text = extract_pdf_text(path)
+    text = select_best_text_variant(extract_pdf_text(path))
     extracted_from = "pdf_text"
     failure_reason = None
 
@@ -429,6 +480,7 @@ def extract_document_text(path: Path, source_type: str) -> tuple[str, str, Optio
 
 
 def parse_document_text(text: str) -> dict[str, object]:
+    text = select_best_text_variant(text)
     extracted_fields = {}
     confidence_map = {}
     manual_review_reasons = []
@@ -785,7 +837,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         version_number = max([version.version_number for version in document.versions], default=0) + 1
         text_excerpt = normalize_text(text.replace("\n", " "))[:500] if text else None
         parsed_payload = {
-            "processor": "hybrid_document_ocr_v1",
+            "processor": "hybrid_document_ocr_v2",
             "document_kind": document.kind.value,
             "extracted_from": extracted_from,
             "text_length": len(text),

@@ -10,5 +10,3 @@ node_modules/
 dist/
 coverage/
 backend/.venv/
-backend/alembic/versions/
-

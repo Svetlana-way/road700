@@ -12,12 +12,19 @@ class Settings(BaseSettings):
     postgres_password: str = "road700"
     postgres_port: int = 5432
     cors_origins: list[str] = ["http://localhost:5173"]
+    jwt_secret_key: str = "change-me"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 120
+    initial_admin_full_name: str = "System Administrator"
+    initial_admin_login: str = "admin"
+    initial_admin_email: str = "admin@example.com"
+    initial_admin_password: str = "change-me"
     s3_bucket: str = "road700-documents"
     s3_region: str = "us-east-1"
     s3_endpoint: str = "http://minio:9000"
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "../.env"),
         env_prefix="",
         case_sensitive=False,
         extra="ignore",
@@ -37,4 +44,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-

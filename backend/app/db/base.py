@@ -1,3 +1,4 @@
+from app.models.base import Base
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
 from app.models.imports import ImportConflict, ImportJob
@@ -8,6 +9,7 @@ from app.models.vehicle import Vehicle, VehicleAssignmentHistory, VehicleLinkHis
 
 __all__ = [
     "AuditLog",
+    "Base",
     "Document",
     "DocumentVersion",
     "ImportConflict",

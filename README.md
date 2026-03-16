@@ -26,3 +26,12 @@ Initial project scaffold for the fleet repairs platform.
 4. Document upload and OCR pipeline
 5. Repair draft flow and review queue
 
+## Local bootstrap
+
+1. Copy or adjust `.env`
+2. Start infrastructure:
+   `docker compose up --build`
+3. Run migrations inside `backend/`:
+   `alembic upgrade head`
+4. Create or update the first admin:
+   `python -m app.scripts.init_admin`

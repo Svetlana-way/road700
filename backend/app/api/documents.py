@@ -19,6 +19,8 @@ from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.schemas.document import (
     DocumentBatchProcessResponse,
+    DocumentComparisonFieldRead,
+    DocumentComparisonResponse,
     DocumentListResponse,
     DocumentProcessResponse,
     DocumentRead,
@@ -128,6 +130,47 @@ def get_visible_document(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     return document
+
+
+def get_latest_parsed_payload(document: Document) -> dict:
+    if not document.versions:
+        return {}
+    latest_version = max(document.versions, key=lambda version: version.version_number)
+    if latest_version.parsed_payload and isinstance(latest_version.parsed_payload, dict):
+        return latest_version.parsed_payload
+    return {}
+
+
+def get_payload_mapping(payload: dict, key: str) -> dict:
+    value = payload.get(key)
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def stringify_comparison_value(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, float):
+        return f"{value:.2f}"
+    return str(value)
+
+
+def build_comparison_field(
+    field_name: str,
+    label: str,
+    left_value: object,
+    right_value: object,
+) -> DocumentComparisonFieldRead:
+    left_string = stringify_comparison_value(left_value)
+    right_string = stringify_comparison_value(right_value)
+    return DocumentComparisonFieldRead(
+        field_name=field_name,
+        label=label,
+        left_value=left_string,
+        right_value=right_string,
+        is_different=left_string != right_string,
+    )
 
 
 def build_primary_document_snapshot(repair: Repair, documents: list[Document]) -> dict:
@@ -418,6 +461,56 @@ def download_document(
         path=storage_path,
         media_type=document.mime_type or "application/octet-stream",
         filename=document.original_filename,
+    )
+
+
+@router.get("/{document_id}/compare", response_model=DocumentComparisonResponse)
+def compare_documents(
+    document_id: int,
+    with_document_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> DocumentComparisonResponse:
+    left_document = get_visible_document(db, current_user, document_id)
+    right_document = get_visible_document(db, current_user, with_document_id)
+
+    if left_document.repair_id != right_document.repair_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Documents must belong to the same repair",
+        )
+
+    left_payload = get_latest_parsed_payload(left_document)
+    right_payload = get_latest_parsed_payload(right_document)
+    left_fields = get_payload_mapping(left_payload, "extracted_fields")
+    right_fields = get_payload_mapping(right_payload, "extracted_fields")
+    left_items = get_payload_mapping(left_payload, "extracted_items")
+    right_items = get_payload_mapping(right_payload, "extracted_items")
+
+    compared_fields = [
+        build_comparison_field("order_number", "Номер заказ-наряда", left_fields.get("order_number"), right_fields.get("order_number")),
+        build_comparison_field("repair_date", "Дата ремонта", left_fields.get("repair_date"), right_fields.get("repair_date")),
+        build_comparison_field("mileage", "Пробег", left_fields.get("mileage"), right_fields.get("mileage")),
+        build_comparison_field("service_name", "Сервис", left_fields.get("service_name"), right_fields.get("service_name")),
+        build_comparison_field("work_total", "Сумма работ", left_fields.get("work_total"), right_fields.get("work_total")),
+        build_comparison_field("parts_total", "Сумма запчастей", left_fields.get("parts_total"), right_fields.get("parts_total")),
+        build_comparison_field("vat_total", "НДС", left_fields.get("vat_total"), right_fields.get("vat_total")),
+        build_comparison_field("grand_total", "Итого", left_fields.get("grand_total"), right_fields.get("grand_total")),
+    ]
+
+    left_works = left_items.get("works") if isinstance(left_items, dict) and isinstance(left_items.get("works"), list) else []
+    right_works = right_items.get("works") if isinstance(right_items, dict) and isinstance(right_items.get("works"), list) else []
+    left_parts = left_items.get("parts") if isinstance(left_items, dict) and isinstance(left_items.get("parts"), list) else []
+    right_parts = right_items.get("parts") if isinstance(right_items, dict) and isinstance(right_items.get("parts"), list) else []
+
+    return DocumentComparisonResponse(
+        left_document=serialize_document(left_document),
+        right_document=serialize_document(right_document),
+        compared_fields=compared_fields,
+        works_count_left=len(left_works),
+        works_count_right=len(right_works),
+        parts_count_left=len(left_parts),
+        parts_count_right=len(right_parts),
     )
 
 

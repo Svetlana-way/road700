@@ -66,3 +66,21 @@ class DocumentBatchProcessResponse(BaseModel):
     processed_count: int
     document_ids: list[int]
     message: str
+
+
+class DocumentComparisonFieldRead(BaseModel):
+    field_name: str
+    label: str
+    left_value: Optional[str]
+    right_value: Optional[str]
+    is_different: bool
+
+
+class DocumentComparisonResponse(BaseModel):
+    left_document: DocumentRead
+    right_document: DocumentRead
+    compared_fields: list[DocumentComparisonFieldRead]
+    works_count_left: int
+    works_count_right: int
+    parts_count_left: int
+    parts_count_right: int

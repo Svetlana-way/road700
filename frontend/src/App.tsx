@@ -174,6 +174,22 @@ type ReviewActionResponse = {
   queue_item: ReviewQueueItem | null;
 };
 
+type DocumentComparisonResponse = {
+  left_document: DocumentItem;
+  right_document: DocumentItem;
+  compared_fields: Array<{
+    field_name: string;
+    label: string;
+    left_value: string | null;
+    right_value: string | null;
+    is_different: boolean;
+  }>;
+  works_count_left: number;
+  works_count_right: number;
+  parts_count_left: number;
+  parts_count_right: number;
+};
+
 type LoginResponse = {
   access_token: string;
 };
@@ -582,11 +598,13 @@ export default function App() {
   const [checkActionLoadingId, setCheckActionLoadingId] = useState<number | null>(null);
   const [documentOpenLoadingId, setDocumentOpenLoadingId] = useState<number | null>(null);
   const [primaryDocumentLoadingId, setPrimaryDocumentLoadingId] = useState<number | null>(null);
+  const [documentComparisonLoadingId, setDocumentComparisonLoadingId] = useState<number | null>(null);
   const [saveRepairLoading, setSaveRepairLoading] = useState(false);
   const [checkComments, setCheckComments] = useState<Record<number, string>>({});
   const [attachedDocumentKind, setAttachedDocumentKind] = useState<DocumentKind>("repeat_scan");
   const [attachedDocumentNotes, setAttachedDocumentNotes] = useState("");
   const [attachedDocumentFile, setAttachedDocumentFile] = useState<File | null>(null);
+  const [documentComparison, setDocumentComparison] = useState<DocumentComparisonResponse | null>(null);
   const [reviewActionComment, setReviewActionComment] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -678,6 +696,7 @@ export default function App() {
       .then((payload) => {
         setSelectedRepair(payload);
         setCheckComments({});
+        setDocumentComparison(null);
         setAttachedDocumentKind("repeat_scan");
         setAttachedDocumentNotes("");
         setAttachedDocumentFile(null);
@@ -775,6 +794,7 @@ export default function App() {
     try {
       const payload = await apiRequest<RepairDetail>(`/repairs/${repairId}`, { method: "GET" }, token);
       setSelectedRepair(payload);
+      setDocumentComparison(null);
       setAttachedDocumentKind("repeat_scan");
       setAttachedDocumentNotes("");
       setAttachedDocumentFile(null);
@@ -898,6 +918,34 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Failed to set primary document");
     } finally {
       setPrimaryDocumentLoadingId(null);
+    }
+  }
+
+  async function handleCompareWithPrimary(documentId: number) {
+    if (!token || !selectedRepair) {
+      return;
+    }
+
+    const primaryDocument = selectedRepair.documents.find((item) => item.is_primary);
+    if (!primaryDocument || primaryDocument.id === documentId) {
+      return;
+    }
+
+    setDocumentComparisonLoadingId(documentId);
+    setErrorMessage("");
+    try {
+      const result = await apiRequest<DocumentComparisonResponse>(
+        `/documents/${documentId}/compare?with_document_id=${primaryDocument.id}`,
+        {
+          method: "GET",
+        },
+        token,
+      );
+      setDocumentComparison(result);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to compare documents");
+    } finally {
+      setDocumentComparisonLoadingId(null);
     }
   }
 
@@ -2126,16 +2174,28 @@ export default function App() {
                                         {user?.role === "admin" &&
                                         (document.kind === "order" || document.kind === "repeat_scan") &&
                                         !document.is_primary ? (
-                                          <Button
-                                            size="small"
-                                            variant="text"
-                                            disabled={primaryDocumentLoadingId === document.id}
-                                            onClick={() => {
-                                              void handleSetPrimaryDocument(document.id);
-                                            }}
-                                          >
-                                            {primaryDocumentLoadingId === document.id ? "Смена..." : "Сделать основным"}
-                                          </Button>
+                                          <>
+                                            <Button
+                                              size="small"
+                                              variant="text"
+                                              disabled={documentComparisonLoadingId === document.id}
+                                              onClick={() => {
+                                                void handleCompareWithPrimary(document.id);
+                                              }}
+                                            >
+                                              {documentComparisonLoadingId === document.id ? "Сравнение..." : "Сравнить с основным"}
+                                            </Button>
+                                            <Button
+                                              size="small"
+                                              variant="text"
+                                              disabled={primaryDocumentLoadingId === document.id}
+                                              onClick={() => {
+                                                void handleSetPrimaryDocument(document.id);
+                                              }}
+                                            >
+                                              {primaryDocumentLoadingId === document.id ? "Смена..." : "Сделать основным"}
+                                            </Button>
+                                          </>
                                         ) : null}
                                       </Stack>
                                       <Stack spacing={1}>
@@ -2170,6 +2230,44 @@ export default function App() {
                                 <Typography className="muted-copy">Документы к ремонту пока не привязаны.</Typography>
                               )}
                             </Stack>
+
+                            {documentComparison ? (
+                              <Stack spacing={1}>
+                                <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                                  <Typography variant="h6">Сравнение документов</Typography>
+                                  <Button
+                                    size="small"
+                                    variant="text"
+                                    onClick={() => {
+                                      setDocumentComparison(null);
+                                    }}
+                                  >
+                                    Закрыть
+                                  </Button>
+                                </Stack>
+                                <Paper className="repair-line" elevation={0}>
+                                  <Stack spacing={1.25}>
+                                    <Typography>
+                                      {documentComparison.left_document.original_filename} против {documentComparison.right_document.original_filename}
+                                    </Typography>
+                                    <Typography className="muted-copy">
+                                      Работы: {documentComparison.works_count_left} / {documentComparison.works_count_right}
+                                      {" · "}
+                                      Запчасти: {documentComparison.parts_count_left} / {documentComparison.parts_count_right}
+                                    </Typography>
+                                    {documentComparison.compared_fields.map((field) => (
+                                      <Box key={field.field_name}>
+                                        <Typography className="metric-label">{field.label}</Typography>
+                                        <Typography className="muted-copy">
+                                          {field.left_value || "—"} / {field.right_value || "—"}
+                                          {field.is_different ? " · отличается" : " · совпадает"}
+                                        </Typography>
+                                      </Box>
+                                    ))}
+                                  </Stack>
+                                </Paper>
+                              </Stack>
+                            ) : null}
 
                             <Stack spacing={1}>
                               <Typography variant="h6">Работы</Typography>

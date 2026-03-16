@@ -1,0 +1,77 @@
+:root {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: #132238;
+  background:
+    radial-gradient(circle at top left, rgba(255, 199, 94, 0.3), transparent 28%),
+    radial-gradient(circle at top right, rgba(76, 145, 255, 0.22), transparent 24%),
+    linear-gradient(180deg, #f7f3ea 0%, #eef2f6 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 40px 0 56px;
+}
+
+.hero {
+  padding: 32px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(19, 34, 56, 0.08);
+}
+
+.hero h1 {
+  margin-top: 16px;
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+.hero-copy {
+  margin-top: 16px;
+  max-width: 760px;
+  font-size: 1.05rem;
+  line-height: 1.7;
+}
+
+.card,
+.status-panel {
+  height: 100%;
+  padding: 24px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(19, 34, 56, 0.08);
+}
+
+.card-copy {
+  margin-top: 12px;
+  line-height: 1.7;
+  color: #4a5d73;
+}
+
+@media (max-width: 768px) {
+  .app-shell {
+    padding: 24px 0 40px;
+  }
+
+  .hero {
+    padding: 24px;
+    border-radius: 22px;
+  }
+
+  .hero h1 {
+    font-size: 2.2rem;
+  }
+}

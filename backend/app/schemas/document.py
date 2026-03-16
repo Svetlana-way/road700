@@ -84,3 +84,17 @@ class DocumentComparisonResponse(BaseModel):
     works_count_right: int
     parts_count_left: int
     parts_count_right: int
+
+
+class DocumentComparisonReviewRequest(BaseModel):
+    with_document_id: int
+    action: str
+    comment: Optional[str] = None
+
+
+class DocumentComparisonReviewResponse(BaseModel):
+    message: str
+    action: str
+    document_id: int
+    repair_id: int
+    source_document_id: Optional[int]

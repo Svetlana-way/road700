@@ -20,6 +20,8 @@ from app.models.vehicle import Vehicle
 from app.schemas.document import (
     DocumentBatchProcessResponse,
     DocumentComparisonFieldRead,
+    DocumentComparisonReviewRequest,
+    DocumentComparisonReviewResponse,
     DocumentComparisonResponse,
     DocumentListResponse,
     DocumentProcessResponse,
@@ -35,6 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 LOCAL_STORAGE_ROOT = PROJECT_ROOT / "storage"
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+COMPARISON_REVIEW_ACTIONS = {"keep_current_primary", "make_document_primary", "mark_reviewed"}
 
 
 def get_visible_vehicle(
@@ -187,6 +190,36 @@ def build_primary_document_snapshot(repair: Repair, documents: list[Document]) -
             for item in sorted(documents, key=lambda item: item.id)
         ],
     }
+
+
+def set_primary_document_for_repair(target_document: Document, documents: list[Document]) -> None:
+    for item in documents:
+        item.is_primary = item.id == target_document.id
+    target_document.repair.source_document_id = target_document.id
+
+
+def append_comparison_review_note(
+    existing: Optional[str],
+    action: str,
+    current_admin: User,
+    counterpart: Document,
+    comment: Optional[str],
+) -> str:
+    action_labels = {
+        "keep_current_primary": "Оставлен текущий основной документ",
+        "make_document_primary": "Документ выбран основным после сравнения",
+        "mark_reviewed": "Сравнение документов проверено",
+    }
+    normalized_comment = (comment or "").strip()
+    note = (
+        f"[Сравнение документов] {action_labels[action]} "
+        f"({counterpart.original_filename}) · {current_admin.full_name}"
+    )
+    if normalized_comment:
+        note = f"{note}: {normalized_comment}"
+    if existing:
+        return f"{existing}\n{note}"
+    return note
 
 
 @router.get("", response_model=DocumentListResponse)
@@ -540,9 +573,7 @@ def set_primary_document(
 
     old_snapshot = build_primary_document_snapshot(document.repair, sibling_documents)
 
-    for item in sibling_documents:
-        item.is_primary = item.id == document.id
-    document.repair.source_document_id = document.id
+    set_primary_document_for_repair(document, sibling_documents)
 
     db.commit()
 
@@ -575,6 +606,106 @@ def set_primary_document(
     db.commit()
 
     return serialize_document(refreshed_document)
+
+
+@router.post("/{document_id}/compare/review", response_model=DocumentComparisonReviewResponse)
+def review_document_comparison(
+    document_id: int,
+    payload: DocumentComparisonReviewRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> DocumentComparisonReviewResponse:
+    action = payload.action.strip().lower()
+    if action not in COMPARISON_REVIEW_ACTIONS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported comparison review action")
+
+    compared_document = get_visible_document(db, current_admin, document_id)
+    primary_document = get_visible_document(db, current_admin, payload.with_document_id)
+    if compared_document.repair_id != primary_document.repair_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Documents must belong to the same repair")
+    if not primary_document.is_primary:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reference document must be primary")
+
+    sibling_documents = db.execute(
+        select(Document)
+        .options(
+            joinedload(Document.repair).joinedload(Repair.vehicle),
+            joinedload(Document.versions),
+        )
+        .where(Document.repair_id == compared_document.repair_id)
+    ).unique().scalars().all()
+
+    old_snapshot = build_primary_document_snapshot(compared_document.repair, sibling_documents)
+    if action == "make_document_primary":
+        if compared_document.kind not in {DocumentKind.ORDER, DocumentKind.REPEAT_SCAN}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only order documents and repeat scans can be primary",
+            )
+        set_primary_document_for_repair(compared_document, sibling_documents)
+        message = "Сравниваемый документ назначен основным"
+    elif action == "keep_current_primary":
+        message = "Текущий основной документ сохранён"
+    else:
+        message = "Сравнение документов отмечено как проверенное"
+
+    compared_document.notes = append_comparison_review_note(
+        compared_document.notes,
+        action=action,
+        current_admin=current_admin,
+        counterpart=primary_document,
+        comment=payload.comment,
+    )
+    if action == "keep_current_primary":
+        primary_document.notes = append_comparison_review_note(
+            primary_document.notes,
+            action=action,
+            current_admin=current_admin,
+            counterpart=compared_document,
+            comment=payload.comment,
+        )
+
+    db.commit()
+
+    refreshed_compared = get_visible_document(db, current_admin, compared_document.id)
+    refreshed_siblings = db.execute(select(Document).where(Document.repair_id == refreshed_compared.repair_id)).scalars().all()
+    new_snapshot = build_primary_document_snapshot(refreshed_compared.repair, refreshed_siblings)
+    new_snapshot["comparison_review"] = {
+        "action": action,
+        "comment": (payload.comment or "").strip() or None,
+        "compared_document_id": refreshed_compared.id,
+        "with_document_id": payload.with_document_id,
+    }
+
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="repair",
+            entity_id=str(refreshed_compared.repair.id),
+            action_type="document_comparison_reviewed",
+            old_value=old_snapshot,
+            new_value=new_snapshot,
+        )
+    )
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="document",
+            entity_id=str(refreshed_compared.id),
+            action_type=f"comparison_{action}",
+            old_value=old_snapshot,
+            new_value=new_snapshot,
+        )
+    )
+    db.commit()
+
+    return DocumentComparisonReviewResponse(
+        message=message,
+        action=action,
+        document_id=refreshed_compared.id,
+        repair_id=refreshed_compared.repair.id,
+        source_document_id=refreshed_compared.repair.source_document_id,
+    )
 
 
 @router.post("/process-pending", response_model=DocumentBatchProcessResponse)

@@ -190,6 +190,14 @@ type DocumentComparisonResponse = {
   parts_count_right: number;
 };
 
+type DocumentComparisonReviewResponse = {
+  message: string;
+  action: string;
+  document_id: number;
+  repair_id: number;
+  source_document_id: number | null;
+};
+
 type LoginResponse = {
   access_token: string;
 };
@@ -599,12 +607,14 @@ export default function App() {
   const [documentOpenLoadingId, setDocumentOpenLoadingId] = useState<number | null>(null);
   const [primaryDocumentLoadingId, setPrimaryDocumentLoadingId] = useState<number | null>(null);
   const [documentComparisonLoadingId, setDocumentComparisonLoadingId] = useState<number | null>(null);
+  const [documentComparisonReviewLoading, setDocumentComparisonReviewLoading] = useState(false);
   const [saveRepairLoading, setSaveRepairLoading] = useState(false);
   const [checkComments, setCheckComments] = useState<Record<number, string>>({});
   const [attachedDocumentKind, setAttachedDocumentKind] = useState<DocumentKind>("repeat_scan");
   const [attachedDocumentNotes, setAttachedDocumentNotes] = useState("");
   const [attachedDocumentFile, setAttachedDocumentFile] = useState<File | null>(null);
   const [documentComparison, setDocumentComparison] = useState<DocumentComparisonResponse | null>(null);
+  const [documentComparisonComment, setDocumentComparisonComment] = useState("");
   const [reviewActionComment, setReviewActionComment] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -697,6 +707,7 @@ export default function App() {
         setSelectedRepair(payload);
         setCheckComments({});
         setDocumentComparison(null);
+        setDocumentComparisonComment("");
         setAttachedDocumentKind("repeat_scan");
         setAttachedDocumentNotes("");
         setAttachedDocumentFile(null);
@@ -795,6 +806,7 @@ export default function App() {
       const payload = await apiRequest<RepairDetail>(`/repairs/${repairId}`, { method: "GET" }, token);
       setSelectedRepair(payload);
       setDocumentComparison(null);
+      setDocumentComparisonComment("");
       setAttachedDocumentKind("repeat_scan");
       setAttachedDocumentNotes("");
       setAttachedDocumentFile(null);
@@ -942,10 +954,46 @@ export default function App() {
         token,
       );
       setDocumentComparison(result);
+      setDocumentComparisonComment("");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to compare documents");
     } finally {
       setDocumentComparisonLoadingId(null);
+    }
+  }
+
+  async function handleReviewDocumentComparison(
+    action: "keep_current_primary" | "make_document_primary" | "mark_reviewed",
+  ) {
+    if (!token || !selectedRepair || !documentComparison) {
+      return;
+    }
+
+    setDocumentComparisonReviewLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const result = await apiRequest<DocumentComparisonReviewResponse>(
+        `/documents/${documentComparison.left_document.id}/compare/review`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            with_document_id: documentComparison.right_document.id,
+            action,
+            comment: documentComparisonComment.trim() || null,
+          }),
+        },
+        token,
+      );
+      setSuccessMessage(result.message);
+      setDocumentComparison(null);
+      setDocumentComparisonComment("");
+      await loadWorkspace(token);
+      await openRepairByIds(result.document_id, result.repair_id);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to review document comparison");
+    } finally {
+      setDocumentComparisonReviewLoading(false);
     }
   }
 
@@ -2264,6 +2312,43 @@ export default function App() {
                                         </Typography>
                                       </Box>
                                     ))}
+                                    <TextField
+                                      label="Комментарий по сверке"
+                                      value={documentComparisonComment}
+                                      onChange={(event) => setDocumentComparisonComment(event.target.value)}
+                                      fullWidth
+                                      multiline
+                                      minRows={2}
+                                    />
+                                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                      <Button
+                                        variant="outlined"
+                                        disabled={documentComparisonReviewLoading}
+                                        onClick={() => {
+                                          void handleReviewDocumentComparison("keep_current_primary");
+                                        }}
+                                      >
+                                        {documentComparisonReviewLoading ? "Сохранение..." : "Оставить текущий основной"}
+                                      </Button>
+                                      <Button
+                                        variant="contained"
+                                        disabled={documentComparisonReviewLoading}
+                                        onClick={() => {
+                                          void handleReviewDocumentComparison("make_document_primary");
+                                        }}
+                                      >
+                                        Сделать сравниваемый основным
+                                      </Button>
+                                      <Button
+                                        variant="text"
+                                        disabled={documentComparisonReviewLoading}
+                                        onClick={() => {
+                                          void handleReviewDocumentComparison("mark_reviewed");
+                                        }}
+                                      >
+                                        Отметить как проверенное
+                                      </Button>
+                                    </Stack>
                                   </Stack>
                                 </Paper>
                               </Stack>

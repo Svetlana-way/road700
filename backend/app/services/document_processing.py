@@ -156,7 +156,7 @@ TOTAL_PATTERNS = {
 LINE_ITEM_PATTERN = re.compile(
     r"^(?P<name>[^\d].*?)\s+"
     r"(?P<qty>\d+(?:[.,]\d+)?)"
-    r"(?:\s+(?P<unit>шт|нч|ч|час|часа|часов|компл|усл|ед|л|кг|м|к-т))?"
+    r"(?:\s+(?P<unit>[A-Za-zА-Яа-я./-]{1,8}))?"
     r"\s+(?P<price>\d[\d\s]*(?:[.,]\d{2})?)"
     r"\s+(?P<total>\d[\d\s]*(?:[.,]\d{2})?)$",
     re.IGNORECASE,
@@ -165,7 +165,7 @@ PART_LINE_WITH_ARTICLE_PATTERN = re.compile(
     r"^(?P<article>[A-Za-zА-Яа-я0-9-]{3,})\s+"
     r"(?P<name>.+?)\s+"
     r"(?P<qty>\d+(?:[.,]\d+)?)"
-    r"(?:\s+(?P<unit>шт|компл|усл|ед|л|кг|м|к-т))?"
+    r"(?:\s+(?P<unit>[A-Za-zА-Яа-я./-]{1,8}))?"
     r"\s+(?P<price>\d[\d\s]*(?:[.,]\d{2})?)"
     r"\s+(?P<total>\d[\d\s]*(?:[.,]\d{2})?)$",
     re.IGNORECASE,
@@ -205,6 +205,7 @@ ITEM_UNIT_MARKERS = {
     "к-т",
 }
 ARTICLE_TOKEN_PATTERN = re.compile(r"^(?=.*[\d-])[A-Za-zА-Яа-я0-9/_-]{3,}$")
+WORK_CODE_TOKEN_PATTERN = re.compile(r"^(?=.*\d)(?=.*[A-Za-zА-Яа-я])[A-Za-zА-Яа-я0-9/_-]{3,}$")
 TEXT_KEYWORD_PATTERN = re.compile(
     "|".join(
         [
@@ -246,6 +247,72 @@ SERVICE_NAME_BLOCKLIST = (
     "наряд",
     "дата",
 )
+OCR_TOKEN_CHAR_REPLACEMENTS = str.maketrans(
+    {
+        "О": "O",
+        "о": "o",
+        "о": "o",
+        "А": "A",
+        "а": "a",
+        "В": "B",
+        "в": "b",
+        "Е": "E",
+        "е": "e",
+        "К": "K",
+        "к": "k",
+        "М": "M",
+        "м": "m",
+        "Н": "H",
+        "н": "h",
+        "Р": "P",
+        "р": "p",
+        "С": "C",
+        "с": "c",
+        "Т": "T",
+        "т": "t",
+        "У": "Y",
+        "у": "y",
+        "Х": "X",
+        "х": "x",
+        "І": "I",
+        "і": "i",
+        "—": "-",
+        "–": "-",
+        "−": "-",
+        "‑": "-",
+    }
+)
+UNIT_ALIASES = {
+    "шт": "шт",
+    "шг": "шт",
+    "шt": "шт",
+    "шт.": "шт",
+    "ед": "ед",
+    "ед.": "ед",
+    "компл": "компл",
+    "компл.": "компл",
+    "к-т": "компл",
+    "кт": "компл",
+    "усл": "усл",
+    "усл.": "усл",
+    "л": "л",
+    "л.": "л",
+    "кг": "кг",
+    "кг.": "кг",
+    "м": "м",
+    "м.": "м",
+    "ч": "ч",
+    "ч.": "ч",
+    "час": "ч",
+    "часа": "ч",
+    "часов": "ч",
+    "нч": "нч",
+    "н.ч": "нч",
+    "н/ч": "нч",
+    "hч": "нч",
+    "h.ч": "нч",
+    "h/ч": "нч",
+}
 
 
 @dataclass
@@ -375,6 +442,41 @@ def normalize_token_for_unit(token: str) -> str:
     return token.lower().strip(".,;:!?)(")
 
 
+def normalize_ocr_code_token(value: str) -> str:
+    return normalize_text(value).translate(OCR_TOKEN_CHAR_REPLACEMENTS)
+
+
+def normalize_unit_name(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    normalized_value = normalize_token_for_unit(value)
+    compact_value = normalized_value.replace(" ", "")
+    translated_value = normalize_ocr_code_token(compact_value).lower()
+    translated_value = translated_value.replace(".", ".").replace("/", "/")
+    return (
+        UNIT_ALIASES.get(compact_value)
+        or UNIT_ALIASES.get(translated_value)
+        or compact_value
+        or None
+    )
+
+
+def normalize_article_value(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    normalized_value = normalize_ocr_code_token(value).upper()
+    normalized_value = re.sub(r"[^A-Z0-9/_-]+", "", normalized_value)
+    return normalized_value or None
+
+
+def split_work_code_and_name(value: str) -> tuple[Optional[str], str]:
+    normalized_value = normalize_text(value)
+    parts = normalized_value.split(maxsplit=1)
+    if len(parts) == 2 and WORK_CODE_TOKEN_PATTERN.fullmatch(parts[0]):
+        return normalize_article_value(parts[0]), parts[1]
+    return None, normalized_value
+
+
 def is_quantity_token(token: str) -> bool:
     return bool(re.fullmatch(r"\d+(?:[.,]\d+)?", token))
 
@@ -396,8 +498,11 @@ def parse_inline_item_sequence(section_text: str, target: str) -> list[dict[str,
 
             amount_start_index = quantity_index + 1
             unit_token: Optional[str] = None
-            if amount_start_index < len(tokens) and normalize_token_for_unit(tokens[amount_start_index]) in ITEM_UNIT_MARKERS:
-                unit_token = normalize_token_for_unit(tokens[amount_start_index])
+            normalized_candidate_unit = (
+                normalize_unit_name(tokens[amount_start_index]) if amount_start_index < len(tokens) else None
+            )
+            if normalized_candidate_unit in ITEM_UNIT_MARKERS:
+                unit_token = normalized_candidate_unit
                 amount_start_index += 1
 
             if amount_start_index + 1 >= len(tokens):
@@ -421,10 +526,12 @@ def parse_inline_item_sequence(section_text: str, target: str) -> list[dict[str,
 
             payload: Optional[dict[str, object]]
             if target == "works":
+                work_code, work_name = split_work_code_and_name(payload_text)
                 payload = {
-                    "work_name": payload_text[:500],
+                    "work_code": work_code,
+                    "work_name": work_name[:500],
                     "quantity": quantity,
-                    "unit_name": unit_token,
+                    "unit_name": normalize_unit_name(unit_token),
                     "price": price,
                     "line_total": total,
                 }
@@ -432,7 +539,7 @@ def parse_inline_item_sequence(section_text: str, target: str) -> list[dict[str,
                 article = None
                 name_tokens = prefix_tokens
                 if len(prefix_tokens) > 1 and ARTICLE_TOKEN_PATTERN.fullmatch(prefix_tokens[0]):
-                    article = prefix_tokens[0]
+                    article = normalize_article_value(prefix_tokens[0])
                     name_tokens = prefix_tokens[1:]
                 part_name = " ".join(name_tokens).strip()
                 if not part_name:
@@ -441,7 +548,7 @@ def parse_inline_item_sequence(section_text: str, target: str) -> list[dict[str,
                     "article": article,
                     "part_name": part_name[:500],
                     "quantity": quantity,
-                    "unit_name": unit_token,
+                    "unit_name": normalize_unit_name(unit_token),
                     "price": price,
                     "line_total": total,
                 }
@@ -547,14 +654,15 @@ def parse_work_line(line: str) -> Optional[dict[str, object]]:
     quantity = parse_decimal_value(match.group("qty"))
     price = parse_amount(match.group("price"))
     total = parse_amount(match.group("total"))
-    name = normalize_text(match.group("name"))
+    work_code, name = split_work_code_and_name(normalize_text(match.group("name")))
     if quantity is None or price is None or total is None or not name:
         return None
 
     return {
+        "work_code": work_code,
         "work_name": name[:500],
         "quantity": quantity,
-        "unit_name": match.group("unit"),
+        "unit_name": normalize_unit_name(match.group("unit")),
         "price": price,
         "line_total": total,
     }
@@ -579,10 +687,10 @@ def parse_part_line(line: str) -> Optional[dict[str, object]]:
         return None
 
     return {
-        "article": article,
+        "article": normalize_article_value(article),
         "part_name": name[:500],
         "quantity": quantity,
-        "unit_name": match.groupdict().get("unit"),
+        "unit_name": normalize_unit_name(match.groupdict().get("unit")),
         "price": price,
         "line_total": total,
     }
@@ -1031,27 +1139,34 @@ def replace_repair_lines(
     db.execute(delete(RepairPart).where(RepairPart.repair_id == repair.id))
 
     for item in works_payload:
+        normalized_unit_name = normalize_unit_name(str(item.get("unit_name")) if item.get("unit_name") else None)
         db.add(
             RepairWork(
                 repair_id=repair.id,
+                work_code=str(item["work_code"]) if item.get("work_code") else None,
                 work_name=str(item["work_name"]),
                 quantity=float(item["quantity"]),
-                actual_hours=float(item["quantity"]) if str(item.get("unit_name") or "").lower() in {"нч", "ч", "час", "часа", "часов"} else None,
+                actual_hours=float(item["quantity"]) if normalized_unit_name in {"нч", "ч"} else None,
                 price=float(item["price"]),
                 line_total=float(item["line_total"]),
                 status=CatalogStatus.PRELIMINARY,
-                reference_payload={"source": "ocr", "unit_name": item.get("unit_name")},
+                reference_payload={
+                    "source": "ocr",
+                    "unit_name": normalized_unit_name,
+                    "normalized": True,
+                },
             )
         )
 
     for item in parts_payload:
+        normalized_unit_name = normalize_unit_name(str(item["unit_name"]) if item.get("unit_name") else None)
         db.add(
             RepairPart(
                 repair_id=repair.id,
-                article=str(item["article"]) if item.get("article") else None,
+                article=normalize_article_value(str(item["article"])) if item.get("article") else None,
                 part_name=str(item["part_name"]),
                 quantity=float(item["quantity"]),
-                unit_name=str(item["unit_name"]) if item.get("unit_name") else None,
+                unit_name=normalized_unit_name,
                 price=float(item["price"]),
                 line_total=float(item["line_total"]),
                 status=CatalogStatus.PRELIMINARY,

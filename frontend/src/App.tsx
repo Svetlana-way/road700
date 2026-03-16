@@ -727,7 +727,7 @@ export default function App() {
                             <Box>
                               <Typography variant="subtitle1">Файл документа</Typography>
                               <Typography className="muted-copy">
-                                Поддерживаются PDF и изображения. OCR-обработка будет добавлена следующим шагом.
+                                Поддерживаются PDF и изображения. Для PDF с текстовым слоем OCR срабатывает автоматически, для фото и сканов используется локальное распознавание.
                               </Typography>
                             </Box>
                             <Button component="label" variant="outlined">

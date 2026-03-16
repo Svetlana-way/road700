@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -19,10 +23,12 @@ from app.models.service import Service
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 LOCAL_STORAGE_ROOT = PROJECT_ROOT / "storage"
+VISION_OCR_SCRIPT = Path(__file__).with_name("vision_ocr.swift")
 
 ORDER_PATTERNS = [
     r"(?:заказ[\s-]*наряд|наряд[\s-]*заказ)\s*(?:№|N|#)?\s*([A-Za-zА-Яа-я0-9/_-]{3,})",
     r"\b(?:№|N|#)\s*([A-Za-zА-Яа-я0-9/_-]{4,})",
+    r"\b([A-Z]{2,}[A-Z0-9/_-]*-\d{2,})\b",
 ]
 DATE_PATTERNS = [
     r"(?:дата|от)\s*[:№]?\s*(\d{2}[./-]\d{2}[./-]\d{4})",
@@ -101,6 +107,10 @@ def score_text_quality(text: str) -> tuple[int, int, int]:
         )
     )
     return (keyword_hits, cyrillic_count, alnum_count)
+
+
+def is_vision_ocr_available() -> bool:
+    return shutil.which("swift") is not None and VISION_OCR_SCRIPT.exists()
 
 
 def parse_amount(value: str) -> Optional[float]:
@@ -297,6 +307,119 @@ def extract_pdf_text(path: Path) -> str:
     return "\n".join(filter(None, chunks)).strip()
 
 
+def run_vision_ocr(image_paths: list[Path]) -> dict[str, str]:
+    if not image_paths:
+        return {}
+    if not is_vision_ocr_available():
+        raise RuntimeError("Apple Vision OCR is not available in the current environment")
+
+    command = ["swift", VISION_OCR_SCRIPT.as_posix(), *[path.as_posix() for path in image_paths]]
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "Vision OCR command failed")
+
+    payload = json.loads(result.stdout)
+    return {item["path"]: item["text"] for item in payload.get("results", [])}
+
+
+def preprocess_image_for_ocr(path: Path) -> tuple[tempfile.TemporaryDirectory, Path]:
+    temp_dir = tempfile.TemporaryDirectory()
+    processed_path = Path(temp_dir.name) / f"{path.stem}_ocr.jpg"
+    command = [
+        "sips",
+        "-s",
+        "format",
+        "jpeg",
+        "-Z",
+        "2400",
+        path.as_posix(),
+        "--out",
+        processed_path.as_posix(),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        temp_dir.cleanup()
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Failed to preprocess image for OCR")
+    return temp_dir, processed_path
+
+
+def extract_image_text(path: Path) -> str:
+    temp_dir, processed_path = preprocess_image_for_ocr(path)
+    try:
+        ocr_results = run_vision_ocr([processed_path])
+        return normalize_text(ocr_results.get(processed_path.as_posix(), ""))
+    finally:
+        temp_dir.cleanup()
+
+
+def render_pdf_pages_for_ocr(path: Path, max_pages: int = 5) -> tuple[tempfile.TemporaryDirectory, list[Path]]:
+    temp_dir = tempfile.TemporaryDirectory()
+    image_paths: list[Path] = []
+    page_count = max(1, min(len(PdfReader(path.as_posix()).pages), max_pages))
+    for page_index in range(page_count):
+        image_path = Path(temp_dir.name) / f"ocr_page_{page_index + 1}.jpg"
+        command = [
+            "sips",
+            "-s",
+            "format",
+            "jpeg",
+            "-Z",
+            "2400",
+            path.as_posix(),
+            "--out",
+            image_path.as_posix(),
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            temp_dir.cleanup()
+            raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Failed to render PDF page for OCR")
+        image_paths.append(image_path)
+        break
+
+    return temp_dir, image_paths
+
+
+def extract_scanned_pdf_text(path: Path) -> str:
+    temp_dir, image_paths = render_pdf_pages_for_ocr(path)
+    try:
+        ocr_results = run_vision_ocr(image_paths)
+        chunks = [normalize_text(ocr_results.get(image_path.as_posix(), "")) for image_path in image_paths]
+        return "\n".join(filter(None, chunks)).strip()
+    finally:
+        temp_dir.cleanup()
+
+
+def extract_document_text(path: Path, source_type: str) -> tuple[str, str, Optional[str]]:
+    if source_type == "image":
+        if not is_vision_ocr_available():
+            return "", "manual_review", "image_ocr_unavailable"
+        text = extract_image_text(path)
+        return text, "image_vision_ocr", None if text else "image_text_not_found"
+
+    text = extract_pdf_text(path)
+    extracted_from = "pdf_text"
+    failure_reason = None
+
+    if score_text_quality(text)[0] >= 2 or score_text_quality(text)[1] >= 6:
+        return text, extracted_from, None
+
+    if not is_vision_ocr_available():
+        return text, extracted_from, "pdf_ocr_unavailable" if not text else None
+
+    scanned_text = extract_scanned_pdf_text(path)
+    if score_text_quality(scanned_text) > score_text_quality(text):
+        return scanned_text, "pdf_vision_ocr", None if scanned_text else "pdf_text_not_found"
+
+    if not text and not scanned_text:
+        failure_reason = "pdf_text_not_found"
+    return text or scanned_text, extracted_from if text else "pdf_vision_ocr", failure_reason
+
+
 def parse_document_text(text: str) -> dict[str, object]:
     extracted_fields = {}
     confidence_map = {}
@@ -464,16 +587,12 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         if not storage_path.exists():
             raise FileNotFoundError(f"Source document file not found: {storage_path}")
 
-        text = ""
-        extracted_from = "manual_review"
-        if document.source_type == "pdf":
-            text = extract_pdf_text(storage_path)
-            extracted_from = "pdf_text"
-
+        text, extracted_from, extraction_failure_reason = extract_document_text(storage_path, document.source_type)
         parsed = parse_document_text(text) if text else {
             "extracted_fields": {},
+            "extracted_items": {"works": [], "parts": []},
             "confidence_map": {},
-            "manual_review_reasons": ["image_ocr_not_available" if document.source_type != "pdf" else "text_not_found"],
+            "manual_review_reasons": [extraction_failure_reason or "text_not_found"],
         }
 
         extracted_fields = parsed["extracted_fields"]
@@ -618,7 +737,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         version_number = max([version.version_number for version in document.versions], default=0) + 1
         text_excerpt = normalize_text(text.replace("\n", " "))[:500] if text else None
         parsed_payload = {
-            "processor": "pdf_text_regex_v1",
+            "processor": "hybrid_document_ocr_v1",
             "extracted_from": extracted_from,
             "text_length": len(text),
             "text_excerpt": text_excerpt,

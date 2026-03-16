@@ -307,6 +307,9 @@ type RepairDetail = {
   }>;
 };
 
+type RepairHistoryEntry = RepairDetail["history"][number];
+type RepairDocumentHistoryEntry = RepairDetail["document_history"][number];
+
 type CheckResolutionMeta = {
   is_resolved?: boolean;
   comment?: string | null;
@@ -416,6 +419,39 @@ const documentKindOptions: Array<{ value: DocumentKind; label: string }> = [
 const rootDocumentKindOptions = documentKindOptions.filter(
   (option) => option.value === "order" || option.value === "repeat_scan",
 );
+const HISTORY_DETAIL_PREVIEW_LIMIT = 220;
+const historyActionLabels: Record<string, string> = {
+  manual_update: "Ручное редактирование ремонта",
+  check_resolution_update: "Изменение статуса проверки",
+  review_confirm: "Подтверждение администратором",
+  review_send_to_review: "Возврат в ручную проверку",
+  primary_document_changed: "Смена основного документа",
+  set_primary: "Документ назначен основным",
+  document_uploaded: "Загрузка нового документа",
+  document_attached: "Прикрепление документа к ремонту",
+  document_comparison_reviewed: "Результат сверки документов",
+  comparison_keep_current_primary: "Сверка: оставлен текущий основной документ",
+  comparison_make_document_primary: "Сверка: выбран новый основной документ",
+  comparison_mark_reviewed: "Сверка отмечена как проверенная",
+};
+const repairStatusLabels: Record<string, string> = {
+  draft: "Черновик",
+  in_review: "На проверке",
+  employee_confirmed: "Подтверждено сотрудником",
+  suspicious: "Подозрительный ремонт",
+  ocr_error: "Ошибка OCR",
+  confirmed: "Подтверждено",
+  archived: "Архив",
+};
+const documentStatusLabels: Record<string, string> = {
+  uploaded: "Загружен",
+  recognized: "Распознан",
+  partially_recognized: "Распознан частично",
+  needs_review: "Требует ручной проверки",
+  confirmed: "Подтвержден",
+  ocr_error: "Ошибка OCR",
+  archived: "Архив",
+};
 
 function formatStatus(status: string) {
   return status.split("_").join(" ");
@@ -494,6 +530,311 @@ function formatDocumentKind(kind: DocumentKind) {
     return "Приложение";
   }
   return "Подтверждение";
+}
+
+function formatRepairStatus(status: string | null | undefined) {
+  if (!status) {
+    return "—";
+  }
+  return repairStatusLabels[status] || formatStatus(status);
+}
+
+function formatDocumentStatusLabel(status: string | null | undefined) {
+  if (!status) {
+    return "—";
+  }
+  return documentStatusLabels[status] || formatStatus(status);
+}
+
+function formatHistoryActionLabel(actionType: string) {
+  return historyActionLabels[actionType] || formatStatus(actionType);
+}
+
+function formatComparisonActionLabel(action: string | null | undefined) {
+  if (!action) {
+    return "Результат не указан";
+  }
+  const labels: Record<string, string> = {
+    keep_current_primary: "Оставлен текущий основной документ",
+    make_document_primary: "Сравниваемый документ назначен основным",
+    mark_reviewed: "Сверка отмечена как проверенная",
+  };
+  return labels[action] || formatStatus(action);
+}
+
+function formatDateValue(value: string) {
+  const normalizedValue = value.length === 10 ? `${value}T00:00:00` : value;
+  const parsed = new Date(normalizedValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat(
+    "ru-RU",
+    value.length === 10 ? { dateStyle: "short" } : { dateStyle: "short", timeStyle: "short" },
+  ).format(parsed);
+}
+
+function safeJsonStringify(value: unknown) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function areHistoryValuesEqual(left: unknown, right: unknown) {
+  if (left === right) {
+    return true;
+  }
+  return safeJsonStringify(left) === safeJsonStringify(right);
+}
+
+function formatHistoryFieldLabel(fieldName: string, context: "repair" | "document" | "generic" = "generic") {
+  if (fieldName === "status") {
+    return context === "document" ? "Статус документа" : "Статус ремонта";
+  }
+
+  const labels: Record<string, string> = {
+    order_number: "Номер заказ-наряда",
+    repair_date: "Дата ремонта",
+    mileage: "Пробег",
+    reason: "Причина обращения",
+    employee_comment: "Комментарий сотрудника",
+    service_name: "Сервис",
+    work_total: "Сумма работ",
+    parts_total: "Сумма запчастей",
+    vat_total: "НДС",
+    grand_total: "Итоговая сумма",
+    repair_status: "Статус ремонта",
+    document_status: "Статус документа",
+    review_queue_priority: "Приоритет очереди",
+    source_document_id: "Основной документ",
+    is_preliminary: "Черновик",
+    is_partially_recognized: "Частичное распознавание",
+    is_primary: "Основной документ",
+    kind: "Тип документа",
+    document_kind: "Тип документа",
+    notes: "Комментарий",
+  };
+
+  return labels[fieldName] || formatStatus(fieldName);
+}
+
+function formatHistoryScalar(
+  fieldName: string,
+  value: unknown,
+  context: "repair" | "document" | "generic" = "generic",
+) {
+  if (value === null || value === undefined || value === "") {
+    return "—";
+  }
+  if (typeof value === "boolean") {
+    return value ? "Да" : "Нет";
+  }
+  if (typeof value === "number") {
+    if (
+      fieldName === "work_total" ||
+      fieldName === "parts_total" ||
+      fieldName === "vat_total" ||
+      fieldName === "grand_total"
+    ) {
+      return formatMoney(value) || "—";
+    }
+    return new Intl.NumberFormat("ru-RU").format(value);
+  }
+  if (typeof value === "string") {
+    if (fieldName === "repair_date") {
+      return formatDateValue(value);
+    }
+    if (fieldName === "status" || fieldName === "repair_status") {
+      return formatRepairStatus(value);
+    }
+    if (fieldName === "document_status") {
+      return formatDocumentStatusLabel(value);
+    }
+    if (fieldName === "kind" || fieldName === "document_kind") {
+      return formatDocumentKind(value as DocumentKind);
+    }
+    if (fieldName.endsWith("_at")) {
+      return formatDateValue(value);
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return `${value.length}`;
+  }
+  if (typeof value === "object") {
+    if (fieldName === "status" && context === "document") {
+      return formatDocumentStatusLabel(String((value as Record<string, unknown>).status || ""));
+    }
+    return safeJsonStringify(value);
+  }
+  return String(value);
+}
+
+function collectChangedFieldLines(
+  oldValue: Record<string, unknown> | null,
+  newValue: Record<string, unknown> | null,
+  fieldNames: string[],
+  context: "repair" | "document" | "generic" = "generic",
+) {
+  const lines: string[] = [];
+  fieldNames.forEach((fieldName) => {
+    const previous = oldValue?.[fieldName];
+    const next = newValue?.[fieldName];
+    if (areHistoryValuesEqual(previous, next)) {
+      return;
+    }
+    lines.push(
+      `${formatHistoryFieldLabel(fieldName, context)}: ${formatHistoryScalar(fieldName, previous, context)} -> ${formatHistoryScalar(fieldName, next, context)}`,
+    );
+  });
+  return lines;
+}
+
+function summarizeChecks(value: unknown) {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const unresolved = value.filter((item) => {
+    if (!item || typeof item !== "object") {
+      return false;
+    }
+    return !Boolean((item as Record<string, unknown>).is_resolved);
+  }).length;
+  return `${unresolved} открыто из ${value.length}`;
+}
+
+function buildCollectionCountLine(label: string, previous: unknown, next: unknown) {
+  if (!Array.isArray(previous) || !Array.isArray(next)) {
+    return null;
+  }
+  if (previous.length === next.length) {
+    return null;
+  }
+  return `${label}: ${previous.length} -> ${next.length}`;
+}
+
+function buildCheckSummaryLine(previous: unknown, next: unknown) {
+  const previousSummary = summarizeChecks(previous);
+  const nextSummary = summarizeChecks(next);
+  if (!previousSummary || !nextSummary || previousSummary === nextSummary) {
+    return null;
+  }
+  return `Открытые проверки: ${previousSummary} -> ${nextSummary}`;
+}
+
+function buildHistoryFallbackLine(
+  oldValue: Record<string, unknown> | null,
+  newValue: Record<string, unknown> | null,
+) {
+  if (!oldValue && !newValue) {
+    return "Изменение зафиксировано без дополнительных данных.";
+  }
+  return `Снимок изменения: ${safeJsonStringify({ before: oldValue, after: newValue })}`;
+}
+
+function buildRepairHistoryDetails(entry: RepairHistoryEntry) {
+  const lines = [
+    ...collectChangedFieldLines(
+      entry.old_value,
+      entry.new_value,
+      [
+        "order_number",
+        "repair_date",
+        "mileage",
+        "service_name",
+        "grand_total",
+        "status",
+        "repair_status",
+        "document_status",
+        "review_queue_priority",
+        "is_preliminary",
+        "is_partially_recognized",
+      ],
+      "repair",
+    ),
+  ];
+
+  const worksLine = buildCollectionCountLine("Работы", entry.old_value?.works, entry.new_value?.works);
+  if (worksLine) {
+    lines.push(worksLine);
+  }
+  const partsLine = buildCollectionCountLine("Запчасти", entry.old_value?.parts, entry.new_value?.parts);
+  if (partsLine) {
+    lines.push(partsLine);
+  }
+  const documentsLine = buildCollectionCountLine("Документы", entry.old_value?.documents, entry.new_value?.documents);
+  if (documentsLine) {
+    lines.push(documentsLine);
+  }
+  const checksLine =
+    buildCheckSummaryLine(entry.old_value?.checks, entry.new_value?.checks) ||
+    buildCheckSummaryLine(entry.old_value?.unresolved_checks, entry.new_value?.unresolved_checks);
+  if (checksLine) {
+    lines.push(checksLine);
+  }
+
+  const sourceDocumentChange = collectChangedFieldLines(
+    entry.old_value,
+    entry.new_value,
+    ["source_document_id"],
+    "repair",
+  );
+  if (sourceDocumentChange.length > 0) {
+    lines.push(...sourceDocumentChange);
+  }
+
+  const reviewMeta = readComparisonReviewMeta(entry.new_value);
+  if (reviewMeta) {
+    lines.push(`Результат сверки: ${formatComparisonActionLabel(String(reviewMeta.action || ""))}`);
+    if (reviewMeta.comment) {
+      lines.push(`Комментарий: ${String(reviewMeta.comment)}`);
+    }
+    if (reviewMeta.compared_document_id || reviewMeta.with_document_id) {
+      lines.push(
+        `Документы: ${String(reviewMeta.compared_document_id || "—")} и ${String(reviewMeta.with_document_id || "—")}`,
+      );
+    }
+  }
+
+  if (lines.length === 0) {
+    lines.push(buildHistoryFallbackLine(entry.old_value, entry.new_value));
+  }
+  return lines;
+}
+
+function buildDocumentHistoryDetails(entry: RepairDocumentHistoryEntry) {
+  const lines = [
+    ...collectChangedFieldLines(
+      entry.old_value,
+      entry.new_value,
+      ["status", "document_status", "repair_status", "review_queue_priority", "is_primary", "kind", "notes"],
+      "document",
+    ),
+    ...collectChangedFieldLines(entry.old_value, entry.new_value, ["source_document_id"], "document"),
+  ];
+
+  const reviewMeta = readComparisonReviewMeta(entry.new_value);
+  if (reviewMeta) {
+    lines.push(`Результат сверки: ${formatComparisonActionLabel(String(reviewMeta.action || ""))}`);
+    if (reviewMeta.comment) {
+      lines.push(`Комментарий: ${String(reviewMeta.comment)}`);
+    }
+    if (reviewMeta.compared_document_id || reviewMeta.with_document_id) {
+      lines.push(
+        `Документы: ${String(reviewMeta.compared_document_id || "—")} и ${String(reviewMeta.with_document_id || "—")}`,
+      );
+    }
+  }
+
+  if (lines.length === 0 && entry.new_value) {
+    lines.push(buildHistoryFallbackLine(entry.old_value, entry.new_value));
+  }
+  if (lines.length === 0) {
+    lines.push("Событие зафиксировано без дополнительных деталей.");
+  }
+  return lines;
 }
 
 function matchesTextSearch(parts: Array<string | null | undefined>, search: string) {
@@ -654,6 +995,7 @@ export default function App() {
   const [documentComparisonComment, setDocumentComparisonComment] = useState("");
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
   const [historySearch, setHistorySearch] = useState("");
+  const [expandedHistoryEntries, setExpandedHistoryEntries] = useState<Record<string, boolean>>({});
   const [reviewActionComment, setReviewActionComment] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -806,6 +1148,7 @@ export default function App() {
         setDocumentComparisonComment("");
         setHistoryFilter("all");
         setHistorySearch("");
+        setExpandedHistoryEntries({});
         setAttachedDocumentKind("repeat_scan");
         setAttachedDocumentNotes("");
         setAttachedDocumentFile(null);
@@ -907,6 +1250,7 @@ export default function App() {
       setDocumentComparisonComment("");
       setHistoryFilter("all");
       setHistorySearch("");
+      setExpandedHistoryEntries({});
       setAttachedDocumentKind("repeat_scan");
       setAttachedDocumentNotes("");
       setAttachedDocumentFile(null);
@@ -1178,6 +1522,43 @@ export default function App() {
 
   function updateRepairDraftField<K extends keyof EditableRepairDraft>(field: K, value: EditableRepairDraft[K]) {
     setRepairDraft((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  function toggleHistoryEntry(entryKey: string) {
+    setExpandedHistoryEntries((current) => ({
+      ...current,
+      [entryKey]: !current[entryKey],
+    }));
+  }
+
+  function renderHistoryDetails(entryKey: string, lines: string[]) {
+    const text = lines.join("\n");
+    const isExpandable = text.length > HISTORY_DETAIL_PREVIEW_LIMIT || lines.length > 3;
+    const isExpanded = Boolean(expandedHistoryEntries[entryKey]);
+    const visibleText =
+      !isExpandable || isExpanded
+        ? text
+        : `${text.slice(0, HISTORY_DETAIL_PREVIEW_LIMIT).trimEnd()}...`;
+
+    return (
+      <Stack spacing={0.5}>
+        <Typography className="muted-copy" sx={{ whiteSpace: "pre-line" }}>
+          {visibleText}
+        </Typography>
+        {isExpandable ? (
+          <Box>
+            <Button
+              size="small"
+              onClick={() => {
+                toggleHistoryEntry(entryKey);
+              }}
+            >
+              {isExpanded ? "Скрыть" : "Подробнее"}
+            </Button>
+          </Box>
+        ) : null}
+      </Stack>
+    );
   }
 
   function updateWorkDraft(index: number, field: keyof EditableWorkDraft, value: EditableWorkDraft[keyof EditableWorkDraft]) {
@@ -2610,7 +2991,7 @@ export default function App() {
                                     <Stack spacing={1}>
                                       <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
                                         <Typography>
-                                          {entry.user_name || "Система"} · {formatStatus(entry.action_type)}
+                                          {entry.user_name || "Система"} · {formatHistoryActionLabel(entry.action_type)}
                                         </Typography>
                                         <Typography className="muted-copy">{formatDateTime(entry.created_at)}</Typography>
                                       </Stack>
@@ -2618,24 +2999,10 @@ export default function App() {
                                         {entry.document_filename || "Документ"}
                                         {entry.document_kind ? ` · ${formatDocumentKind(entry.document_kind)}` : ""}
                                       </Typography>
-                                      {entry.action_type === "set_primary" || entry.action_type === "primary_document_changed" ? (
-                                        <Typography className="muted-copy">
-                                          Основной документ: {String(entry.old_value?.source_document_id || "не задан")} → {String(entry.new_value?.source_document_id || "не задан")}
-                                        </Typography>
-                                      ) : null}
-                                      {entry.action_type.startsWith("comparison_") ? (
-                                        <Typography className="muted-copy">
-                                          Сверка: {String(readComparisonReviewMeta(entry.new_value)?.action || entry.action_type)}
-                                          {readComparisonReviewMeta(entry.new_value)?.comment
-                                            ? ` · ${String(readComparisonReviewMeta(entry.new_value)?.comment)}`
-                                            : ""}
-                                        </Typography>
-                                      ) : null}
-                                      {(entry.action_type === "document_uploaded" || entry.action_type === "document_attached") && entry.new_value ? (
-                                        <Typography className="muted-copy">
-                                          Добавлен файл · статус {String(entry.new_value.status || "unknown")}
-                                        </Typography>
-                                      ) : null}
+                                      {renderHistoryDetails(
+                                        `document-${entry.id}`,
+                                        buildDocumentHistoryDetails(entry),
+                                      )}
                                     </Stack>
                                   </Paper>
                                 ))
@@ -2652,16 +3019,14 @@ export default function App() {
                                     <Stack spacing={1}>
                                       <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
                                         <Typography>
-                                          {entry.user_name || "Система"} · {formatStatus(entry.action_type)}
+                                          {entry.user_name || "Система"} · {formatHistoryActionLabel(entry.action_type)}
                                         </Typography>
                                         <Typography className="muted-copy">{formatDateTime(entry.created_at)}</Typography>
                                       </Stack>
-                                      <Typography className="muted-copy">
-                                        Было: {String(entry.old_value?.order_number || "без номера")} · {formatMoney(Number(entry.old_value?.grand_total || 0)) || "—"}
-                                      </Typography>
-                                      <Typography className="muted-copy">
-                                        Стало: {String(entry.new_value?.order_number || "без номера")} · {formatMoney(Number(entry.new_value?.grand_total || 0)) || "—"}
-                                      </Typography>
+                                      {renderHistoryDetails(
+                                        `repair-${entry.id}`,
+                                        buildRepairHistoryDetails(entry),
+                                      )}
                                     </Stack>
                                   </Paper>
                                 ))

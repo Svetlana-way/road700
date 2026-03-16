@@ -60,6 +60,13 @@ type VehiclesResponse = {
   total: number;
 };
 
+type VehiclePreview = {
+  id: number;
+  plate_number: string | null;
+  brand: string | null;
+  model: string | null;
+};
+
 type DocumentItem = {
   id: number;
   original_filename: string;
@@ -102,6 +109,70 @@ type DocumentsResponse = {
 
 type LoginResponse = {
   access_token: string;
+};
+
+type CheckSeverity = "normal" | "warning" | "suspicious" | "error";
+
+type RepairDetail = {
+  id: number;
+  order_number: string | null;
+  repair_date: string;
+  mileage: number;
+  reason: string | null;
+  employee_comment: string | null;
+  work_total: number;
+  parts_total: number;
+  vat_total: number;
+  grand_total: number;
+  status: string;
+  is_preliminary: boolean;
+  is_partially_recognized: boolean;
+  is_manually_completed: boolean;
+  created_at: string;
+  updated_at: string;
+  vehicle: {
+    id: number;
+    plate_number: string | null;
+    brand: string | null;
+    model: string | null;
+  };
+  service: {
+    id: number;
+    name: string;
+    city: string | null;
+  } | null;
+  works: Array<{
+    id: number;
+    work_code: string | null;
+    work_name: string;
+    quantity: number;
+    standard_hours: number | null;
+    actual_hours: number | null;
+    price: number;
+    line_total: number;
+    status: string;
+    reference_payload: Record<string, unknown> | null;
+  }>;
+  parts: Array<{
+    id: number;
+    article: string | null;
+    part_name: string;
+    quantity: number;
+    unit_name: string | null;
+    price: number;
+    line_total: number;
+    status: string;
+  }>;
+  checks: Array<{
+    id: number;
+    check_type: string;
+    severity: CheckSeverity;
+    title: string;
+    details: string | null;
+    calculation_payload: Record<string, unknown> | null;
+    is_resolved: boolean;
+    created_at: string;
+  }>;
 };
 
 type UploadFormState = {
@@ -152,7 +223,7 @@ function formatMoney(value?: number) {
   }).format(value);
 }
 
-function formatVehicle(vehicle: Vehicle | DocumentItem["vehicle"]) {
+function formatVehicle(vehicle: VehiclePreview) {
   const parts = [vehicle.plate_number, vehicle.brand, vehicle.model].filter(Boolean);
   return parts.join(" • ") || `#${vehicle.id}`;
 }
@@ -166,6 +237,19 @@ function statusColor(status: DocumentStatus): "default" | "success" | "error" | 
   }
   if (status === "needs_review" || status === "partially_recognized") {
     return "warning";
+  }
+  return "default";
+}
+
+function checkSeverityColor(severity: CheckSeverity): "default" | "success" | "error" | "warning" {
+  if (severity === "error") {
+    return "error";
+  }
+  if (severity === "warning" || severity === "suspicious") {
+    return "warning";
+  }
+  if (severity === "normal") {
+    return "success";
   }
   return "default";
 }
@@ -198,6 +282,8 @@ export default function App() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
+  const [selectedRepair, setSelectedRepair] = useState<RepairDetail | null>(null);
   const [loginValue, setLoginValue] = useState("");
   const [passwordValue, setPasswordValue] = useState("");
   const [uploadForm, setUploadForm] = useState<UploadFormState>(emptyUploadForm);
@@ -205,6 +291,8 @@ export default function App() {
   const [bootLoading, setBootLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
+  const [repairLoading, setRepairLoading] = useState(false);
+  const [reprocessLoading, setReprocessLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -222,6 +310,9 @@ export default function App() {
       setSummary(dashboard);
       setVehicles(vehicleList.items);
       setDocuments(recentDocuments.items);
+      if (recentDocuments.items.length > 0 && selectedDocumentId === null) {
+        setSelectedDocumentId(recentDocuments.items[0].id);
+      }
       setErrorMessage("");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load workspace";
@@ -242,10 +333,36 @@ export default function App() {
       setSummary(null);
       setVehicles([]);
       setDocuments([]);
+      setSelectedDocumentId(null);
+      setSelectedRepair(null);
       return;
     }
     void loadWorkspace(token);
   }, [token]);
+
+  useEffect(() => {
+    if (!token || selectedDocumentId === null) {
+      setSelectedRepair(null);
+      return;
+    }
+
+    const selectedDocument = documents.find((item) => item.id === selectedDocumentId);
+    if (!selectedDocument) {
+      return;
+    }
+
+    setRepairLoading(true);
+    void apiRequest<RepairDetail>(`/repairs/${selectedDocument.repair.id}`, { method: "GET" }, token)
+      .then((payload) => {
+        setSelectedRepair(payload);
+      })
+      .catch((error) => {
+        setErrorMessage(error instanceof Error ? error.message : "Failed to load repair");
+      })
+      .finally(() => {
+        setRepairLoading(false);
+      });
+  }, [documents, selectedDocumentId, token]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -315,6 +432,46 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Upload failed");
     } finally {
       setUploadLoading(false);
+    }
+  }
+
+  async function handleOpenRepair(document: DocumentItem) {
+    setSelectedDocumentId(document.id);
+    if (!token) {
+      return;
+    }
+    setRepairLoading(true);
+    setErrorMessage("");
+    try {
+      const payload = await apiRequest<RepairDetail>(`/repairs/${document.repair.id}`, { method: "GET" }, token);
+      setSelectedRepair(payload);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load repair");
+    } finally {
+      setRepairLoading(false);
+    }
+  }
+
+  async function handleReprocessDocument(document: DocumentItem) {
+    if (!token) {
+      return;
+    }
+    setReprocessLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const result = await apiRequest<{ message: string }>(
+        `/documents/${document.id}/process`,
+        { method: "POST" },
+        token,
+      );
+      setSuccessMessage(result.message);
+      await loadWorkspace(token);
+      await handleOpenRepair(document);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to reprocess document");
+    } finally {
+      setReprocessLoading(false);
     }
   }
 
@@ -618,7 +775,11 @@ export default function App() {
                     </Box>
                     <Stack spacing={1.5}>
                       {documents.map((document) => (
-                        <Paper className="document-row" key={document.id} elevation={0}>
+                        <Paper
+                          className={`document-row${selectedDocumentId === document.id ? " document-row-active" : ""}`}
+                          key={document.id}
+                          elevation={0}
+                        >
                           <Stack spacing={1.25}>
                             <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
                               <Typography variant="subtitle1">{document.original_filename}</Typography>
@@ -657,6 +818,29 @@ export default function App() {
                             {document.notes ? (
                               <Typography className="muted-copy">{document.notes}</Typography>
                             ) : null}
+                            <Stack direction="row" spacing={1} flexWrap="wrap">
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={() => {
+                                  void handleOpenRepair(document);
+                                }}
+                              >
+                                Открыть ремонт
+                              </Button>
+                              {user?.role === "admin" ? (
+                                <Button
+                                  size="small"
+                                  variant="text"
+                                  disabled={reprocessLoading}
+                                  onClick={() => {
+                                    void handleReprocessDocument(document);
+                                  }}
+                                >
+                                  {reprocessLoading && selectedDocumentId === document.id ? "Повтор..." : "Повторить OCR"}
+                                </Button>
+                              ) : null}
+                            </Stack>
                           </Stack>
                         </Paper>
                       ))}
@@ -666,6 +850,129 @@ export default function App() {
                         </Typography>
                       ) : null}
                     </Stack>
+                  </Stack>
+                </Paper>
+
+                <Paper className="workspace-panel" elevation={0}>
+                  <Stack spacing={2}>
+                    <Box>
+                      <Typography variant="h5">Карточка ремонта</Typography>
+                      <Typography className="muted-copy">
+                        Состав работ, материалов и проверки по выбранному документу.
+                      </Typography>
+                    </Box>
+                    {repairLoading ? (
+                      <Stack spacing={2} alignItems="center" className="repair-placeholder">
+                        <CircularProgress size={28} />
+                        <Typography className="muted-copy">Загрузка карточки ремонта...</Typography>
+                      </Stack>
+                    ) : selectedRepair ? (
+                      <Stack spacing={2}>
+                        <Paper className="repair-summary" elevation={0}>
+                          <Grid container spacing={2}>
+                            <Grid item xs={12} sm={6}>
+                              <Typography className="metric-label">Заказ-наряд</Typography>
+                              <Typography>{selectedRepair.order_number || "Не указан"}</Typography>
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                              <Typography className="metric-label">Техника</Typography>
+                              <Typography>{formatVehicle(selectedRepair.vehicle)}</Typography>
+                            </Grid>
+                            <Grid item xs={6}>
+                              <Typography className="metric-label">Работы</Typography>
+                              <Typography>{formatMoney(selectedRepair.work_total) || "—"}</Typography>
+                            </Grid>
+                            <Grid item xs={6}>
+                              <Typography className="metric-label">Запчасти</Typography>
+                              <Typography>{formatMoney(selectedRepair.parts_total) || "—"}</Typography>
+                            </Grid>
+                            <Grid item xs={6}>
+                              <Typography className="metric-label">НДС</Typography>
+                              <Typography>{formatMoney(selectedRepair.vat_total) || "—"}</Typography>
+                            </Grid>
+                            <Grid item xs={6}>
+                              <Typography className="metric-label">Итого</Typography>
+                              <Typography>{formatMoney(selectedRepair.grand_total) || "—"}</Typography>
+                            </Grid>
+                          </Grid>
+                        </Paper>
+
+                        <Stack spacing={1}>
+                          <Typography variant="h6">Работы</Typography>
+                          {selectedRepair.works.length > 0 ? (
+                            selectedRepair.works.map((item) => (
+                              <Paper className="repair-line" key={item.id} elevation={0}>
+                                <Stack direction="row" justifyContent="space-between" spacing={2}>
+                                  <Box>
+                                    <Typography>{item.work_name}</Typography>
+                                    <Typography className="muted-copy">
+                                      Кол-во {item.quantity}
+                                      {item.actual_hours ? ` · ${item.actual_hours} ч` : ""}
+                                    </Typography>
+                                  </Box>
+                                  <Typography>{formatMoney(item.line_total) || "—"}</Typography>
+                                </Stack>
+                              </Paper>
+                            ))
+                          ) : (
+                            <Typography className="muted-copy">Строки работ не распознаны.</Typography>
+                          )}
+                        </Stack>
+
+                        <Stack spacing={1}>
+                          <Typography variant="h6">Запчасти</Typography>
+                          {selectedRepair.parts.length > 0 ? (
+                            selectedRepair.parts.map((item) => (
+                              <Paper className="repair-line" key={item.id} elevation={0}>
+                                <Stack direction="row" justifyContent="space-between" spacing={2}>
+                                  <Box>
+                                    <Typography>{item.part_name}</Typography>
+                                    <Typography className="muted-copy">
+                                      {item.article ? `${item.article} · ` : ""}
+                                      {item.quantity} {item.unit_name || "шт"}
+                                    </Typography>
+                                  </Box>
+                                  <Typography>{formatMoney(item.line_total) || "—"}</Typography>
+                                </Stack>
+                              </Paper>
+                            ))
+                          ) : (
+                            <Typography className="muted-copy">Строки запчастей не распознаны.</Typography>
+                          )}
+                        </Stack>
+
+                        <Stack spacing={1}>
+                          <Typography variant="h6">Проверки</Typography>
+                          {selectedRepair.checks.length > 0 ? (
+                            selectedRepair.checks.map((check) => (
+                              <Paper className="repair-line" key={check.id} elevation={0}>
+                                <Stack spacing={1}>
+                                  <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                                    <Typography>{check.title}</Typography>
+                                    <Chip
+                                      size="small"
+                                      color={checkSeverityColor(check.severity)}
+                                      label={formatStatus(check.severity)}
+                                    />
+                                  </Stack>
+                                  {check.details ? (
+                                    <Typography className="muted-copy">{check.details}</Typography>
+                                  ) : null}
+                                </Stack>
+                              </Paper>
+                            ))
+                          ) : (
+                            <Typography className="muted-copy">Подозрительные проверки не найдены.</Typography>
+                          )}
+                        </Stack>
+                      </Stack>
+                    ) : (
+                      <Stack spacing={2} alignItems="center" className="repair-placeholder">
+                        <Typography className="muted-copy">
+                          Выберите документ, чтобы открыть карточку ремонта.
+                        </Typography>
+                      </Stack>
+                    )}
                   </Stack>
                 </Paper>
 

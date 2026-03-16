@@ -8,7 +8,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.enums import CatalogStatus
+from app.models.enums import CatalogStatus, VehicleType
 from app.models.labor_norm import LaborNorm
 
 
@@ -74,6 +74,29 @@ MATCH_STOPWORDS = {
     "деталь",
     "узел",
 }
+DONGFENG_LABOR_NORM_SCOPE = "dongfeng_2025"
+SUPPORTED_DONGFENG_BRANDS = ("DONGFENG", "DFH4180")
+SUPPORTED_DONGFENG_VIN_PREFIXES = ("LGAG3DV2",)
+VEHICLE_TEXT_REPLACEMENTS = str.maketrans(
+    {
+        "ё": "е",
+        "Ё": "Е",
+        "—": "-",
+        "–": "-",
+        "−": "-",
+        "‑": "-",
+        "/": " ",
+        "\\": " ",
+    }
+)
+
+
+def normalize_vehicle_match_text(value: Optional[str]) -> str:
+    if value is None:
+        return ""
+    normalized_value = str(value).strip().translate(VEHICLE_TEXT_REPLACEMENTS).lower()
+    normalized_value = re.sub(r"\s+", " ", normalized_value)
+    return normalized_value
 
 
 def normalize_labor_norm_code(value: Optional[str]) -> Optional[str]:
@@ -117,6 +140,89 @@ class LaborNormMatch:
     norm: LaborNorm
     score: float
     matched_by: str
+
+
+@dataclass(frozen=True)
+class LaborNormApplicability:
+    eligible: bool
+    scope: str
+    reason_code: str
+    reason: str
+    brand_family: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class LaborNormEnrichmentSummary:
+    matched_count: int = 0
+    unmatched_count: int = 0
+
+
+def detect_labor_norm_brand_family(
+    *,
+    brand: Optional[str],
+    model: Optional[str],
+    vin: Optional[str],
+) -> Optional[str]:
+    brand_tokens = {
+        normalize_vehicle_match_text(brand).replace(" ", ""),
+        normalize_vehicle_match_text(model).replace(" ", ""),
+    }
+    if any(token and supported.lower() in token for token in brand_tokens for supported in SUPPORTED_DONGFENG_BRANDS):
+        return "dongfeng"
+
+    normalized_vin = str(vin or "").strip().upper()
+    if any(normalized_vin.startswith(prefix) for prefix in SUPPORTED_DONGFENG_VIN_PREFIXES):
+        return "dongfeng"
+    return None
+
+
+def assess_labor_norm_applicability(vehicle: object | None) -> LaborNormApplicability:
+    if vehicle is None:
+        return LaborNormApplicability(
+            eligible=False,
+            scope=DONGFENG_LABOR_NORM_SCOPE,
+            reason_code="vehicle_missing",
+            reason="Карточка техники не привязана к ремонту, применимость норм определить нельзя",
+        )
+
+    vehicle_type = getattr(vehicle, "vehicle_type", None)
+    if vehicle_type != VehicleType.TRUCK:
+        return LaborNormApplicability(
+            eligible=False,
+            scope=DONGFENG_LABOR_NORM_SCOPE,
+            reason_code="vehicle_type_not_supported",
+            reason="Справочник нормо-часов Dong Feng применяется только к грузовикам",
+        )
+
+    brand = getattr(vehicle, "brand", None)
+    model = getattr(vehicle, "model", None)
+    vin = getattr(vehicle, "vin", None)
+    brand_family = detect_labor_norm_brand_family(brand=brand, model=model, vin=vin)
+    if brand_family != "dongfeng":
+        return LaborNormApplicability(
+            eligible=False,
+            scope=DONGFENG_LABOR_NORM_SCOPE,
+            reason_code="brand_not_supported",
+            reason="Текущий справочник покрывает только Dong Feng / DFH4180",
+        )
+
+    normalized_model = normalize_vehicle_match_text(model)
+    if normalized_model and "тягач" not in normalized_model:
+        return LaborNormApplicability(
+            eligible=False,
+            scope=DONGFENG_LABOR_NORM_SCOPE,
+            reason_code="model_not_supported",
+            reason="Текущий справочник подтверждён только для сегмента седельных тягачей Dong Feng",
+            brand_family=brand_family,
+        )
+
+    return LaborNormApplicability(
+        eligible=True,
+        scope=DONGFENG_LABOR_NORM_SCOPE,
+        reason_code="supported",
+        reason="Справочник нормо-часов Dong Feng может быть применён автоматически",
+        brand_family=brand_family,
+    )
 
 
 def load_active_labor_norms(db: Session) -> list[LaborNorm]:

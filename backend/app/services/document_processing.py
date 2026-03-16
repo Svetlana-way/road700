@@ -34,6 +34,9 @@ from app.models.imports import ImportJob
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
 from app.services.labor_norms import (
+    LaborNormApplicability,
+    LaborNormEnrichmentSummary,
+    assess_labor_norm_applicability,
     build_normalized_name,
     find_best_labor_norm_match,
     normalize_labor_norm_code,
@@ -773,8 +776,11 @@ def reconcile_header_totals_with_line_items(
 def enrich_work_payloads_with_labor_norms(
     db: Session,
     works_payload: list[dict[str, object]],
-) -> list[str]:
+    applicability: LaborNormApplicability,
+) -> tuple[list[str], LaborNormEnrichmentSummary]:
     notes: list[str] = []
+    matched_count = 0
+    unmatched_count = 0
     for item in works_payload:
         work_name = str(item.get("work_name") or "").strip()
         if not work_name:
@@ -788,6 +794,16 @@ def enrich_work_payloads_with_labor_norms(
         if not isinstance(reference_payload, dict):
             reference_payload = {}
         reference_payload["normalized_work_name"] = build_normalized_name(work_name)
+        reference_payload["labor_norm_applicable"] = applicability.eligible
+        reference_payload["labor_norm_scope"] = applicability.scope
+        reference_payload["labor_norm_applicability_reason_code"] = applicability.reason_code
+        reference_payload["labor_norm_applicability_reason"] = applicability.reason
+        if applicability.brand_family:
+            reference_payload["labor_norm_brand_family"] = applicability.brand_family
+
+        if not applicability.eligible:
+            item["reference_payload"] = reference_payload
+            continue
 
         match = find_best_labor_norm_match(
             db,
@@ -796,6 +812,7 @@ def enrich_work_payloads_with_labor_norms(
         )
         if match is None:
             item["reference_payload"] = reference_payload
+            unmatched_count += 1
             continue
 
         item["standard_hours"] = float(match.norm.standard_hours)
@@ -814,7 +831,17 @@ def enrich_work_payloads_with_labor_norms(
         )
         item["reference_payload"] = reference_payload
         notes.append(f"labor_norm_match:{match.norm.code}")
-    return notes
+        matched_count += 1
+
+    if works_payload and not applicability.eligible:
+        notes.append(f"labor_norm_skipped:{applicability.reason_code}")
+    elif works_payload and matched_count == 0:
+        notes.append("labor_norm_match_missing")
+
+    return notes, LaborNormEnrichmentSummary(
+        matched_count=matched_count,
+        unmatched_count=unmatched_count,
+    )
 
 
 def build_standard_hours_checks(
@@ -1345,8 +1372,14 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         confidence_map = parsed["confidence_map"]
         manual_review_reasons = parsed["manual_review_reasons"]
         normalization_notes = parsed.get("normalization_notes", [])
-        normalization_notes.extend(enrich_work_payloads_with_labor_norms(db, extracted_items["works"]))
         repair = document.repair
+        labor_norm_applicability = assess_labor_norm_applicability(repair.vehicle)
+        labor_norm_notes, labor_norm_summary = enrich_work_payloads_with_labor_norms(
+            db,
+            extracted_items["works"],
+            labor_norm_applicability,
+        )
+        normalization_notes.extend(labor_norm_notes)
         checks = []
 
         if "order_number" in extracted_fields:
@@ -1494,6 +1527,15 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
             "extracted_items": extracted_items,
             "manual_review_reasons": manual_review_reasons,
             "normalization_notes": normalization_notes,
+            "labor_norm_applicability": {
+                "eligible": labor_norm_applicability.eligible,
+                "scope": labor_norm_applicability.scope,
+                "reason_code": labor_norm_applicability.reason_code,
+                "reason": labor_norm_applicability.reason,
+                "brand_family": labor_norm_applicability.brand_family,
+                "matched_count": labor_norm_summary.matched_count,
+                "unmatched_count": labor_norm_summary.unmatched_count,
+            },
         }
         db.add(
             DocumentVersion(

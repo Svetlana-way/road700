@@ -88,6 +88,13 @@ type DocumentItem = {
       parts?: Array<Record<string, unknown>>;
     };
     manual_review_reasons?: string[];
+    labor_norm_applicability?: {
+      eligible?: boolean;
+      reason?: string;
+      matched_count?: number;
+      unmatched_count?: number;
+      brand_family?: string | null;
+    };
   } | null;
   repair: {
     id: number;
@@ -466,6 +473,56 @@ function formatMoney(value?: number) {
     currency: "RUB",
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function getLaborNormApplicability(
+  payload: Record<string, unknown> | null | undefined,
+):
+  | {
+      eligible: boolean;
+      reason: string | null;
+      matchedCount: number;
+      unmatchedCount: number;
+    }
+  | null {
+  const rawValue = payload?.labor_norm_applicability;
+  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
+    return null;
+  }
+
+  const rawApplicability = rawValue as Record<string, unknown>;
+  return {
+    eligible: rawApplicability.eligible === true,
+    reason: typeof rawApplicability.reason === "string" ? rawApplicability.reason : null,
+    matchedCount:
+      typeof rawApplicability.matched_count === "number" ? rawApplicability.matched_count : 0,
+    unmatchedCount:
+      typeof rawApplicability.unmatched_count === "number" ? rawApplicability.unmatched_count : 0,
+  };
+}
+
+function formatLaborNormApplicability(payload: Record<string, unknown> | null | undefined) {
+  const applicability = getLaborNormApplicability(payload);
+  if (!applicability) {
+    return null;
+  }
+
+  if (!applicability.eligible) {
+    return `Нормо-часы: ${applicability.reason || "справочник не применяется к этой технике"}`;
+  }
+
+  if (applicability.matchedCount > 0) {
+    if (applicability.unmatchedCount > 0) {
+      return `Нормо-часы: найдено совпадений ${applicability.matchedCount}, без совпадения ${applicability.unmatchedCount}`;
+    }
+    return `Нормо-часы: найдено совпадений ${applicability.matchedCount}`;
+  }
+
+  if (applicability.unmatchedCount > 0) {
+    return "Нормо-часы: справочник применим, но совпадения не найдены";
+  }
+
+  return "Нормо-часы: применимость проверена";
 }
 
 function formatVehicle(vehicle: VehiclePreview) {
@@ -2183,6 +2240,11 @@ export default function App() {
                                 Проверить вручную: {document.parsed_payload.manual_review_reasons.join(", ")}
                               </Typography>
                             ) : null}
+                            {formatLaborNormApplicability(document.parsed_payload ?? null) ? (
+                              <Typography className="muted-copy">
+                                {formatLaborNormApplicability(document.parsed_payload ?? null)}
+                              </Typography>
+                            ) : null}
                             {document.notes ? (
                               <Typography className="muted-copy">{document.notes}</Typography>
                             ) : null}
@@ -2747,6 +2809,11 @@ export default function App() {
                                             version.parsed_payload.manual_review_reasons.length > 0 ? (
                                               <Typography className="muted-copy">
                                                 Ручная проверка: {version.parsed_payload.manual_review_reasons.join(", ")}
+                                              </Typography>
+                                            ) : null}
+                                            {formatLaborNormApplicability(version.parsed_payload) ? (
+                                              <Typography className="muted-copy">
+                                                {formatLaborNormApplicability(version.parsed_payload)}
                                               </Typography>
                                             ) : null}
                                           </Box>

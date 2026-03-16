@@ -69,6 +69,18 @@ class RepairHistoryEntryRead(BaseModel):
     new_value: Optional[dict]
 
 
+class RepairDocumentHistoryEntryRead(BaseModel):
+    id: int
+    action_type: str
+    created_at: datetime
+    user_name: Optional[str]
+    document_id: Optional[int]
+    document_filename: Optional[str]
+    document_kind: Optional[DocumentKind]
+    old_value: Optional[dict]
+    new_value: Optional[dict]
+
+
 class RepairDocumentVersionRead(BaseModel):
     id: int
     version_number: int
@@ -116,6 +128,7 @@ class RepairDetailResponse(BaseModel):
     parts: list[RepairPartRead]
     checks: list[RepairCheckRead]
     documents: list[RepairDocumentRead]
+    document_history: list[RepairDocumentHistoryEntryRead]
     history: list[RepairHistoryEntryRead]
 
 

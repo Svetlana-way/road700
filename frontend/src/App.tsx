@@ -285,6 +285,17 @@ type RepairDetail = {
       parsed_payload: Record<string, unknown> | null;
     }>;
   }>;
+  document_history: Array<{
+    id: number;
+    action_type: string;
+    created_at: string;
+    user_name: string | null;
+    document_id: number | null;
+    document_filename: string | null;
+    document_kind: DocumentKind | null;
+    old_value: Record<string, unknown> | null;
+    new_value: Record<string, unknown> | null;
+  }>;
   history: Array<{
     id: number;
     action_type: string;
@@ -531,6 +542,14 @@ function readCheckResolutionMeta(check: RepairDetail["checks"][number]): CheckRe
     return null;
   }
   return resolution as CheckResolutionMeta;
+}
+
+function readComparisonReviewMeta(value: Record<string, unknown> | null): Record<string, unknown> | null {
+  const review = value?.comparison_review;
+  if (!review || typeof review !== "object") {
+    return null;
+  }
+  return review as Record<string, unknown>;
 }
 
 async function downloadDocumentFile(documentId: number, token: string): Promise<string> {
@@ -2473,6 +2492,48 @@ export default function App() {
                                 ))
                               ) : (
                                 <Typography className="muted-copy">Подозрительные проверки не найдены.</Typography>
+                              )}
+                            </Stack>
+
+                            <Stack spacing={1}>
+                              <Typography variant="h6">История по документам</Typography>
+                              {selectedRepair.document_history.length > 0 ? (
+                                selectedRepair.document_history.map((entry) => (
+                                  <Paper className="repair-line" key={`document-history-${entry.id}`} elevation={0}>
+                                    <Stack spacing={1}>
+                                      <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                                        <Typography>
+                                          {entry.user_name || "Система"} · {formatStatus(entry.action_type)}
+                                        </Typography>
+                                        <Typography className="muted-copy">{formatDateTime(entry.created_at)}</Typography>
+                                      </Stack>
+                                      <Typography className="muted-copy">
+                                        {entry.document_filename || "Документ"}
+                                        {entry.document_kind ? ` · ${formatDocumentKind(entry.document_kind)}` : ""}
+                                      </Typography>
+                                      {entry.action_type === "set_primary" || entry.action_type === "primary_document_changed" ? (
+                                        <Typography className="muted-copy">
+                                          Основной документ: {String(entry.old_value?.source_document_id || "не задан")} → {String(entry.new_value?.source_document_id || "не задан")}
+                                        </Typography>
+                                      ) : null}
+                                      {entry.action_type.startsWith("comparison_") ? (
+                                        <Typography className="muted-copy">
+                                          Сверка: {String(readComparisonReviewMeta(entry.new_value)?.action || entry.action_type)}
+                                          {readComparisonReviewMeta(entry.new_value)?.comment
+                                            ? ` · ${String(readComparisonReviewMeta(entry.new_value)?.comment)}`
+                                            : ""}
+                                        </Typography>
+                                      ) : null}
+                                      {(entry.action_type === "document_uploaded" || entry.action_type === "document_attached") && entry.new_value ? (
+                                        <Typography className="muted-copy">
+                                          Добавлен файл · статус {String(entry.new_value.status || "unknown")}
+                                        </Typography>
+                                      ) : null}
+                                    </Stack>
+                                  </Paper>
+                                ))
+                              ) : (
+                                <Typography className="muted-copy">История по документам пока пуста.</Typography>
                               )}
                             </Stack>
 

@@ -222,6 +222,32 @@ def append_comparison_review_note(
     return note
 
 
+def log_document_upload_event(
+    db: Session,
+    current_user: User,
+    document: Document,
+    action_type: str,
+) -> None:
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            entity_type="document",
+            entity_id=str(document.id),
+            action_type=action_type,
+            old_value=None,
+            new_value={
+                "document_id": document.id,
+                "repair_id": document.repair_id,
+                "original_filename": document.original_filename,
+                "kind": document.kind.value,
+                "status": document.status.value,
+                "is_primary": document.is_primary,
+                "notes": document.notes,
+            },
+        )
+    )
+
+
 @router.get("", response_model=DocumentListResponse)
 def list_documents(
     limit: int = Query(default=20, ge=1, le=100),
@@ -359,6 +385,8 @@ def upload_document(
     created_document = load_document_with_relations(db, created_document_id)
     if created_document is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")
+    log_document_upload_event(db, current_user, created_document, action_type="document_uploaded")
+    db.commit()
 
     return DocumentUploadResponse(
         document=serialize_document(created_document),
@@ -445,6 +473,8 @@ def upload_document_to_repair(
     created_document = load_document_with_relations(db, created_document_id)
     if created_document is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")
+    log_document_upload_event(db, current_user, created_document, action_type="document_attached")
+    db.commit()
 
     return DocumentUploadResponse(
         document=serialize_document(created_document),

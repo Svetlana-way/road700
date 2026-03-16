@@ -112,8 +112,59 @@ def fetch_repair_history(db: Session, repair_id: int) -> list[AuditLog]:
     return db.execute(stmt).scalars().all()
 
 
-def serialize_repair(repair: Repair, history_entries: list[AuditLog]) -> RepairDetailResponse:
+def fetch_document_history(db: Session, repair: Repair) -> list[AuditLog]:
+    document_ids = [str(item.id) for item in repair.documents]
+    if not document_ids:
+        return []
+
+    stmt = (
+        select(AuditLog)
+        .options(joinedload(AuditLog.user))
+        .where(
+            AuditLog.entity_type == "document",
+            AuditLog.entity_id.in_(document_ids),
+        )
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+    )
+    return db.execute(stmt).scalars().all()
+
+
+def serialize_document_history_entry(entry: AuditLog, documents_by_id: dict[str, Document]) -> dict:
+    document = documents_by_id.get(entry.entity_id)
+    new_value = entry.new_value if isinstance(entry.new_value, dict) else {}
+    old_value = entry.old_value if isinstance(entry.old_value, dict) else {}
+    document_id = document.id if document is not None else None
+    if document_id is None and isinstance(new_value.get("document_id"), int):
+        document_id = int(new_value["document_id"])
+
+    return {
+        "id": entry.id,
+        "action_type": entry.action_type,
+        "created_at": entry.created_at,
+        "user_name": entry.user.full_name if entry.user is not None else None,
+        "document_id": document_id,
+        "document_filename": (
+            document.original_filename
+            if document is not None
+            else (str(new_value.get("original_filename")) if new_value.get("original_filename") else None)
+        ),
+        "document_kind": (
+            document.kind
+            if document is not None
+            else None
+        ),
+        "old_value": old_value or None,
+        "new_value": new_value or None,
+    }
+
+
+def serialize_repair(
+    repair: Repair,
+    history_entries: list[AuditLog],
+    document_history_entries: list[AuditLog],
+) -> RepairDetailResponse:
     documents = sorted(repair.documents, key=lambda item: (item.created_at, item.id), reverse=True)
+    documents_by_id = {str(item.id): item for item in documents}
     return RepairDetailResponse(
         id=repair.id,
         order_number=repair.order_number,
@@ -175,6 +226,10 @@ def serialize_repair(repair: Repair, history_entries: list[AuditLog]) -> RepairD
                 ],
             }
             for document in documents
+        ],
+        document_history=[
+            serialize_document_history_entry(entry, documents_by_id)
+            for entry in document_history_entries
         ],
         history=[
             {
@@ -239,7 +294,8 @@ def get_repair(
 ) -> RepairDetailResponse:
     repair = load_repair_for_user(db, repair_id, current_user)
     history_entries = fetch_repair_history(db, repair.id)
-    return serialize_repair(repair, history_entries)
+    document_history_entries = fetch_document_history(db, repair)
+    return serialize_repair(repair, history_entries, document_history_entries)
 
 
 @router.patch("/{repair_id}", response_model=RepairDetailResponse)
@@ -304,7 +360,8 @@ def update_repair(
     )
     db.commit()
     history_entries = fetch_repair_history(db, refreshed.id)
-    return serialize_repair(refreshed, history_entries)
+    document_history_entries = fetch_document_history(db, refreshed)
+    return serialize_repair(refreshed, history_entries, document_history_entries)
 
 
 def update_check_resolution_payload(
@@ -384,4 +441,5 @@ def update_repair_check(
     db.commit()
 
     history_entries = fetch_repair_history(db, refreshed.id)
-    return serialize_repair(refreshed, history_entries)
+    document_history_entries = fetch_document_history(db, refreshed)
+    return serialize_repair(refreshed, history_entries, document_history_entries)

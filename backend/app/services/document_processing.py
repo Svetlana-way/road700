@@ -11,9 +11,9 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.document import Document, DocumentVersion
-from app.models.enums import CheckSeverity, DocumentStatus, ImportStatus, RepairStatus, ServiceStatus
+from app.models.enums import CatalogStatus, CheckSeverity, DocumentStatus, ImportStatus, RepairStatus, ServiceStatus
 from app.models.imports import ImportJob
-from app.models.repair import Repair, RepairCheck
+from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
 
 
@@ -42,18 +42,37 @@ SERVICE_PATTERNS = [
 ]
 TOTAL_PATTERNS = {
     "work_total": [
-        r"(?:работы|стоимость\s+работ)\D{0,20}(\d[\d\s]*(?:[,.]\d{2})?)",
+        r"(?:^|[\n\r])\s*(?:работы\s+итого|стоимость\s+работ|итого\s+работ)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)",
     ],
     "parts_total": [
-        r"(?:запчасти|материалы|стоимость\s+запчастей)\D{0,20}(\d[\d\s]*(?:[,.]\d{2})?)",
+        r"(?:^|[\n\r])\s*(?:запчасти\s+итого|материалы\s+итого|стоимость\s+запчастей|запчасти|материалы)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)",
     ],
     "vat_total": [
-        r"(?:ндс)\D{0,20}(\d[\d\s]*(?:[,.]\d{2})?)",
+        r"(?:^|[\n\r])\s*(?:ндс)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)",
     ],
     "grand_total": [
-        r"(?:итого\s+к\s+оплате|к\s+оплате|итого|всего)\D{0,20}(\d[\d\s]*(?:[,.]\d{2})?)",
+        r"(?:^|[\n\r])\s*(?:итого\s+к\s+оплате|к\s+оплате|итого|всего)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)",
     ],
 }
+LINE_ITEM_PATTERN = re.compile(
+    r"^(?P<name>[^\d].*?)\s+"
+    r"(?P<qty>\d+(?:[.,]\d+)?)"
+    r"(?:\s+(?P<unit>шт|нч|ч|час|часа|часов|компл|усл|ед|л|кг|м|к-т))?"
+    r"\s+(?P<price>\d[\d\s]*(?:[.,]\d{2})?)"
+    r"\s+(?P<total>\d[\d\s]*(?:[.,]\d{2})?)$",
+    re.IGNORECASE,
+)
+PART_LINE_WITH_ARTICLE_PATTERN = re.compile(
+    r"^(?P<article>[A-Za-zА-Яа-я0-9-]{3,})\s+"
+    r"(?P<name>.+?)\s+"
+    r"(?P<qty>\d+(?:[.,]\d+)?)"
+    r"(?:\s+(?P<unit>шт|компл|усл|ед|л|кг|м|к-т))?"
+    r"\s+(?P<price>\d[\d\s]*(?:[.,]\d{2})?)"
+    r"\s+(?P<total>\d[\d\s]*(?:[.,]\d{2})?)$",
+    re.IGNORECASE,
+)
+WORK_SECTION_MARKERS = ("работы", "услуги", "работа:")
+PART_SECTION_MARKERS = ("запчасти", "материалы", "запчасть:")
 
 
 @dataclass
@@ -101,12 +120,126 @@ def parse_date_value(value: str) -> Optional[date]:
     return None
 
 
+def parse_decimal_value(value: str) -> Optional[float]:
+    normalized = value.replace(" ", "").replace(",", ".")
+    try:
+        return float(normalized)
+    except ValueError:
+        return None
+
+
 def first_match(patterns: list[str], text: str) -> Optional[str]:
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
         if match:
             return normalize_text(match.group(1))
     return None
+
+
+def normalize_line(line: str) -> str:
+    return normalize_text(line.replace("\xa0", " "))
+
+
+def extract_line_items(text: str) -> dict[str, list[dict[str, object]]]:
+    works: list[dict[str, object]] = []
+    parts: list[dict[str, object]] = []
+    current_section: Optional[str] = None
+
+    for raw_line in text.splitlines():
+        line = normalize_line(raw_line)
+        if not line:
+            continue
+
+        lower_line = line.lower()
+        if any(marker in lower_line for marker in WORK_SECTION_MARKERS):
+            current_section = "works"
+            if lower_line.startswith("работа:"):
+                payload = parse_work_line(line.split(":", 1)[1].strip())
+                if payload:
+                    works.append(payload)
+            continue
+
+        if any(marker in lower_line for marker in PART_SECTION_MARKERS):
+            current_section = "parts"
+            if lower_line.startswith("запчасть:"):
+                payload = parse_part_line(line.split(":", 1)[1].strip())
+                if payload:
+                    parts.append(payload)
+            continue
+
+        if current_section == "works":
+            payload = parse_work_line(line)
+            if payload:
+                works.append(payload)
+                continue
+
+        if current_section == "parts":
+            payload = parse_part_line(line)
+            if payload:
+                parts.append(payload)
+                continue
+
+        if lower_line.startswith("работа:"):
+            payload = parse_work_line(line.split(":", 1)[1].strip())
+            if payload:
+                works.append(payload)
+            continue
+
+        if lower_line.startswith("запчасть:"):
+            payload = parse_part_line(line.split(":", 1)[1].strip())
+            if payload:
+                parts.append(payload)
+
+    return {"works": works, "parts": parts}
+
+
+def parse_work_line(line: str) -> Optional[dict[str, object]]:
+    match = LINE_ITEM_PATTERN.match(line)
+    if not match:
+        return None
+
+    quantity = parse_decimal_value(match.group("qty"))
+    price = parse_amount(match.group("price"))
+    total = parse_amount(match.group("total"))
+    name = normalize_text(match.group("name"))
+    if quantity is None or price is None or total is None or not name:
+        return None
+
+    return {
+        "work_name": name[:500],
+        "quantity": quantity,
+        "unit_name": match.group("unit"),
+        "price": price,
+        "line_total": total,
+    }
+
+
+def parse_part_line(line: str) -> Optional[dict[str, object]]:
+    match = PART_LINE_WITH_ARTICLE_PATTERN.match(line)
+    article = None
+    if match is None:
+        match = LINE_ITEM_PATTERN.match(line)
+    else:
+        article = normalize_text(match.group("article"))
+
+    if match is None:
+        return None
+
+    quantity = parse_decimal_value(match.group("qty"))
+    price = parse_amount(match.group("price"))
+    total = parse_amount(match.group("total"))
+    name = normalize_text(match.group("name"))
+    if quantity is None or price is None or total is None or not name:
+        return None
+
+    return {
+        "article": article,
+        "part_name": name[:500],
+        "quantity": quantity,
+        "unit_name": match.groupdict().get("unit"),
+        "price": price,
+        "line_total": total,
+    }
 
 
 def decode_pdf_literal(raw_text: bytes) -> bytes:
@@ -168,6 +301,7 @@ def parse_document_text(text: str) -> dict[str, object]:
     extracted_fields = {}
     confidence_map = {}
     manual_review_reasons = []
+    extracted_items = extract_line_items(text)
 
     order_number = first_match(ORDER_PATTERNS, text)
     if order_number:
@@ -223,6 +357,7 @@ def parse_document_text(text: str) -> dict[str, object]:
 
     return {
         "extracted_fields": extracted_fields,
+        "extracted_items": extracted_items,
         "confidence_map": confidence_map,
         "manual_review_reasons": manual_review_reasons,
     }
@@ -271,6 +406,44 @@ def replace_ocr_checks(db: Session, repair_id: int, checks: list[dict[str, objec
         )
 
 
+def replace_repair_lines(
+    db: Session,
+    repair: Repair,
+    works_payload: list[dict[str, object]],
+    parts_payload: list[dict[str, object]],
+) -> None:
+    db.execute(delete(RepairWork).where(RepairWork.repair_id == repair.id))
+    db.execute(delete(RepairPart).where(RepairPart.repair_id == repair.id))
+
+    for item in works_payload:
+        db.add(
+            RepairWork(
+                repair_id=repair.id,
+                work_name=str(item["work_name"]),
+                quantity=float(item["quantity"]),
+                actual_hours=float(item["quantity"]) if str(item.get("unit_name") or "").lower() in {"нч", "ч", "час", "часа", "часов"} else None,
+                price=float(item["price"]),
+                line_total=float(item["line_total"]),
+                status=CatalogStatus.PRELIMINARY,
+                reference_payload={"source": "ocr", "unit_name": item.get("unit_name")},
+            )
+        )
+
+    for item in parts_payload:
+        db.add(
+            RepairPart(
+                repair_id=repair.id,
+                article=str(item["article"]) if item.get("article") else None,
+                part_name=str(item["part_name"]),
+                quantity=float(item["quantity"]),
+                unit_name=str(item["unit_name"]) if item.get("unit_name") else None,
+                price=float(item["price"]),
+                line_total=float(item["line_total"]),
+                status=CatalogStatus.PRELIMINARY,
+            )
+        )
+
+
 def process_document(db: Session, document_id: int) -> ProcessingResult:
     document = load_document_for_processing(db, document_id)
     if document is None or document.repair is None:
@@ -304,6 +477,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         }
 
         extracted_fields = parsed["extracted_fields"]
+        extracted_items = parsed["extracted_items"]
         confidence_map = parsed["confidence_map"]
         manual_review_reasons = parsed["manual_review_reasons"]
         repair = document.repair
@@ -329,6 +503,13 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
             service = resolve_service(db, str(extracted_fields["service_name"]))
             repair.service_id = service.id
 
+        replace_repair_lines(
+            db,
+            repair,
+            works_payload=extracted_items["works"],
+            parts_payload=extracted_items["parts"],
+        )
+
         if "plate_number" in extracted_fields and repair.vehicle.plate_number:
             if str(extracted_fields["plate_number"]).upper() != repair.vehicle.plate_number.upper():
                 checks.append(
@@ -343,6 +524,38 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
                         "payload": {
                             "document_plate_number": extracted_fields["plate_number"],
                             "vehicle_plate_number": repair.vehicle.plate_number,
+                        },
+                    }
+                )
+
+        works_sum = round(sum(float(item["line_total"]) for item in extracted_items["works"]), 2)
+        parts_sum = round(sum(float(item["line_total"]) for item in extracted_items["parts"]), 2)
+        if extracted_items["works"] and "work_total" in extracted_fields:
+            if abs(works_sum - float(extracted_fields["work_total"])) > 0.01:
+                checks.append(
+                    {
+                        "check_type": "ocr_work_lines_total_mismatch",
+                        "severity": CheckSeverity.SUSPICIOUS,
+                        "title": "Сумма строк работ не совпадает с итогом работ",
+                        "details": "Нужна ручная проверка работ в заказ-наряде",
+                        "payload": {
+                            "lines_total": works_sum,
+                            "header_total": float(extracted_fields["work_total"]),
+                        },
+                    }
+                )
+
+        if extracted_items["parts"] and "parts_total" in extracted_fields:
+            if abs(parts_sum - float(extracted_fields["parts_total"])) > 0.01:
+                checks.append(
+                    {
+                        "check_type": "ocr_part_lines_total_mismatch",
+                        "severity": CheckSeverity.SUSPICIOUS,
+                        "title": "Сумма строк запчастей не совпадает с итогом материалов",
+                        "details": "Нужна ручная проверка состава материалов",
+                        "payload": {
+                            "lines_total": parts_sum,
+                            "header_total": float(extracted_fields["parts_total"]),
                         },
                     }
                 )
@@ -410,6 +623,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
             "text_length": len(text),
             "text_excerpt": text_excerpt,
             "extracted_fields": extracted_fields,
+            "extracted_items": extracted_items,
             "manual_review_reasons": manual_review_reasons,
         }
         db.add(
@@ -432,6 +646,8 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
             "document_id": document.id,
             "document_status": document.status.value,
             "recognized_fields_count": recognized_fields_count,
+            "works_count": len(extracted_items["works"]),
+            "parts_count": len(extracted_items["parts"]),
             "manual_review_reasons": manual_review_reasons,
             "confidence": document.ocr_confidence,
         }

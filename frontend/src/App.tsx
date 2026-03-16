@@ -74,6 +74,10 @@ type DocumentItem = {
       grand_total?: number;
       service_name?: string;
     };
+    extracted_items?: {
+      works?: Array<Record<string, unknown>>;
+      parts?: Array<Record<string, unknown>>;
+    };
     manual_review_reasons?: string[];
   } | null;
   repair: {
@@ -638,6 +642,11 @@ export default function App() {
                             {document.parsed_payload?.extracted_fields?.grand_total ? (
                               <Typography className="muted-copy">
                                 OCR: итог {formatMoney(document.parsed_payload.extracted_fields.grand_total)}
+                              </Typography>
+                            ) : null}
+                            {document.parsed_payload?.extracted_items ? (
+                              <Typography className="muted-copy">
+                                OCR: работ {document.parsed_payload.extracted_items.works?.length || 0}, запчастей {document.parsed_payload.extracted_items.parts?.length || 0}
                               </Typography>
                             ) : null}
                             {document.parsed_payload?.manual_review_reasons?.length ? (

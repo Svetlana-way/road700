@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Optional
 
 import xlrd
-from sqlalchemy import delete, or_, select
+from sqlalchemy import or_, select
+from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.models.enums import VehicleStatus, VehicleType
@@ -23,6 +24,15 @@ class ImportStats:
     created: int = 0
     updated: int = 0
     links_created: int = 0
+    links_closed: int = 0
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "created": self.created,
+            "updated": self.updated,
+            "links_created": self.links_created,
+            "links_closed": self.links_closed,
+        }
 
 
 def normalize_text(value: object) -> Optional[str]:
@@ -57,6 +67,18 @@ def normalize_datetime(value: object) -> Optional[datetime]:
     return None
 
 
+def split_registry_values(value: object) -> list[str]:
+    text = normalize_text(value)
+    if not text:
+        return []
+
+    normalized = text
+    for separator in (";", "\n", "\r"):
+        normalized = normalized.replace(separator, ",")
+
+    return [part.strip() for part in normalized.split(",") if part.strip()]
+
+
 def open_sheet(path: Path) -> tuple[list[str], list[dict[str, object]]]:
     book = xlrd.open_workbook(path.as_posix())
     sheet = book.sheet_by_index(0)
@@ -68,7 +90,13 @@ def open_sheet(path: Path) -> tuple[list[str], list[dict[str, object]]]:
     return headers, rows
 
 
-def find_vehicle(db, external_id: Optional[str], vin: Optional[str], plate_number: Optional[str]) -> Optional[Vehicle]:
+def find_vehicle(
+    db: Session,
+    vehicle_type: VehicleType,
+    external_id: Optional[str],
+    vin: Optional[str],
+    plate_number: Optional[str],
+) -> Optional[Vehicle]:
     clauses = []
     if external_id:
         clauses.append(Vehicle.external_id == external_id)
@@ -78,15 +106,31 @@ def find_vehicle(db, external_id: Optional[str], vin: Optional[str], plate_numbe
         clauses.append(Vehicle.plate_number == plate_number)
     if not clauses:
         return None
-    return db.scalar(select(Vehicle).where(or_(*clauses)))
+    return db.scalar(
+        select(Vehicle).where(
+            Vehicle.vehicle_type == vehicle_type,
+            or_(*clauses),
+        )
+    )
 
 
-def upsert_vehicle(db, row: dict[str, object], vehicle_type: VehicleType, stats: ImportStats) -> Vehicle:
+def upsert_vehicle(
+    db: Session,
+    row: dict[str, object],
+    vehicle_type: VehicleType,
+    stats: ImportStats,
+) -> Vehicle:
     external_id = normalize_text(row.get("ID в CARGO.RUN"))
     vin = normalize_text(row.get("VIN"))
     plate_number = normalize_text(row.get("Госномер"))
 
-    vehicle = find_vehicle(db, external_id=external_id, vin=vin, plate_number=plate_number)
+    vehicle = find_vehicle(
+        db,
+        vehicle_type=vehicle_type,
+        external_id=external_id,
+        vin=vin,
+        plate_number=plate_number,
+    )
     is_new = vehicle is None
     if vehicle is None:
         vehicle = Vehicle(vehicle_type=vehicle_type, status=VehicleStatus.ACTIVE)
@@ -119,17 +163,24 @@ def upsert_vehicle(db, row: dict[str, object], vehicle_type: VehicleType, stats:
     return vehicle
 
 
-def import_registry(db, path: Path, vehicle_type: VehicleType, stats: ImportStats) -> list[dict[str, object]]:
+def import_registry(
+    db: Session,
+    path: Path,
+    vehicle_type: VehicleType,
+    stats: ImportStats,
+) -> list[dict[str, object]]:
     _, rows = open_sheet(path)
     for row in rows:
         upsert_vehicle(db, row, vehicle_type, stats)
     return rows
 
 
-def create_links(db, trucks_rows: list[dict[str, object]], trailers_rows: list[dict[str, object]], stats: ImportStats) -> None:
-    db.execute(delete(VehicleLinkHistory))
-    db.flush()
-
+def create_links(
+    db: Session,
+    trucks_rows: list[dict[str, object]],
+    trailers_rows: list[dict[str, object]],
+    stats: ImportStats,
+) -> None:
     by_plate = {
         vehicle.plate_number: vehicle
         for vehicle in db.scalars(select(Vehicle)).all()
@@ -137,7 +188,20 @@ def create_links(db, trucks_rows: list[dict[str, object]], trailers_rows: list[d
     }
 
     today = date.today()
-    seen_pairs: set[tuple[int, int]] = set()
+    imported_pairs: set[tuple[int, int]] = set()
+    active_links = db.scalars(
+        select(VehicleLinkHistory).where(
+            VehicleLinkHistory.starts_at <= today,
+            or_(
+                VehicleLinkHistory.ends_at.is_(None),
+                VehicleLinkHistory.ends_at >= today,
+            ),
+        )
+    ).all()
+    active_pairs = {
+        (link.left_vehicle_id, link.right_vehicle_id): link
+        for link in active_links
+    }
 
     def add_link(left_plate: Optional[str], right_plate: Optional[str]) -> None:
         if not left_plate or not right_plate:
@@ -147,7 +211,10 @@ def create_links(db, trucks_rows: list[dict[str, object]], trailers_rows: list[d
         if not left or not right:
             return
         pair = (left.id, right.id)
-        if pair in seen_pairs:
+        if pair in imported_pairs:
+            return
+        imported_pairs.add(pair)
+        if pair in active_pairs:
             return
         db.add(
             VehicleLinkHistory(
@@ -157,25 +224,49 @@ def create_links(db, trucks_rows: list[dict[str, object]], trailers_rows: list[d
                 comment="Imported current link from vehicle registries",
             )
         )
-        seen_pairs.add(pair)
         stats.links_created += 1
 
     for row in trucks_rows:
-        add_link(normalize_text(row.get("Госномер")), normalize_text(row.get("Прицеп")))
-        add_link(normalize_text(row.get("Госномер")), normalize_text(row.get("Привязанные прицепы")))
+        truck_plate = normalize_text(row.get("Госномер"))
+        for trailer_plate in split_registry_values(row.get("Прицеп")):
+            add_link(truck_plate, trailer_plate)
+        for trailer_plate in split_registry_values(row.get("Привязанные прицепы")):
+            add_link(truck_plate, trailer_plate)
 
     for row in trailers_rows:
-        add_link(normalize_text(row.get("Грузовик")), normalize_text(row.get("Госномер")))
-        add_link(normalize_text(row.get("Привязанные грузовики")), normalize_text(row.get("Госномер")))
+        trailer_plate = normalize_text(row.get("Госномер"))
+        for truck_plate in split_registry_values(row.get("Грузовик")):
+            add_link(truck_plate, trailer_plate)
+        for truck_plate in split_registry_values(row.get("Привязанные грузовики")):
+            add_link(truck_plate, trailer_plate)
+
+    for pair, link in active_pairs.items():
+        if pair in imported_pairs:
+            continue
+        if link.ends_at is None or link.ends_at > today:
+            link.ends_at = today
+            stats.links_closed += 1
 
 
-def import_vehicles(trucks_path: Path = DEFAULT_TRUCKS_PATH, trailers_path: Path = DEFAULT_TRAILERS_PATH) -> ImportStats:
+def import_vehicles_with_session(
+    db: Session,
+    trucks_path: Path = DEFAULT_TRUCKS_PATH,
+    trailers_path: Path = DEFAULT_TRAILERS_PATH,
+) -> ImportStats:
     stats = ImportStats()
+    trucks_rows = import_registry(db, trucks_path, VehicleType.TRUCK, stats)
+    trailers_rows = import_registry(db, trailers_path, VehicleType.TRAILER, stats)
+    create_links(db, trucks_rows, trailers_rows, stats)
+    db.commit()
+    return stats
+
+
+def import_vehicles(
+    trucks_path: Path = DEFAULT_TRUCKS_PATH,
+    trailers_path: Path = DEFAULT_TRAILERS_PATH,
+) -> ImportStats:
     with SessionLocal() as db:
-        trucks_rows = import_registry(db, trucks_path, VehicleType.TRUCK, stats)
-        trailers_rows = import_registry(db, trailers_path, VehicleType.TRAILER, stats)
-        create_links(db, trucks_rows, trailers_rows, stats)
-        db.commit()
+        stats = import_vehicles_with_session(db, trucks_path=trucks_path, trailers_path=trailers_path)
     return stats
 
 

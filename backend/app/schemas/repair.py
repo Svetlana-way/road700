@@ -69,6 +69,29 @@ class RepairHistoryEntryRead(BaseModel):
     new_value: Optional[dict]
 
 
+class RepairDocumentVersionRead(BaseModel):
+    id: int
+    version_number: int
+    created_at: datetime
+    change_summary: Optional[str]
+    parsed_payload: Optional[dict]
+
+
+class RepairDocumentRead(BaseModel):
+    id: int
+    original_filename: str
+    source_type: str
+    mime_type: Optional[str]
+    status: str
+    is_primary: bool
+    ocr_confidence: Optional[float]
+    review_queue_priority: int
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    versions: list[RepairDocumentVersionRead]
+
+
 class RepairDetailResponse(BaseModel):
     id: int
     order_number: Optional[str]
@@ -91,6 +114,7 @@ class RepairDetailResponse(BaseModel):
     works: list[RepairWorkRead]
     parts: list[RepairPartRead]
     checks: list[RepairCheckRead]
+    documents: list[RepairDocumentRead]
     history: list[RepairHistoryEntryRead]
 
 

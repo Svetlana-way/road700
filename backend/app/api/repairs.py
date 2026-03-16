@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.api.access import get_allowed_vehicle_ids_query
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.models.audit import AuditLog
+from app.models.document import Document
 from app.models.enums import CheckSeverity, RepairStatus, UserRole
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.user import User
@@ -82,6 +83,7 @@ def build_repair_query():
             joinedload(Repair.works),
             joinedload(Repair.parts),
             joinedload(Repair.checks),
+            joinedload(Repair.documents).joinedload(Document.versions),
         )
     )
 
@@ -111,6 +113,7 @@ def fetch_repair_history(db: Session, repair_id: int) -> list[AuditLog]:
 
 
 def serialize_repair(repair: Repair, history_entries: list[AuditLog]) -> RepairDetailResponse:
+    documents = sorted(repair.documents, key=lambda item: (item.created_at, item.id), reverse=True)
     return RepairDetailResponse(
         id=repair.id,
         order_number=repair.order_number,
@@ -146,6 +149,32 @@ def serialize_repair(repair: Repair, history_entries: list[AuditLog]) -> RepairD
         works=sorted(repair.works, key=lambda item: item.id),
         parts=sorted(repair.parts, key=lambda item: item.id),
         checks=sorted(repair.checks, key=lambda item: item.id),
+        documents=[
+            {
+                "id": document.id,
+                "original_filename": document.original_filename,
+                "source_type": document.source_type,
+                "mime_type": document.mime_type,
+                "status": document.status.value,
+                "is_primary": document.is_primary,
+                "ocr_confidence": document.ocr_confidence,
+                "review_queue_priority": document.review_queue_priority,
+                "notes": document.notes,
+                "created_at": document.created_at,
+                "updated_at": document.updated_at,
+                "versions": [
+                    {
+                        "id": version.id,
+                        "version_number": version.version_number,
+                        "created_at": version.created_at,
+                        "change_summary": version.change_summary,
+                        "parsed_payload": version.parsed_payload,
+                    }
+                    for version in sorted(document.versions, key=lambda item: item.version_number, reverse=True)
+                ],
+            }
+            for document in documents
+        ],
         history=[
             {
                 "id": entry.id,

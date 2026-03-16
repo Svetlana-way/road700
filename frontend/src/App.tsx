@@ -237,6 +237,26 @@ type RepairDetail = {
     is_resolved: boolean;
     created_at: string;
   }>;
+  documents: Array<{
+    id: number;
+    original_filename: string;
+    source_type: string;
+    mime_type: string | null;
+    status: string;
+    is_primary: boolean;
+    ocr_confidence: number | null;
+    review_queue_priority: number;
+    notes: string | null;
+    created_at: string;
+    updated_at: string;
+    versions: Array<{
+      id: number;
+      version_number: number;
+      created_at: string;
+      change_summary: string | null;
+      parsed_payload: Record<string, unknown> | null;
+    }>;
+  }>;
   history: Array<{
     id: number;
     action_type: string;
@@ -459,6 +479,23 @@ function readCheckResolutionMeta(check: RepairDetail["checks"][number]): CheckRe
   return resolution as CheckResolutionMeta;
 }
 
+async function downloadDocumentFile(documentId: number, token: string): Promise<string> {
+  const response = await fetch(`${API_BASE_URL}/documents/${documentId}/download`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(payload?.detail || `Request failed: ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+
 async function apiRequest<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers ?? {});
   if (token) {
@@ -512,6 +549,7 @@ export default function App() {
   const [reprocessLoading, setReprocessLoading] = useState(false);
   const [reviewActionLoading, setReviewActionLoading] = useState(false);
   const [checkActionLoadingId, setCheckActionLoadingId] = useState<number | null>(null);
+  const [documentOpenLoadingId, setDocumentOpenLoadingId] = useState<number | null>(null);
   const [saveRepairLoading, setSaveRepairLoading] = useState(false);
   const [checkComments, setCheckComments] = useState<Record<number, string>>({});
   const [reviewActionComment, setReviewActionComment] = useState("");
@@ -738,6 +776,24 @@ export default function App() {
 
   async function handleReprocessDocument(document: DocumentItem) {
     await handleReprocessDocumentById(document.id, document.repair.id);
+  }
+
+  async function handleOpenDocumentFile(documentId: number) {
+    if (!token) {
+      return;
+    }
+
+    setDocumentOpenLoadingId(documentId);
+    setErrorMessage("");
+    try {
+      const objectUrl = await downloadDocumentFile(documentId, token);
+      window.open(objectUrl, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to open document");
+    } finally {
+      setDocumentOpenLoadingId(null);
+    }
   }
 
   async function handleCheckResolution(checkId: number, isResolved: boolean) {
@@ -1823,6 +1879,86 @@ export default function App() {
                                 </Grid>
                               </Grid>
                             </Paper>
+
+                            <Stack spacing={1}>
+                              <Typography variant="h6">Документы ремонта</Typography>
+                              {selectedRepair.documents.length > 0 ? (
+                                selectedRepair.documents.map((document) => (
+                                  <Paper className="repair-line" key={document.id} elevation={0}>
+                                    <Stack spacing={1}>
+                                      <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                                        <Typography>{document.original_filename}</Typography>
+                                        <Stack direction="row" spacing={1}>
+                                          {document.is_primary ? <Chip size="small" label="основной" /> : null}
+                                          <Chip
+                                            size="small"
+                                            color={statusColor(document.status as DocumentStatus)}
+                                            label={formatStatus(document.status)}
+                                          />
+                                        </Stack>
+                                      </Stack>
+                                      <Typography className="muted-copy">
+                                        {formatDateTime(document.created_at)} · {document.source_type.toUpperCase()} · OCR {formatConfidence(document.ocr_confidence)}
+                                      </Typography>
+                                      {document.notes ? (
+                                        <Typography className="muted-copy">{document.notes}</Typography>
+                                      ) : null}
+                                      <Stack direction="row" spacing={1} flexWrap="wrap">
+                                        <Button
+                                          size="small"
+                                          variant="outlined"
+                                          disabled={documentOpenLoadingId === document.id}
+                                          onClick={() => {
+                                            void handleOpenDocumentFile(document.id);
+                                          }}
+                                        >
+                                          {documentOpenLoadingId === document.id ? "Открытие..." : "Открыть файл"}
+                                        </Button>
+                                        {user?.role === "admin" ? (
+                                          <Button
+                                            size="small"
+                                            variant="text"
+                                            disabled={reprocessLoading}
+                                            onClick={() => {
+                                              void handleReprocessDocumentById(document.id, selectedRepair.id);
+                                            }}
+                                          >
+                                            {reprocessLoading && selectedDocumentId === document.id ? "Повтор..." : "Повторить OCR"}
+                                          </Button>
+                                        ) : null}
+                                      </Stack>
+                                      <Stack spacing={1}>
+                                        <Typography className="metric-label">
+                                          Версии обработки: {document.versions.length}
+                                        </Typography>
+                                        {document.versions.map((version) => (
+                                          <Box key={version.id}>
+                                            <Typography className="muted-copy">
+                                              v{version.version_number} · {formatDateTime(version.created_at)}
+                                              {version.change_summary ? ` · ${version.change_summary}` : ""}
+                                            </Typography>
+                                            {version.parsed_payload?.processor ? (
+                                              <Typography className="muted-copy">
+                                                Процессор: {String(version.parsed_payload.processor)}
+                                              </Typography>
+                                            ) : null}
+                                            {version.parsed_payload?.manual_review_reasons &&
+                                            Array.isArray(version.parsed_payload.manual_review_reasons) &&
+                                            version.parsed_payload.manual_review_reasons.length > 0 ? (
+                                              <Typography className="muted-copy">
+                                                Ручная проверка: {version.parsed_payload.manual_review_reasons.join(", ")}
+                                              </Typography>
+                                            ) : null}
+                                          </Box>
+                                        ))}
+                                      </Stack>
+                                    </Stack>
+                                  </Paper>
+                                ))
+                              ) : (
+                                <Typography className="muted-copy">Документы к ремонту пока не привязаны.</Typography>
+                              )}
+                            </Stack>
 
                             <Stack spacing={1}>
                               <Typography variant="h6">Работы</Typography>

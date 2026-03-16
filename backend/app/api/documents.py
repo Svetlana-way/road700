@@ -5,6 +5,7 @@ from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
@@ -97,6 +98,23 @@ def load_document_with_relations(db: Session, document_id: int) -> Optional[Docu
         .where(Document.id == document_id)
     )
     return db.execute(stmt).unique().scalar_one_or_none()
+
+
+def get_visible_document(
+    db: Session,
+    current_user: User,
+    document_id: int,
+) -> Document:
+    document = load_document_with_relations(db, document_id)
+    if document is None or document.repair is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    if current_user.role != UserRole.ADMIN:
+        visible_vehicle = get_visible_vehicle(db, current_user, document.repair.vehicle_id)
+        if visible_vehicle is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    return document
 
 
 @router.get("", response_model=DocumentListResponse)
@@ -258,6 +276,24 @@ def process_single_document(
         job_id=result.job.id,
         import_status=result.job.status.value,
         message=result.message,
+    )
+
+
+@router.get("/{document_id}/download")
+def download_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> FileResponse:
+    document = get_visible_document(db, current_user, document_id)
+    storage_path = LOCAL_STORAGE_ROOT / document.storage_key
+    if not storage_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
+
+    return FileResponse(
+        path=storage_path,
+        media_type=document.mime_type or "application/octet-stream",
+        filename=document.original_filename,
     )
 
 

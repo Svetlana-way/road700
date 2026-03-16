@@ -24,6 +24,7 @@ REVIEWABLE_DOCUMENT_STATUSES = (
 )
 REVIEWABLE_REPAIR_STATUSES = (
     RepairStatus.IN_REVIEW,
+    RepairStatus.EMPLOYEE_CONFIRMED,
     RepairStatus.SUSPICIOUS,
     RepairStatus.OCR_ERROR,
 )
@@ -46,6 +47,7 @@ DOCUMENT_STATUS_LABELS = {
 }
 REPAIR_STATUS_LABELS = {
     RepairStatus.IN_REVIEW: "Ремонт ждёт проверки",
+    RepairStatus.EMPLOYEE_CONFIRMED: "Ремонт подготовлен сотрудником и ждёт подтверждения",
     RepairStatus.SUSPICIOUS: "Ремонт помечен как подозрительный",
     RepairStatus.OCR_ERROR: "Ремонт требует ручного восстановления после OCR",
 }
@@ -139,6 +141,8 @@ def build_priority(document: Document, unresolved_checks: list[RepairCheck], man
 
     if document.repair.status == RepairStatus.IN_REVIEW:
         score += 40
+    elif document.repair.status == RepairStatus.EMPLOYEE_CONFIRMED:
+        score += 60
 
     if document.repair.is_partially_recognized:
         score += 25

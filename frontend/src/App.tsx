@@ -238,6 +238,14 @@ type RepairDetail = {
   }>;
 };
 
+type CheckResolutionMeta = {
+  is_resolved?: boolean;
+  comment?: string | null;
+  user_id?: number;
+  user_name?: string | null;
+  resolved_at?: string | null;
+};
+
 type EditableWorkDraft = {
   work_code: string;
   work_name: string;
@@ -425,6 +433,14 @@ function formatConfidence(value: number | null) {
   return `${Math.round(value * 100)}%`;
 }
 
+function readCheckResolutionMeta(check: RepairDetail["checks"][number]): CheckResolutionMeta | null {
+  const resolution = check.calculation_payload?.resolution;
+  if (!resolution || typeof resolution !== "object") {
+    return null;
+  }
+  return resolution as CheckResolutionMeta;
+}
+
 async function apiRequest<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers ?? {});
   if (token) {
@@ -468,7 +484,9 @@ export default function App() {
   const [repairLoading, setRepairLoading] = useState(false);
   const [reprocessLoading, setReprocessLoading] = useState(false);
   const [reviewActionLoading, setReviewActionLoading] = useState(false);
+  const [checkActionLoadingId, setCheckActionLoadingId] = useState<number | null>(null);
   const [saveRepairLoading, setSaveRepairLoading] = useState(false);
+  const [checkComments, setCheckComments] = useState<Record<number, string>>({});
   const [reviewActionComment, setReviewActionComment] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -546,6 +564,7 @@ export default function App() {
     void apiRequest<RepairDetail>(`/repairs/${selectedRepairId}`, { method: "GET" }, token)
       .then((payload) => {
         setSelectedRepair(payload);
+        setCheckComments({});
         if (!isEditingRepair) {
           setRepairDraft(createRepairDraft(payload));
         }
@@ -679,6 +698,37 @@ export default function App() {
 
   async function handleReprocessDocument(document: DocumentItem) {
     await handleReprocessDocumentById(document.id, document.repair.id);
+  }
+
+  async function handleCheckResolution(checkId: number, isResolved: boolean) {
+    if (!token || !selectedRepair) {
+      return;
+    }
+
+    setCheckActionLoadingId(checkId);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const updatedRepair = await apiRequest<RepairDetail>(
+        `/repairs/${selectedRepair.id}/checks/${checkId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            is_resolved: isResolved,
+            comment: checkComments[checkId]?.trim() || null,
+          }),
+        },
+        token,
+      );
+      setSelectedRepair(updatedRepair);
+      setCheckComments((current) => ({ ...current, [checkId]: "" }));
+      setSuccessMessage(isResolved ? "Проверка закрыта" : "Проверка возвращена в работу");
+      await loadWorkspace(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to update repair check");
+    } finally {
+      setCheckActionLoadingId(null);
+    }
   }
 
   async function handleReviewAction(action: "confirm" | "send_to_review") {
@@ -1770,15 +1820,68 @@ export default function App() {
                                     <Stack spacing={1}>
                                       <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
                                         <Typography>{check.title}</Typography>
-                                        <Chip
-                                          size="small"
-                                          color={checkSeverityColor(check.severity)}
-                                          label={formatStatus(check.severity)}
-                                        />
+                                        <Stack direction="row" spacing={1}>
+                                          <Chip
+                                            size="small"
+                                            color={checkSeverityColor(check.severity)}
+                                            label={formatStatus(check.severity)}
+                                          />
+                                          <Chip
+                                            size="small"
+                                            color={check.is_resolved ? "success" : "default"}
+                                            label={check.is_resolved ? "решено" : "открыто"}
+                                          />
+                                        </Stack>
                                       </Stack>
                                       {check.details ? (
                                         <Typography className="muted-copy">{check.details}</Typography>
                                       ) : null}
+                                      {readCheckResolutionMeta(check)?.user_name ? (
+                                        <Typography className="muted-copy">
+                                          Последнее действие: {readCheckResolutionMeta(check)?.user_name}
+                                          {readCheckResolutionMeta(check)?.resolved_at
+                                            ? ` · ${formatDateTime(String(readCheckResolutionMeta(check)?.resolved_at))}`
+                                            : ""}
+                                          {readCheckResolutionMeta(check)?.comment
+                                            ? ` · ${String(readCheckResolutionMeta(check)?.comment)}`
+                                            : ""}
+                                        </Typography>
+                                      ) : null}
+                                      <TextField
+                                        label="Комментарий по проверке"
+                                        value={checkComments[check.id] || ""}
+                                        onChange={(event) =>
+                                          setCheckComments((current) => ({
+                                            ...current,
+                                            [check.id]: event.target.value,
+                                          }))
+                                        }
+                                        fullWidth
+                                        multiline
+                                        minRows={2}
+                                      />
+                                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                        <Button
+                                          size="small"
+                                          variant="contained"
+                                          disabled={checkActionLoadingId === check.id || check.is_resolved}
+                                          onClick={() => {
+                                            void handleCheckResolution(check.id, true);
+                                          }}
+                                        >
+                                          {checkActionLoadingId === check.id ? "Сохранение..." : "Закрыть проверку"}
+                                        </Button>
+                                        <Button
+                                          size="small"
+                                          variant="outlined"
+                                          disabled={checkActionLoadingId === check.id || !check.is_resolved}
+                                          onClick={() => {
+                                            void handleCheckResolution(check.id, false);
+                                          }}
+                                        >
+                                          Вернуть в работу
+                                        </Button>
+                                      </Stack>
                                     </Stack>
                                   </Paper>
                                 ))

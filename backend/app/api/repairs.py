@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, joinedload
@@ -5,10 +9,10 @@ from sqlalchemy.orm import Session, joinedload
 from app.api.access import get_allowed_vehicle_ids_query
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.models.audit import AuditLog
-from app.models.enums import UserRole
-from app.models.repair import Repair, RepairPart, RepairWork
+from app.models.enums import CheckSeverity, RepairStatus, UserRole
+from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.user import User
-from app.schemas.repair import RepairDetailResponse, RepairUpdateRequest
+from app.schemas.repair import RepairCheckUpdateRequest, RepairDetailResponse, RepairUpdateRequest
 from app.services.document_processing import replace_ocr_checks, resolve_service
 
 
@@ -29,6 +33,18 @@ def build_repair_snapshot(repair: Repair) -> dict:
         "grand_total": float(repair.grand_total),
         "status": repair.status.value,
         "is_preliminary": repair.is_preliminary,
+        "is_partially_recognized": repair.is_partially_recognized,
+        "checks": [
+            {
+                "id": item.id,
+                "check_type": item.check_type,
+                "severity": item.severity.value,
+                "title": item.title,
+                "is_resolved": item.is_resolved,
+                "calculation_payload": item.calculation_payload,
+            }
+            for item in sorted(repair.checks, key=lambda item: item.id)
+        ],
         "works": [
             {
                 "work_code": item.work_code,
@@ -55,6 +71,30 @@ def build_repair_snapshot(repair: Repair) -> dict:
             for item in sorted(repair.parts, key=lambda item: item.id)
         ],
     }
+
+
+def build_repair_query():
+    return (
+        select(Repair)
+        .options(
+            joinedload(Repair.vehicle),
+            joinedload(Repair.service),
+            joinedload(Repair.works),
+            joinedload(Repair.parts),
+            joinedload(Repair.checks),
+        )
+    )
+
+
+def load_repair_for_user(db: Session, repair_id: int, current_user: User) -> Repair:
+    stmt = build_repair_query().where(Repair.id == repair_id)
+    if current_user.role != UserRole.ADMIN:
+        stmt = stmt.where(Repair.vehicle_id.in_(get_allowed_vehicle_ids_query(current_user)))
+
+    repair = db.execute(stmt).unique().scalar_one_or_none()
+    if repair is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
+    return repair
 
 
 def fetch_repair_history(db: Session, repair_id: int) -> list[AuditLog]:
@@ -167,25 +207,7 @@ def get_repair(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> RepairDetailResponse:
-    stmt = (
-        select(Repair)
-        .options(
-            joinedload(Repair.vehicle),
-            joinedload(Repair.service),
-            joinedload(Repair.works),
-            joinedload(Repair.parts),
-            joinedload(Repair.checks),
-        )
-        .where(Repair.id == repair_id)
-    )
-
-    if current_user.role != UserRole.ADMIN:
-        stmt = stmt.where(Repair.vehicle_id.in_(get_allowed_vehicle_ids_query(current_user)))
-
-    repair = db.execute(stmt).unique().scalar_one_or_none()
-    if repair is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
-
+    repair = load_repair_for_user(db, repair_id, current_user)
     history_entries = fetch_repair_history(db, repair.id)
     return serialize_repair(repair, history_entries)
 
@@ -197,17 +219,7 @@ def update_repair(
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_admin),
 ) -> RepairDetailResponse:
-    stmt = (
-        select(Repair)
-        .options(
-            joinedload(Repair.vehicle),
-            joinedload(Repair.service),
-            joinedload(Repair.works),
-            joinedload(Repair.parts),
-            joinedload(Repair.checks),
-        )
-        .where(Repair.id == repair_id)
-    )
+    stmt = build_repair_query().where(Repair.id == repair_id)
     repair = db.execute(stmt).unique().scalar_one_or_none()
     if repair is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
@@ -261,5 +273,85 @@ def update_repair(
         )
     )
     db.commit()
+    history_entries = fetch_repair_history(db, refreshed.id)
+    return serialize_repair(refreshed, history_entries)
+
+
+def update_check_resolution_payload(
+    check: RepairCheck,
+    is_resolved: bool,
+    comment: str | None,
+    current_user: User,
+) -> dict:
+    payload = dict(check.calculation_payload or {})
+    payload["resolution"] = {
+        "is_resolved": is_resolved,
+        "comment": comment,
+        "user_id": current_user.id,
+        "user_name": current_user.full_name,
+        "resolved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return payload
+
+
+def refresh_repair_status_after_check_updates(repair: Repair, current_user: User) -> None:
+    unresolved_checks = [item for item in repair.checks if not item.is_resolved]
+    has_blocking_checks = any(item.severity in {CheckSeverity.SUSPICIOUS, CheckSeverity.ERROR} for item in unresolved_checks)
+
+    if has_blocking_checks:
+        repair.status = RepairStatus.SUSPICIOUS
+        return
+
+    if unresolved_checks:
+        repair.status = RepairStatus.IN_REVIEW
+        return
+
+    if current_user.role == UserRole.ADMIN:
+        repair.status = RepairStatus.IN_REVIEW
+    else:
+        repair.status = RepairStatus.EMPLOYEE_CONFIRMED
+
+
+@router.patch("/{repair_id}/checks/{check_id}", response_model=RepairDetailResponse)
+def update_repair_check(
+    repair_id: int,
+    check_id: int,
+    payload: RepairCheckUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> RepairDetailResponse:
+    repair = load_repair_for_user(db, repair_id, current_user)
+    target_check = next((item for item in repair.checks if item.id == check_id), None)
+    if target_check is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair check not found")
+
+    old_snapshot = build_repair_snapshot(repair)
+    normalized_comment = (payload.comment or "").strip() or None
+
+    target_check.is_resolved = payload.is_resolved
+    target_check.calculation_payload = update_check_resolution_payload(
+        target_check,
+        is_resolved=payload.is_resolved,
+        comment=normalized_comment,
+        current_user=current_user,
+    )
+    refresh_repair_status_after_check_updates(repair, current_user)
+
+    db.commit()
+
+    refreshed = load_repair_for_user(db, repair_id, current_user)
+    new_snapshot = build_repair_snapshot(refreshed)
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            entity_type="repair",
+            entity_id=str(refreshed.id),
+            action_type="check_resolution_update",
+            old_value=old_snapshot,
+            new_value=new_snapshot,
+        )
+    )
+    db.commit()
+
     history_entries = fetch_repair_history(db, refreshed.id)
     return serialize_repair(refreshed, history_entries)

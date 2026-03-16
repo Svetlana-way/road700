@@ -131,3 +131,8 @@ class RepairUpdateRequest(BaseModel):
     is_preliminary: Optional[bool] = None
     works: Optional[list[RepairWorkUpdateInput]] = None
     parts: Optional[list[RepairPartUpdateInput]] = None
+
+
+class RepairCheckUpdateRequest(BaseModel):
+    is_resolved: bool
+    comment: Optional[str] = None

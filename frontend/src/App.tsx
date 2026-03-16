@@ -116,6 +116,41 @@ type DocumentsResponse = {
   items: DocumentItem[];
 };
 
+type LaborNormCatalogItem = {
+  id: number;
+  code: string;
+  category: string | null;
+  name_ru: string;
+  name_ru_alt: string | null;
+  name_cn: string | null;
+  name_en: string | null;
+  normalized_name: string;
+  standard_hours: number;
+  source_sheet: string | null;
+  source_file: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type LaborNormCatalogResponse = {
+  items: LaborNormCatalogItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  categories: string[];
+  source_files: string[];
+};
+
+type LaborNormImportResponse = {
+  message: string;
+  filename: string;
+  imported_at: string;
+  created: number;
+  updated: number;
+  skipped: number;
+};
+
 type ReviewPriorityBucket = "review" | "critical" | "suspicious";
 type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
 type ReviewQueueCategory =
@@ -325,6 +360,17 @@ type CheckResolutionMeta = {
   resolved_at?: string | null;
 };
 
+type WorkLaborNormMeta = {
+  applicable: boolean | null;
+  applicabilityReason: string | null;
+  code: string | null;
+  name: string | null;
+  category: string | null;
+  matchedBy: string | null;
+  matchScore: number | null;
+  standardHours: number | null;
+};
+
 type EditableWorkDraft = {
   work_code: string;
   work_name: string;
@@ -523,6 +569,88 @@ function formatLaborNormApplicability(payload: Record<string, unknown> | null | 
   }
 
   return "Нормо-часы: применимость проверена";
+}
+
+function formatHours(value: number | null | undefined) {
+  if (typeof value !== "number") {
+    return null;
+  }
+  return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(value)} ч`;
+}
+
+function formatMatchMethod(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+  const labels: Record<string, string> = {
+    code: "по коду",
+    normalized_name: "по нормализованному названию",
+    name_contains: "по частичному совпадению",
+    name_tokens: "по токенам названия",
+  };
+  return labels[value] || value;
+}
+
+function readWorkLaborNormMeta(referencePayload: Record<string, unknown> | null | undefined): WorkLaborNormMeta | null {
+  if (!referencePayload) {
+    return null;
+  }
+  return {
+    applicable:
+      typeof referencePayload.labor_norm_applicable === "boolean"
+        ? referencePayload.labor_norm_applicable
+        : null,
+    applicabilityReason:
+      typeof referencePayload.labor_norm_applicability_reason === "string"
+        ? referencePayload.labor_norm_applicability_reason
+        : null,
+    code:
+      typeof referencePayload.labor_norm_code === "string" ? referencePayload.labor_norm_code : null,
+    name:
+      typeof referencePayload.labor_norm_name === "string" ? referencePayload.labor_norm_name : null,
+    category:
+      typeof referencePayload.labor_norm_category === "string"
+        ? referencePayload.labor_norm_category
+        : null,
+    matchedBy:
+      typeof referencePayload.labor_norm_matched_by === "string"
+        ? referencePayload.labor_norm_matched_by
+        : null,
+    matchScore:
+      typeof referencePayload.labor_norm_match_score === "number"
+        ? referencePayload.labor_norm_match_score
+        : null,
+    standardHours:
+      typeof referencePayload.labor_norm_standard_hours === "number"
+        ? referencePayload.labor_norm_standard_hours
+        : null,
+  };
+}
+
+function formatWorkLaborNormMeta(item: RepairDetail["works"][number]) {
+  const meta = readWorkLaborNormMeta(item.reference_payload);
+  if (!meta) {
+    return null;
+  }
+
+  if (meta.code && meta.name) {
+    const scoreSuffix =
+      typeof meta.matchScore === "number" ? ` · уверенность ${Math.round(meta.matchScore * 100)}%` : "";
+    const methodSuffix = formatMatchMethod(meta.matchedBy) ? ` · ${formatMatchMethod(meta.matchedBy)}` : "";
+    const hoursSuffix = formatHours(meta.standardHours) ? ` · норма ${formatHours(meta.standardHours)}` : "";
+    const categorySuffix = meta.category ? ` · ${meta.category}` : "";
+    return `Матчинг: ${meta.code} · ${meta.name}${categorySuffix}${hoursSuffix}${methodSuffix}${scoreSuffix}`;
+  }
+
+  if (meta.applicable === false) {
+    return `Матчинг: справочник не применён${meta.applicabilityReason ? ` · ${meta.applicabilityReason}` : ""}`;
+  }
+
+  if (meta.applicable === true) {
+    return "Матчинг: справочник применим, но совпадение не найдено";
+  }
+
+  return null;
 }
 
 function formatVehicle(vehicle: VehiclePreview) {
@@ -1013,6 +1141,15 @@ export default function App() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [laborNorms, setLaborNorms] = useState<LaborNormCatalogItem[]>([]);
+  const [laborNormTotal, setLaborNormTotal] = useState(0);
+  const [laborNormCategories, setLaborNormCategories] = useState<string[]>([]);
+  const [laborNormSourceFiles, setLaborNormSourceFiles] = useState<string[]>([]);
+  const [laborNormQuery, setLaborNormQuery] = useState("");
+  const [laborNormCategory, setLaborNormCategory] = useState("");
+  const [laborNormLoading, setLaborNormLoading] = useState(false);
+  const [laborNormImportLoading, setLaborNormImportLoading] = useState(false);
+  const [laborNormFile, setLaborNormFile] = useState<File | null>(null);
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
   const [reviewQueueCounts, setReviewQueueCounts] = useState<Record<ReviewQueueCategory, number>>({
     all: 0,
@@ -1117,11 +1254,49 @@ export default function App() {
       })
     : [];
 
+  function buildLaborNormQueryString(
+    query: string = laborNormQuery,
+    category: string = laborNormCategory,
+  ) {
+    const params = new URLSearchParams();
+    params.set("limit", "12");
+    if (query.trim()) {
+      params.set("q", query.trim());
+    }
+    if (category) {
+      params.set("category", category);
+    }
+    return params.toString();
+  }
+
+  async function loadLaborNormCatalog(activeToken: string, query: string = laborNormQuery, category: string = laborNormCategory) {
+    setLaborNormLoading(true);
+    try {
+      const payload = await apiRequest<LaborNormCatalogResponse>(
+        `/labor-norms?${buildLaborNormQueryString(query, category)}`,
+        { method: "GET" },
+        activeToken,
+      );
+      setLaborNorms(payload.items);
+      setLaborNormTotal(payload.total);
+      setLaborNormCategories(payload.categories);
+      setLaborNormSourceFiles(payload.source_files);
+    } finally {
+      setLaborNormLoading(false);
+    }
+  }
+
   async function loadWorkspace(activeToken: string, reviewCategory: ReviewQueueCategory = selectedReviewCategory) {
     setBootLoading(true);
     try {
-      const [me, dashboard, vehicleList, recentDocuments, reviewQueueData] = await Promise.all([
-        apiRequest<User>("/auth/me", { method: "GET" }, activeToken),
+      const me = await apiRequest<User>("/auth/me", { method: "GET" }, activeToken);
+      const [
+        dashboard,
+        vehicleList,
+        recentDocuments,
+        reviewQueueData,
+        laborNormCatalog,
+      ] = await Promise.all([
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
         apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
         apiRequest<DocumentsResponse>("/documents?limit=8", { method: "GET" }, activeToken),
@@ -1130,12 +1305,23 @@ export default function App() {
           { method: "GET" },
           activeToken,
         ),
+        me.role === "admin"
+          ? apiRequest<LaborNormCatalogResponse>(
+              `/labor-norms?${buildLaborNormQueryString()}`,
+              { method: "GET" },
+              activeToken,
+            )
+          : Promise.resolve(null),
       ]);
 
       setUser(me);
       setSummary(dashboard);
       setVehicles(vehicleList.items);
       setDocuments(recentDocuments.items);
+      setLaborNorms(laborNormCatalog?.items || []);
+      setLaborNormTotal(laborNormCatalog?.total || 0);
+      setLaborNormCategories(laborNormCatalog?.categories || []);
+      setLaborNormSourceFiles(laborNormCatalog?.source_files || []);
       setReviewQueue(reviewQueueData.items);
       setReviewQueueCounts(reviewQueueData.counts);
       if (selectedDocumentId === null) {
@@ -1165,6 +1351,10 @@ export default function App() {
       setSummary(null);
       setVehicles([]);
       setDocuments([]);
+      setLaborNorms([]);
+      setLaborNormTotal(0);
+      setLaborNormCategories([]);
+      setLaborNormSourceFiles([]);
       setReviewQueue([]);
       setReviewQueueCounts({
         all: 0,
@@ -1557,6 +1747,52 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Failed to apply review action");
     } finally {
       setReviewActionLoading(false);
+    }
+  }
+
+  async function handleLaborNormSearch() {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    setErrorMessage("");
+    try {
+      await loadLaborNormCatalog(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load labor norms catalog");
+    }
+  }
+
+  async function handleLaborNormImport() {
+    if (!token || user?.role !== "admin" || !laborNormFile) {
+      setErrorMessage("Выберите .xlsx файл справочника");
+      return;
+    }
+
+    setLaborNormImportLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const body = new FormData();
+      body.append("file", laborNormFile);
+
+      const result = await apiRequest<LaborNormImportResponse>(
+        "/labor-norms/import",
+        {
+          method: "POST",
+          body,
+        },
+        token,
+      );
+
+      setSuccessMessage(
+        `${result.message}. Создано ${result.created}, обновлено ${result.updated}, пропущено ${result.skipped}.`,
+      );
+      setLaborNormFile(null);
+      await loadLaborNormCatalog(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to import labor norms catalog");
+    } finally {
+      setLaborNormImportLoading(false);
     }
   }
 
@@ -2283,6 +2519,128 @@ export default function App() {
                   </Stack>
                 </Paper>
 
+                {user?.role === "admin" ? (
+                  <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={2}>
+                      <Box>
+                        <Typography variant="h5">Справочник нормо-часов</Typography>
+                        <Typography className="muted-copy">
+                          Каталог нормативных работ, импортируемый через админку и используемый для автоматического матчинга.
+                        </Typography>
+                      </Box>
+                      <Grid container spacing={1.5}>
+                        <Grid item xs={12} sm={6}>
+                          <TextField
+                            label="Поиск по коду или названию"
+                            value={laborNormQuery}
+                            onChange={(event) => setLaborNormQuery(event.target.value)}
+                            fullWidth
+                          />
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                          <TextField
+                            select
+                            label="Категория"
+                            value={laborNormCategory}
+                            onChange={(event) => setLaborNormCategory(event.target.value)}
+                            fullWidth
+                          >
+                            <MenuItem value="">Все категории</MenuItem>
+                            {laborNormCategories.map((category) => (
+                              <MenuItem key={category} value={category}>
+                                {category}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+                      </Grid>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                        <Button variant="outlined" onClick={() => void handleLaborNormSearch()} disabled={laborNormLoading}>
+                          {laborNormLoading ? "Загрузка..." : "Обновить список"}
+                        </Button>
+                        <Button
+                          variant="text"
+                          onClick={() => {
+                            setLaborNormQuery("");
+                            setLaborNormCategory("");
+                            if (token) {
+                              void loadLaborNormCatalog(token, "", "");
+                            }
+                          }}
+                          disabled={laborNormLoading}
+                        >
+                          Сбросить фильтр
+                        </Button>
+                      </Stack>
+                      <Paper className="repair-line" elevation={0}>
+                        <Stack spacing={1.25}>
+                          <Typography className="metric-label">
+                            Импорт / обновление каталога
+                          </Typography>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
+                            <Button component="label" variant="outlined">
+                              Выбрать .xlsx
+                              <input
+                                hidden
+                                type="file"
+                                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                onChange={(event) => setLaborNormFile(event.target.files?.[0] ?? null)}
+                              />
+                            </Button>
+                            <Typography className="muted-copy">
+                              {laborNormFile ? laborNormFile.name : "Файл не выбран"}
+                            </Typography>
+                          </Stack>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Button
+                              variant="contained"
+                              disabled={laborNormImportLoading || !laborNormFile}
+                              onClick={() => {
+                                void handleLaborNormImport();
+                              }}
+                            >
+                              {laborNormImportLoading ? "Импорт..." : "Импортировать справочник"}
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                      <Typography className="muted-copy">
+                        В каталоге {laborNormTotal} записей
+                        {laborNormSourceFiles.length > 0 ? ` · источники: ${laborNormSourceFiles.join(", ")}` : ""}
+                      </Typography>
+                      {laborNormLoading ? (
+                        <Stack spacing={1} alignItems="center">
+                          <CircularProgress size={24} />
+                          <Typography className="muted-copy">Загрузка каталога...</Typography>
+                        </Stack>
+                      ) : laborNorms.length > 0 ? (
+                        <Stack spacing={1}>
+                          {laborNorms.map((item) => (
+                            <Paper className="repair-line" key={item.id} elevation={0}>
+                              <Stack spacing={0.5}>
+                                <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                  <Typography>{item.code} · {item.name_ru}</Typography>
+                                  <Typography>{formatHours(item.standard_hours) || "—"}</Typography>
+                                </Stack>
+                                <Typography className="muted-copy">
+                                  {item.category || "Без категории"}
+                                  {item.name_ru_alt ? ` · alt: ${item.name_ru_alt}` : ""}
+                                </Typography>
+                                <Typography className="muted-copy">
+                                  Источник: {item.source_file || "—"}
+                                  {item.source_sheet ? ` · лист ${item.source_sheet}` : ""}
+                                </Typography>
+                              </Stack>
+                            </Paper>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Typography className="muted-copy">По текущему фильтру записи не найдены.</Typography>
+                      )}
+                    </Stack>
+                  </Paper>
+                ) : null}
+
                 <Paper className="workspace-panel" elevation={0}>
                   <Stack spacing={2}>
                     <Box>
@@ -2907,15 +3265,24 @@ export default function App() {
                               {selectedRepair.works.length > 0 ? (
                                 selectedRepair.works.map((item) => (
                                   <Paper className="repair-line" key={item.id} elevation={0}>
-                                    <Stack direction="row" justifyContent="space-between" spacing={2}>
-                                      <Box>
-                                        <Typography>{item.work_name}</Typography>
+                                    <Stack spacing={0.75}>
+                                      <Stack direction="row" justifyContent="space-between" spacing={2}>
+                                        <Box>
+                                          <Typography>{item.work_name}</Typography>
+                                          <Typography className="muted-copy">
+                                            {item.work_code ? `${item.work_code} · ` : ""}
+                                            Кол-во {item.quantity}
+                                            {formatHours(item.standard_hours) ? ` · норма ${formatHours(item.standard_hours)}` : ""}
+                                            {formatHours(item.actual_hours) ? ` · факт ${formatHours(item.actual_hours)}` : ""}
+                                          </Typography>
+                                        </Box>
+                                        <Typography>{formatMoney(item.line_total) || "—"}</Typography>
+                                      </Stack>
+                                      {formatWorkLaborNormMeta(item) ? (
                                         <Typography className="muted-copy">
-                                          Кол-во {item.quantity}
-                                          {item.actual_hours ? ` · ${item.actual_hours} ч` : ""}
+                                          {formatWorkLaborNormMeta(item)}
                                         </Typography>
-                                      </Box>
-                                      <Typography>{formatMoney(item.line_total) || "—"}</Typography>
+                                      ) : null}
                                     </Stack>
                                   </Paper>
                                 ))

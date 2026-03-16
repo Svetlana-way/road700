@@ -37,6 +37,7 @@ MANUAL_REVIEW_REASON_LABELS = {
     "repair_date_missing": "Не найдена дата ремонта",
     "repair_date_invalid": "Дата ремонта распознана с ошибкой",
     "mileage_missing": "Не найден пробег",
+    "service_name_suspicious": "Название сервиса распознано сомнительно",
     "text_not_found": "Текст документа не извлечён",
     "image_text_not_found": "На изображении не удалось распознать текст",
     "pdf_text_not_found": "В PDF не удалось распознать текст",

@@ -232,6 +232,20 @@ TEXT_CHAR_REPLACEMENTS = str.maketrans(
         "»": '"',
     }
 )
+SERVICE_NAME_BLOCKLIST = (
+    "стоимость",
+    "работ",
+    "запчаст",
+    "материал",
+    "ндс",
+    "итого",
+    "к оплате",
+    "пробег",
+    "госномер",
+    "заказ",
+    "наряд",
+    "дата",
+)
 
 
 @dataclass
@@ -574,6 +588,75 @@ def parse_part_line(line: str) -> Optional[dict[str, object]]:
     }
 
 
+def is_service_name_suspicious(value: str) -> bool:
+    normalized_value = normalize_line(value).lower()
+    if not normalized_value:
+        return True
+    if any(marker in normalized_value for marker in SERVICE_NAME_BLOCKLIST):
+        return True
+    if len(re.findall(r"\d", normalized_value)) >= 6:
+        return True
+    if re.search(r"\d[\d\s]*(?:[.,]\d{2})", normalized_value):
+        return True
+    return False
+
+
+def summarize_line_totals(extracted_items: dict[str, list[dict[str, object]]]) -> tuple[Optional[float], Optional[float]]:
+    works = extracted_items.get("works") or []
+    parts = extracted_items.get("parts") or []
+    works_total = round(sum(float(item["line_total"]) for item in works), 2) if works else None
+    parts_total = round(sum(float(item["line_total"]) for item in parts), 2) if parts else None
+    return works_total, parts_total
+
+
+def amounts_match(left: Optional[float], right: Optional[float], tolerance: float = 0.01) -> bool:
+    if left is None or right is None:
+        return False
+    return abs(left - right) <= tolerance
+
+
+def reconcile_header_totals_with_line_items(
+    extracted_fields: dict[str, object],
+    extracted_items: dict[str, list[dict[str, object]]],
+    confidence_map: dict[str, float],
+) -> list[str]:
+    notes: list[str] = []
+    works_total_from_lines, parts_total_from_lines = summarize_line_totals(extracted_items)
+
+    if works_total_from_lines is not None and "work_total" not in extracted_fields:
+        extracted_fields["work_total"] = works_total_from_lines
+        confidence_map["work_total"] = 0.68
+        notes.append("work_total_restored_from_lines")
+
+    if parts_total_from_lines is not None and "parts_total" not in extracted_fields:
+        extracted_fields["parts_total"] = parts_total_from_lines
+        confidence_map["parts_total"] = 0.68
+        notes.append("parts_total_restored_from_lines")
+
+    grand_total = float(extracted_fields["grand_total"]) if "grand_total" in extracted_fields else None
+    vat_total = float(extracted_fields.get("vat_total", 0) or 0) if "vat_total" in extracted_fields else 0.0
+    if grand_total is None:
+        return notes
+
+    if works_total_from_lines is not None and parts_total_from_lines is not None:
+        inferred_grand_total = round(works_total_from_lines + parts_total_from_lines + vat_total, 2)
+        if amounts_match(inferred_grand_total, grand_total):
+            current_work_total = float(extracted_fields["work_total"]) if "work_total" in extracted_fields else None
+            current_parts_total = float(extracted_fields["parts_total"]) if "parts_total" in extracted_fields else None
+
+            if not amounts_match(current_work_total, works_total_from_lines):
+                extracted_fields["work_total"] = works_total_from_lines
+                confidence_map["work_total"] = max(confidence_map.get("work_total", 0), 0.68)
+                notes.append("work_total_aligned_with_lines")
+
+            if not amounts_match(current_parts_total, parts_total_from_lines):
+                extracted_fields["parts_total"] = parts_total_from_lines
+                confidence_map["parts_total"] = max(confidence_map.get("parts_total", 0), 0.68)
+                notes.append("parts_total_aligned_with_lines")
+
+    return notes
+
+
 def decode_pdf_literal(raw_text: bytes) -> bytes:
     return (
         raw_text.replace(b"\\(", b"(")
@@ -820,6 +903,7 @@ def parse_document_text(text: str) -> dict[str, object]:
     extracted_fields = {}
     confidence_map = {}
     manual_review_reasons = []
+    normalization_notes = []
     extracted_items = extract_line_items(text)
 
     order_number = first_match(ORDER_PATTERNS, text)
@@ -861,8 +945,11 @@ def parse_document_text(text: str) -> dict[str, object]:
 
     service_name = first_match(SERVICE_PATTERNS, text)
     if service_name:
-        extracted_fields["service_name"] = service_name[:120]
-        confidence_map["service_name"] = 0.58
+        if is_service_name_suspicious(service_name):
+            manual_review_reasons.append("service_name_suspicious")
+        else:
+            extracted_fields["service_name"] = service_name[:120]
+            confidence_map["service_name"] = 0.58
 
     for field_name, patterns in TOTAL_PATTERNS.items():
         match = first_match(patterns, text)
@@ -874,11 +961,20 @@ def parse_document_text(text: str) -> dict[str, object]:
         extracted_fields[field_name] = amount
         confidence_map[field_name] = 0.8 if field_name == "grand_total" else 0.72
 
+    normalization_notes.extend(
+        reconcile_header_totals_with_line_items(
+            extracted_fields=extracted_fields,
+            extracted_items=extracted_items,
+            confidence_map=confidence_map,
+        )
+    )
+
     return {
         "extracted_fields": extracted_fields,
         "extracted_items": extracted_items,
         "confidence_map": confidence_map,
         "manual_review_reasons": manual_review_reasons,
+        "normalization_notes": normalization_notes,
     }
 
 
@@ -1035,6 +1131,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         extracted_items = parsed["extracted_items"]
         confidence_map = parsed["confidence_map"]
         manual_review_reasons = parsed["manual_review_reasons"]
+        normalization_notes = parsed.get("normalization_notes", [])
         repair = document.repair
         checks = []
 
@@ -1181,6 +1278,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
             "extracted_fields": extracted_fields,
             "extracted_items": extracted_items,
             "manual_review_reasons": manual_review_reasons,
+            "normalization_notes": normalization_notes,
         }
         db.add(
             DocumentVersion(
@@ -1205,6 +1303,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
             "works_count": len(extracted_items["works"]),
             "parts_count": len(extracted_items["parts"]),
             "manual_review_reasons": manual_review_reasons,
+            "normalization_notes": normalization_notes,
             "confidence": document.ocr_confidence,
         }
         job.error_message = None

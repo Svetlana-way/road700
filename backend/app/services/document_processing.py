@@ -10,6 +10,12 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
+try:
+    from PIL import Image, ImageChops
+except ImportError:  # pragma: no cover - optional dependency during bootstrap
+    Image = None
+    ImageChops = None
+
 from pypdf import PdfReader, PdfWriter
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, joinedload
@@ -203,6 +209,10 @@ def select_best_text_variant(text: str) -> str:
 
 def is_vision_ocr_available() -> bool:
     return shutil.which("swift") is not None and VISION_OCR_SCRIPT.exists()
+
+
+def is_pillow_available() -> bool:
+    return Image is not None and ImageChops is not None
 
 
 def parse_amount(value: str) -> Optional[float]:
@@ -547,9 +557,69 @@ def run_vision_ocr(image_paths: list[Path]) -> dict[str, str]:
     return {item["path"]: item["text"] for item in payload.get("results", [])}
 
 
+def save_pillow_optimized_image(source_path: Path, output_path: Path) -> bool:
+    if not is_pillow_available():
+        return False
+
+    try:
+        with Image.open(source_path) as image:
+            rgba_image = image.convert("RGBA")
+            alpha_channel = rgba_image.getchannel("A")
+            alpha_bbox = alpha_channel.getbbox()
+
+            background = Image.new("RGBA", rgba_image.size, (255, 255, 255, 255))
+            rgb_image = Image.alpha_composite(background, rgba_image).convert("RGB")
+
+            grayscale_image = rgb_image.convert("L")
+            diff_image = ImageChops.difference(grayscale_image, Image.new("L", grayscale_image.size, 255))
+            content_bbox = diff_image.point(lambda value: 255 if value > 12 else 0).getbbox()
+
+            if alpha_bbox is not None:
+                content_bbox = alpha_bbox if content_bbox is None else (
+                    min(alpha_bbox[0], content_bbox[0]),
+                    min(alpha_bbox[1], content_bbox[1]),
+                    max(alpha_bbox[2], content_bbox[2]),
+                    max(alpha_bbox[3], content_bbox[3]),
+                )
+
+            if content_bbox is not None:
+                left, top, right, bottom = content_bbox
+                padding = max(24, int(max(rgb_image.size) * 0.03))
+                crop_box = (
+                    max(0, left - padding),
+                    max(0, top - padding),
+                    min(rgb_image.width, right + padding),
+                    min(rgb_image.height, bottom + padding),
+                )
+                rgb_image = rgb_image.crop(crop_box)
+
+            longest_side = max(rgb_image.size)
+            if longest_side and longest_side < 2400:
+                scale = 2400 / float(longest_side)
+                resized_size = (
+                    max(1, int(round(rgb_image.width * scale))),
+                    max(1, int(round(rgb_image.height * scale))),
+                )
+                rgb_image = rgb_image.resize(resized_size, Image.Resampling.LANCZOS)
+
+            rgb_image.save(output_path, format="JPEG", quality=95, optimize=True)
+            return True
+    except Exception:
+        return False
+
+
+def optimize_existing_image_for_ocr(path: Path) -> None:
+    temporary_output_path = path.with_name(f"{path.stem}_optimized.jpg")
+    if save_pillow_optimized_image(path, temporary_output_path):
+        temporary_output_path.replace(path)
+
+
 def preprocess_image_for_ocr(path: Path) -> tuple[tempfile.TemporaryDirectory, Path]:
     temp_dir = tempfile.TemporaryDirectory()
     processed_path = Path(temp_dir.name) / f"{path.stem}_ocr.jpg"
+    if save_pillow_optimized_image(path, processed_path):
+        return temp_dir, processed_path
+
     command = [
         "sips",
         "-s",
@@ -568,6 +638,8 @@ def preprocess_image_for_ocr(path: Path) -> tuple[tempfile.TemporaryDirectory, P
     if result.returncode != 0:
         temp_dir.cleanup()
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Failed to preprocess image for OCR")
+
+    optimize_existing_image_for_ocr(processed_path)
     return temp_dir, processed_path
 
 

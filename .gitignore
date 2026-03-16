@@ -1,5 +1,6 @@
 .DS_Store
 .env
+.env.local
 .venv/
 __pycache__/
 *.pyc
@@ -10,3 +11,5 @@ node_modules/
 dist/
 coverage/
 backend/.venv/
+backend/*.egg-info/
+backend/local.db

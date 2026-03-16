@@ -1,5 +1,7 @@
 from functools import lru_cache
+from typing import Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -7,6 +9,7 @@ class Settings(BaseSettings):
     project_name: str = "Road700 Fleet Repairs"
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
+    database_url_override: Optional[str] = Field(default=None, validation_alias="DATABASE_URL")
     postgres_db: str = "road700"
     postgres_user: str = "road700"
     postgres_password: str = "road700"
@@ -32,6 +35,8 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        if self.database_url_override:
+            return self.database_url_override
         return (
             f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
             f"@postgres:{self.postgres_port}/{self.postgres_db}"

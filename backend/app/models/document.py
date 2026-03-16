@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from sqlalchemy import Boolean, Enum, ForeignKey, Float, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -11,11 +13,11 @@ class Document(Base, TimestampMixin):
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    repair_id: Mapped[int | None] = mapped_column(ForeignKey("repairs.id"), nullable=True, index=True)
-    uploaded_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    repair_id: Mapped[Optional[int]] = mapped_column(ForeignKey("repairs.id"), nullable=True, index=True)
+    uploaded_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     storage_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
-    mime_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    mime_type: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     source_type: Mapped[str] = mapped_column(String(50), nullable=False, default="pdf")
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(DocumentStatus),
@@ -24,9 +26,9 @@ class Document(Base, TimestampMixin):
         index=True,
     )
     is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    ocr_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ocr_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     review_queue_priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     repair: Mapped["Repair | None"] = relationship(
         back_populates="documents",
@@ -46,8 +48,8 @@ class DocumentVersion(Base, TimestampMixin):
     document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), nullable=False, index=True)
     version_number: Mapped[int] = mapped_column(nullable=False)
     storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
-    parsed_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    field_confidence_map: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    change_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parsed_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    field_confidence_map: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    change_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="versions")

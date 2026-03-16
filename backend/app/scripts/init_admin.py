@@ -2,15 +2,12 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.security import get_password_hash
-from app.db.base import Base
-from app.db.session import SessionLocal, engine
+from app.db.session import SessionLocal
 from app.models.enums import UserRole
 from app.models.user import User
 
 
 def init_admin() -> None:
-    Base.metadata.create_all(bind=engine)
-
     with SessionLocal() as db:
         existing_user = db.scalar(
             select(User).where(

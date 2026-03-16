@@ -103,6 +103,7 @@ def upgrade() -> None:
         sa.Column("current_driver_name", sa.String(length=255), nullable=True),
         sa.Column("last_coordinates_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("comment", sa.Text(), nullable=True),
+        sa.Column("source_payload", sa.JSON(), nullable=True),
         sa.Column("status", vehicle_status, nullable=False),
         sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -195,13 +196,14 @@ def upgrade() -> None:
     op.create_index("ix_documents_repair_id", "documents", ["repair_id"])
     op.create_index("ix_documents_status", "documents", ["status"])
 
-    op.create_foreign_key(
-        "fk_repairs_source_document_id_documents",
-        "repairs",
-        "documents",
-        ["source_document_id"],
-        ["id"],
-    )
+    if bind.dialect.name != "sqlite":
+        op.create_foreign_key(
+            "fk_repairs_source_document_id_documents",
+            "repairs",
+            "documents",
+            ["source_document_id"],
+            ["id"],
+        )
 
     op.create_table(
         "document_versions",
@@ -362,7 +364,8 @@ def downgrade() -> None:
     op.drop_index("ix_document_versions_document_id", table_name="document_versions")
     op.drop_table("document_versions")
 
-    op.drop_constraint("fk_repairs_source_document_id_documents", "repairs", type_="foreignkey")
+    if bind.dialect.name != "sqlite":
+        op.drop_constraint("fk_repairs_source_document_id_documents", "repairs", type_="foreignkey")
     op.drop_index("ix_documents_status", table_name="documents")
     op.drop_index("ix_documents_repair_id", table_name="documents")
     op.drop_table("documents")
@@ -403,4 +406,3 @@ def downgrade() -> None:
     vehicle_status.drop(bind, checkfirst=True)
     vehicle_type.drop(bind, checkfirst=True)
     user_role.drop(bind, checkfirst=True)
-

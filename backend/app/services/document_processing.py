@@ -10,7 +10,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, joinedload
 
@@ -394,6 +394,9 @@ def preprocess_image_for_ocr(path: Path) -> tuple[tempfile.TemporaryDirectory, P
         "-s",
         "format",
         "jpeg",
+        "-s",
+        "formatOptions",
+        "best",
         "-Z",
         "2400",
         path.as_posix(),
@@ -419,17 +422,26 @@ def extract_image_text(path: Path) -> str:
 def render_pdf_pages_for_ocr(path: Path, max_pages: int = 5) -> tuple[tempfile.TemporaryDirectory, list[Path]]:
     temp_dir = tempfile.TemporaryDirectory()
     image_paths: list[Path] = []
-    page_count = max(1, min(len(PdfReader(path.as_posix()).pages), max_pages))
+    reader = PdfReader(path.as_posix())
+    page_count = max(1, min(len(reader.pages), max_pages))
     for page_index in range(page_count):
+        single_page_pdf_path = Path(temp_dir.name) / f"ocr_page_{page_index + 1}.pdf"
         image_path = Path(temp_dir.name) / f"ocr_page_{page_index + 1}.jpg"
+        writer = PdfWriter()
+        writer.add_page(reader.pages[page_index])
+        with single_page_pdf_path.open("wb") as output_stream:
+            writer.write(output_stream)
         command = [
             "sips",
             "-s",
             "format",
             "jpeg",
+            "-s",
+            "formatOptions",
+            "best",
             "-Z",
             "2400",
-            path.as_posix(),
+            single_page_pdf_path.as_posix(),
             "--out",
             image_path.as_posix(),
         ]
@@ -438,7 +450,6 @@ def render_pdf_pages_for_ocr(path: Path, max_pages: int = 5) -> tuple[tempfile.T
             temp_dir.cleanup()
             raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Failed to render PDF page for OCR")
         image_paths.append(image_path)
-        break
 
     return temp_dir, image_paths
 

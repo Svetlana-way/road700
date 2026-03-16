@@ -39,17 +39,96 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 LOCAL_STORAGE_ROOT = PROJECT_ROOT / "storage"
 VISION_OCR_SCRIPT = Path(__file__).with_name("vision_ocr.swift")
 
+OCR_CONFUSABLE_CHARSETS = {
+    "а": "аa4@",
+    "б": "б6b",
+    "в": "вb8",
+    "г": "гgr",
+    "д": "дdg",
+    "е": "еe",
+    "з": "з3",
+    "и": "иu",
+    "к": "кk",
+    "м": "мm",
+    "н": "нh",
+    "о": "оo0",
+    "п": "пnp",
+    "р": "рpr",
+    "с": "сc",
+    "т": "тt",
+    "у": "уy",
+    "х": "хx",
+}
+
+
+def fuzzy_char_pattern(char: str) -> str:
+    lower_char = char.lower()
+    charset = OCR_CONFUSABLE_CHARSETS.get(lower_char)
+    if charset is None:
+        return re.escape(char)
+    return f"[{re.escape(charset)}]"
+
+
+def fuzzy_word_pattern(word: str) -> str:
+    return "".join(fuzzy_char_pattern(char) for char in word)
+
+
+def fuzzy_phrase_pattern(*words: str) -> str:
+    return r"[\s-]*".join(fuzzy_word_pattern(word) for word in words)
+
+
+ORDER_LABEL_PATTERN = fuzzy_phrase_pattern("заказ", "наряд")
+REVERSED_ORDER_LABEL_PATTERN = fuzzy_phrase_pattern("наряд", "заказ")
+DATE_LABEL_PATTERN = fuzzy_word_pattern("дата")
+FROM_LABEL_PATTERN = fuzzy_word_pattern("от")
+MILEAGE_LABEL_PATTERN = fuzzy_word_pattern("пробег")
+ODOMETER_LABEL_PATTERN = fuzzy_word_pattern("одометр")
+SERVICE_LABEL_PATTERN = "|".join(
+    [
+        fuzzy_word_pattern("сервис"),
+        fuzzy_word_pattern("сто"),
+        fuzzy_word_pattern("исполнитель"),
+        fuzzy_word_pattern("подрядчик"),
+    ]
+)
+WORK_TOTAL_LABEL_PATTERN = "|".join(
+    [
+        fuzzy_phrase_pattern("работы", "итого"),
+        fuzzy_phrase_pattern("стоимость", "работ"),
+        fuzzy_phrase_pattern("итого", "работ"),
+    ]
+)
+PARTS_TOTAL_LABEL_PATTERN = "|".join(
+    [
+        fuzzy_phrase_pattern("запчасти", "итого"),
+        fuzzy_phrase_pattern("материалы", "итого"),
+        fuzzy_phrase_pattern("стоимость", "запчастей"),
+        fuzzy_phrase_pattern("стоимость", "материалов"),
+        fuzzy_word_pattern("запчасти"),
+        fuzzy_word_pattern("материалы"),
+    ]
+)
+VAT_LABEL_PATTERN = fuzzy_word_pattern("ндс")
+GRAND_TOTAL_LABEL_PATTERN = "|".join(
+    [
+        fuzzy_phrase_pattern("итого", "к", "оплате"),
+        fuzzy_phrase_pattern("к", "оплате"),
+        fuzzy_word_pattern("итого"),
+        fuzzy_word_pattern("всего"),
+    ]
+)
+
 ORDER_PATTERNS = [
-    r"(?:заказ[\s-]*наряд|наряд[\s-]*заказ)\s*(?:№|N|#)?\s*([A-Za-zА-Яа-я0-9/_-]{3,})",
+    rf"(?:{ORDER_LABEL_PATTERN}|{REVERSED_ORDER_LABEL_PATTERN})\s*(?:№|N|#)?\s*([A-Za-zА-Яа-я0-9/_-]{{3,}})",
     r"\b(?:№|N|#)\s*([A-Za-zА-Яа-я0-9/_-]{4,})",
     r"\b([A-Z]{2,}[A-Z0-9/_-]*-\d{2,})\b",
 ]
 DATE_PATTERNS = [
-    r"(?:дата|от)\s*[:№]?\s*(\d{2}[./-]\d{2}[./-]\d{4})",
-    r"\b(\d{2}[./-]\d{2}[./-]\d{4})\b",
+    rf"(?:{DATE_LABEL_PATTERN}|{FROM_LABEL_PATTERN})\s*[:№]?\s*(\d{{2}}[./-]\d{{2}}[./-]\d{{2,4}})",
+    r"\b(\d{2}[./-]\d{2}[./-]\d{2,4})\b",
 ]
 MILEAGE_PATTERNS = [
-    r"(?:пробег|одометр)\D{0,20}(\d[\d\s]{2,})",
+    rf"(?:{MILEAGE_LABEL_PATTERN}|{ODOMETER_LABEL_PATTERN})\D{{0,20}}(\d[\d\s]{{2,}})",
 ]
 PLATE_PATTERNS = [
     r"\b([А-ЯA-Z]\d{3}[А-ЯA-Z]{2}\d{2,3})\b",
@@ -58,20 +137,20 @@ VIN_PATTERNS = [
     r"\b([A-HJ-NPR-Z0-9]{17})\b",
 ]
 SERVICE_PATTERNS = [
-    r"(?:сервис|сто|исполнитель|подрядчик)\b\s*[:№]?\s*([^\n\r]{3,120})",
+    rf"(?:{SERVICE_LABEL_PATTERN})\b\s*[:№]?\s*([^\n\r]{{3,120}})",
 ]
 TOTAL_PATTERNS = {
     "work_total": [
-        r"(?:работы\s+итого|стоимость\s+работ|итого\s+работ)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)(?=\s*(?:запчаст|материал|ндс|итого|сервис|сто|$))",
+        rf"(?:{WORK_TOTAL_LABEL_PATTERN})\b[^\d\r\n]{{0,20}}(\d[\d\s]*(?:[.,]\d{{2}})?)(?=\s*(?:запчаст|материал|ндс|итого|сервис|сто|$))",
     ],
     "parts_total": [
-        r"(?:запчасти\s+итого|материалы\s+итого|стоимость\s+запчастей|стоимость\s+материалов|запчасти|материалы)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)(?=\s*(?:ндс|итого|сервис|сто|$))",
+        rf"(?:{PARTS_TOTAL_LABEL_PATTERN})\b[^\d\r\n]{{0,20}}(\d[\d\s]*(?:[.,]\d{{2}})?)(?=\s*(?:ндс|итого|сервис|сто|$))",
     ],
     "vat_total": [
-        r"(?:ндс)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)(?=\s*(?:итого|сервис|сто|$))",
+        rf"(?:{VAT_LABEL_PATTERN})\b[^\d\r\n]{{0,20}}(\d[\d\s]*(?:[.,]\d{{2}})?)(?=\s*(?:итого|сервис|сто|$))",
     ],
     "grand_total": [
-        r"(?:итого\s+к\s+оплате|к\s+оплате|итого|всего)\b[^\d\r\n]{0,20}(\d[\d\s]*(?:[.,]\d{2})?)(?=\s*(?:сервис|сто|$))",
+        rf"(?:{GRAND_TOTAL_LABEL_PATTERN})\b[^\d\r\n]{{0,20}}(\d[\d\s]*(?:[.,]\d{{2}})?)(?=\s*(?:сервис|сто|$))",
     ],
 }
 LINE_ITEM_PATTERN = re.compile(
@@ -127,7 +206,20 @@ ITEM_UNIT_MARKERS = {
 }
 ARTICLE_TOKEN_PATTERN = re.compile(r"^(?=.*[\d-])[A-Za-zА-Яа-я0-9/_-]{3,}$")
 TEXT_KEYWORD_PATTERN = re.compile(
-    r"(заказ|наряд|дата|госномер|пробег|работ|запчаст|итого|сервис|ндс)",
+    "|".join(
+        [
+            fuzzy_word_pattern("заказ"),
+            fuzzy_word_pattern("наряд"),
+            fuzzy_word_pattern("дата"),
+            fuzzy_word_pattern("госномер"),
+            fuzzy_word_pattern("пробег"),
+            fuzzy_word_pattern("работ"),
+            fuzzy_word_pattern("запчаст"),
+            fuzzy_word_pattern("итого"),
+            fuzzy_word_pattern("сервис"),
+            fuzzy_word_pattern("ндс"),
+        ]
+    ),
     re.IGNORECASE,
 )
 TEXT_CHAR_REPLACEMENTS = str.maketrans(
@@ -224,7 +316,7 @@ def parse_amount(value: str) -> Optional[float]:
 
 
 def parse_date_value(value: str) -> Optional[date]:
-    for fmt in ("%d.%m.%Y", "%d-%m-%Y", "%d/%m/%Y"):
+    for fmt in ("%d.%m.%Y", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%y", "%d-%m-%y", "%d/%m/%y"):
         try:
             return datetime.strptime(value, fmt).date()
         except ValueError:

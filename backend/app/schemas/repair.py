@@ -60,6 +60,15 @@ class RepairServiceRead(BaseModel):
     city: Optional[str]
 
 
+class RepairHistoryEntryRead(BaseModel):
+    id: int
+    action_type: str
+    created_at: datetime
+    user_name: Optional[str]
+    old_value: Optional[dict]
+    new_value: Optional[dict]
+
+
 class RepairDetailResponse(BaseModel):
     id: int
     order_number: Optional[str]
@@ -82,6 +91,7 @@ class RepairDetailResponse(BaseModel):
     works: list[RepairWorkRead]
     parts: list[RepairPartRead]
     checks: list[RepairCheckRead]
+    history: list[RepairHistoryEntryRead]
 
 
 class RepairWorkUpdateInput(BaseModel):

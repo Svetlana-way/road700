@@ -173,6 +173,14 @@ type RepairDetail = {
     is_resolved: boolean;
     created_at: string;
   }>;
+  history: Array<{
+    id: number;
+    action_type: string;
+    created_at: string;
+    user_name: string | null;
+    old_value: Record<string, unknown> | null;
+    new_value: Record<string, unknown> | null;
+  }>;
 };
 
 type EditableWorkDraft = {
@@ -326,6 +334,13 @@ function createRepairDraft(repair: RepairDetail): EditableRepairDraft {
       status: item.status,
     })),
   };
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("ru-RU", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 async function apiRequest<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
@@ -1483,6 +1498,32 @@ export default function App() {
                                 ))
                               ) : (
                                 <Typography className="muted-copy">Подозрительные проверки не найдены.</Typography>
+                              )}
+                            </Stack>
+
+                            <Stack spacing={1}>
+                              <Typography variant="h6">История изменений</Typography>
+                              {selectedRepair.history.length > 0 ? (
+                                selectedRepair.history.map((entry) => (
+                                  <Paper className="repair-line" key={entry.id} elevation={0}>
+                                    <Stack spacing={1}>
+                                      <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                                        <Typography>
+                                          {entry.user_name || "Система"} · {formatStatus(entry.action_type)}
+                                        </Typography>
+                                        <Typography className="muted-copy">{formatDateTime(entry.created_at)}</Typography>
+                                      </Stack>
+                                      <Typography className="muted-copy">
+                                        Было: {String(entry.old_value?.order_number || "без номера")} · {formatMoney(Number(entry.old_value?.grand_total || 0)) || "—"}
+                                      </Typography>
+                                      <Typography className="muted-copy">
+                                        Стало: {String(entry.new_value?.order_number || "без номера")} · {formatMoney(Number(entry.new_value?.grand_total || 0)) || "—"}
+                                      </Typography>
+                                    </Stack>
+                                  </Paper>
+                                ))
+                              ) : (
+                                <Typography className="muted-copy">История изменений пока пуста.</Typography>
                               )}
                             </Stack>
                           </>

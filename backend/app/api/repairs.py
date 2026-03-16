@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.access import get_allowed_vehicle_ids_query
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.models.audit import AuditLog
 from app.models.enums import UserRole
 from app.models.repair import Repair, RepairPart, RepairWork
 from app.models.user import User
@@ -14,7 +15,62 @@ from app.services.document_processing import replace_ocr_checks, resolve_service
 router = APIRouter(prefix="/repairs", tags=["repairs"])
 
 
-def serialize_repair(repair: Repair) -> RepairDetailResponse:
+def build_repair_snapshot(repair: Repair) -> dict:
+    return {
+        "order_number": repair.order_number,
+        "repair_date": repair.repair_date.isoformat(),
+        "mileage": repair.mileage,
+        "reason": repair.reason,
+        "employee_comment": repair.employee_comment,
+        "service_name": repair.service.name if repair.service is not None else None,
+        "work_total": float(repair.work_total),
+        "parts_total": float(repair.parts_total),
+        "vat_total": float(repair.vat_total),
+        "grand_total": float(repair.grand_total),
+        "status": repair.status.value,
+        "is_preliminary": repair.is_preliminary,
+        "works": [
+            {
+                "work_code": item.work_code,
+                "work_name": item.work_name,
+                "quantity": item.quantity,
+                "standard_hours": item.standard_hours,
+                "actual_hours": item.actual_hours,
+                "price": float(item.price),
+                "line_total": float(item.line_total),
+                "status": item.status.value,
+            }
+            for item in sorted(repair.works, key=lambda item: item.id)
+        ],
+        "parts": [
+            {
+                "article": item.article,
+                "part_name": item.part_name,
+                "quantity": item.quantity,
+                "unit_name": item.unit_name,
+                "price": float(item.price),
+                "line_total": float(item.line_total),
+                "status": item.status.value,
+            }
+            for item in sorted(repair.parts, key=lambda item: item.id)
+        ],
+    }
+
+
+def fetch_repair_history(db: Session, repair_id: int) -> list[AuditLog]:
+    stmt = (
+        select(AuditLog)
+        .options(joinedload(AuditLog.user))
+        .where(
+            AuditLog.entity_type == "repair",
+            AuditLog.entity_id == str(repair_id),
+        )
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+    )
+    return db.execute(stmt).scalars().all()
+
+
+def serialize_repair(repair: Repair, history_entries: list[AuditLog]) -> RepairDetailResponse:
     return RepairDetailResponse(
         id=repair.id,
         order_number=repair.order_number,
@@ -50,6 +106,17 @@ def serialize_repair(repair: Repair) -> RepairDetailResponse:
         works=sorted(repair.works, key=lambda item: item.id),
         parts=sorted(repair.parts, key=lambda item: item.id),
         checks=sorted(repair.checks, key=lambda item: item.id),
+        history=[
+            {
+                "id": entry.id,
+                "action_type": entry.action_type,
+                "created_at": entry.created_at,
+                "user_name": entry.user.full_name if entry.user is not None else None,
+                "old_value": entry.old_value,
+                "new_value": entry.new_value,
+            }
+            for entry in history_entries
+        ],
     )
 
 
@@ -119,7 +186,8 @@ def get_repair(
     if repair is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
 
-    return serialize_repair(repair)
+    history_entries = fetch_repair_history(db, repair.id)
+    return serialize_repair(repair, history_entries)
 
 
 @router.patch("/{repair_id}", response_model=RepairDetailResponse)
@@ -127,7 +195,7 @@ def update_repair(
     repair_id: int,
     payload: RepairUpdateRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    current_admin: User = Depends(get_current_admin),
 ) -> RepairDetailResponse:
     stmt = (
         select(Repair)
@@ -143,6 +211,7 @@ def update_repair(
     repair = db.execute(stmt).unique().scalar_one_or_none()
     if repair is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
+    old_snapshot = build_repair_snapshot(repair)
 
     update_data = payload.model_dump(exclude_unset=True)
     for field_name in (
@@ -180,4 +249,17 @@ def update_repair(
     refreshed = db.execute(stmt).unique().scalar_one_or_none()
     if refreshed is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repair could not be reloaded")
-    return serialize_repair(refreshed)
+    new_snapshot = build_repair_snapshot(refreshed)
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="repair",
+            entity_id=str(refreshed.id),
+            action_type="manual_update",
+            old_value=old_snapshot,
+            new_value=new_snapshot,
+        )
+    )
+    db.commit()
+    history_entries = fetch_repair_history(db, refreshed.id)
+    return serialize_repair(refreshed, history_entries)

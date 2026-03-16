@@ -107,6 +107,52 @@ type DocumentsResponse = {
   items: DocumentItem[];
 };
 
+type ReviewPriorityBucket = "review" | "critical" | "suspicious";
+
+type ReviewQueueItem = {
+  priority_score: number;
+  priority_bucket: ReviewPriorityBucket;
+  issue_count: number;
+  issue_titles: string[];
+  manual_review_reasons: string[];
+  extracted_order_number: string | null;
+  extracted_grand_total: number | null;
+  document: {
+    id: number;
+    original_filename: string;
+    source_type: string;
+    status: DocumentStatus;
+    created_at: string;
+    updated_at: string;
+    ocr_confidence: number | null;
+    review_queue_priority: number;
+  };
+  repair: {
+    id: number;
+    order_number: string | null;
+    repair_date: string;
+    mileage: number;
+    status: string;
+    is_partially_recognized: boolean;
+    unresolved_checks_total: number;
+    suspicious_checks_total: number;
+  };
+  vehicle: {
+    id: number;
+    vehicle_type: VehicleType;
+    plate_number: string | null;
+    brand: string | null;
+    model: string | null;
+  };
+};
+
+type ReviewQueueResponse = {
+  items: ReviewQueueItem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 type LoginResponse = {
   access_token: string;
 };
@@ -300,6 +346,26 @@ function checkSeverityColor(severity: CheckSeverity): "default" | "success" | "e
   return "default";
 }
 
+function reviewPriorityColor(bucket: ReviewPriorityBucket): "default" | "error" | "warning" {
+  if (bucket === "suspicious") {
+    return "error";
+  }
+  if (bucket === "critical") {
+    return "warning";
+  }
+  return "default";
+}
+
+function formatReviewPriority(bucket: ReviewPriorityBucket) {
+  if (bucket === "suspicious") {
+    return "Подозрительно";
+  }
+  if (bucket === "critical") {
+    return "Критично";
+  }
+  return "Проверить";
+}
+
 function createRepairDraft(repair: RepairDetail): EditableRepairDraft {
   return {
     order_number: repair.order_number || "",
@@ -343,6 +409,13 @@ function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
+function formatConfidence(value: number | null) {
+  if (typeof value !== "number") {
+    return "—";
+  }
+  return `${Math.round(value * 100)}%`;
+}
+
 async function apiRequest<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers ?? {});
   if (token) {
@@ -371,6 +444,7 @@ export default function App() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
   const [selectedRepair, setSelectedRepair] = useState<RepairDetail | null>(null);
   const [repairDraft, setRepairDraft] = useState<EditableRepairDraft | null>(null);
@@ -391,19 +465,25 @@ export default function App() {
   async function loadWorkspace(activeToken: string) {
     setBootLoading(true);
     try {
-      const [me, dashboard, vehicleList, recentDocuments] = await Promise.all([
+      const [me, dashboard, vehicleList, recentDocuments, reviewQueueData] = await Promise.all([
         apiRequest<User>("/auth/me", { method: "GET" }, activeToken),
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
         apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
         apiRequest<DocumentsResponse>("/documents?limit=8", { method: "GET" }, activeToken),
+        apiRequest<ReviewQueueResponse>("/review/queue?limit=6", { method: "GET" }, activeToken),
       ]);
 
       setUser(me);
       setSummary(dashboard);
       setVehicles(vehicleList.items);
       setDocuments(recentDocuments.items);
-      if (recentDocuments.items.length > 0 && selectedDocumentId === null) {
-        setSelectedDocumentId(recentDocuments.items[0].id);
+      setReviewQueue(reviewQueueData.items);
+      if (selectedDocumentId === null) {
+        const defaultDocumentId =
+          reviewQueueData.items[0]?.document.id ?? recentDocuments.items[0]?.id ?? null;
+        if (defaultDocumentId !== null) {
+          setSelectedDocumentId(defaultDocumentId);
+        }
       }
       setErrorMessage("");
     } catch (error) {
@@ -425,6 +505,7 @@ export default function App() {
       setSummary(null);
       setVehicles([]);
       setDocuments([]);
+      setReviewQueue([]);
       setSelectedDocumentId(null);
       setSelectedRepair(null);
       return;
@@ -438,13 +519,17 @@ export default function App() {
       return;
     }
 
-    const selectedDocument = documents.find((item) => item.id === selectedDocumentId);
-    if (!selectedDocument) {
+    const selectedRepairId =
+      documents.find((item) => item.id === selectedDocumentId)?.repair.id ??
+      reviewQueue.find((item) => item.document.id === selectedDocumentId)?.repair.id;
+
+    if (!selectedRepairId) {
+      setSelectedRepair(null);
       return;
     }
 
     setRepairLoading(true);
-    void apiRequest<RepairDetail>(`/repairs/${selectedDocument.repair.id}`, { method: "GET" }, token)
+    void apiRequest<RepairDetail>(`/repairs/${selectedRepairId}`, { method: "GET" }, token)
       .then((payload) => {
         setSelectedRepair(payload);
         if (!isEditingRepair) {
@@ -457,7 +542,7 @@ export default function App() {
       .finally(() => {
         setRepairLoading(false);
       });
-  }, [documents, isEditingRepair, selectedDocumentId, token]);
+  }, [documents, isEditingRepair, reviewQueue, selectedDocumentId, token]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -530,15 +615,15 @@ export default function App() {
     }
   }
 
-  async function handleOpenRepair(document: DocumentItem) {
-    setSelectedDocumentId(document.id);
+  async function openRepairByIds(documentId: number, repairId: number) {
+    setSelectedDocumentId(documentId);
     if (!token) {
       return;
     }
     setRepairLoading(true);
     setErrorMessage("");
     try {
-      const payload = await apiRequest<RepairDetail>(`/repairs/${document.repair.id}`, { method: "GET" }, token);
+      const payload = await apiRequest<RepairDetail>(`/repairs/${repairId}`, { method: "GET" }, token);
       setSelectedRepair(payload);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load repair");
@@ -547,7 +632,15 @@ export default function App() {
     }
   }
 
-  async function handleReprocessDocument(document: DocumentItem) {
+  async function handleOpenRepair(document: DocumentItem) {
+    await openRepairByIds(document.id, document.repair.id);
+  }
+
+  async function handleOpenReviewQueueItem(item: ReviewQueueItem) {
+    await openRepairByIds(item.document.id, item.repair.id);
+  }
+
+  async function handleReprocessDocumentById(documentId: number, repairId: number) {
     if (!token) {
       return;
     }
@@ -556,18 +649,22 @@ export default function App() {
     setSuccessMessage("");
     try {
       const result = await apiRequest<{ message: string }>(
-        `/documents/${document.id}/process`,
+        `/documents/${documentId}/process`,
         { method: "POST" },
         token,
       );
       setSuccessMessage(result.message);
       await loadWorkspace(token);
-      await handleOpenRepair(document);
+      await openRepairByIds(documentId, repairId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to reprocess document");
     } finally {
       setReprocessLoading(false);
     }
+  }
+
+  async function handleReprocessDocument(document: DocumentItem) {
+    await handleReprocessDocumentById(document.id, document.repair.id);
   }
 
   function handleStartRepairEdit() {
@@ -1030,6 +1127,94 @@ export default function App() {
 
             <Grid item xs={12} lg={5}>
               <Stack spacing={3}>
+                <Paper className="workspace-panel" elevation={0}>
+                  <Stack spacing={2}>
+                    <Box>
+                      <Typography variant="h5">Очередь проверки</Typography>
+                      <Typography className="muted-copy">
+                        Сначала показываются подозрительные и проблемные заказ-наряды по доступной технике.
+                      </Typography>
+                    </Box>
+                    <Stack spacing={1.5}>
+                      {reviewQueue.map((item) => (
+                        <Paper className="document-row" key={`review-${item.document.id}`} elevation={0}>
+                          <Stack spacing={1.25}>
+                            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                              <Typography variant="subtitle1">{item.document.original_filename}</Typography>
+                              <Stack direction="row" spacing={1}>
+                                <Chip
+                                  size="small"
+                                  color={reviewPriorityColor(item.priority_bucket)}
+                                  label={formatReviewPriority(item.priority_bucket)}
+                                />
+                                <Chip
+                                  size="small"
+                                  color={statusColor(item.document.status)}
+                                  label={formatStatus(item.document.status)}
+                                />
+                              </Stack>
+                            </Stack>
+                            <Typography className="muted-copy">{formatVehicle(item.vehicle)}</Typography>
+                            <Typography className="muted-copy">
+                              Ремонт #{item.repair.id}
+                              {item.repair.order_number ? ` · ${item.repair.order_number}` : ""}
+                              {" · "}
+                              {item.repair.repair_date}
+                              {" · "}
+                              пробег {item.repair.mileage}
+                            </Typography>
+                            <Typography className="muted-copy">
+                              Приоритет {item.priority_score} · OCR {formatConfidence(item.document.ocr_confidence)} · нерешённых проверок {item.repair.unresolved_checks_total}
+                            </Typography>
+                            {item.extracted_order_number ? (
+                              <Typography className="muted-copy">
+                                OCR: заказ-наряд {item.extracted_order_number}
+                                {item.extracted_grand_total !== null
+                                  ? ` · итог ${formatMoney(item.extracted_grand_total)}`
+                                  : ""}
+                              </Typography>
+                            ) : null}
+                            {item.issue_titles.length > 0 ? (
+                              <Typography className="muted-copy">
+                                Требует внимания: {item.issue_titles.slice(0, 3).join(", ")}
+                                {item.issue_titles.length > 3 ? ` и ещё ${item.issue_titles.length - 3}` : ""}
+                              </Typography>
+                            ) : null}
+                            <Stack direction="row" spacing={1} flexWrap="wrap">
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={() => {
+                                  void handleOpenReviewQueueItem(item);
+                                }}
+                              >
+                                Открыть ремонт
+                              </Button>
+                              {user?.role === "admin" ? (
+                                <Button
+                                  size="small"
+                                  variant="text"
+                                  disabled={reprocessLoading}
+                                  onClick={() => {
+                                    void handleReprocessDocumentById(item.document.id, item.repair.id);
+                                  }}
+                                >
+                                  {reprocessLoading && selectedDocumentId === item.document.id ? "Повтор..." : "Повторить OCR"}
+                                </Button>
+                              ) : null}
+                            </Stack>
+                          </Stack>
+                        </Paper>
+                      ))}
+                      {reviewQueue.length === 0 ? (
+                        <Typography className="muted-copy">
+                          Очередь проверки сейчас пустая.
+                        </Typography>
+                      ) : null}
+                    </Stack>
+                  </Stack>
+                </Paper>
+
                 <Paper className="workspace-panel" elevation={0}>
                   <Stack spacing={2}>
                     <Box>

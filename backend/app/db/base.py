@@ -2,6 +2,7 @@ from app.models.base import Base
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
 from app.models.imports import ImportConflict, ImportJob
+from app.models.labor_norm import LaborNorm
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
 from app.models.user import User
@@ -14,6 +15,7 @@ __all__ = [
     "DocumentVersion",
     "ImportConflict",
     "ImportJob",
+    "LaborNorm",
     "Repair",
     "RepairCheck",
     "RepairPart",
@@ -24,4 +26,3 @@ __all__ = [
     "VehicleAssignmentHistory",
     "VehicleLinkHistory",
 ]
-

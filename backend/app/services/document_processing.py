@@ -33,6 +33,11 @@ from app.models.enums import (
 from app.models.imports import ImportJob
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
+from app.services.labor_norms import (
+    build_normalized_name,
+    find_best_labor_norm_match,
+    normalize_labor_norm_code,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -765,6 +770,92 @@ def reconcile_header_totals_with_line_items(
     return notes
 
 
+def enrich_work_payloads_with_labor_norms(
+    db: Session,
+    works_payload: list[dict[str, object]],
+) -> list[str]:
+    notes: list[str] = []
+    for item in works_payload:
+        work_name = str(item.get("work_name") or "").strip()
+        if not work_name:
+            continue
+
+        work_code = normalize_labor_norm_code(str(item.get("work_code"))) if item.get("work_code") else None
+        if work_code:
+            item["work_code"] = work_code
+
+        reference_payload = item.get("reference_payload")
+        if not isinstance(reference_payload, dict):
+            reference_payload = {}
+        reference_payload["normalized_work_name"] = build_normalized_name(work_name)
+
+        match = find_best_labor_norm_match(
+            db,
+            work_code=work_code,
+            work_name=work_name,
+        )
+        if match is None:
+            item["reference_payload"] = reference_payload
+            continue
+
+        item["standard_hours"] = float(match.norm.standard_hours)
+        if not item.get("work_code"):
+            item["work_code"] = match.norm.code
+        reference_payload.update(
+            {
+                "labor_norm_id": match.norm.id,
+                "labor_norm_code": match.norm.code,
+                "labor_norm_name": match.norm.name_ru,
+                "labor_norm_category": match.norm.category,
+                "labor_norm_standard_hours": float(match.norm.standard_hours),
+                "labor_norm_match_score": match.score,
+                "labor_norm_matched_by": match.matched_by,
+            }
+        )
+        item["reference_payload"] = reference_payload
+        notes.append(f"labor_norm_match:{match.norm.code}")
+    return notes
+
+
+def build_standard_hours_checks(
+    works_payload: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    checks: list[dict[str, object]] = []
+    for item in works_payload:
+        normalized_unit_name = normalize_unit_name(str(item.get("unit_name")) if item.get("unit_name") else None)
+        actual_hours = item.get("actual_hours")
+        if actual_hours is None and normalized_unit_name in {"нч", "ч"} and item.get("quantity") is not None:
+            actual_hours = float(item["quantity"])
+        standard_hours = item.get("standard_hours")
+        if actual_hours is None or standard_hours is None:
+            continue
+
+        actual_value = float(actual_hours)
+        standard_value = float(standard_hours)
+        if standard_value <= 0 or actual_value <= round(standard_value * 1.1, 2):
+            continue
+
+        checks.append(
+            {
+                "check_type": "ocr_standard_hours_exceeded",
+                "severity": CheckSeverity.SUSPICIOUS,
+                "title": "Фактические часы превышают норматив",
+                "details": (
+                    f"{item.get('work_name', 'Работа')} · факт {actual_value:.2f} ч, "
+                    f"норма {standard_value:.2f} ч"
+                ),
+                "payload": {
+                    "work_code": item.get("work_code"),
+                    "work_name": item.get("work_name"),
+                    "actual_hours": actual_value,
+                    "standard_hours": standard_value,
+                    "reference_payload": item.get("reference_payload"),
+                },
+            }
+        )
+    return checks
+
+
 def decode_pdf_literal(raw_text: bytes) -> bytes:
     return (
         raw_text.replace(b"\\(", b"(")
@@ -1140,6 +1231,16 @@ def replace_repair_lines(
 
     for item in works_payload:
         normalized_unit_name = normalize_unit_name(str(item.get("unit_name")) if item.get("unit_name") else None)
+        reference_payload = item.get("reference_payload")
+        if not isinstance(reference_payload, dict):
+            reference_payload = {}
+        reference_payload.update(
+            {
+                "source": "ocr",
+                "unit_name": normalized_unit_name,
+                "normalized": True,
+            }
+        )
         db.add(
             RepairWork(
                 repair_id=repair.id,
@@ -1147,14 +1248,11 @@ def replace_repair_lines(
                 work_name=str(item["work_name"]),
                 quantity=float(item["quantity"]),
                 actual_hours=float(item["quantity"]) if normalized_unit_name in {"нч", "ч"} else None,
+                standard_hours=float(item["standard_hours"]) if item.get("standard_hours") is not None else None,
                 price=float(item["price"]),
                 line_total=float(item["line_total"]),
                 status=CatalogStatus.PRELIMINARY,
-                reference_payload={
-                    "source": "ocr",
-                    "unit_name": normalized_unit_name,
-                    "normalized": True,
-                },
+                reference_payload=reference_payload,
             )
         )
 
@@ -1247,6 +1345,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         confidence_map = parsed["confidence_map"]
         manual_review_reasons = parsed["manual_review_reasons"]
         normalization_notes = parsed.get("normalization_notes", [])
+        normalization_notes.extend(enrich_work_payloads_with_labor_norms(db, extracted_items["works"]))
         repair = document.repair
         checks = []
 
@@ -1297,6 +1396,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
 
         works_sum = round(sum(float(item["line_total"]) for item in extracted_items["works"]), 2)
         parts_sum = round(sum(float(item["line_total"]) for item in extracted_items["parts"]), 2)
+        checks.extend(build_standard_hours_checks(extracted_items["works"]))
         if extracted_items["works"] and "work_total" in extracted_fields:
             if abs(works_sum - float(extracted_fields["work_total"])) > 0.01:
                 checks.append(

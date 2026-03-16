@@ -1,0 +1,153 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+from openpyxl import load_workbook
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.db.session import SessionLocal
+from app.models.enums import CatalogStatus
+from app.models.labor_norm import LaborNorm
+from app.services.labor_norms import (
+    build_normalized_name,
+    build_search_text,
+    default_labor_norms_path,
+    normalize_labor_norm_code,
+)
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_LABOR_NORMS_PATH = default_labor_norms_path(PROJECT_ROOT)
+SKIPPED_SHEETS = {"Лист1", "00 Все нормы времени"}
+
+
+@dataclass
+class ImportStats:
+    created: int = 0
+    updated: int = 0
+    skipped: int = 0
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "created": self.created,
+            "updated": self.updated,
+            "skipped": self.skipped,
+        }
+
+
+def normalize_text(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith(".0") and text.replace(".", "", 1).isdigit():
+        text = text[:-2]
+    return text
+
+
+def normalize_hours(value: object) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return round(float(value), 2)
+    text = normalize_text(value)
+    if not text:
+        return None
+    try:
+        return round(float(text.replace(",", ".")), 2)
+    except ValueError:
+        return None
+
+
+def upsert_labor_norm(
+    db: Session,
+    *,
+    code: str,
+    category: str,
+    name_ru: str,
+    name_ru_alt: Optional[str],
+    name_cn: Optional[str],
+    name_en: Optional[str],
+    standard_hours: float,
+    source_sheet: str,
+    source_file: str,
+    stats: ImportStats,
+) -> None:
+    existing = db.scalar(select(LaborNorm).where(LaborNorm.code == code))
+    is_new = existing is None
+    labor_norm = existing or LaborNorm(code=code)
+
+    labor_norm.category = category
+    labor_norm.name_ru = name_ru
+    labor_norm.name_ru_alt = name_ru_alt
+    labor_norm.name_cn = name_cn
+    labor_norm.name_en = name_en
+    labor_norm.normalized_name = build_normalized_name(name_ru, name_ru_alt, name_en)
+    labor_norm.search_text = build_search_text(code, category, name_ru, name_ru_alt, name_en, name_cn)
+    labor_norm.standard_hours = standard_hours
+    labor_norm.source_sheet = source_sheet
+    labor_norm.source_file = source_file
+    labor_norm.status = CatalogStatus.CONFIRMED
+
+    db.add(labor_norm)
+    db.flush()
+
+    if is_new:
+        stats.created += 1
+    else:
+        stats.updated += 1
+
+
+def import_labor_norms_with_session(
+    db: Session,
+    path: Path = DEFAULT_LABOR_NORMS_PATH,
+) -> ImportStats:
+    workbook = load_workbook(path, data_only=True, read_only=True)
+    stats = ImportStats()
+
+    for sheet_name in workbook.sheetnames:
+        if sheet_name in SKIPPED_SHEETS:
+            continue
+        worksheet = workbook[sheet_name]
+        for row in worksheet.iter_rows(values_only=True):
+            code = normalize_labor_norm_code(normalize_text(row[0] if len(row) > 0 else None))
+            name_ru = normalize_text(row[1] if len(row) > 1 else None)
+            name_cn = normalize_text(row[2] if len(row) > 2 else None)
+            name_en = normalize_text(row[3] if len(row) > 3 else None)
+            standard_hours = normalize_hours(row[4] if len(row) > 4 else None)
+            name_ru_alt = normalize_text(row[5] if len(row) > 5 else None)
+
+            if not code or not name_ru or standard_hours is None:
+                stats.skipped += 1
+                continue
+
+            upsert_labor_norm(
+                db,
+                code=code,
+                category=sheet_name,
+                name_ru=name_ru,
+                name_ru_alt=name_ru_alt,
+                name_cn=name_cn,
+                name_en=name_en,
+                standard_hours=standard_hours,
+                source_sheet=sheet_name,
+                source_file=path.name,
+                stats=stats,
+            )
+
+    db.commit()
+    return stats
+
+
+def main() -> None:
+    with SessionLocal() as db:
+        stats = import_labor_norms_with_session(db)
+    print(stats.as_dict())
+
+
+if __name__ == "__main__":
+    main()

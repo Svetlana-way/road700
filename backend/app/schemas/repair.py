@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import CatalogStatus, CheckSeverity, RepairStatus
+from app.models.enums import CatalogStatus, CheckSeverity, DocumentKind, RepairStatus
 
 
 class RepairWorkRead(BaseModel):
@@ -81,6 +81,7 @@ class RepairDocumentRead(BaseModel):
     id: int
     original_filename: str
     source_type: str
+    kind: DocumentKind
     mime_type: Optional[str]
     status: str
     is_primary: bool

@@ -40,6 +40,13 @@ class DocumentStatus(str, enum.Enum):
     ARCHIVED = "archived"
 
 
+class DocumentKind(str, enum.Enum):
+    ORDER = "order"
+    REPEAT_SCAN = "repeat_scan"
+    ATTACHMENT = "attachment"
+    CONFIRMATION = "confirmation"
+
+
 class ServiceStatus(str, enum.Enum):
     PRELIMINARY = "preliminary"
     CONFIRMED = "confirmed"
@@ -66,4 +73,3 @@ class ImportStatus(str, enum.Enum):
     COMPLETED = "completed"
     COMPLETED_WITH_CONFLICTS = "completed_with_conflicts"
     FAILED = "failed"
-

@@ -8,7 +8,7 @@ from app.api.access import get_allowed_vehicle_ids_query
 from app.api.deps import get_current_active_user, get_db
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
-from app.models.enums import CheckSeverity, DocumentStatus, RepairStatus, UserRole
+from app.models.enums import CheckSeverity, DocumentKind, DocumentStatus, RepairStatus, UserRole
 from app.models.repair import Repair, RepairCheck
 from app.models.user import User
 from app.schemas.review import ReviewActionRequest, ReviewActionResponse, ReviewQueueResponse
@@ -21,6 +21,10 @@ REVIEWABLE_DOCUMENT_STATUSES = (
     DocumentStatus.PARTIALLY_RECOGNIZED,
     DocumentStatus.NEEDS_REVIEW,
     DocumentStatus.OCR_ERROR,
+)
+REVIEWABLE_DOCUMENT_KINDS = (
+    DocumentKind.ORDER,
+    DocumentKind.REPEAT_SCAN,
 )
 REVIEWABLE_REPAIR_STATUSES = (
     RepairStatus.IN_REVIEW,
@@ -192,6 +196,7 @@ def build_repair_state_snapshot(document: Document) -> dict:
     ]
     return {
         "document_status": document.status.value,
+        "document_kind": document.kind.value,
         "review_queue_priority": document.review_queue_priority,
         "document_notes": document.notes,
         "repair_status": repair.status.value,
@@ -285,6 +290,7 @@ def serialize_review_item(document: Document) -> dict:
             "id": document.id,
             "original_filename": document.original_filename,
             "source_type": document.source_type,
+            "kind": document.kind,
             "status": document.status,
             "created_at": document.created_at,
             "updated_at": document.updated_at,
@@ -344,9 +350,13 @@ def get_review_queue(
             joinedload(Document.repair).joinedload(Repair.checks),
             joinedload(Document.versions),
         )
-        .where(review_filter)
+        .where(Document.kind.in_(REVIEWABLE_DOCUMENT_KINDS), review_filter)
     )
-    count_stmt = select(func.count(Document.id)).join(Document.repair).where(review_filter)
+    count_stmt = (
+        select(func.count(Document.id))
+        .join(Document.repair)
+        .where(Document.kind.in_(REVIEWABLE_DOCUMENT_KINDS), review_filter)
+    )
 
     if current_user.role != UserRole.ADMIN:
         visible_vehicle_ids = get_allowed_vehicle_ids_query(current_user)

@@ -6,7 +6,7 @@ from sqlalchemy import Boolean, Enum, ForeignKey, Float, Integer, JSON, String, 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
-from app.models.enums import DocumentStatus
+from app.models.enums import DocumentKind, DocumentStatus
 
 
 class Document(Base, TimestampMixin):
@@ -19,6 +19,12 @@ class Document(Base, TimestampMixin):
     storage_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
     mime_type: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     source_type: Mapped[str] = mapped_column(String(50), nullable=False, default="pdf")
+    kind: Mapped[DocumentKind] = mapped_column(
+        Enum(DocumentKind),
+        nullable=False,
+        default=DocumentKind.ORDER,
+        index=True,
+    )
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(DocumentStatus),
         nullable=False,

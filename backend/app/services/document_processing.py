@@ -15,7 +15,15 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.document import Document, DocumentVersion
-from app.models.enums import CatalogStatus, CheckSeverity, DocumentStatus, ImportStatus, RepairStatus, ServiceStatus
+from app.models.enums import (
+    CatalogStatus,
+    CheckSeverity,
+    DocumentKind,
+    DocumentStatus,
+    ImportStatus,
+    RepairStatus,
+    ServiceStatus,
+)
 from app.models.imports import ImportJob
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
@@ -587,6 +595,46 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         if not storage_path.exists():
             raise FileNotFoundError(f"Source document file not found: {storage_path}")
 
+        if document.kind in {DocumentKind.ATTACHMENT, DocumentKind.CONFIRMATION}:
+            document.status = DocumentStatus.CONFIRMED
+            document.review_queue_priority = 0
+            document.ocr_confidence = None
+
+            version_number = max([version.version_number for version in document.versions], default=0) + 1
+            parsed_payload = {
+                "processor": "document_storage_only_v1",
+                "document_kind": document.kind.value,
+                "ocr_skipped": True,
+            }
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=version_number,
+                    storage_key=document.storage_key,
+                    parsed_payload=parsed_payload,
+                    field_confidence_map={},
+                    change_summary="Stored without OCR",
+                )
+            )
+            job.status = ImportStatus.COMPLETED
+            job.summary = {
+                "document_id": document.id,
+                "document_kind": document.kind.value,
+                "document_status": document.status.value,
+                "ocr_skipped": True,
+            }
+            job.error_message = None
+            db.commit()
+
+            refreshed_document = load_document_for_processing(db, document.id)
+            if refreshed_document is None:
+                raise ValueError("Processed document could not be reloaded")
+            return ProcessingResult(
+                document=refreshed_document,
+                job=job,
+                message="Document stored without OCR",
+            )
+
         text, extracted_from, extraction_failure_reason = extract_document_text(storage_path, document.source_type)
         parsed = parse_document_text(text) if text else {
             "extracted_fields": {},
@@ -738,6 +786,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         text_excerpt = normalize_text(text.replace("\n", " "))[:500] if text else None
         parsed_payload = {
             "processor": "hybrid_document_ocr_v1",
+            "document_kind": document.kind.value,
             "extracted_from": extracted_from,
             "text_length": len(text),
             "text_excerpt": text_excerpt,

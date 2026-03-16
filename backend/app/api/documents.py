@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.api.access import get_allowed_vehicle_ids_query
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.models.document import Document, DocumentVersion
-from app.models.enums import DocumentStatus, RepairStatus, UserRole
+from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, UserRole
 from app.models.repair import Repair
 from app.models.user import User
 from app.models.vehicle import Vehicle
@@ -68,6 +68,7 @@ def serialize_document(document: Document) -> DocumentRead:
         id=document.id,
         original_filename=document.original_filename,
         source_type=document.source_type,
+        kind=document.kind,
         mime_type=document.mime_type,
         status=document.status,
         is_primary=document.is_primary,
@@ -173,6 +174,7 @@ def upload_document(
     vehicle_id: int = Form(...),
     repair_date: date = Form(...),
     mileage: int = Form(...),
+    kind: DocumentKind = Form(default=DocumentKind.ORDER),
     order_number: Optional[str] = Form(default=None),
     reason: Optional[str] = Form(default=None),
     employee_comment: Optional[str] = Form(default=None),
@@ -181,6 +183,12 @@ def upload_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> DocumentUploadResponse:
+    if kind not in {DocumentKind.ORDER, DocumentKind.REPEAT_SCAN}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only order documents and repeat scans can create a new repair",
+        )
+
     vehicle = get_visible_vehicle(db, current_user, vehicle_id)
     if vehicle is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
@@ -216,6 +224,7 @@ def upload_document(
             storage_key=storage_key,
             mime_type=file.content_type,
             source_type=source_type,
+            kind=kind,
             status=DocumentStatus.UPLOADED,
             is_primary=True,
             review_queue_priority=100,
@@ -232,6 +241,7 @@ def upload_document(
                 storage_key=storage_key,
                 parsed_payload={
                     "pipeline": "uploaded",
+                    "document_kind": kind.value,
                     "ocr_status": "queued",
                     "uploaded_by_user_id": current_user.id,
                 },
@@ -266,6 +276,7 @@ def upload_document(
 @router.post("/upload-to-repair", response_model=DocumentUploadResponse)
 def upload_document_to_repair(
     repair_id: int = Form(...),
+    kind: DocumentKind = Form(default=DocumentKind.REPEAT_SCAN),
     notes: Optional[str] = Form(default=None),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -296,6 +307,7 @@ def upload_document_to_repair(
             storage_key=storage_key,
             mime_type=file.content_type,
             source_type=source_type,
+            kind=kind,
             status=DocumentStatus.UPLOADED,
             is_primary=existing_documents_total == 0,
             review_queue_priority=100,
@@ -314,6 +326,7 @@ def upload_document_to_repair(
                 storage_key=storage_key,
                 parsed_payload={
                     "pipeline": "uploaded_to_repair",
+                    "document_kind": kind.value,
                     "ocr_status": "queued",
                     "uploaded_by_user_id": current_user.id,
                     "repair_id": repair.id,

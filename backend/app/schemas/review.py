@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from app.models.enums import DocumentStatus, RepairStatus, VehicleType
+from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, VehicleType
 
 
 class ReviewQueueVehicleRead(BaseModel):
@@ -18,6 +18,7 @@ class ReviewQueueDocumentRead(BaseModel):
     id: int
     original_filename: str
     source_type: str
+    kind: DocumentKind
     status: DocumentStatus
     created_at: datetime
     updated_at: datetime

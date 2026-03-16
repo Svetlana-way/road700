@@ -154,6 +154,7 @@ def serialize_repair(repair: Repair, history_entries: list[AuditLog]) -> RepairD
                 "id": document.id,
                 "original_filename": document.original_filename,
                 "source_type": document.source_type,
+                "kind": document.kind,
                 "mime_type": document.mime_type,
                 "status": document.status.value,
                 "is_primary": document.is_primary,

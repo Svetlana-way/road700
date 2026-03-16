@@ -19,6 +19,7 @@ import {
 
 type UserRole = "admin" | "employee";
 type VehicleType = "truck" | "trailer";
+type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
 type DocumentStatus =
   | "uploaded"
   | "recognized"
@@ -71,6 +72,7 @@ type DocumentItem = {
   id: number;
   original_filename: string;
   source_type: string;
+  kind: DocumentKind;
   status: DocumentStatus;
   created_at: string;
   notes: string | null;
@@ -129,6 +131,7 @@ type ReviewQueueItem = {
     id: number;
     original_filename: string;
     source_type: string;
+    kind: DocumentKind;
     status: DocumentStatus;
     created_at: string;
     updated_at: string;
@@ -241,6 +244,7 @@ type RepairDetail = {
     id: number;
     original_filename: string;
     source_type: string;
+    kind: DocumentKind;
     mime_type: string | null;
     status: string;
     is_primary: boolean;
@@ -315,6 +319,7 @@ type EditableRepairDraft = {
 
 type UploadFormState = {
   vehicleId: string;
+  documentKind: DocumentKind;
   repairDate: string;
   mileage: string;
   orderNumber: string;
@@ -331,6 +336,7 @@ const API_BASE_URL =
 
 const emptyUploadForm = (): UploadFormState => ({
   vehicleId: "",
+  documentKind: "order",
   repairDate: new Date().toISOString().slice(0, 10),
   mileage: "",
   orderNumber: "",
@@ -354,6 +360,17 @@ const reviewQueueFilters: Array<{ key: ReviewQueueCategory; label: string }> = [
   { key: "employee_confirmation", label: "Ждут подтверждения" },
   { key: "manual_review", label: "Ручная проверка" },
 ];
+
+const documentKindOptions: Array<{ value: DocumentKind; label: string }> = [
+  { value: "order", label: "Основной заказ-наряд" },
+  { value: "repeat_scan", label: "Повторный скан" },
+  { value: "attachment", label: "Приложение" },
+  { value: "confirmation", label: "Подтверждающий файл" },
+];
+
+const rootDocumentKindOptions = documentKindOptions.filter(
+  (option) => option.value === "order" || option.value === "repeat_scan",
+);
 
 function formatStatus(status: string) {
   return status.split("_").join(" ");
@@ -419,6 +436,19 @@ function formatReviewPriority(bucket: ReviewPriorityBucket) {
     return "Критично";
   }
   return "Проверить";
+}
+
+function formatDocumentKind(kind: DocumentKind) {
+  if (kind === "order") {
+    return "Заказ-наряд";
+  }
+  if (kind === "repeat_scan") {
+    return "Повторный скан";
+  }
+  if (kind === "attachment") {
+    return "Приложение";
+  }
+  return "Подтверждение";
 }
 
 function createRepairDraft(repair: RepairDetail): EditableRepairDraft {
@@ -553,6 +583,7 @@ export default function App() {
   const [documentOpenLoadingId, setDocumentOpenLoadingId] = useState<number | null>(null);
   const [saveRepairLoading, setSaveRepairLoading] = useState(false);
   const [checkComments, setCheckComments] = useState<Record<number, string>>({});
+  const [attachedDocumentKind, setAttachedDocumentKind] = useState<DocumentKind>("repeat_scan");
   const [attachedDocumentNotes, setAttachedDocumentNotes] = useState("");
   const [attachedDocumentFile, setAttachedDocumentFile] = useState<File | null>(null);
   const [reviewActionComment, setReviewActionComment] = useState("");
@@ -646,6 +677,7 @@ export default function App() {
       .then((payload) => {
         setSelectedRepair(payload);
         setCheckComments({});
+        setAttachedDocumentKind("repeat_scan");
         setAttachedDocumentNotes("");
         setAttachedDocumentFile(null);
         if (!isEditingRepair) {
@@ -707,6 +739,7 @@ export default function App() {
     try {
       const body = new FormData();
       body.append("vehicle_id", uploadForm.vehicleId);
+      body.append("kind", uploadForm.documentKind);
       body.append("repair_date", uploadForm.repairDate);
       body.append("mileage", uploadForm.mileage);
       body.append("order_number", uploadForm.orderNumber);
@@ -741,6 +774,7 @@ export default function App() {
     try {
       const payload = await apiRequest<RepairDetail>(`/repairs/${repairId}`, { method: "GET" }, token);
       setSelectedRepair(payload);
+      setAttachedDocumentKind("repeat_scan");
       setAttachedDocumentNotes("");
       setAttachedDocumentFile(null);
     } catch (error) {
@@ -815,6 +849,7 @@ export default function App() {
     try {
       const body = new FormData();
       body.append("repair_id", String(selectedRepair.id));
+      body.append("kind", attachedDocumentKind);
       body.append("notes", attachedDocumentNotes);
       body.append("file", attachedDocumentFile);
 
@@ -1240,6 +1275,27 @@ export default function App() {
                           ))}
                         </TextField>
                       </Grid>
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          select
+                          label="Вид документа"
+                          value={uploadForm.documentKind}
+                          onChange={(event) =>
+                            setUploadForm((current) => ({
+                              ...current,
+                              documentKind: event.target.value as DocumentKind,
+                            }))
+                          }
+                          fullWidth
+                          required
+                        >
+                          {rootDocumentKindOptions.map((option) => (
+                            <MenuItem key={option.value} value={option.value}>
+                              {option.label}
+                            </MenuItem>
+                          ))}
+                        </TextField>
+                      </Grid>
                       <Grid item xs={12} md={3}>
                         <TextField
                           label="Дата ремонта"
@@ -1394,6 +1450,11 @@ export default function App() {
                               <Stack direction="row" spacing={1}>
                                 <Chip
                                   size="small"
+                                  variant="outlined"
+                                  label={formatDocumentKind(item.document.kind)}
+                                />
+                                <Chip
+                                  size="small"
                                   color={reviewPriorityColor(item.priority_bucket)}
                                   label={formatReviewPriority(item.priority_bucket)}
                                 />
@@ -1483,11 +1544,14 @@ export default function App() {
                           <Stack spacing={1.25}>
                             <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
                               <Typography variant="subtitle1">{document.original_filename}</Typography>
-                              <Chip
-                                size="small"
-                                color={statusColor(document.status)}
-                                label={formatStatus(document.status)}
-                              />
+                              <Stack direction="row" spacing={1}>
+                                <Chip size="small" variant="outlined" label={formatDocumentKind(document.kind)} />
+                                <Chip
+                                  size="small"
+                                  color={statusColor(document.status)}
+                                  label={formatStatus(document.status)}
+                                />
+                              </Stack>
                             </Stack>
                             <Typography className="muted-copy">
                               {formatVehicle(document.vehicle)}
@@ -1931,6 +1995,21 @@ export default function App() {
                                     Добавьте повторный скан, корректирующий файл или дополнительный документ в текущий ремонт.
                                   </Typography>
                                   <TextField
+                                    select
+                                    label="Вид документа"
+                                    value={attachedDocumentKind}
+                                    onChange={(event) =>
+                                      setAttachedDocumentKind(event.target.value as DocumentKind)
+                                    }
+                                    fullWidth
+                                  >
+                                    {documentKindOptions.map((option) => (
+                                      <MenuItem key={option.value} value={option.value}>
+                                        {option.label}
+                                      </MenuItem>
+                                    ))}
+                                  </TextField>
+                                  <TextField
                                     label="Примечание к новому документу"
                                     value={attachedDocumentNotes}
                                     onChange={(event) => setAttachedDocumentNotes(event.target.value)}
@@ -1980,6 +2059,7 @@ export default function App() {
                                         <Typography>{document.original_filename}</Typography>
                                         <Stack direction="row" spacing={1}>
                                           {document.is_primary ? <Chip size="small" label="основной" /> : null}
+                                          <Chip size="small" variant="outlined" label={formatDocumentKind(document.kind)} />
                                           <Chip
                                             size="small"
                                             color={statusColor(document.status as DocumentStatus)}

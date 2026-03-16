@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import DocumentStatus, RepairStatus, VehicleType
+from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, VehicleType
 
 
 class DocumentVehicleRead(BaseModel):
@@ -30,6 +30,7 @@ class DocumentRead(BaseModel):
     id: int
     original_filename: str
     source_type: str
+    kind: DocumentKind
     mime_type: Optional[str]
     status: DocumentStatus
     is_primary: bool

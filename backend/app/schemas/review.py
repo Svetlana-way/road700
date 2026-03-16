@@ -37,6 +37,7 @@ class ReviewQueueRepairRead(BaseModel):
 
 
 class ReviewQueueItemRead(BaseModel):
+    category: str
     priority_score: int
     priority_bucket: str
     issue_count: int
@@ -51,6 +52,7 @@ class ReviewQueueItemRead(BaseModel):
 
 class ReviewQueueResponse(BaseModel):
     items: list[ReviewQueueItemRead]
+    counts: dict[str, int]
     total: int
     limit: int
     offset: int

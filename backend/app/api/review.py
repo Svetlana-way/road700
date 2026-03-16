@@ -52,6 +52,14 @@ REPAIR_STATUS_LABELS = {
     RepairStatus.OCR_ERROR: "Ремонт требует ручного восстановления после OCR",
 }
 REVIEW_ACTIONS = {"confirm", "send_to_review"}
+REVIEW_QUEUE_CATEGORIES = {
+    "all",
+    "suspicious",
+    "ocr_error",
+    "partial_recognition",
+    "employee_confirmation",
+    "manual_review",
+}
 
 
 def latest_document_version(document: Document) -> Optional[DocumentVersion]:
@@ -156,6 +164,20 @@ def build_priority(document: Document, unresolved_checks: list[RepairCheck], man
     return score, bucket
 
 
+def determine_review_category(document: Document, unresolved_checks: list[RepairCheck]) -> str:
+    if document.repair.status == RepairStatus.SUSPICIOUS:
+        return "suspicious"
+    if any(check.severity in {CheckSeverity.SUSPICIOUS, CheckSeverity.ERROR} for check in unresolved_checks):
+        return "suspicious"
+    if document.status == DocumentStatus.OCR_ERROR or document.repair.status == RepairStatus.OCR_ERROR:
+        return "ocr_error"
+    if document.repair.status == RepairStatus.EMPLOYEE_CONFIRMED:
+        return "employee_confirmation"
+    if document.status == DocumentStatus.PARTIALLY_RECOGNIZED or document.repair.is_partially_recognized:
+        return "partial_recognition"
+    return "manual_review"
+
+
 def build_repair_state_snapshot(document: Document) -> dict:
     repair = document.repair
     unresolved_checks = [
@@ -226,6 +248,7 @@ def serialize_review_item(document: Document) -> dict:
     manual_review_reasons = normalize_manual_review_reasons(
         parsed_payload.get("manual_review_reasons") if isinstance(parsed_payload, dict) else None
     )
+    category = determine_review_category(document, unresolved_checks)
 
     issue_titles: list[str] = []
     append_issue(issue_titles, DOCUMENT_STATUS_LABELS.get(document.status))
@@ -250,6 +273,7 @@ def serialize_review_item(document: Document) -> dict:
             extracted_order_number = str(raw_order_number)
 
     return {
+        "category": category,
         "priority_score": priority_score,
         "priority_bucket": priority_bucket,
         "issue_count": len(issue_titles),
@@ -297,9 +321,13 @@ def serialize_review_item(document: Document) -> dict:
 def get_review_queue(
     limit: int = Query(default=10, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    category: str = Query(default="all"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> ReviewQueueResponse:
+    if category not in REVIEW_QUEUE_CATEGORIES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported review category")
+
     unresolved_repair_ids = select(RepairCheck.repair_id).where(RepairCheck.is_resolved.is_(False))
     review_filter = or_(
         Document.status.in_(REVIEWABLE_DOCUMENT_STATUSES),
@@ -327,7 +355,13 @@ def get_review_queue(
 
     total = db.scalar(count_stmt) or 0
     documents = db.execute(stmt).unique().scalars().all()
-    items = [serialize_review_item(document) for document in documents]
+    serialized_items = [serialize_review_item(document) for document in documents]
+    counts = {name: 0 for name in REVIEW_QUEUE_CATEGORIES}
+    counts["all"] = len(serialized_items)
+    for item in serialized_items:
+        counts[item["category"]] += 1
+
+    items = serialized_items if category == "all" else [item for item in serialized_items if item["category"] == category]
     items.sort(
         key=lambda item: (
             item["priority_score"],
@@ -341,7 +375,8 @@ def get_review_queue(
     paged_items = items[offset : offset + limit]
     return ReviewQueueResponse(
         items=paged_items,
-        total=total,
+        counts=counts,
+        total=len(items) if category != "all" else total,
         limit=limit,
         offset=offset,
     )

@@ -108,8 +108,16 @@ type DocumentsResponse = {
 };
 
 type ReviewPriorityBucket = "review" | "critical" | "suspicious";
+type ReviewQueueCategory =
+  | "all"
+  | "suspicious"
+  | "ocr_error"
+  | "partial_recognition"
+  | "employee_confirmation"
+  | "manual_review";
 
 type ReviewQueueItem = {
+  category: ReviewQueueCategory;
   priority_score: number;
   priority_bucket: ReviewPriorityBucket;
   issue_count: number;
@@ -148,6 +156,7 @@ type ReviewQueueItem = {
 
 type ReviewQueueResponse = {
   items: ReviewQueueItem[];
+  counts: Record<ReviewQueueCategory, number>;
   total: number;
   limit: number;
   offset: number;
@@ -317,6 +326,15 @@ const summaryCards: Array<{ key: keyof DashboardSummary; label: string }> = [
   { key: "documents_review_queue", label: "Очередь проверки" },
 ];
 
+const reviewQueueFilters: Array<{ key: ReviewQueueCategory; label: string }> = [
+  { key: "all", label: "Все" },
+  { key: "suspicious", label: "Подозрительные" },
+  { key: "ocr_error", label: "OCR ошибки" },
+  { key: "partial_recognition", label: "Частично распознано" },
+  { key: "employee_confirmation", label: "Ждут подтверждения" },
+  { key: "manual_review", label: "Ручная проверка" },
+];
+
 function formatStatus(status: string) {
   return status.split("_").join(" ");
 }
@@ -470,6 +488,15 @@ export default function App() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
+  const [reviewQueueCounts, setReviewQueueCounts] = useState<Record<ReviewQueueCategory, number>>({
+    all: 0,
+    suspicious: 0,
+    ocr_error: 0,
+    partial_recognition: 0,
+    employee_confirmation: 0,
+    manual_review: 0,
+  });
+  const [selectedReviewCategory, setSelectedReviewCategory] = useState<ReviewQueueCategory>("all");
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
   const [selectedRepair, setSelectedRepair] = useState<RepairDetail | null>(null);
   const [repairDraft, setRepairDraft] = useState<EditableRepairDraft | null>(null);
@@ -494,7 +521,7 @@ export default function App() {
   const selectedReviewItem =
     reviewQueue.find((item) => item.document.id === selectedDocumentId) ?? null;
 
-  async function loadWorkspace(activeToken: string) {
+  async function loadWorkspace(activeToken: string, reviewCategory: ReviewQueueCategory = selectedReviewCategory) {
     setBootLoading(true);
     try {
       const [me, dashboard, vehicleList, recentDocuments, reviewQueueData] = await Promise.all([
@@ -502,7 +529,11 @@ export default function App() {
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
         apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
         apiRequest<DocumentsResponse>("/documents?limit=8", { method: "GET" }, activeToken),
-        apiRequest<ReviewQueueResponse>("/review/queue?limit=6", { method: "GET" }, activeToken),
+        apiRequest<ReviewQueueResponse>(
+          `/review/queue?limit=6&category=${reviewCategory}`,
+          { method: "GET" },
+          activeToken,
+        ),
       ]);
 
       setUser(me);
@@ -510,6 +541,7 @@ export default function App() {
       setVehicles(vehicleList.items);
       setDocuments(recentDocuments.items);
       setReviewQueue(reviewQueueData.items);
+      setReviewQueueCounts(reviewQueueData.counts);
       if (selectedDocumentId === null) {
         const defaultDocumentId =
           reviewQueueData.items[0]?.document.id ?? recentDocuments.items[0]?.id ?? null;
@@ -538,12 +570,20 @@ export default function App() {
       setVehicles([]);
       setDocuments([]);
       setReviewQueue([]);
+      setReviewQueueCounts({
+        all: 0,
+        suspicious: 0,
+        ocr_error: 0,
+        partial_recognition: 0,
+        employee_confirmation: 0,
+        manual_review: 0,
+      });
       setSelectedDocumentId(null);
       setSelectedRepair(null);
       return;
     }
-    void loadWorkspace(token);
-  }, [token]);
+    void loadWorkspace(token, selectedReviewCategory);
+  }, [selectedReviewCategory, token]);
 
   useEffect(() => {
     if (!token || selectedDocumentId === null) {
@@ -1230,6 +1270,22 @@ export default function App() {
                         Сначала показываются подозрительные и проблемные заказ-наряды по доступной технике.
                       </Typography>
                     </Box>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                      {reviewQueueFilters.map((filter) => (
+                        <Chip
+                          key={filter.key}
+                          label={`${filter.label} · ${reviewQueueCounts[filter.key] || 0}`}
+                          color={selectedReviewCategory === filter.key ? "primary" : "default"}
+                          variant={selectedReviewCategory === filter.key ? "filled" : "outlined"}
+                          onClick={() => {
+                            setSelectedReviewCategory(filter.key);
+                          }}
+                        />
+                      ))}
+                    </Stack>
+                    <Typography className="muted-copy">
+                      Показано {reviewQueue.length} из {reviewQueueCounts[selectedReviewCategory] || 0} по выбранному фильтру.
+                    </Typography>
                     <Stack spacing={1.5}>
                       {reviewQueue.map((item) => (
                         <Paper className="document-row" key={`review-${item.document.id}`} elevation={0}>
@@ -1303,7 +1359,7 @@ export default function App() {
                       ))}
                       {reviewQueue.length === 0 ? (
                         <Typography className="muted-copy">
-                          Очередь проверки сейчас пустая.
+                          По выбранному фильтру элементов нет.
                         </Typography>
                       ) : null}
                     </Stack>

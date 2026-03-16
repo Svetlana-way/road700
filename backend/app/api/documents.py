@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.access import get_allowed_vehicle_ids_query
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, UserRole
 from app.models.repair import Repair
@@ -127,6 +128,22 @@ def get_visible_document(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     return document
+
+
+def build_primary_document_snapshot(repair: Repair, documents: list[Document]) -> dict:
+    return {
+        "repair_id": repair.id,
+        "source_document_id": repair.source_document_id,
+        "documents": [
+            {
+                "id": item.id,
+                "kind": item.kind.value,
+                "is_primary": item.is_primary,
+                "status": item.status.value,
+            }
+            for item in sorted(documents, key=lambda item: item.id)
+        ],
+    }
 
 
 @router.get("", response_model=DocumentListResponse)
@@ -402,6 +419,69 @@ def download_document(
         media_type=document.mime_type or "application/octet-stream",
         filename=document.original_filename,
     )
+
+
+@router.post("/{document_id}/set-primary", response_model=DocumentRead)
+def set_primary_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> DocumentRead:
+    document = get_visible_document(db, current_admin, document_id)
+    if document.repair is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document repair relation is incomplete")
+    if document.kind not in {DocumentKind.ORDER, DocumentKind.REPEAT_SCAN}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only order documents and repeat scans can be primary",
+        )
+
+    sibling_documents = db.execute(
+        select(Document)
+        .options(
+            joinedload(Document.repair).joinedload(Repair.vehicle),
+            joinedload(Document.versions),
+        )
+        .where(Document.repair_id == document.repair_id)
+    ).unique().scalars().all()
+
+    old_snapshot = build_primary_document_snapshot(document.repair, sibling_documents)
+
+    for item in sibling_documents:
+        item.is_primary = item.id == document.id
+    document.repair.source_document_id = document.id
+
+    db.commit()
+
+    refreshed_document = get_visible_document(db, current_admin, document_id)
+    refreshed_siblings = db.execute(
+        select(Document).where(Document.repair_id == refreshed_document.repair_id)
+    ).scalars().all()
+    new_snapshot = build_primary_document_snapshot(refreshed_document.repair, refreshed_siblings)
+
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="repair",
+            entity_id=str(refreshed_document.repair.id),
+            action_type="primary_document_changed",
+            old_value=old_snapshot,
+            new_value=new_snapshot,
+        )
+    )
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="document",
+            entity_id=str(refreshed_document.id),
+            action_type="set_primary",
+            old_value=old_snapshot,
+            new_value=new_snapshot,
+        )
+    )
+    db.commit()
+
+    return serialize_document(refreshed_document)
 
 
 @router.post("/process-pending", response_model=DocumentBatchProcessResponse)

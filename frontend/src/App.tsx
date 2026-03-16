@@ -581,6 +581,7 @@ export default function App() {
   const [reviewActionLoading, setReviewActionLoading] = useState(false);
   const [checkActionLoadingId, setCheckActionLoadingId] = useState<number | null>(null);
   const [documentOpenLoadingId, setDocumentOpenLoadingId] = useState<number | null>(null);
+  const [primaryDocumentLoadingId, setPrimaryDocumentLoadingId] = useState<number | null>(null);
   const [saveRepairLoading, setSaveRepairLoading] = useState(false);
   const [checkComments, setCheckComments] = useState<Record<number, string>>({});
   const [attachedDocumentKind, setAttachedDocumentKind] = useState<DocumentKind>("repeat_scan");
@@ -871,6 +872,32 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Failed to upload document to repair");
     } finally {
       setAttachDocumentLoading(false);
+    }
+  }
+
+  async function handleSetPrimaryDocument(documentId: number) {
+    if (!token || !selectedRepair) {
+      return;
+    }
+
+    setPrimaryDocumentLoadingId(documentId);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const result = await apiRequest<{ id: number }>(
+        `/documents/${documentId}/set-primary`,
+        {
+          method: "POST",
+        },
+        token,
+      );
+      setSuccessMessage("Основной документ обновлён");
+      await loadWorkspace(token);
+      await openRepairByIds(result.id, selectedRepair.id);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to set primary document");
+    } finally {
+      setPrimaryDocumentLoadingId(null);
     }
   }
 
@@ -2094,6 +2121,20 @@ export default function App() {
                                             }}
                                           >
                                             {reprocessLoading && selectedDocumentId === document.id ? "Повтор..." : "Повторить OCR"}
+                                          </Button>
+                                        ) : null}
+                                        {user?.role === "admin" &&
+                                        (document.kind === "order" || document.kind === "repeat_scan") &&
+                                        !document.is_primary ? (
+                                          <Button
+                                            size="small"
+                                            variant="text"
+                                            disabled={primaryDocumentLoadingId === document.id}
+                                            onClick={() => {
+                                              void handleSetPrimaryDocument(document.id);
+                                            }}
+                                          >
+                                            {primaryDocumentLoadingId === document.id ? "Смена..." : "Сделать основным"}
                                           </Button>
                                         ) : null}
                                       </Stack>

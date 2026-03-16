@@ -175,6 +175,44 @@ type RepairDetail = {
   }>;
 };
 
+type EditableWorkDraft = {
+  work_code: string;
+  work_name: string;
+  quantity: number;
+  standard_hours: number | "";
+  actual_hours: number | "";
+  price: number;
+  line_total: number;
+  status: string;
+};
+
+type EditablePartDraft = {
+  article: string;
+  part_name: string;
+  quantity: number;
+  unit_name: string;
+  price: number;
+  line_total: number;
+  status: string;
+};
+
+type EditableRepairDraft = {
+  order_number: string;
+  repair_date: string;
+  mileage: number;
+  reason: string;
+  employee_comment: string;
+  service_name: string;
+  work_total: number;
+  parts_total: number;
+  vat_total: number;
+  grand_total: number;
+  status: string;
+  is_preliminary: boolean;
+  works: EditableWorkDraft[];
+  parts: EditablePartDraft[];
+};
+
 type UploadFormState = {
   vehicleId: string;
   repairDate: string;
@@ -254,6 +292,42 @@ function checkSeverityColor(severity: CheckSeverity): "default" | "success" | "e
   return "default";
 }
 
+function createRepairDraft(repair: RepairDetail): EditableRepairDraft {
+  return {
+    order_number: repair.order_number || "",
+    repair_date: repair.repair_date,
+    mileage: repair.mileage,
+    reason: repair.reason || "",
+    employee_comment: repair.employee_comment || "",
+    service_name: repair.service?.name || "",
+    work_total: repair.work_total,
+    parts_total: repair.parts_total,
+    vat_total: repair.vat_total,
+    grand_total: repair.grand_total,
+    status: repair.status,
+    is_preliminary: repair.is_preliminary,
+    works: repair.works.map((item) => ({
+      work_code: item.work_code || "",
+      work_name: item.work_name,
+      quantity: item.quantity,
+      standard_hours: item.standard_hours ?? "",
+      actual_hours: item.actual_hours ?? "",
+      price: item.price,
+      line_total: item.line_total,
+      status: item.status,
+    })),
+    parts: repair.parts.map((item) => ({
+      article: item.article || "",
+      part_name: item.part_name,
+      quantity: item.quantity,
+      unit_name: item.unit_name || "",
+      price: item.price,
+      line_total: item.line_total,
+      status: item.status,
+    })),
+  };
+}
+
 async function apiRequest<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers ?? {});
   if (token) {
@@ -284,6 +358,8 @@ export default function App() {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
   const [selectedRepair, setSelectedRepair] = useState<RepairDetail | null>(null);
+  const [repairDraft, setRepairDraft] = useState<EditableRepairDraft | null>(null);
+  const [isEditingRepair, setIsEditingRepair] = useState(false);
   const [loginValue, setLoginValue] = useState("");
   const [passwordValue, setPasswordValue] = useState("");
   const [uploadForm, setUploadForm] = useState<UploadFormState>(emptyUploadForm);
@@ -293,6 +369,7 @@ export default function App() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [repairLoading, setRepairLoading] = useState(false);
   const [reprocessLoading, setReprocessLoading] = useState(false);
+  const [saveRepairLoading, setSaveRepairLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -355,6 +432,9 @@ export default function App() {
     void apiRequest<RepairDetail>(`/repairs/${selectedDocument.repair.id}`, { method: "GET" }, token)
       .then((payload) => {
         setSelectedRepair(payload);
+        if (!isEditingRepair) {
+          setRepairDraft(createRepairDraft(payload));
+        }
       })
       .catch((error) => {
         setErrorMessage(error instanceof Error ? error.message : "Failed to load repair");
@@ -362,7 +442,7 @@ export default function App() {
       .finally(() => {
         setRepairLoading(false);
       });
-  }, [documents, selectedDocumentId, token]);
+  }, [documents, isEditingRepair, selectedDocumentId, token]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -472,6 +552,176 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Failed to reprocess document");
     } finally {
       setReprocessLoading(false);
+    }
+  }
+
+  function handleStartRepairEdit() {
+    if (!selectedRepair) {
+      return;
+    }
+    setRepairDraft(createRepairDraft(selectedRepair));
+    setIsEditingRepair(true);
+  }
+
+  function handleCancelRepairEdit() {
+    if (selectedRepair) {
+      setRepairDraft(createRepairDraft(selectedRepair));
+    } else {
+      setRepairDraft(null);
+    }
+    setIsEditingRepair(false);
+  }
+
+  function updateRepairDraftField<K extends keyof EditableRepairDraft>(field: K, value: EditableRepairDraft[K]) {
+    setRepairDraft((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  function updateWorkDraft(index: number, field: keyof EditableWorkDraft, value: EditableWorkDraft[keyof EditableWorkDraft]) {
+    setRepairDraft((current) => {
+      if (!current) {
+        return current;
+      }
+      const works = [...current.works];
+      works[index] = { ...works[index], [field]: value };
+      return { ...current, works };
+    });
+  }
+
+  function updatePartDraft(index: number, field: keyof EditablePartDraft, value: EditablePartDraft[keyof EditablePartDraft]) {
+    setRepairDraft((current) => {
+      if (!current) {
+        return current;
+      }
+      const parts = [...current.parts];
+      parts[index] = { ...parts[index], [field]: value };
+      return { ...current, parts };
+    });
+  }
+
+  function addWorkDraft() {
+    setRepairDraft((current) =>
+      current
+        ? {
+            ...current,
+            works: [
+              ...current.works,
+              {
+                work_code: "",
+                work_name: "",
+                quantity: 1,
+                standard_hours: "",
+                actual_hours: "",
+                price: 0,
+                line_total: 0,
+                status: "preliminary",
+              },
+            ],
+          }
+        : current,
+    );
+  }
+
+  function addPartDraft() {
+    setRepairDraft((current) =>
+      current
+        ? {
+            ...current,
+            parts: [
+              ...current.parts,
+              {
+                article: "",
+                part_name: "",
+                quantity: 1,
+                unit_name: "шт",
+                price: 0,
+                line_total: 0,
+                status: "preliminary",
+              },
+            ],
+          }
+        : current,
+    );
+  }
+
+  function removeWorkDraft(index: number) {
+    setRepairDraft((current) =>
+      current
+        ? { ...current, works: current.works.filter((_, itemIndex) => itemIndex !== index) }
+        : current,
+    );
+  }
+
+  function removePartDraft(index: number) {
+    setRepairDraft((current) =>
+      current
+        ? { ...current, parts: current.parts.filter((_, itemIndex) => itemIndex !== index) }
+        : current,
+    );
+  }
+
+  async function handleSaveRepair() {
+    if (!token || !selectedRepair || !repairDraft) {
+      return;
+    }
+
+    setSaveRepairLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const payload = {
+        order_number: repairDraft.order_number || null,
+        repair_date: repairDraft.repair_date,
+        mileage: Number(repairDraft.mileage),
+        reason: repairDraft.reason || null,
+        employee_comment: repairDraft.employee_comment || null,
+        service_name: repairDraft.service_name || null,
+        work_total: Number(repairDraft.work_total),
+        parts_total: Number(repairDraft.parts_total),
+        vat_total: Number(repairDraft.vat_total),
+        grand_total: Number(repairDraft.grand_total),
+        status: repairDraft.status,
+        is_preliminary: repairDraft.is_preliminary,
+        works: repairDraft.works.map((item) => ({
+          work_code: item.work_code || null,
+          work_name: item.work_name,
+          quantity: Number(item.quantity),
+          standard_hours: item.standard_hours === "" ? null : Number(item.standard_hours),
+          actual_hours: item.actual_hours === "" ? null : Number(item.actual_hours),
+          price: Number(item.price),
+          line_total: Number(item.line_total),
+          status: item.status,
+          reference_payload: { source: "manual_edit" },
+        })),
+        parts: repairDraft.parts.map((item) => ({
+          article: item.article || null,
+          part_name: item.part_name,
+          quantity: Number(item.quantity),
+          unit_name: item.unit_name || null,
+          price: Number(item.price),
+          line_total: Number(item.line_total),
+          status: item.status,
+        })),
+      };
+
+      const savedRepair = await apiRequest<RepairDetail>(
+        `/repairs/${selectedRepair.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        },
+        token,
+      );
+
+      setSelectedRepair(savedRepair);
+      setRepairDraft(createRepairDraft(savedRepair));
+      setIsEditingRepair(false);
+      setSuccessMessage("Карточка ремонта обновлена");
+      await loadWorkspace(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save repair");
+    } finally {
+      setSaveRepairLoading(false);
     }
   }
 
@@ -868,103 +1118,375 @@ export default function App() {
                       </Stack>
                     ) : selectedRepair ? (
                       <Stack spacing={2}>
-                        <Paper className="repair-summary" elevation={0}>
-                          <Grid container spacing={2}>
-                            <Grid item xs={12} sm={6}>
-                              <Typography className="metric-label">Заказ-наряд</Typography>
-                              <Typography>{selectedRepair.order_number || "Не указан"}</Typography>
-                            </Grid>
-                            <Grid item xs={12} sm={6}>
-                              <Typography className="metric-label">Техника</Typography>
-                              <Typography>{formatVehicle(selectedRepair.vehicle)}</Typography>
-                            </Grid>
-                            <Grid item xs={6}>
-                              <Typography className="metric-label">Работы</Typography>
-                              <Typography>{formatMoney(selectedRepair.work_total) || "—"}</Typography>
-                            </Grid>
-                            <Grid item xs={6}>
-                              <Typography className="metric-label">Запчасти</Typography>
-                              <Typography>{formatMoney(selectedRepair.parts_total) || "—"}</Typography>
-                            </Grid>
-                            <Grid item xs={6}>
-                              <Typography className="metric-label">НДС</Typography>
-                              <Typography>{formatMoney(selectedRepair.vat_total) || "—"}</Typography>
-                            </Grid>
-                            <Grid item xs={6}>
-                              <Typography className="metric-label">Итого</Typography>
-                              <Typography>{formatMoney(selectedRepair.grand_total) || "—"}</Typography>
-                            </Grid>
-                          </Grid>
-                        </Paper>
-
-                        <Stack spacing={1}>
-                          <Typography variant="h6">Работы</Typography>
-                          {selectedRepair.works.length > 0 ? (
-                            selectedRepair.works.map((item) => (
-                              <Paper className="repair-line" key={item.id} elevation={0}>
-                                <Stack direction="row" justifyContent="space-between" spacing={2}>
-                                  <Box>
-                                    <Typography>{item.work_name}</Typography>
-                                    <Typography className="muted-copy">
-                                      Кол-во {item.quantity}
-                                      {item.actual_hours ? ` · ${item.actual_hours} ч` : ""}
-                                    </Typography>
-                                  </Box>
-                                  <Typography>{formatMoney(item.line_total) || "—"}</Typography>
-                                </Stack>
-                              </Paper>
-                            ))
-                          ) : (
-                            <Typography className="muted-copy">Строки работ не распознаны.</Typography>
-                          )}
+                        <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="center">
+                          <Chip size="small" label={formatStatus(selectedRepair.status)} />
+                          {user?.role === "admin" ? (
+                            <Stack direction="row" spacing={1}>
+                              {isEditingRepair ? (
+                                <>
+                                  <Button variant="outlined" onClick={handleCancelRepairEdit} disabled={saveRepairLoading}>
+                                    Отмена
+                                  </Button>
+                                  <Button variant="contained" onClick={() => void handleSaveRepair()} disabled={saveRepairLoading || !repairDraft}>
+                                    {saveRepairLoading ? "Сохранение..." : "Сохранить"}
+                                  </Button>
+                                </>
+                              ) : (
+                                <Button variant="outlined" onClick={handleStartRepairEdit}>
+                                  Редактировать
+                                </Button>
+                              )}
+                            </Stack>
+                          ) : null}
                         </Stack>
 
-                        <Stack spacing={1}>
-                          <Typography variant="h6">Запчасти</Typography>
-                          {selectedRepair.parts.length > 0 ? (
-                            selectedRepair.parts.map((item) => (
-                              <Paper className="repair-line" key={item.id} elevation={0}>
-                                <Stack direction="row" justifyContent="space-between" spacing={2}>
-                                  <Box>
-                                    <Typography>{item.part_name}</Typography>
-                                    <Typography className="muted-copy">
-                                      {item.article ? `${item.article} · ` : ""}
-                                      {item.quantity} {item.unit_name || "шт"}
-                                    </Typography>
-                                  </Box>
-                                  <Typography>{formatMoney(item.line_total) || "—"}</Typography>
-                                </Stack>
-                              </Paper>
-                            ))
-                          ) : (
-                            <Typography className="muted-copy">Строки запчастей не распознаны.</Typography>
-                          )}
-                        </Stack>
+                        {isEditingRepair && repairDraft ? (
+                          <Stack spacing={2}>
+                            <Paper className="repair-summary" elevation={0}>
+                              <Grid container spacing={2}>
+                                <Grid item xs={12} sm={6}>
+                                  <TextField
+                                    label="Заказ-наряд"
+                                    value={repairDraft.order_number}
+                                    onChange={(event) => updateRepairDraftField("order_number", event.target.value)}
+                                    fullWidth
+                                  />
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                  <TextField
+                                    label="Сервис"
+                                    value={repairDraft.service_name}
+                                    onChange={(event) => updateRepairDraftField("service_name", event.target.value)}
+                                    fullWidth
+                                  />
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                  <TextField
+                                    type="date"
+                                    label="Дата ремонта"
+                                    value={repairDraft.repair_date}
+                                    onChange={(event) => updateRepairDraftField("repair_date", event.target.value)}
+                                    InputLabelProps={{ shrink: true }}
+                                    fullWidth
+                                  />
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                  <TextField
+                                    type="number"
+                                    label="Пробег"
+                                    value={repairDraft.mileage}
+                                    onChange={(event) => updateRepairDraftField("mileage", Number(event.target.value))}
+                                    fullWidth
+                                  />
+                                </Grid>
+                                <Grid item xs={6}>
+                                  <TextField
+                                    type="number"
+                                    label="Работы"
+                                    value={repairDraft.work_total}
+                                    onChange={(event) => updateRepairDraftField("work_total", Number(event.target.value))}
+                                    fullWidth
+                                  />
+                                </Grid>
+                                <Grid item xs={6}>
+                                  <TextField
+                                    type="number"
+                                    label="Запчасти"
+                                    value={repairDraft.parts_total}
+                                    onChange={(event) => updateRepairDraftField("parts_total", Number(event.target.value))}
+                                    fullWidth
+                                  />
+                                </Grid>
+                                <Grid item xs={6}>
+                                  <TextField
+                                    type="number"
+                                    label="НДС"
+                                    value={repairDraft.vat_total}
+                                    onChange={(event) => updateRepairDraftField("vat_total", Number(event.target.value))}
+                                    fullWidth
+                                  />
+                                </Grid>
+                                <Grid item xs={6}>
+                                  <TextField
+                                    type="number"
+                                    label="Итого"
+                                    value={repairDraft.grand_total}
+                                    onChange={(event) => updateRepairDraftField("grand_total", Number(event.target.value))}
+                                    fullWidth
+                                  />
+                                </Grid>
+                                <Grid item xs={12}>
+                                  <TextField
+                                    label="Причина ремонта"
+                                    value={repairDraft.reason}
+                                    onChange={(event) => updateRepairDraftField("reason", event.target.value)}
+                                    fullWidth
+                                    multiline
+                                    minRows={2}
+                                  />
+                                </Grid>
+                                <Grid item xs={12}>
+                                  <TextField
+                                    label="Комментарий сотрудника"
+                                    value={repairDraft.employee_comment}
+                                    onChange={(event) => updateRepairDraftField("employee_comment", event.target.value)}
+                                    fullWidth
+                                    multiline
+                                    minRows={2}
+                                  />
+                                </Grid>
+                              </Grid>
+                            </Paper>
 
-                        <Stack spacing={1}>
-                          <Typography variant="h6">Проверки</Typography>
-                          {selectedRepair.checks.length > 0 ? (
-                            selectedRepair.checks.map((check) => (
-                              <Paper className="repair-line" key={check.id} elevation={0}>
-                                <Stack spacing={1}>
-                                  <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                                    <Typography>{check.title}</Typography>
-                                    <Chip
-                                      size="small"
-                                      color={checkSeverityColor(check.severity)}
-                                      label={formatStatus(check.severity)}
-                                    />
-                                  </Stack>
-                                  {check.details ? (
-                                    <Typography className="muted-copy">{check.details}</Typography>
-                                  ) : null}
-                                </Stack>
-                              </Paper>
-                            ))
-                          ) : (
-                            <Typography className="muted-copy">Подозрительные проверки не найдены.</Typography>
-                          )}
-                        </Stack>
+                            <Stack spacing={1}>
+                              <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                                <Typography variant="h6">Работы</Typography>
+                                <Button size="small" variant="text" onClick={addWorkDraft}>Добавить работу</Button>
+                              </Stack>
+                              {repairDraft.works.map((item, index) => (
+                                <Paper className="repair-line" key={`work-${index}`} elevation={0}>
+                                  <Grid container spacing={1.5}>
+                                    <Grid item xs={12}>
+                                      <TextField
+                                        label="Наименование работы"
+                                        value={item.work_name}
+                                        onChange={(event) => updateWorkDraft(index, "work_name", event.target.value)}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={6}>
+                                      <TextField
+                                        label="Код"
+                                        value={item.work_code}
+                                        onChange={(event) => updateWorkDraft(index, "work_code", event.target.value)}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={6}>
+                                      <TextField
+                                        type="number"
+                                        label="Кол-во"
+                                        value={item.quantity}
+                                        onChange={(event) => updateWorkDraft(index, "quantity", Number(event.target.value))}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={6}>
+                                      <TextField
+                                        type="number"
+                                        label="Нормо-часы"
+                                        value={item.standard_hours}
+                                        onChange={(event) => updateWorkDraft(index, "standard_hours", event.target.value === "" ? "" : Number(event.target.value))}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={6}>
+                                      <TextField
+                                        type="number"
+                                        label="Факт-часы"
+                                        value={item.actual_hours}
+                                        onChange={(event) => updateWorkDraft(index, "actual_hours", event.target.value === "" ? "" : Number(event.target.value))}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={6}>
+                                      <TextField
+                                        type="number"
+                                        label="Цена"
+                                        value={item.price}
+                                        onChange={(event) => updateWorkDraft(index, "price", Number(event.target.value))}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={6}>
+                                      <TextField
+                                        type="number"
+                                        label="Сумма"
+                                        value={item.line_total}
+                                        onChange={(event) => updateWorkDraft(index, "line_total", Number(event.target.value))}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={12}>
+                                      <Button size="small" color="error" onClick={() => removeWorkDraft(index)}>
+                                        Удалить работу
+                                      </Button>
+                                    </Grid>
+                                  </Grid>
+                                </Paper>
+                              ))}
+                            </Stack>
+
+                            <Stack spacing={1}>
+                              <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                                <Typography variant="h6">Запчасти</Typography>
+                                <Button size="small" variant="text" onClick={addPartDraft}>Добавить запчасть</Button>
+                              </Stack>
+                              {repairDraft.parts.map((item, index) => (
+                                <Paper className="repair-line" key={`part-${index}`} elevation={0}>
+                                  <Grid container spacing={1.5}>
+                                    <Grid item xs={12}>
+                                      <TextField
+                                        label="Наименование запчасти"
+                                        value={item.part_name}
+                                        onChange={(event) => updatePartDraft(index, "part_name", event.target.value)}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={6}>
+                                      <TextField
+                                        label="Артикул"
+                                        value={item.article}
+                                        onChange={(event) => updatePartDraft(index, "article", event.target.value)}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={6}>
+                                      <TextField
+                                        label="Ед. изм."
+                                        value={item.unit_name}
+                                        onChange={(event) => updatePartDraft(index, "unit_name", event.target.value)}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={4}>
+                                      <TextField
+                                        type="number"
+                                        label="Кол-во"
+                                        value={item.quantity}
+                                        onChange={(event) => updatePartDraft(index, "quantity", Number(event.target.value))}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={4}>
+                                      <TextField
+                                        type="number"
+                                        label="Цена"
+                                        value={item.price}
+                                        onChange={(event) => updatePartDraft(index, "price", Number(event.target.value))}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={4}>
+                                      <TextField
+                                        type="number"
+                                        label="Сумма"
+                                        value={item.line_total}
+                                        onChange={(event) => updatePartDraft(index, "line_total", Number(event.target.value))}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={12}>
+                                      <Button size="small" color="error" onClick={() => removePartDraft(index)}>
+                                        Удалить запчасть
+                                      </Button>
+                                    </Grid>
+                                  </Grid>
+                                </Paper>
+                              ))}
+                            </Stack>
+                          </Stack>
+                        ) : (
+                          <>
+                            <Paper className="repair-summary" elevation={0}>
+                              <Grid container spacing={2}>
+                                <Grid item xs={12} sm={6}>
+                                  <Typography className="metric-label">Заказ-наряд</Typography>
+                                  <Typography>{selectedRepair.order_number || "Не указан"}</Typography>
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                  <Typography className="metric-label">Техника</Typography>
+                                  <Typography>{formatVehicle(selectedRepair.vehicle)}</Typography>
+                                </Grid>
+                                <Grid item xs={6}>
+                                  <Typography className="metric-label">Работы</Typography>
+                                  <Typography>{formatMoney(selectedRepair.work_total) || "—"}</Typography>
+                                </Grid>
+                                <Grid item xs={6}>
+                                  <Typography className="metric-label">Запчасти</Typography>
+                                  <Typography>{formatMoney(selectedRepair.parts_total) || "—"}</Typography>
+                                </Grid>
+                                <Grid item xs={6}>
+                                  <Typography className="metric-label">НДС</Typography>
+                                  <Typography>{formatMoney(selectedRepair.vat_total) || "—"}</Typography>
+                                </Grid>
+                                <Grid item xs={6}>
+                                  <Typography className="metric-label">Итого</Typography>
+                                  <Typography>{formatMoney(selectedRepair.grand_total) || "—"}</Typography>
+                                </Grid>
+                              </Grid>
+                            </Paper>
+
+                            <Stack spacing={1}>
+                              <Typography variant="h6">Работы</Typography>
+                              {selectedRepair.works.length > 0 ? (
+                                selectedRepair.works.map((item) => (
+                                  <Paper className="repair-line" key={item.id} elevation={0}>
+                                    <Stack direction="row" justifyContent="space-between" spacing={2}>
+                                      <Box>
+                                        <Typography>{item.work_name}</Typography>
+                                        <Typography className="muted-copy">
+                                          Кол-во {item.quantity}
+                                          {item.actual_hours ? ` · ${item.actual_hours} ч` : ""}
+                                        </Typography>
+                                      </Box>
+                                      <Typography>{formatMoney(item.line_total) || "—"}</Typography>
+                                    </Stack>
+                                  </Paper>
+                                ))
+                              ) : (
+                                <Typography className="muted-copy">Строки работ не распознаны.</Typography>
+                              )}
+                            </Stack>
+
+                            <Stack spacing={1}>
+                              <Typography variant="h6">Запчасти</Typography>
+                              {selectedRepair.parts.length > 0 ? (
+                                selectedRepair.parts.map((item) => (
+                                  <Paper className="repair-line" key={item.id} elevation={0}>
+                                    <Stack direction="row" justifyContent="space-between" spacing={2}>
+                                      <Box>
+                                        <Typography>{item.part_name}</Typography>
+                                        <Typography className="muted-copy">
+                                          {item.article ? `${item.article} · ` : ""}
+                                          {item.quantity} {item.unit_name || "шт"}
+                                        </Typography>
+                                      </Box>
+                                      <Typography>{formatMoney(item.line_total) || "—"}</Typography>
+                                    </Stack>
+                                  </Paper>
+                                ))
+                              ) : (
+                                <Typography className="muted-copy">Строки запчастей не распознаны.</Typography>
+                              )}
+                            </Stack>
+
+                            <Stack spacing={1}>
+                              <Typography variant="h6">Проверки</Typography>
+                              {selectedRepair.checks.length > 0 ? (
+                                selectedRepair.checks.map((check) => (
+                                  <Paper className="repair-line" key={check.id} elevation={0}>
+                                    <Stack spacing={1}>
+                                      <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                                        <Typography>{check.title}</Typography>
+                                        <Chip
+                                          size="small"
+                                          color={checkSeverityColor(check.severity)}
+                                          label={formatStatus(check.severity)}
+                                        />
+                                      </Stack>
+                                      {check.details ? (
+                                        <Typography className="muted-copy">{check.details}</Typography>
+                                      ) : null}
+                                    </Stack>
+                                  </Paper>
+                                ))
+                              ) : (
+                                <Typography className="muted-copy">Подозрительные проверки не найдены.</Typography>
+                              )}
+                            </Stack>
+                          </>
+                        )}
                       </Stack>
                     ) : (
                       <Stack spacing={2} alignItems="center" className="repair-placeholder">

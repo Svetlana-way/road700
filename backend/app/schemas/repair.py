@@ -82,3 +82,42 @@ class RepairDetailResponse(BaseModel):
     works: list[RepairWorkRead]
     parts: list[RepairPartRead]
     checks: list[RepairCheckRead]
+
+
+class RepairWorkUpdateInput(BaseModel):
+    work_code: Optional[str] = None
+    work_name: str
+    quantity: float = 1
+    standard_hours: Optional[float] = None
+    actual_hours: Optional[float] = None
+    price: float = 0
+    line_total: float = 0
+    status: CatalogStatus = CatalogStatus.PRELIMINARY
+    reference_payload: Optional[dict] = None
+
+
+class RepairPartUpdateInput(BaseModel):
+    article: Optional[str] = None
+    part_name: str
+    quantity: float = 1
+    unit_name: Optional[str] = None
+    price: float = 0
+    line_total: float = 0
+    status: CatalogStatus = CatalogStatus.PRELIMINARY
+
+
+class RepairUpdateRequest(BaseModel):
+    order_number: Optional[str] = None
+    repair_date: Optional[date] = None
+    mileage: Optional[int] = None
+    reason: Optional[str] = None
+    employee_comment: Optional[str] = None
+    service_name: Optional[str] = None
+    work_total: Optional[float] = None
+    parts_total: Optional[float] = None
+    vat_total: Optional[float] = None
+    grand_total: Optional[float] = None
+    status: Optional[RepairStatus] = None
+    is_preliminary: Optional[bool] = None
+    works: Optional[list[RepairWorkUpdateInput]] = None
+    parts: Optional[list[RepairPartUpdateInput]] = None

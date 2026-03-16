@@ -110,6 +110,7 @@ type DocumentsResponse = {
 };
 
 type ReviewPriorityBucket = "review" | "critical" | "suspicious";
+type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
 type ReviewQueueCategory =
   | "all"
   | "suspicious"
@@ -396,6 +397,15 @@ const reviewQueueFilters: Array<{ key: ReviewQueueCategory; label: string }> = [
   { key: "manual_review", label: "Ручная проверка" },
 ];
 
+const historyFilters: Array<{ key: HistoryFilter; label: string }> = [
+  { key: "all", label: "Все события" },
+  { key: "repair", label: "Ремонт" },
+  { key: "documents", label: "Документы" },
+  { key: "uploads", label: "Загрузки" },
+  { key: "primary", label: "Основной документ" },
+  { key: "comparison", label: "Сверки" },
+];
+
 const documentKindOptions: Array<{ value: DocumentKind; label: string }> = [
   { value: "order", label: "Основной заказ-наряд" },
   { value: "repeat_scan", label: "Повторный скан" },
@@ -484,6 +494,14 @@ function formatDocumentKind(kind: DocumentKind) {
     return "Приложение";
   }
   return "Подтверждение";
+}
+
+function matchesTextSearch(parts: Array<string | null | undefined>, search: string) {
+  const normalizedSearch = search.trim().toLowerCase();
+  if (!normalizedSearch) {
+    return true;
+  }
+  return parts.some((part) => part?.toLowerCase().includes(normalizedSearch));
 }
 
 function createRepairDraft(repair: RepairDetail): EditableRepairDraft {
@@ -634,12 +652,71 @@ export default function App() {
   const [attachedDocumentFile, setAttachedDocumentFile] = useState<File | null>(null);
   const [documentComparison, setDocumentComparison] = useState<DocumentComparisonResponse | null>(null);
   const [documentComparisonComment, setDocumentComparisonComment] = useState("");
+  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
+  const [historySearch, setHistorySearch] = useState("");
   const [reviewActionComment, setReviewActionComment] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
   const selectedReviewItem =
     reviewQueue.find((item) => item.document.id === selectedDocumentId) ?? null;
+  const filteredRepairHistory = selectedRepair
+    ? selectedRepair.history.filter((entry) => {
+        if (historyFilter === "documents" || historyFilter === "uploads") {
+          return false;
+        }
+        if (historyFilter === "primary" && entry.action_type !== "primary_document_changed") {
+          return false;
+        }
+        if (historyFilter === "comparison" && entry.action_type !== "document_comparison_reviewed") {
+          return false;
+        }
+        return matchesTextSearch(
+          [
+            entry.user_name,
+            entry.action_type,
+            JSON.stringify(entry.old_value),
+            JSON.stringify(entry.new_value),
+          ],
+          historySearch,
+        );
+      })
+    : [];
+  const filteredDocumentHistory = selectedRepair
+    ? selectedRepair.document_history.filter((entry) => {
+        if (historyFilter === "repair") {
+          return false;
+        }
+        if (
+          historyFilter === "uploads" &&
+          entry.action_type !== "document_uploaded" &&
+          entry.action_type !== "document_attached"
+        ) {
+          return false;
+        }
+        if (
+          historyFilter === "primary" &&
+          entry.action_type !== "set_primary" &&
+          entry.action_type !== "primary_document_changed"
+        ) {
+          return false;
+        }
+        if (historyFilter === "comparison" && !entry.action_type.startsWith("comparison_")) {
+          return false;
+        }
+        return matchesTextSearch(
+          [
+            entry.user_name,
+            entry.action_type,
+            entry.document_filename,
+            entry.document_kind ? formatDocumentKind(entry.document_kind) : null,
+            JSON.stringify(entry.old_value),
+            JSON.stringify(entry.new_value),
+          ],
+          historySearch,
+        );
+      })
+    : [];
 
   async function loadWorkspace(activeToken: string, reviewCategory: ReviewQueueCategory = selectedReviewCategory) {
     setBootLoading(true);
@@ -727,6 +804,8 @@ export default function App() {
         setCheckComments({});
         setDocumentComparison(null);
         setDocumentComparisonComment("");
+        setHistoryFilter("all");
+        setHistorySearch("");
         setAttachedDocumentKind("repeat_scan");
         setAttachedDocumentNotes("");
         setAttachedDocumentFile(null);
@@ -826,6 +905,8 @@ export default function App() {
       setSelectedRepair(payload);
       setDocumentComparison(null);
       setDocumentComparisonComment("");
+      setHistoryFilter("all");
+      setHistorySearch("");
       setAttachedDocumentKind("repeat_scan");
       setAttachedDocumentNotes("");
       setAttachedDocumentFile(null);
@@ -2496,9 +2577,35 @@ export default function App() {
                             </Stack>
 
                             <Stack spacing={1}>
+                              <Typography variant="h6">Журнал событий</Typography>
+                              <TextField
+                                label="Поиск по истории"
+                                value={historySearch}
+                                onChange={(event) => setHistorySearch(event.target.value)}
+                                fullWidth
+                              />
+                              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                {historyFilters.map((filter) => (
+                                  <Chip
+                                    key={filter.key}
+                                    label={filter.label}
+                                    color={historyFilter === filter.key ? "primary" : "default"}
+                                    variant={historyFilter === filter.key ? "filled" : "outlined"}
+                                    onClick={() => {
+                                      setHistoryFilter(filter.key);
+                                    }}
+                                  />
+                                ))}
+                              </Stack>
+                              <Typography className="muted-copy">
+                                Найдено событий: {filteredDocumentHistory.length + filteredRepairHistory.length}
+                              </Typography>
+                            </Stack>
+
+                            <Stack spacing={1}>
                               <Typography variant="h6">История по документам</Typography>
-                              {selectedRepair.document_history.length > 0 ? (
-                                selectedRepair.document_history.map((entry) => (
+                              {filteredDocumentHistory.length > 0 ? (
+                                filteredDocumentHistory.map((entry) => (
                                   <Paper className="repair-line" key={`document-history-${entry.id}`} elevation={0}>
                                     <Stack spacing={1}>
                                       <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
@@ -2533,14 +2640,14 @@ export default function App() {
                                   </Paper>
                                 ))
                               ) : (
-                                <Typography className="muted-copy">История по документам пока пуста.</Typography>
+                                <Typography className="muted-copy">По текущему фильтру событий по документам нет.</Typography>
                               )}
                             </Stack>
 
                             <Stack spacing={1}>
                               <Typography variant="h6">История изменений</Typography>
-                              {selectedRepair.history.length > 0 ? (
-                                selectedRepair.history.map((entry) => (
+                              {filteredRepairHistory.length > 0 ? (
+                                filteredRepairHistory.map((entry) => (
                                   <Paper className="repair-line" key={entry.id} elevation={0}>
                                     <Stack spacing={1}>
                                       <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
@@ -2559,7 +2666,7 @@ export default function App() {
                                   </Paper>
                                 ))
                               ) : (
-                                <Typography className="muted-copy">История изменений пока пуста.</Typography>
+                                <Typography className="muted-copy">По текущему фильтру событий по ремонту нет.</Typography>
                               )}
                             </Stack>
                           </>

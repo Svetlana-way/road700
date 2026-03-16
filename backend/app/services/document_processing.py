@@ -87,6 +87,39 @@ PART_LINE_WITH_ARTICLE_PATTERN = re.compile(
 )
 WORK_SECTION_MARKERS = ("работы", "услуги", "работа:")
 PART_SECTION_MARKERS = ("запчасти", "материалы", "запчасть:")
+SECTION_FOOTER_MARKERS = (
+    "стоимость работ",
+    "работы итого",
+    "итого работ",
+    "запчасти итого",
+    "материалы итого",
+    "стоимость запчастей",
+    "стоимость материалов",
+    "ндс",
+    "итого к оплате",
+    "к оплате",
+    "всего",
+    "сервис",
+    "сто",
+    "исполнитель",
+    "подрядчик",
+)
+ITEM_UNIT_MARKERS = {
+    "шт",
+    "нч",
+    "ч",
+    "час",
+    "часа",
+    "часов",
+    "компл",
+    "усл",
+    "ед",
+    "л",
+    "кг",
+    "м",
+    "к-т",
+}
+ARTICLE_TOKEN_PATTERN = re.compile(r"^(?=.*[\d-])[A-Za-zА-Яа-я0-9/_-]{3,}$")
 TEXT_KEYWORD_PATTERN = re.compile(
     r"(заказ|наряд|дата|госномер|пробег|работ|запчаст|итого|сервис|ндс)",
     re.IGNORECASE,
@@ -209,6 +242,130 @@ def normalize_line(line: str) -> str:
     return normalize_text(line.replace("\xa0", " "))
 
 
+def build_section_body_pattern(markers: tuple[str, ...], stop_markers: tuple[str, ...]) -> re.Pattern[str]:
+    marker_pattern = "|".join(re.escape(marker.rstrip(":")) + ":?" for marker in markers)
+    stop_pattern = "|".join(re.escape(marker) for marker in stop_markers)
+    return re.compile(
+        rf"(?:^|\b)(?:{marker_pattern})\b\s*(?P<body>.+?)(?=(?:\b(?:{stop_pattern})\b)|$)",
+        re.IGNORECASE | re.DOTALL,
+    )
+
+
+def tokenize_inline_section(section_text: str) -> list[str]:
+    return [token for token in re.split(r"\s+", normalize_line(section_text)) if token]
+
+
+def normalize_token_for_unit(token: str) -> str:
+    return token.lower().strip(".,;:!?)(")
+
+
+def is_quantity_token(token: str) -> bool:
+    return bool(re.fullmatch(r"\d+(?:[.,]\d+)?", token))
+
+
+def is_amount_token(token: str) -> bool:
+    return parse_amount(token) is not None
+
+
+def parse_inline_item_sequence(section_text: str, target: str) -> list[dict[str, object]]:
+    tokens = tokenize_inline_section(section_text)
+    items: list[dict[str, object]] = []
+    start_index = 0
+
+    while start_index < len(tokens):
+        matched = False
+        for quantity_index in range(start_index + 1, len(tokens)):
+            if not is_quantity_token(tokens[quantity_index]):
+                continue
+
+            amount_start_index = quantity_index + 1
+            unit_token: Optional[str] = None
+            if amount_start_index < len(tokens) and normalize_token_for_unit(tokens[amount_start_index]) in ITEM_UNIT_MARKERS:
+                unit_token = normalize_token_for_unit(tokens[amount_start_index])
+                amount_start_index += 1
+
+            if amount_start_index + 1 >= len(tokens):
+                continue
+            if not is_amount_token(tokens[amount_start_index]) or not is_amount_token(tokens[amount_start_index + 1]):
+                continue
+
+            prefix_tokens = tokens[start_index:quantity_index]
+            if not prefix_tokens:
+                continue
+
+            payload_text = " ".join(prefix_tokens)
+            if any(marker in payload_text.lower() for marker in SECTION_FOOTER_MARKERS):
+                return items
+
+            quantity = parse_decimal_value(tokens[quantity_index])
+            price = parse_amount(tokens[amount_start_index])
+            total = parse_amount(tokens[amount_start_index + 1])
+            if quantity is None or price is None or total is None:
+                continue
+
+            payload: Optional[dict[str, object]]
+            if target == "works":
+                payload = {
+                    "work_name": payload_text[:500],
+                    "quantity": quantity,
+                    "unit_name": unit_token,
+                    "price": price,
+                    "line_total": total,
+                }
+            else:
+                article = None
+                name_tokens = prefix_tokens
+                if len(prefix_tokens) > 1 and ARTICLE_TOKEN_PATTERN.fullmatch(prefix_tokens[0]):
+                    article = prefix_tokens[0]
+                    name_tokens = prefix_tokens[1:]
+                part_name = " ".join(name_tokens).strip()
+                if not part_name:
+                    continue
+                payload = {
+                    "article": article,
+                    "part_name": part_name[:500],
+                    "quantity": quantity,
+                    "unit_name": unit_token,
+                    "price": price,
+                    "line_total": total,
+                }
+
+            items.append(payload)
+            start_index = amount_start_index + 2
+            matched = True
+            break
+
+        if not matched:
+            break
+
+    return items
+
+
+def extract_inline_section_items(text: str) -> dict[str, list[dict[str, object]]]:
+    works: list[dict[str, object]] = []
+    parts: list[dict[str, object]] = []
+    normalized_text = normalize_line(text.replace("\n", " "))
+
+    work_pattern = build_section_body_pattern(
+        WORK_SECTION_MARKERS,
+        PART_SECTION_MARKERS + SECTION_FOOTER_MARKERS,
+    )
+    part_pattern = build_section_body_pattern(
+        PART_SECTION_MARKERS,
+        SECTION_FOOTER_MARKERS,
+    )
+
+    work_match = work_pattern.search(normalized_text)
+    if work_match:
+        works = parse_inline_item_sequence(work_match.group("body"), "works")
+
+    part_match = part_pattern.search(normalized_text)
+    if part_match:
+        parts = parse_inline_item_sequence(part_match.group("body"), "parts")
+
+    return {"works": works, "parts": parts}
+
+
 def extract_line_items(text: str) -> dict[str, list[dict[str, object]]]:
     works: list[dict[str, object]] = []
     parts: list[dict[str, object]] = []
@@ -259,7 +416,11 @@ def extract_line_items(text: str) -> dict[str, list[dict[str, object]]]:
             if payload:
                 parts.append(payload)
 
-    return {"works": works, "parts": parts}
+    if works or parts:
+        return {"works": works, "parts": parts}
+
+    inline_items = extract_inline_section_items(text)
+    return inline_items
 
 
 def parse_work_line(line: str) -> Optional[dict[str, object]]:

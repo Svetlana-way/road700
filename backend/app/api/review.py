@@ -1,16 +1,17 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.access import get_allowed_vehicle_ids_query
 from app.api.deps import get_current_active_user, get_db
+from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
 from app.models.enums import CheckSeverity, DocumentStatus, RepairStatus, UserRole
 from app.models.repair import Repair, RepairCheck
 from app.models.user import User
-from app.schemas.review import ReviewQueueResponse
+from app.schemas.review import ReviewActionRequest, ReviewActionResponse, ReviewQueueResponse
 
 
 router = APIRouter(prefix="/review", tags=["review"])
@@ -48,12 +49,27 @@ REPAIR_STATUS_LABELS = {
     RepairStatus.SUSPICIOUS: "Ремонт помечен как подозрительный",
     RepairStatus.OCR_ERROR: "Ремонт требует ручного восстановления после OCR",
 }
+REVIEW_ACTIONS = {"confirm", "send_to_review"}
 
 
 def latest_document_version(document: Document) -> Optional[DocumentVersion]:
     if not document.versions:
         return None
     return max(document.versions, key=lambda version: version.version_number)
+
+
+def load_document_for_review(db: Session, document_id: int) -> Optional[Document]:
+    stmt = (
+        select(Document)
+        .join(Document.repair)
+        .options(
+            joinedload(Document.repair).joinedload(Repair.vehicle),
+            joinedload(Document.repair).joinedload(Repair.checks),
+            joinedload(Document.versions),
+        )
+        .where(Document.id == document_id)
+    )
+    return db.execute(stmt).unique().scalar_one_or_none()
 
 
 def normalize_manual_review_reasons(raw_reasons: object) -> list[str]:
@@ -70,6 +86,26 @@ def normalize_manual_review_reasons(raw_reasons: object) -> list[str]:
 def append_issue(issues: list[str], issue: Optional[str]) -> None:
     if issue and issue not in issues:
         issues.append(issue)
+
+
+def get_visible_document(db: Session, current_user: User, document_id: int) -> Document:
+    document = load_document_for_review(db, document_id)
+    if document is None or document.repair is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    if current_user.role == UserRole.ADMIN:
+        return document
+
+    visible_vehicle = get_allowed_vehicle_ids_query(current_user)
+    vehicle_is_visible = db.scalar(
+        select(func.count(Repair.id)).where(
+            Repair.id == document.repair_id,
+            Repair.vehicle_id.in_(visible_vehicle),
+        )
+    )
+    if not vehicle_is_visible:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    return document
 
 
 def build_priority(document: Document, unresolved_checks: list[RepairCheck], manual_review_reasons: list[str]) -> tuple[int, str]:
@@ -114,6 +150,62 @@ def build_priority(document: Document, unresolved_checks: list[RepairCheck], man
         score += max(0, round((1 - float(document.ocr_confidence)) * 40))
 
     return score, bucket
+
+
+def build_repair_state_snapshot(document: Document) -> dict:
+    repair = document.repair
+    unresolved_checks = [
+        {
+            "id": item.id,
+            "check_type": item.check_type,
+            "severity": item.severity.value,
+            "title": item.title,
+            "is_resolved": item.is_resolved,
+        }
+        for item in sorted(repair.checks, key=lambda item: item.id)
+    ]
+    return {
+        "document_status": document.status.value,
+        "review_queue_priority": document.review_queue_priority,
+        "document_notes": document.notes,
+        "repair_status": repair.status.value,
+        "is_preliminary": repair.is_preliminary,
+        "is_partially_recognized": repair.is_partially_recognized,
+        "unresolved_checks": unresolved_checks,
+    }
+
+
+def append_review_comment(existing: Optional[str], action: str, comment: Optional[str], current_user: User) -> Optional[str]:
+    normalized_comment = (comment or "").strip()
+    if not normalized_comment:
+        return existing
+    action_label = "Подтверждено администратором" if action == "confirm" else "Возвращено в ручную проверку"
+    note_line = f"[{action_label}] {current_user.full_name}: {normalized_comment}"
+    if existing:
+        return f"{existing}\n{note_line}"
+    return note_line
+
+
+def apply_review_action(document: Document, action: str, comment: Optional[str], current_user: User) -> str:
+    if action == "confirm":
+        document.status = DocumentStatus.CONFIRMED
+        document.review_queue_priority = 20
+        document.repair.status = RepairStatus.CONFIRMED
+        document.repair.is_preliminary = False
+        document.repair.is_partially_recognized = False
+        for check in document.repair.checks:
+            if not check.is_resolved:
+                check.is_resolved = True
+        message = "Заказ-наряд подтверждён администратором"
+    else:
+        document.status = DocumentStatus.NEEDS_REVIEW
+        document.review_queue_priority = 120
+        document.repair.status = RepairStatus.IN_REVIEW
+        document.repair.is_preliminary = True
+        message = "Заказ-наряд возвращён в ручную проверку"
+
+    document.notes = append_review_comment(document.notes, action, comment, current_user)
+    return message
 
 
 def serialize_review_item(document: Document) -> dict:
@@ -248,4 +340,61 @@ def get_review_queue(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+@router.post("/queue/{document_id}/action", response_model=ReviewActionResponse)
+def execute_review_action(
+    document_id: int,
+    payload: ReviewActionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> ReviewActionResponse:
+    action = payload.action.strip().lower()
+    if action not in REVIEW_ACTIONS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported review action")
+
+    if action == "confirm" and current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+
+    document = get_visible_document(db, current_user, document_id)
+    old_snapshot = build_repair_state_snapshot(document)
+    message = apply_review_action(document, action, payload.comment, current_user)
+
+    db.flush()
+    new_snapshot = build_repair_state_snapshot(document)
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            entity_type="repair",
+            entity_id=str(document.repair.id),
+            action_type=f"review_{action}",
+            old_value=old_snapshot,
+            new_value=new_snapshot,
+        )
+    )
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            entity_type="document",
+            entity_id=str(document.id),
+            action_type=f"review_{action}",
+            old_value=old_snapshot,
+            new_value=new_snapshot,
+        )
+    )
+    db.commit()
+
+    refreshed_document = get_visible_document(db, current_user, document_id)
+    review_item = None
+    if refreshed_document.status in REVIEWABLE_DOCUMENT_STATUSES or refreshed_document.repair.status in REVIEWABLE_REPAIR_STATUSES:
+        review_item = serialize_review_item(refreshed_document)
+
+    return ReviewActionResponse(
+        message=message,
+        document_id=refreshed_document.id,
+        repair_id=refreshed_document.repair.id,
+        document_status=refreshed_document.status,
+        repair_status=refreshed_document.repair.status,
+        queue_item=review_item,
     )

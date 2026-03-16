@@ -153,6 +153,15 @@ type ReviewQueueResponse = {
   offset: number;
 };
 
+type ReviewActionResponse = {
+  message: string;
+  document_id: number;
+  repair_id: number;
+  document_status: DocumentStatus;
+  repair_status: string;
+  queue_item: ReviewQueueItem | null;
+};
+
 type LoginResponse = {
   access_token: string;
 };
@@ -458,9 +467,14 @@ export default function App() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [repairLoading, setRepairLoading] = useState(false);
   const [reprocessLoading, setReprocessLoading] = useState(false);
+  const [reviewActionLoading, setReviewActionLoading] = useState(false);
   const [saveRepairLoading, setSaveRepairLoading] = useState(false);
+  const [reviewActionComment, setReviewActionComment] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+
+  const selectedReviewItem =
+    reviewQueue.find((item) => item.document.id === selectedDocumentId) ?? null;
 
   async function loadWorkspace(activeToken: string) {
     setBootLoading(true);
@@ -665,6 +679,37 @@ export default function App() {
 
   async function handleReprocessDocument(document: DocumentItem) {
     await handleReprocessDocumentById(document.id, document.repair.id);
+  }
+
+  async function handleReviewAction(action: "confirm" | "send_to_review") {
+    if (!token || !selectedReviewItem) {
+      return;
+    }
+
+    setReviewActionLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const result = await apiRequest<ReviewActionResponse>(
+        `/review/queue/${selectedReviewItem.document.id}/action`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            action,
+            comment: reviewActionComment.trim() || null,
+          }),
+        },
+        token,
+      );
+      setSuccessMessage(result.message);
+      setReviewActionComment("");
+      await loadWorkspace(token);
+      await openRepairByIds(result.document_id, result.repair_id);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to apply review action");
+    } finally {
+      setReviewActionLoading(false);
+    }
   }
 
   function handleStartRepairEdit() {
@@ -1319,7 +1364,16 @@ export default function App() {
                     ) : selectedRepair ? (
                       <Stack spacing={2}>
                         <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="center">
-                          <Chip size="small" label={formatStatus(selectedRepair.status)} />
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Chip size="small" label={formatStatus(selectedRepair.status)} />
+                            {selectedReviewItem ? (
+                              <Chip
+                                size="small"
+                                color={reviewPriorityColor(selectedReviewItem.priority_bucket)}
+                                label={formatReviewPriority(selectedReviewItem.priority_bucket)}
+                              />
+                            ) : null}
+                          </Stack>
                           {user?.role === "admin" ? (
                             <Stack direction="row" spacing={1}>
                               {isEditingRepair ? (
@@ -1339,6 +1393,53 @@ export default function App() {
                             </Stack>
                           ) : null}
                         </Stack>
+
+                        {selectedReviewItem && !isEditingRepair ? (
+                          <Paper className="repair-summary" elevation={0}>
+                            <Stack spacing={1.5}>
+                              <Box>
+                                <Typography variant="h6">Решение по проверке</Typography>
+                                <Typography className="muted-copy">
+                                  Финальное подтверждение снимает карточку с очереди и закрывает активные проверки.
+                                </Typography>
+                              </Box>
+                              <Typography className="muted-copy">
+                                Текущие причины: {selectedReviewItem.issue_titles.slice(0, 4).join(", ")}
+                                {selectedReviewItem.issue_titles.length > 4
+                                  ? ` и ещё ${selectedReviewItem.issue_titles.length - 4}`
+                                  : ""}
+                              </Typography>
+                              <TextField
+                                label="Комментарий администратора"
+                                value={reviewActionComment}
+                                onChange={(event) => setReviewActionComment(event.target.value)}
+                                fullWidth
+                                multiline
+                                minRows={2}
+                              />
+                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                <Button
+                                  variant="contained"
+                                  disabled={reviewActionLoading}
+                                  onClick={() => {
+                                    void handleReviewAction("confirm");
+                                  }}
+                                >
+                                  {reviewActionLoading ? "Сохранение..." : "Подтвердить админом"}
+                                </Button>
+                                <Button
+                                  variant="outlined"
+                                  disabled={reviewActionLoading}
+                                  onClick={() => {
+                                    void handleReviewAction("send_to_review");
+                                  }}
+                                >
+                                  Вернуть в ручную проверку
+                                </Button>
+                              </Stack>
+                            </Stack>
+                          </Paper>
+                        ) : null}
 
                         {isEditingRepair && repairDraft ? (
                           <Stack spacing={2}>

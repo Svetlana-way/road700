@@ -54,3 +54,17 @@ class ReviewQueueResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class ReviewActionRequest(BaseModel):
+    action: str
+    comment: Optional[str] = None
+
+
+class ReviewActionResponse(BaseModel):
+    message: str
+    document_id: int
+    repair_id: int
+    document_status: DocumentStatus
+    repair_status: RepairStatus
+    queue_item: Optional[ReviewQueueItemRead] = None

@@ -37,6 +37,7 @@ class DocumentRead(BaseModel):
     review_queue_priority: int
     notes: Optional[str]
     created_at: datetime
+    parsed_payload: Optional[dict]
     repair: DocumentRepairRead
     vehicle: DocumentVehicleRead
 
@@ -50,4 +51,17 @@ class DocumentListResponse(BaseModel):
 
 class DocumentUploadResponse(BaseModel):
     document: DocumentRead
+    message: str
+
+
+class DocumentProcessResponse(BaseModel):
+    document: DocumentRead
+    job_id: int
+    import_status: str
+    message: str
+
+
+class DocumentBatchProcessResponse(BaseModel):
+    processed_count: int
+    document_ids: list[int]
     message: str

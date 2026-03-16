@@ -67,6 +67,15 @@ type DocumentItem = {
   status: DocumentStatus;
   created_at: string;
   notes: string | null;
+  parsed_payload?: {
+    extracted_fields?: {
+      order_number?: string;
+      mileage?: number;
+      grand_total?: number;
+      service_name?: string;
+    };
+    manual_review_reasons?: string[];
+  } | null;
   repair: {
     id: number;
     order_number: string | null;
@@ -126,6 +135,17 @@ const summaryCards: Array<{ key: keyof DashboardSummary; label: string }> = [
 
 function formatStatus(status: string) {
   return status.split("_").join(" ");
+}
+
+function formatMoney(value?: number) {
+  if (typeof value !== "number") {
+    return null;
+  }
+  return new Intl.NumberFormat("ru-RU", {
+    style: "currency",
+    currency: "RUB",
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
 function formatVehicle(vehicle: Vehicle | DocumentItem["vehicle"]) {
@@ -610,6 +630,21 @@ export default function App() {
                             <Typography className="muted-copy">
                               Ремонт #{document.repair.id} · {document.repair.repair_date} · пробег {document.repair.mileage}
                             </Typography>
+                            {document.parsed_payload?.extracted_fields?.order_number ? (
+                              <Typography className="muted-copy">
+                                OCR: заказ-наряд {document.parsed_payload.extracted_fields.order_number}
+                              </Typography>
+                            ) : null}
+                            {document.parsed_payload?.extracted_fields?.grand_total ? (
+                              <Typography className="muted-copy">
+                                OCR: итог {formatMoney(document.parsed_payload.extracted_fields.grand_total)}
+                              </Typography>
+                            ) : null}
+                            {document.parsed_payload?.manual_review_reasons?.length ? (
+                              <Typography className="muted-copy">
+                                Проверить вручную: {document.parsed_payload.manual_review_reasons.join(", ")}
+                              </Typography>
+                            ) : null}
                             {document.notes ? (
                               <Typography className="muted-copy">{document.notes}</Typography>
                             ) : null}

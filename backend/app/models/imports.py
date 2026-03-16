@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import Enum, JSON, String, Text
+from sqlalchemy import Enum, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -13,6 +13,7 @@ class ImportJob(Base, TimestampMixin):
     __tablename__ = "import_jobs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[Optional[int]] = mapped_column(ForeignKey("documents.id"), nullable=True, index=True)
     import_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     source_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[ImportStatus] = mapped_column(Enum(ImportStatus), nullable=False, index=True)

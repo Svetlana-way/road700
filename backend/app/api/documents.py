@@ -9,19 +9,22 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.access import get_allowed_vehicle_ids_query
-from app.api.deps import get_current_active_user, get_db
+from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentStatus, RepairStatus, UserRole
 from app.models.repair import Repair
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.schemas.document import (
+    DocumentBatchProcessResponse,
     DocumentListResponse,
+    DocumentProcessResponse,
     DocumentRead,
     DocumentRepairRead,
     DocumentUploadResponse,
     DocumentVehicleRead,
 )
+from app.services.document_processing import process_document
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -45,6 +48,10 @@ def serialize_document(document: Document) -> DocumentRead:
     if document.repair is None or document.repair.vehicle is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document relation is incomplete")
 
+    latest_version = None
+    if document.versions:
+        latest_version = max(document.versions, key=lambda version: version.version_number)
+
     return DocumentRead(
         id=document.id,
         original_filename=document.original_filename,
@@ -56,6 +63,7 @@ def serialize_document(document: Document) -> DocumentRead:
         review_queue_priority=document.review_queue_priority,
         notes=document.notes,
         created_at=document.created_at,
+        parsed_payload=latest_version.parsed_payload if latest_version is not None else None,
         repair=DocumentRepairRead.model_validate(document.repair),
         vehicle=DocumentVehicleRead.model_validate(document.repair.vehicle),
     )
@@ -82,7 +90,10 @@ def build_storage_key(filename: str) -> str:
 def load_document_with_relations(db: Session, document_id: int) -> Optional[Document]:
     stmt = (
         select(Document)
-        .options(joinedload(Document.repair).joinedload(Repair.vehicle))
+        .options(
+            joinedload(Document.repair).joinedload(Repair.vehicle),
+            joinedload(Document.versions),
+        )
         .where(Document.id == document_id)
     )
     return db.execute(stmt).unique().scalar_one_or_none()
@@ -99,7 +110,10 @@ def list_documents(
     stmt = (
         select(Document)
         .join(Document.repair)
-        .options(joinedload(Document.repair).joinedload(Repair.vehicle))
+        .options(
+            joinedload(Document.repair).joinedload(Repair.vehicle),
+            joinedload(Document.versions),
+        )
     )
     count_stmt = select(func.count(Document.id)).join(Document.repair)
 
@@ -147,6 +161,7 @@ def upload_document(
     destination = LOCAL_STORAGE_ROOT / storage_key
     destination.parent.mkdir(parents=True, exist_ok=True)
 
+    created_document_id = None
     try:
         with destination.open("wb") as target:
             shutil.copyfileobj(file.file, target)
@@ -196,6 +211,7 @@ def upload_document(
             )
         )
         db.commit()
+        created_document_id = document.id
     except Exception:
         db.rollback()
         if destination.exists():
@@ -204,11 +220,67 @@ def upload_document(
     finally:
         file.file.close()
 
-    created_document = load_document_with_relations(db, document.id)
+    if created_document_id is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")
+
+    processing_result = process_document(db, created_document_id)
+    created_document = load_document_with_relations(db, created_document_id)
     if created_document is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")
 
     return DocumentUploadResponse(
         document=serialize_document(created_document),
-        message="Document uploaded and repair draft created",
+        message=processing_result.message,
+    )
+
+
+@router.post("/{document_id}/process", response_model=DocumentProcessResponse)
+def process_single_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> DocumentProcessResponse:
+    document = load_document_with_relations(db, document_id)
+    if document is None or document.repair is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if current_user.role != UserRole.ADMIN:
+        visible_vehicle = get_visible_vehicle(db, current_user, document.repair.vehicle_id)
+        if visible_vehicle is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    result = process_document(db, document_id)
+    processed_document = load_document_with_relations(db, document_id)
+    if processed_document is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not processed")
+
+    return DocumentProcessResponse(
+        document=serialize_document(processed_document),
+        job_id=result.job.id,
+        import_status=result.job.status.value,
+        message=result.message,
+    )
+
+
+@router.post("/process-pending", response_model=DocumentBatchProcessResponse)
+def process_pending_documents(
+    limit: int = Query(default=10, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> DocumentBatchProcessResponse:
+    pending_documents = db.execute(
+        select(Document.id)
+        .where(Document.status.in_([DocumentStatus.UPLOADED, DocumentStatus.OCR_ERROR, DocumentStatus.NEEDS_REVIEW]))
+        .order_by(Document.created_at.asc(), Document.id.asc())
+        .limit(limit)
+    ).scalars().all()
+
+    processed_ids = []
+    for document_id in pending_documents:
+        process_document(db, document_id)
+        processed_ids.append(document_id)
+
+    return DocumentBatchProcessResponse(
+        processed_count=len(processed_ids),
+        document_ids=processed_ids,
+        message="Pending documents processed",
     )

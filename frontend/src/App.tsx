@@ -251,6 +251,7 @@ type OcrLearningDraftsResponse = {
 
 type VehiclePreview = {
   id: number;
+  external_id?: string | null;
   plate_number: string | null;
   brand: string | null;
   model: string | null;
@@ -270,6 +271,9 @@ type DocumentItem = {
       mileage?: number;
       grand_total?: number;
       service_name?: string;
+      plate_number?: string;
+      vin?: string;
+      repair_date?: string;
     };
     extracted_items?: {
       works?: Array<Record<string, unknown>>;
@@ -293,6 +297,7 @@ type DocumentItem = {
   };
   vehicle: {
     id: number;
+    external_id: string | null;
     vehicle_type: VehicleType;
     plate_number: string | null;
     brand: string | null;
@@ -451,11 +456,29 @@ type ReviewQueueItem = {
   };
   vehicle: {
     id: number;
+    external_id: string | null;
     vehicle_type: VehicleType;
     plate_number: string | null;
     brand: string | null;
     model: string | null;
   };
+};
+
+type DocumentVehicleFormState = {
+  vehicle_type: VehicleType;
+  plate_number: string;
+  vin: string;
+  brand: string;
+  model: string;
+  year: string;
+  comment: string;
+};
+
+type DocumentCreateVehicleResponse = {
+  message: string;
+  repair_id: number;
+  created_new_vehicle: boolean;
+  document: DocumentItem;
 };
 
 type ReviewQueueResponse = {
@@ -555,6 +578,7 @@ type RepairDetail = {
   updated_at: string;
   vehicle: {
     id: number;
+    external_id: string | null;
     plate_number: string | null;
     brand: string | null;
     model: string | null;
@@ -718,6 +742,7 @@ type UploadFormState = {
 };
 
 const TOKEN_STORAGE_KEY = "road700.access_token";
+const PLACEHOLDER_EXTERNAL_ID = "__batch_import_placeholder__";
 const API_BASE_URL =
   import.meta.env.VITE_API_URL?.replace(/\/$/, "") ??
   (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
@@ -810,6 +835,9 @@ const historyActionLabels: Record<string, string> = {
   document_uploaded: "Загрузка нового документа",
   document_attached: "Прикрепление документа к ремонту",
   document_comparison_reviewed: "Результат сверки документов",
+  repair_vehicle_relinked: "Перепривязка ремонта к технике",
+  document_vehicle_linked: "Привязка документа к технике",
+  vehicle_created_from_document: "Карточка техники создана из документа",
   comparison_keep_current_primary: "Сверка: оставлен текущий основной документ",
   comparison_make_document_primary: "Сверка: выбран новый основной документ",
   comparison_mark_reviewed: "Сверка отмечена как проверенная",
@@ -1117,6 +1145,18 @@ function createEmptyServiceForm(): ServiceFormState {
   };
 }
 
+function createEmptyDocumentVehicleForm(): DocumentVehicleFormState {
+  return {
+    vehicle_type: "truck",
+    plate_number: "",
+    vin: "",
+    brand: "",
+    model: "",
+    year: "",
+    comment: "",
+  };
+}
+
 function createServiceFormFromItem(item: ServiceItem): ServiceFormState {
   return {
     id: item.id,
@@ -1317,6 +1357,78 @@ function formatWorkLaborNormMeta(item: RepairDetail["works"][number]) {
 function formatVehicle(vehicle: VehiclePreview) {
   const parts = [vehicle.plate_number, vehicle.brand, vehicle.model].filter(Boolean);
   return parts.join(" • ") || `#${vehicle.id}`;
+}
+
+function normalizeIdentifier(value: string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+  return value
+    .replace(/[Оо]/g, "O")
+    .replace(/[Аа]/g, "A")
+    .replace(/[Вв]/g, "B")
+    .replace(/[Ее]/g, "E")
+    .replace(/[Кк]/g, "K")
+    .replace(/[Мм]/g, "M")
+    .replace(/[Нн]/g, "H")
+    .replace(/[Рр]/g, "P")
+    .replace(/[Сс]/g, "C")
+    .replace(/[Тт]/g, "T")
+    .replace(/[Уу]/g, "Y")
+    .replace(/[Хх]/g, "X")
+    .toUpperCase()
+    .replace(/[^A-Z0-9А-Я]/g, "");
+}
+
+function inferVehicleTypeFromIdentifiers(plateNumber: string | null | undefined): VehicleType {
+  const normalizedPlate = normalizeIdentifier(plateNumber);
+  if (/^[A-ZА-Я]{2}\d{4}\d{2,3}$/.test(normalizedPlate)) {
+    return "trailer";
+  }
+  return "truck";
+}
+
+function isPlaceholderVehicle(externalId: string | null | undefined) {
+  return externalId === PLACEHOLDER_EXTERNAL_ID;
+}
+
+function getLatestRepairDocumentPayload(
+  repair: RepairDetail | null,
+  documentId: number | null,
+): Record<string, unknown> | null {
+  if (!repair || documentId === null) {
+    return null;
+  }
+  const selectedDocument = repair.documents.find((item) => item.id === documentId);
+  const latestVersion = selectedDocument?.versions?.[0];
+  if (!latestVersion?.parsed_payload || typeof latestVersion.parsed_payload !== "object") {
+    return null;
+  }
+  return latestVersion.parsed_payload;
+}
+
+function getPayloadExtractedFields(payload: Record<string, unknown> | null | undefined) {
+  const rawValue = payload?.extracted_fields;
+  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
+    return null;
+  }
+  return rawValue as Record<string, unknown>;
+}
+
+function createVehicleFormFromPayload(payload: Record<string, unknown> | null | undefined): DocumentVehicleFormState {
+  const extractedFields = getPayloadExtractedFields(payload);
+  const plateNumber =
+    typeof extractedFields?.plate_number === "string" ? extractedFields.plate_number.trim() : "";
+  const vin = typeof extractedFields?.vin === "string" ? extractedFields.vin.trim() : "";
+  return {
+    vehicle_type: inferVehicleTypeFromIdentifiers(plateNumber),
+    plate_number: plateNumber,
+    vin,
+    brand: "",
+    model: "",
+    year: "",
+    comment: "",
+  };
 }
 
 function formatVehicleTypeLabel(value: VehicleType | "" | null | undefined) {
@@ -1925,6 +2037,7 @@ export default function App() {
   const [selectedReviewCategory, setSelectedReviewCategory] = useState<ReviewQueueCategory>("all");
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
   const [selectedRepair, setSelectedRepair] = useState<RepairDetail | null>(null);
+  const [documentVehicleForm, setDocumentVehicleForm] = useState<DocumentVehicleFormState>(createEmptyDocumentVehicleForm);
   const [repairDraft, setRepairDraft] = useState<EditableRepairDraft | null>(null);
   const [isEditingRepair, setIsEditingRepair] = useState(false);
   const [loginValue, setLoginValue] = useState("");
@@ -1942,6 +2055,7 @@ export default function App() {
   const [batchReprocessStatusFilter, setBatchReprocessStatusFilter] = useState("");
   const [batchReprocessPrimaryOnly, setBatchReprocessPrimaryOnly] = useState<"false" | "true">("false");
   const [reviewActionLoading, setReviewActionLoading] = useState(false);
+  const [documentVehicleSaving, setDocumentVehicleSaving] = useState(false);
   const [checkActionLoadingId, setCheckActionLoadingId] = useState<number | null>(null);
   const [documentOpenLoadingId, setDocumentOpenLoadingId] = useState<number | null>(null);
   const [primaryDocumentLoadingId, setPrimaryDocumentLoadingId] = useState<number | null>(null);
@@ -1963,6 +2077,12 @@ export default function App() {
 
   const selectedReviewItem =
     reviewQueue.find((item) => item.document.id === selectedDocumentId) ?? null;
+  const selectedRepairDocumentPayload = getLatestRepairDocumentPayload(selectedRepair, selectedDocumentId);
+  const selectedRepairDocumentExtractedFields = getPayloadExtractedFields(selectedRepairDocumentPayload);
+  const canCreateVehicleFromSelectedDocument =
+    user?.role === "admin" &&
+    isPlaceholderVehicle(selectedRepair?.vehicle.external_id) &&
+    selectedDocumentId !== null;
   const filteredRepairHistory = selectedRepair
     ? selectedRepair.history.filter((entry) => {
         if (historyFilter === "documents" || historyFilter === "uploads") {
@@ -2383,6 +2503,7 @@ export default function App() {
       });
       setSelectedDocumentId(null);
       setSelectedRepair(null);
+      setDocumentVehicleForm(createEmptyDocumentVehicleForm());
       return;
     }
     void loadWorkspace(token, selectedReviewCategory);
@@ -2458,6 +2579,10 @@ export default function App() {
         setRepairLoading(false);
       });
   }, [documents, isEditingRepair, reviewQueue, selectedDocumentId, token]);
+
+  useEffect(() => {
+    setDocumentVehicleForm(createVehicleFormFromPayload(selectedRepairDocumentPayload));
+  }, [selectedDocumentId, selectedRepairDocumentPayload]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2842,6 +2967,48 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось применить действие по проверке");
     } finally {
       setReviewActionLoading(false);
+    }
+  }
+
+  async function handleCreateVehicleFromDocument() {
+    if (!token || !selectedRepair || selectedDocumentId === null || user?.role !== "admin") {
+      return;
+    }
+
+    const normalizedPlate = documentVehicleForm.plate_number.trim();
+    const normalizedVin = documentVehicleForm.vin.trim();
+    if (!normalizedPlate && !normalizedVin) {
+      setErrorMessage("Для создания карточки техники нужен хотя бы госномер или VIN");
+      return;
+    }
+
+    setDocumentVehicleSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const result = await apiRequest<DocumentCreateVehicleResponse>(
+        `/documents/${selectedDocumentId}/create-vehicle`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            vehicle_type: documentVehicleForm.vehicle_type,
+            plate_number: normalizedPlate || null,
+            vin: normalizedVin || null,
+            brand: documentVehicleForm.brand.trim() || null,
+            model: documentVehicleForm.model.trim() || null,
+            year: documentVehicleForm.year.trim() ? Number(documentVehicleForm.year.trim()) : null,
+            comment: documentVehicleForm.comment.trim() || null,
+          }),
+        },
+        token,
+      );
+      setSuccessMessage(result.message);
+      await loadWorkspace(token);
+      await openRepairByIds(result.document.id, result.repair_id);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось создать карточку техники");
+    } finally {
+      setDocumentVehicleSaving(false);
     }
   }
 
@@ -4290,6 +4457,22 @@ export default function App() {
                             {document.parsed_payload?.extracted_fields?.order_number ? (
                               <Typography className="muted-copy">
                                 OCR: заказ-наряд {document.parsed_payload.extracted_fields.order_number}
+                              </Typography>
+                            ) : null}
+                            {document.parsed_payload?.extracted_fields?.plate_number ||
+                            document.parsed_payload?.extracted_fields?.vin ? (
+                              <Typography className="muted-copy">
+                                OCR:{" "}
+                                {[
+                                  document.parsed_payload?.extracted_fields?.plate_number
+                                    ? `госномер ${document.parsed_payload.extracted_fields.plate_number}`
+                                    : null,
+                                  document.parsed_payload?.extracted_fields?.vin
+                                    ? `VIN ${document.parsed_payload.extracted_fields.vin}`
+                                    : null,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" · ")}
                               </Typography>
                             ) : null}
                             {document.parsed_payload?.extracted_fields?.grand_total ? (
@@ -6207,6 +6390,150 @@ export default function App() {
                                   }}
                                 >
                                   Вернуть в ручную проверку
+                                </Button>
+                              </Stack>
+                            </Stack>
+                          </Paper>
+                        ) : null}
+
+                        {canCreateVehicleFromSelectedDocument && !isEditingRepair ? (
+                          <Paper className="repair-summary" elevation={0}>
+                            <Stack spacing={1.5}>
+                              <Box>
+                                <Typography variant="h6">Создать карточку техники</Typography>
+                                <Typography className="muted-copy">
+                                  Для непривязанного заказ-наряда можно сразу завести технику и перепривязать ремонт.
+                                </Typography>
+                              </Box>
+                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} flexWrap="wrap">
+                                <Chip
+                                  size="small"
+                                  variant="outlined"
+                                  label={`Тип: ${formatVehicleTypeLabel(documentVehicleForm.vehicle_type)}`}
+                                />
+                                {selectedRepairDocumentExtractedFields?.plate_number ? (
+                                  <Chip
+                                    size="small"
+                                    variant="outlined"
+                                    label={`OCR госномер: ${String(selectedRepairDocumentExtractedFields.plate_number)}`}
+                                  />
+                                ) : null}
+                                {selectedRepairDocumentExtractedFields?.vin ? (
+                                  <Chip
+                                    size="small"
+                                    variant="outlined"
+                                    label={`OCR VIN: ${String(selectedRepairDocumentExtractedFields.vin)}`}
+                                  />
+                                ) : null}
+                              </Stack>
+                              <Grid container spacing={1.5}>
+                                <Grid item xs={12} sm={4}>
+                                  <TextField
+                                    select
+                                    fullWidth
+                                    label="Тип техники"
+                                    value={documentVehicleForm.vehicle_type}
+                                    onChange={(event) =>
+                                      setDocumentVehicleForm((current) => ({
+                                        ...current,
+                                        vehicle_type: event.target.value as VehicleType,
+                                      }))
+                                    }
+                                  >
+                                    <MenuItem value="truck">Грузовик</MenuItem>
+                                    <MenuItem value="trailer">Прицеп</MenuItem>
+                                  </TextField>
+                                </Grid>
+                                <Grid item xs={12} sm={4}>
+                                  <TextField
+                                    fullWidth
+                                    label="Госномер"
+                                    value={documentVehicleForm.plate_number}
+                                    onChange={(event) =>
+                                      setDocumentVehicleForm((current) => ({
+                                        ...current,
+                                        plate_number: event.target.value,
+                                      }))
+                                    }
+                                  />
+                                </Grid>
+                                <Grid item xs={12} sm={4}>
+                                  <TextField
+                                    fullWidth
+                                    label="VIN"
+                                    value={documentVehicleForm.vin}
+                                    onChange={(event) =>
+                                      setDocumentVehicleForm((current) => ({
+                                        ...current,
+                                        vin: event.target.value,
+                                      }))
+                                    }
+                                  />
+                                </Grid>
+                                <Grid item xs={12} sm={4}>
+                                  <TextField
+                                    fullWidth
+                                    label="Марка"
+                                    value={documentVehicleForm.brand}
+                                    onChange={(event) =>
+                                      setDocumentVehicleForm((current) => ({
+                                        ...current,
+                                        brand: event.target.value,
+                                      }))
+                                    }
+                                  />
+                                </Grid>
+                                <Grid item xs={12} sm={4}>
+                                  <TextField
+                                    fullWidth
+                                    label="Модель"
+                                    value={documentVehicleForm.model}
+                                    onChange={(event) =>
+                                      setDocumentVehicleForm((current) => ({
+                                        ...current,
+                                        model: event.target.value,
+                                      }))
+                                    }
+                                  />
+                                </Grid>
+                                <Grid item xs={12} sm={4}>
+                                  <TextField
+                                    fullWidth
+                                    label="Год"
+                                    value={documentVehicleForm.year}
+                                    onChange={(event) =>
+                                      setDocumentVehicleForm((current) => ({
+                                        ...current,
+                                        year: event.target.value.replace(/[^\d]/g, "").slice(0, 4),
+                                      }))
+                                    }
+                                  />
+                                </Grid>
+                                <Grid item xs={12}>
+                                  <TextField
+                                    fullWidth
+                                    multiline
+                                    minRows={2}
+                                    label="Комментарий"
+                                    value={documentVehicleForm.comment}
+                                    onChange={(event) =>
+                                      setDocumentVehicleForm((current) => ({
+                                        ...current,
+                                        comment: event.target.value,
+                                      }))
+                                    }
+                                  />
+                                </Grid>
+                              </Grid>
+                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                <Button
+                                  variant="contained"
+                                  disabled={documentVehicleSaving}
+                                  onClick={() => {
+                                    void handleCreateVehicleFromDocument();
+                                  }}
+                                >
+                                  {documentVehicleSaving ? "Создание..." : "Создать и привязать"}
                                 </Button>
                               </Stack>
                             </Stack>

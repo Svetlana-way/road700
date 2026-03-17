@@ -49,6 +49,7 @@ class RepairCheckRead(BaseModel):
 
 class RepairVehicleRead(BaseModel):
     id: int
+    external_id: Optional[str]
     plate_number: Optional[str]
     brand: Optional[str]
     model: Optional[str]

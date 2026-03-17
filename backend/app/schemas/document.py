@@ -10,6 +10,7 @@ class DocumentVehicleRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    external_id: Optional[str]
     vehicle_type: VehicleType
     plate_number: Optional[str]
     brand: Optional[str]
@@ -53,6 +54,23 @@ class DocumentListResponse(BaseModel):
 class DocumentUploadResponse(BaseModel):
     document: DocumentRead
     message: str
+
+
+class DocumentCreateVehicleRequest(BaseModel):
+    vehicle_type: VehicleType
+    plate_number: Optional[str] = None
+    vin: Optional[str] = None
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    year: Optional[int] = None
+    comment: Optional[str] = None
+
+
+class DocumentCreateVehicleResponse(BaseModel):
+    message: str
+    document: DocumentRead
+    repair_id: int
+    created_new_vehicle: bool
 
 
 class DocumentProcessResponse(BaseModel):

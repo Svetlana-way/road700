@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.access import get_allowed_vehicle_ids_query
@@ -14,7 +14,7 @@ from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.core.paths import STORAGE_ROOT
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
-from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, UserRole
+from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, UserRole, VehicleStatus
 from app.models.repair import Repair
 from app.models.user import User
 from app.models.vehicle import Vehicle
@@ -23,6 +23,8 @@ from app.schemas.document import (
     DocumentComparisonFieldRead,
     DocumentComparisonReviewRequest,
     DocumentComparisonReviewResponse,
+    DocumentCreateVehicleRequest,
+    DocumentCreateVehicleResponse,
     DocumentComparisonResponse,
     DocumentListResponse,
     DocumentProcessResponse,
@@ -44,6 +46,35 @@ REPROCESSABLE_DOCUMENT_STATUSES = {
     DocumentStatus.CONFIRMED,
     DocumentStatus.OCR_ERROR,
 }
+PLACEHOLDER_EXTERNAL_ID = "__batch_import_placeholder__"
+IDENTIFIER_CHAR_TRANSLATION = str.maketrans(
+    {
+        "О": "O",
+        "о": "O",
+        "А": "A",
+        "а": "A",
+        "В": "B",
+        "в": "B",
+        "Е": "E",
+        "е": "E",
+        "К": "K",
+        "к": "K",
+        "М": "M",
+        "м": "M",
+        "Н": "H",
+        "н": "H",
+        "Р": "P",
+        "р": "P",
+        "С": "C",
+        "с": "C",
+        "Т": "T",
+        "т": "T",
+        "У": "Y",
+        "у": "Y",
+        "Х": "X",
+        "х": "X",
+    }
+)
 
 
 def get_visible_vehicle(
@@ -141,6 +172,65 @@ def get_visible_document(
     return document
 
 
+def normalize_identifier(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = "".join(ch for ch in value.translate(IDENTIFIER_CHAR_TRANSLATION).upper() if ch.isalnum())
+    return normalized or None
+
+
+def normalize_text_field(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def build_vehicle_snapshot(vehicle: Vehicle | None) -> dict | None:
+    if vehicle is None:
+        return None
+    return {
+        "id": vehicle.id,
+        "external_id": vehicle.external_id,
+        "vehicle_type": vehicle.vehicle_type.value,
+        "plate_number": vehicle.plate_number,
+        "vin": vehicle.vin,
+        "brand": vehicle.brand,
+        "model": vehicle.model,
+        "year": vehicle.year,
+        "status": vehicle.status.value,
+    }
+
+
+def find_existing_vehicle_match(
+    db: Session,
+    *,
+    vin: str | None,
+    plate_number: str | None,
+) -> Vehicle | None:
+    normalized_vin = normalize_identifier(vin)
+    normalized_plate = normalize_identifier(plate_number)
+    if not normalized_vin and not normalized_plate:
+        return None
+
+    vehicles = db.scalars(
+        select(Vehicle).where(or_(Vehicle.external_id.is_(None), Vehicle.external_id != PLACEHOLDER_EXTERNAL_ID))
+    ).all()
+    matches: dict[int, Vehicle] = {}
+    for vehicle in vehicles:
+        if normalized_vin and normalize_identifier(vehicle.vin) == normalized_vin:
+            matches[vehicle.id] = vehicle
+        if normalized_plate and normalize_identifier(vehicle.plate_number) == normalized_plate:
+            matches[vehicle.id] = vehicle
+
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="По VIN или госномеру найдено несколько карточек техники. Нужна ручная проверка.",
+        )
+    return next(iter(matches.values()), None)
+
+
 def get_latest_parsed_payload(document: Document) -> dict:
     if not document.versions:
         return {}
@@ -226,6 +316,116 @@ def append_comparison_review_note(
     if existing:
         return f"{existing}\n{note}"
     return note
+
+
+def create_or_link_vehicle_from_document(
+    db: Session,
+    *,
+    document: Document,
+    payload: DocumentCreateVehicleRequest,
+    current_admin: User,
+) -> tuple[Document, bool]:
+    if document.repair is None or document.repair.vehicle is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Документ не связан с ремонтом")
+
+    if document.repair.vehicle.external_id != PLACEHOLDER_EXTERNAL_ID:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Документ уже привязан к карточке техники. Создание новой записи не требуется.",
+        )
+
+    normalized_plate = normalize_text_field(payload.plate_number)
+    normalized_vin = normalize_text_field(payload.vin)
+    if not normalized_plate and not normalized_vin:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Укажите хотя бы госномер или VIN для создания карточки техники.",
+        )
+
+    existing_vehicle = find_existing_vehicle_match(
+        db,
+        vin=normalized_vin,
+        plate_number=normalized_plate,
+    )
+
+    old_vehicle = document.repair.vehicle
+    created_new_vehicle = existing_vehicle is None
+    target_vehicle = existing_vehicle
+
+    if target_vehicle is None:
+        target_vehicle = Vehicle(
+            external_id=None,
+            vehicle_type=payload.vehicle_type,
+            vin=normalized_vin,
+            plate_number=normalized_plate,
+            brand=normalize_text_field(payload.brand),
+            model=normalize_text_field(payload.model),
+            year=payload.year,
+            comment=normalize_text_field(payload.comment),
+            status=VehicleStatus.ACTIVE,
+            source_payload={
+                "created_from_document_id": document.id,
+                "created_from_repair_id": document.repair.id,
+                "created_by_user_id": current_admin.id,
+            },
+        )
+        db.add(target_vehicle)
+        db.flush()
+
+        db.add(
+            AuditLog(
+                user_id=current_admin.id,
+                entity_type="vehicle",
+                entity_id=str(target_vehicle.id),
+                action_type="vehicle_created_from_document",
+                old_value=None,
+                new_value={
+                    "vehicle": build_vehicle_snapshot(target_vehicle),
+                    "document_id": document.id,
+                    "repair_id": document.repair.id,
+                },
+            )
+        )
+
+    document.repair.vehicle_id = target_vehicle.id
+    db.add(document.repair)
+    db.flush()
+
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="repair",
+            entity_id=str(document.repair.id),
+            action_type="repair_vehicle_relinked",
+            old_value={"vehicle": build_vehicle_snapshot(old_vehicle)},
+            new_value={
+                "vehicle": build_vehicle_snapshot(target_vehicle),
+                "document_id": document.id,
+                "created_new_vehicle": created_new_vehicle,
+            },
+        )
+    )
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="document",
+            entity_id=str(document.id),
+            action_type="document_vehicle_linked",
+            old_value={"vehicle": build_vehicle_snapshot(old_vehicle)},
+            new_value={
+                "vehicle": build_vehicle_snapshot(target_vehicle),
+                "repair_id": document.repair.id,
+                "created_new_vehicle": created_new_vehicle,
+            },
+        )
+    )
+    db.commit()
+
+    process_document(db, document.id)
+    refreshed_document = load_document_with_relations(db, document.id)
+    if refreshed_document is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Не удалось обновить документ")
+    return refreshed_document, created_new_vehicle
 
 
 def log_document_upload_event(
@@ -397,6 +597,44 @@ def upload_document(
     return DocumentUploadResponse(
         document=serialize_document(created_document),
         message=processing_result.message,
+    )
+
+
+@router.post("/{document_id}/create-vehicle", response_model=DocumentCreateVehicleResponse)
+def create_vehicle_from_document(
+    document_id: int,
+    payload: DocumentCreateVehicleRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> DocumentCreateVehicleResponse:
+    document = get_visible_document(db, current_admin, document_id)
+
+    normalized_payload = DocumentCreateVehicleRequest(
+        vehicle_type=payload.vehicle_type,
+        plate_number=normalize_text_field(payload.plate_number),
+        vin=normalize_text_field(payload.vin),
+        brand=normalize_text_field(payload.brand),
+        model=normalize_text_field(payload.model),
+        year=payload.year,
+        comment=normalize_text_field(payload.comment),
+    )
+
+    updated_document, created_new_vehicle = create_or_link_vehicle_from_document(
+        db,
+        document=document,
+        payload=normalized_payload,
+        current_admin=current_admin,
+    )
+    message = (
+        "Карточка техники создана и ремонт перепривязан к ней"
+        if created_new_vehicle
+        else "Ремонт перепривязан к существующей карточке техники"
+    )
+    return DocumentCreateVehicleResponse(
+        message=message,
+        document=serialize_document(updated_document),
+        repair_id=updated_document.repair.id,
+        created_new_vehicle=created_new_vehicle,
     )
 
 

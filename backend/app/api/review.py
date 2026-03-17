@@ -452,6 +452,7 @@ def serialize_review_item(
         },
         "vehicle": {
             "id": vehicle.id,
+            "external_id": vehicle.external_id,
             "vehicle_type": vehicle.vehicle_type,
             "plate_number": vehicle.plate_number,
             "brand": vehicle.brand,

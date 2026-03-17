@@ -196,6 +196,7 @@ def serialize_repair(
         updated_at=repair.updated_at,
         vehicle={
             "id": repair.vehicle.id,
+            "external_id": repair.vehicle.external_id,
             "plate_number": repair.vehicle.plate_number,
             "brand": repair.vehicle.brand,
             "model": repair.vehicle.model,

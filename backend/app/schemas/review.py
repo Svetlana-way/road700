@@ -8,6 +8,7 @@ from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, Vehicle
 
 class ReviewQueueVehicleRead(BaseModel):
     id: int
+    external_id: Optional[str]
     vehicle_type: VehicleType
     plate_number: Optional[str]
     brand: Optional[str]

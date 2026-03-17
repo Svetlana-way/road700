@@ -922,6 +922,52 @@ function formatReviewRuleTypeLabel(value: string) {
   return labels[value] || value;
 }
 
+function formatOcrFieldLabel(value: string) {
+  const labels: Record<string, string> = {
+    order_number: "Номер заказ-наряда",
+    repair_date: "Дата ремонта",
+    mileage: "Пробег",
+    plate_number: "Госномер",
+    vin: "VIN",
+    service_name: "Сервис",
+    work_total: "Сумма работ",
+    parts_total: "Сумма запчастей",
+    vat_total: "НДС",
+    grand_total: "Итоговая сумма",
+  };
+  return labels[value] || value;
+}
+
+function formatOcrLearningStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    new: "Новый",
+    reviewed: "Просмотрен",
+    applied: "Применён",
+    rejected: "Отклонён",
+  };
+  return labels[value] || value;
+}
+
+function formatOcrSignalTypeLabel(value: string) {
+  const labels: Record<string, string> = {
+    corrected_value: "Исправленное значение",
+    missing_value: "Не извлечено",
+    mismatched_value: "Извлечено неверно",
+  };
+  return labels[value] || value;
+}
+
+function formatSourceTypeLabel(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    pdf: "PDF",
+    image: "Изображение",
+  };
+  if (!value) {
+    return "Любой";
+  }
+  return labels[value] || value.toUpperCase();
+}
+
 function formatHours(value: number | null | undefined) {
   if (typeof value !== "number") {
     return null;
@@ -4386,10 +4432,10 @@ export default function App() {
                             onChange={(event) => setOcrLearningStatusFilter(event.target.value)}
                             fullWidth
                           >
-                            <MenuItem value="">Все кроме rejected</MenuItem>
+                            <MenuItem value="">Все кроме отклонённых</MenuItem>
                             {ocrLearningStatuses.map((item) => (
                               <MenuItem key={item} value={item}>
-                                {item}
+                                {formatOcrLearningStatusLabel(item)}
                               </MenuItem>
                             ))}
                           </TextField>
@@ -4405,7 +4451,7 @@ export default function App() {
                             <MenuItem value="">Все поля</MenuItem>
                             {ocrLearningTargetFields.map((item) => (
                               <MenuItem key={item} value={item}>
-                                {item}
+                                {formatOcrFieldLabel(item)}
                               </MenuItem>
                             ))}
                           </TextField>
@@ -4413,15 +4459,15 @@ export default function App() {
                         <Grid item xs={12} sm={4}>
                           <TextField
                             select
-                            label="OCR-профиль"
+                            label="Шаблон OCR"
                             value={ocrLearningProfileScopeFilter}
                             onChange={(event) => setOcrLearningProfileScopeFilter(event.target.value)}
                             fullWidth
                           >
-                            <MenuItem value="">Все профили</MenuItem>
+                            <MenuItem value="">Все шаблоны</MenuItem>
                             {ocrLearningProfileScopes.map((item) => (
                               <MenuItem key={item} value={item}>
-                                {item}
+                                {formatOcrProfileName(item)}
                               </MenuItem>
                             ))}
                           </TextField>
@@ -4462,9 +4508,9 @@ export default function App() {
                                 <Typography>{item.suggestion_summary}</Typography>
                                 <Typography className="muted-copy">
                                   Сигналов {item.count}
-                                  {item.ocr_profile_scope ? ` · профиль ${item.ocr_profile_scope}` : ""}
-                                  {` · поле ${item.target_field}`}
-                                  {` · тип ${item.signal_type}`}
+                                  {item.ocr_profile_scope ? ` · шаблон ${formatOcrProfileName(item.ocr_profile_scope)}` : ""}
+                                  {` · поле ${formatOcrFieldLabel(item.target_field)}`}
+                                  {` · тип ${formatOcrSignalTypeLabel(item.signal_type)}`}
                                 </Typography>
                                 {item.example_services.length > 0 ? (
                                   <Typography className="muted-copy">
@@ -4488,12 +4534,12 @@ export default function App() {
                               <Stack spacing={0.5}>
                                 <Stack direction="row" justifyContent="space-between" spacing={1}>
                                   <Typography>
-                                    {item.target_field} · {item.signal_type}
+                                    {formatOcrFieldLabel(item.target_field)} · {formatOcrSignalTypeLabel(item.signal_type)}
                                   </Typography>
                                   <Stack direction="row" spacing={1}>
-                                    <Chip size="small" variant="outlined" label={item.status} />
+                                    <Chip size="small" variant="outlined" label={formatOcrLearningStatusLabel(item.status)} />
                                     {item.ocr_profile_scope ? (
-                                      <Chip size="small" variant="outlined" label={item.ocr_profile_scope} />
+                                      <Chip size="small" variant="outlined" label={formatOcrProfileName(item.ocr_profile_scope)} />
                                     ) : null}
                                   </Stack>
                                 </Stack>
@@ -4546,7 +4592,7 @@ export default function App() {
                                         void handleUpdateOcrLearningSignal(item.id, "reviewed");
                                       }}
                                     >
-                                      Reviewed
+                                      Пометить просмотренным
                                     </Button>
                                   ) : null}
                                   {item.status !== "applied" ? (
@@ -4558,7 +4604,7 @@ export default function App() {
                                         void handleUpdateOcrLearningSignal(item.id, "applied");
                                       }}
                                     >
-                                      Applied
+                                      Применить
                                     </Button>
                                   ) : null}
                                   {item.status !== "rejected" ? (
@@ -4570,7 +4616,7 @@ export default function App() {
                                         void handleUpdateOcrLearningSignal(item.id, "rejected");
                                       }}
                                     >
-                                      Reject
+                                      Отклонить
                                     </Button>
                                   ) : null}
                                 </Stack>
@@ -4703,8 +4749,8 @@ export default function App() {
                                 fullWidth
                               >
                                 <MenuItem value="">Любой</MenuItem>
-                                <MenuItem value="pdf">pdf</MenuItem>
-                                <MenuItem value="image">image</MenuItem>
+                                <MenuItem value="pdf">PDF</MenuItem>
+                                <MenuItem value="image">Изображение</MenuItem>
                               </TextField>
                             </Grid>
                             <Grid item xs={12} sm={2}>
@@ -4818,7 +4864,7 @@ export default function App() {
                                   </Stack>
                                 </Stack>
                                 <Typography className="muted-copy">
-                                  {item.source_type ? `тип файла ${item.source_type} · ` : ""}
+                                  {item.source_type ? `тип файла ${formatSourceTypeLabel(item.source_type)} · ` : ""}
                                   {`приоритет ${item.priority}`}
                                 </Typography>
                                 <Typography className="muted-copy">
@@ -4957,7 +5003,7 @@ export default function App() {
                                   ),
                                 ].map((item) => (
                                   <MenuItem key={item} value={item}>
-                                    {item}
+                                    {formatOcrFieldLabel(item)}
                                   </MenuItem>
                                 ))}
                               </TextField>
@@ -5070,7 +5116,7 @@ export default function App() {
                                       color={item.is_active ? "success" : "default"}
                                       label={item.is_active ? "Активно" : "Отключено"}
                                     />
-                                    <Chip size="small" variant="outlined" label={item.profile_scope} />
+                                    <Chip size="small" variant="outlined" label={formatOcrProfileName(item.profile_scope)} />
                                   </Stack>
                                 </Stack>
                                 <Typography className="muted-copy">

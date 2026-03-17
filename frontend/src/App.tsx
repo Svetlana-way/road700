@@ -92,6 +92,38 @@ type ServiceFormState = {
   status: ServiceStatus;
 };
 
+type OcrRuleItem = {
+  id: number;
+  profile_scope: string;
+  target_field: string;
+  pattern: string;
+  value_parser: string;
+  confidence: number;
+  priority: number;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type OcrRuleResponse = {
+  items: OcrRuleItem[];
+  profile_scopes: string[];
+  target_fields: string[];
+};
+
+type OcrRuleFormState = {
+  id: number | null;
+  profile_scope: string;
+  target_field: string;
+  pattern: string;
+  value_parser: string;
+  confidence: string;
+  priority: string;
+  is_active: "true" | "false";
+  notes: string;
+};
+
 type VehiclePreview = {
   id: number;
   plate_number: string | null;
@@ -815,6 +847,34 @@ function createReviewRuleFormFromItem(item: ReviewRuleItem): ReviewRuleFormState
   };
 }
 
+function createEmptyOcrRuleForm(): OcrRuleFormState {
+  return {
+    id: null,
+    profile_scope: "default",
+    target_field: "order_number",
+    pattern: "",
+    value_parser: "raw",
+    confidence: "0.6",
+    priority: "100",
+    is_active: "true",
+    notes: "",
+  };
+}
+
+function createOcrRuleFormFromItem(item: OcrRuleItem): OcrRuleFormState {
+  return {
+    id: item.id,
+    profile_scope: item.profile_scope,
+    target_field: item.target_field,
+    pattern: item.pattern,
+    value_parser: item.value_parser,
+    confidence: String(item.confidence),
+    priority: String(item.priority),
+    is_active: item.is_active ? "true" : "false",
+    notes: item.notes || "",
+  };
+}
+
 function createLaborNormEntryFormFromItem(item: LaborNormCatalogItem): LaborNormEntryFormState {
   return {
     id: item.id,
@@ -1435,6 +1495,12 @@ export default function App() {
   const [reviewRuleTypes, setReviewRuleTypes] = useState<string[]>([]);
   const [reviewRuleSaving, setReviewRuleSaving] = useState(false);
   const [reviewRuleForm, setReviewRuleForm] = useState<ReviewRuleFormState>(createEmptyReviewRuleForm);
+  const [ocrRules, setOcrRules] = useState<OcrRuleItem[]>([]);
+  const [ocrRuleProfiles, setOcrRuleProfiles] = useState<string[]>([]);
+  const [ocrRuleTargetFields, setOcrRuleTargetFields] = useState<string[]>([]);
+  const [ocrRuleProfileFilter, setOcrRuleProfileFilter] = useState("");
+  const [ocrRuleSaving, setOcrRuleSaving] = useState(false);
+  const [ocrRuleForm, setOcrRuleForm] = useState<OcrRuleFormState>(createEmptyOcrRuleForm);
   const [reviewQueueCounts, setReviewQueueCounts] = useState<Record<ReviewQueueCategory, number>>({
     all: 0,
     suspicious: 0,
@@ -1613,6 +1679,21 @@ export default function App() {
     setReviewRuleTypes(payload.rule_types);
   }
 
+  async function loadOcrRules(activeToken: string, profileScope: string = ocrRuleProfileFilter) {
+    const params = new URLSearchParams();
+    if (profileScope) {
+      params.set("profile_scope", profileScope);
+    }
+    const payload = await apiRequest<OcrRuleResponse>(
+      `/ocr-rules${params.toString() ? `?${params.toString()}` : ""}`,
+      { method: "GET" },
+      activeToken,
+    );
+    setOcrRules(payload.items);
+    setOcrRuleProfiles(payload.profile_scopes);
+    setOcrRuleTargetFields(payload.target_fields);
+  }
+
   async function loadLaborNormCatalogConfigs(activeToken: string) {
     const payload = await apiRequest<LaborNormCatalogConfigResponse>(
       "/labor-norms/catalogs",
@@ -1643,6 +1724,7 @@ export default function App() {
         laborNormCatalogConfigs,
         servicesPayload,
         reviewRulesPayload,
+        ocrRulesPayload,
       ] = await Promise.all([
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
         apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
@@ -1668,6 +1750,9 @@ export default function App() {
         me.role === "admin"
           ? apiRequest<ReviewRuleResponse>("/review/rules", { method: "GET" }, activeToken)
           : Promise.resolve(null),
+        me.role === "admin"
+          ? apiRequest<OcrRuleResponse>("/ocr-rules", { method: "GET" }, activeToken)
+          : Promise.resolve(null),
       ]);
 
       setUser(me);
@@ -1686,6 +1771,9 @@ export default function App() {
       setServiceCities(servicesPayload?.cities || []);
       setReviewRules(reviewRulesPayload?.items || []);
       setReviewRuleTypes(reviewRulesPayload?.rule_types || []);
+      setOcrRules(ocrRulesPayload?.items || []);
+      setOcrRuleProfiles(ocrRulesPayload?.profile_scopes || []);
+      setOcrRuleTargetFields(ocrRulesPayload?.target_fields || []);
       if (selectedDocumentId === null) {
         const defaultDocumentId =
           reviewQueueData.items[0]?.document.id ?? recentDocuments.items[0]?.id ?? null;
@@ -1717,6 +1805,9 @@ export default function App() {
       setServiceCities([]);
       setReviewRules([]);
       setReviewRuleTypes([]);
+      setOcrRules([]);
+      setOcrRuleProfiles([]);
+      setOcrRuleTargetFields([]);
       setLaborNorms([]);
       setLaborNormCatalogs([]);
       setLaborNormTotal(0);
@@ -1727,6 +1818,7 @@ export default function App() {
       setLaborNormEntryForm(createEmptyLaborNormEntryForm());
       setServiceForm(createEmptyServiceForm());
       setReviewRuleForm(createEmptyReviewRuleForm());
+      setOcrRuleForm(createEmptyOcrRuleForm());
       setReviewQueue([]);
       setReviewQueueCounts({
         all: 0,
@@ -2225,6 +2317,69 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Failed to save review rule");
     } finally {
       setReviewRuleSaving(false);
+    }
+  }
+
+  function handleEditOcrRule(item: OcrRuleItem) {
+    setOcrRuleForm(createOcrRuleFormFromItem(item));
+  }
+
+  function resetOcrRuleEditor() {
+    setOcrRuleForm(createEmptyOcrRuleForm());
+  }
+
+  async function handleSaveOcrRule() {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    if (!ocrRuleForm.profile_scope.trim() || !ocrRuleForm.target_field.trim() || !ocrRuleForm.pattern.trim()) {
+      setErrorMessage("Для OCR-правила обязательны профиль, поле и regex");
+      return;
+    }
+
+    setOcrRuleSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const payload = {
+        profile_scope: ocrRuleForm.profile_scope.trim(),
+        target_field: ocrRuleForm.target_field.trim(),
+        pattern: ocrRuleForm.pattern,
+        value_parser: ocrRuleForm.value_parser.trim(),
+        confidence: Number(ocrRuleForm.confidence || "0.6"),
+        priority: Number(ocrRuleForm.priority || "100"),
+        is_active: ocrRuleForm.is_active === "true",
+        notes: ocrRuleForm.notes.trim() || null,
+      };
+
+      if (ocrRuleForm.id) {
+        await apiRequest<OcrRuleItem>(
+          `/ocr-rules/${ocrRuleForm.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          },
+          token,
+        );
+        setSuccessMessage("OCR-правило обновлено");
+      } else {
+        await apiRequest<OcrRuleItem>(
+          "/ocr-rules",
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          },
+          token,
+        );
+        setSuccessMessage("OCR-правило создано");
+      }
+
+      await loadOcrRules(token, ocrRuleProfileFilter);
+      resetOcrRuleEditor();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save OCR rule");
+    } finally {
+      setOcrRuleSaving(false);
     }
   }
 
@@ -3605,6 +3760,256 @@ export default function App() {
                         </Stack>
                       ) : (
                         <Typography className="muted-copy">Правила пока не загружены.</Typography>
+                      )}
+                    </Stack>
+                  </Paper>
+                ) : null}
+
+                {user?.role === "admin" ? (
+                  <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={2}>
+                      <Box>
+                        <Typography variant="h5">OCR-шаблоны извлечения полей</Typography>
+                        <Typography className="muted-copy">
+                          Профили и regex-правила для извлечения номера заказ-наряда, даты, пробега, VIN, сервиса и сумм из разных форматов документов.
+                        </Typography>
+                      </Box>
+                      <Grid container spacing={1.5}>
+                        <Grid item xs={12} sm={4}>
+                          <TextField
+                            select
+                            label="Профиль"
+                            value={ocrRuleProfileFilter}
+                            onChange={(event) => setOcrRuleProfileFilter(event.target.value)}
+                            fullWidth
+                          >
+                            <MenuItem value="">Все профили</MenuItem>
+                            {ocrRuleProfiles.map((item) => (
+                              <MenuItem key={item} value={item}>
+                                {item}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+                        <Grid item xs={12} sm={8}>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Button
+                              variant="outlined"
+                              onClick={() => {
+                                if (token) {
+                                  void loadOcrRules(token, ocrRuleProfileFilter);
+                                }
+                              }}
+                            >
+                              Обновить список
+                            </Button>
+                            <Button
+                              variant="text"
+                              onClick={() => {
+                                setOcrRuleProfileFilter("");
+                                if (token) {
+                                  void loadOcrRules(token, "");
+                                }
+                              }}
+                            >
+                              Сбросить фильтр
+                            </Button>
+                          </Stack>
+                        </Grid>
+                      </Grid>
+                      <Paper className="repair-line" elevation={0}>
+                        <Stack spacing={1.25}>
+                          <Typography className="metric-label">
+                            Создание и редактирование OCR-правила
+                          </Typography>
+                          <Grid container spacing={1.5}>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Профиль"
+                                value={ocrRuleForm.profile_scope}
+                                onChange={(event) =>
+                                  setOcrRuleForm((current) => ({ ...current, profile_scope: event.target.value }))
+                                }
+                                helperText="Например: default, volvo_service_a"
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                select
+                                label="Поле"
+                                value={ocrRuleForm.target_field}
+                                onChange={(event) =>
+                                  setOcrRuleForm((current) => ({ ...current, target_field: event.target.value }))
+                                }
+                                fullWidth
+                              >
+                                {[
+                                  "order_number",
+                                  "repair_date",
+                                  "mileage",
+                                  "plate_number",
+                                  "vin",
+                                  "service_name",
+                                  "work_total",
+                                  "parts_total",
+                                  "vat_total",
+                                  "grand_total",
+                                  ...ocrRuleTargetFields.filter(
+                                    (item) =>
+                                      ![
+                                        "order_number",
+                                        "repair_date",
+                                        "mileage",
+                                        "plate_number",
+                                        "vin",
+                                        "service_name",
+                                        "work_total",
+                                        "parts_total",
+                                        "vat_total",
+                                        "grand_total",
+                                      ].includes(item),
+                                  ),
+                                ].map((item) => (
+                                  <MenuItem key={item} value={item}>
+                                    {item}
+                                  </MenuItem>
+                                ))}
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={2}>
+                              <TextField
+                                select
+                                label="Парсер"
+                                value={ocrRuleForm.value_parser}
+                                onChange={(event) =>
+                                  setOcrRuleForm((current) => ({ ...current, value_parser: event.target.value }))
+                                }
+                                fullWidth
+                              >
+                                <MenuItem value="raw">raw</MenuItem>
+                                <MenuItem value="date">date</MenuItem>
+                                <MenuItem value="amount">amount</MenuItem>
+                                <MenuItem value="digits_int">digits_int</MenuItem>
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={2}>
+                              <TextField
+                                label="Уверенность"
+                                value={ocrRuleForm.confidence}
+                                onChange={(event) =>
+                                  setOcrRuleForm((current) => ({ ...current, confidence: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={2}>
+                              <TextField
+                                label="Приоритет"
+                                value={ocrRuleForm.priority}
+                                onChange={(event) =>
+                                  setOcrRuleForm((current) => ({ ...current, priority: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                select
+                                label="Активность"
+                                value={ocrRuleForm.is_active}
+                                onChange={(event) =>
+                                  setOcrRuleForm((current) => ({
+                                    ...current,
+                                    is_active: event.target.value as "true" | "false",
+                                  }))
+                                }
+                                fullWidth
+                              >
+                                <MenuItem value="true">Активно</MenuItem>
+                                <MenuItem value="false">Отключено</MenuItem>
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={9}>
+                              <TextField
+                                label="Regex"
+                                value={ocrRuleForm.pattern}
+                                onChange={(event) =>
+                                  setOcrRuleForm((current) => ({ ...current, pattern: event.target.value }))
+                                }
+                                fullWidth
+                                multiline
+                                minRows={3}
+                              />
+                            </Grid>
+                            <Grid item xs={12}>
+                              <TextField
+                                label="Примечание"
+                                value={ocrRuleForm.notes}
+                                onChange={(event) =>
+                                  setOcrRuleForm((current) => ({ ...current, notes: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                          </Grid>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Button
+                              variant="contained"
+                              disabled={ocrRuleSaving}
+                              onClick={() => {
+                                void handleSaveOcrRule();
+                              }}
+                            >
+                              {ocrRuleSaving ? "Сохранение..." : ocrRuleForm.id ? "Сохранить OCR-правило" : "Создать OCR-правило"}
+                            </Button>
+                            <Button variant="text" disabled={ocrRuleSaving} onClick={resetOcrRuleEditor}>
+                              Сбросить форму
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                      <Typography className="muted-copy">
+                        В OCR-справочнике {ocrRules.length} правил по текущему фильтру.
+                      </Typography>
+                      {ocrRules.length > 0 ? (
+                        <Stack spacing={1}>
+                          {ocrRules.map((item) => (
+                            <Paper className="repair-line" key={`ocr-rule-${item.id}`} elevation={0}>
+                              <Stack spacing={0.5}>
+                                <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                  <Typography>{item.target_field}</Typography>
+                                  <Stack direction="row" spacing={1}>
+                                    <Chip
+                                      size="small"
+                                      color={item.is_active ? "success" : "default"}
+                                      label={item.is_active ? "Активно" : "Отключено"}
+                                    />
+                                    <Chip size="small" variant="outlined" label={item.profile_scope} />
+                                  </Stack>
+                                </Stack>
+                                <Typography className="muted-copy">
+                                  parser {item.value_parser} · confidence {item.confidence} · приоритет {item.priority}
+                                </Typography>
+                                <Typography className="muted-copy" sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                  {item.pattern}
+                                </Typography>
+                                {item.notes ? <Typography className="muted-copy">{item.notes}</Typography> : null}
+                                <Stack direction="row" spacing={1}>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={() => handleEditOcrRule(item)}
+                                  >
+                                    Редактировать
+                                  </Button>
+                                </Stack>
+                              </Stack>
+                            </Paper>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Typography className="muted-copy">OCR-правила по текущему фильтру не найдены.</Typography>
                       )}
                     </Stack>
                   </Paper>

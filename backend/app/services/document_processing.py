@@ -31,6 +31,7 @@ from app.models.enums import (
     ServiceStatus,
 )
 from app.models.imports import ImportJob
+from app.models.ocr_rule import OcrRule
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
 from app.services.labor_norms import (
@@ -255,6 +256,24 @@ SERVICE_NAME_BLOCKLIST = (
     "наряд",
     "дата",
 )
+OCR_RULE_TARGET_FIELDS = (
+    "order_number",
+    "repair_date",
+    "mileage",
+    "plate_number",
+    "vin",
+    "service_name",
+    "work_total",
+    "parts_total",
+    "vat_total",
+    "grand_total",
+)
+OCR_RULE_VALUE_PARSERS = {
+    "raw",
+    "date",
+    "amount",
+    "digits_int",
+}
 OCR_TOKEN_CHAR_REPLACEMENTS = str.maketrans(
     {
         "О": "O",
@@ -328,6 +347,31 @@ class ProcessingResult:
     document: Document
     job: ImportJob
     message: str
+
+
+DEFAULT_OCR_RULE_DEFINITIONS: list[dict[str, object]] = [
+    {"profile_scope": "default", "target_field": "order_number", "pattern": pattern, "value_parser": "raw", "confidence": 0.74, "priority": (index + 1) * 10}
+    for index, pattern in enumerate(ORDER_PATTERNS)
+] + [
+    {"profile_scope": "default", "target_field": "repair_date", "pattern": pattern, "value_parser": "date", "confidence": 0.7, "priority": (index + 1) * 10}
+    for index, pattern in enumerate(DATE_PATTERNS)
+] + [
+    {"profile_scope": "default", "target_field": "mileage", "pattern": pattern, "value_parser": "digits_int", "confidence": 0.82, "priority": (index + 1) * 10}
+    for index, pattern in enumerate(MILEAGE_PATTERNS)
+] + [
+    {"profile_scope": "default", "target_field": "plate_number", "pattern": pattern, "value_parser": "raw", "confidence": 0.77, "priority": (index + 1) * 10}
+    for index, pattern in enumerate(PLATE_PATTERNS)
+] + [
+    {"profile_scope": "default", "target_field": "vin", "pattern": pattern, "value_parser": "raw", "confidence": 0.88, "priority": (index + 1) * 10}
+    for index, pattern in enumerate(VIN_PATTERNS)
+] + [
+    {"profile_scope": "default", "target_field": "service_name", "pattern": pattern, "value_parser": "raw", "confidence": 0.58, "priority": (index + 1) * 10}
+    for index, pattern in enumerate(SERVICE_PATTERNS)
+] + [
+    {"profile_scope": "default", "target_field": target_field, "pattern": pattern, "value_parser": "amount", "confidence": 0.8 if target_field == "grand_total" else 0.72, "priority": (index + 1) * 10}
+    for target_field, patterns in TOTAL_PATTERNS.items()
+    for index, pattern in enumerate(patterns)
+]
 
 
 def get_storage_path(storage_key: str) -> Path:
@@ -419,6 +463,106 @@ def parse_decimal_value(value: str) -> Optional[float]:
         return float(normalized)
     except ValueError:
         return None
+
+
+def normalize_ocr_rule_code(value: str | None) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = normalize_text(str(value)).lower()
+    normalized = re.sub(r"[^a-z0-9_:-]+", "_", normalized)
+    normalized = normalized.strip("_")
+    return normalized or None
+
+
+def ensure_default_ocr_rules(db: Session) -> None:
+    existing_count = db.scalar(select(func.count(OcrRule.id))) or 0
+    if existing_count > 0:
+        return
+    for item in DEFAULT_OCR_RULE_DEFINITIONS:
+        db.add(
+            OcrRule(
+                profile_scope=str(item["profile_scope"]),
+                target_field=str(item["target_field"]),
+                pattern=str(item["pattern"]),
+                value_parser=str(item["value_parser"]),
+                confidence=float(item["confidence"]),
+                priority=int(item["priority"]),
+                is_active=True,
+            )
+        )
+    db.flush()
+
+
+def load_active_ocr_rules(db: Session, *, profile_scope: str | None = None) -> list[OcrRule]:
+    ensure_default_ocr_rules(db)
+    stmt = (
+        select(OcrRule)
+        .where(OcrRule.is_active.is_(True))
+        .order_by(OcrRule.profile_scope.asc(), OcrRule.target_field.asc(), OcrRule.priority.asc(), OcrRule.id.asc())
+    )
+    normalized_profile_scope = normalize_ocr_rule_code(profile_scope) if profile_scope else None
+    if normalized_profile_scope:
+        stmt = stmt.where(OcrRule.profile_scope.in_(("default", normalized_profile_scope)))
+    return db.scalars(stmt).all()
+
+
+def group_ocr_rules_by_field(rules: list[OcrRule]) -> dict[str, list[OcrRule]]:
+    grouped: dict[str, list[OcrRule]] = {}
+    for rule in rules:
+        grouped.setdefault(rule.target_field, []).append(rule)
+    return grouped
+
+
+def match_custom_ocr_rule(text: str, rules: list[OcrRule]) -> tuple[Optional[str], Optional[float], Optional[OcrRule]]:
+    for rule in rules:
+        try:
+            match = re.search(rule.pattern, text, re.IGNORECASE | re.MULTILINE)
+        except re.error:
+            continue
+        if not match:
+            continue
+        captured = match.group(1) if match.groups() else match.group(0)
+        return normalize_text(captured), float(rule.confidence), rule
+    return None, None, None
+
+
+def parse_ocr_rule_value(raw_value: str, value_parser: str) -> Optional[object]:
+    if value_parser == "date":
+        parsed_date = parse_date_value(raw_value)
+        return parsed_date.isoformat() if parsed_date else None
+    if value_parser == "amount":
+        return parse_amount(raw_value)
+    if value_parser == "digits_int":
+        digits_only = re.sub(r"\D", "", raw_value)
+        return int(digits_only) if digits_only else None
+    return raw_value
+
+
+def extract_header_field(
+    text: str,
+    *,
+    target_field: str,
+    fallback_patterns: list[str],
+    fallback_parser: str,
+    fallback_confidence: float,
+    rule_map: dict[str, list[OcrRule]],
+) -> tuple[Optional[object], Optional[float], bool]:
+    rules = rule_map.get(target_field, [])
+    custom_match, custom_confidence, matched_rule = match_custom_ocr_rule(text, rules)
+    if custom_match is not None:
+        parser_name = matched_rule.value_parser if matched_rule is not None else fallback_parser
+        parsed_value = parse_ocr_rule_value(custom_match, parser_name)
+        if parsed_value is not None:
+            return parsed_value, custom_confidence, False
+        return None, None, True
+
+    fallback_match = first_match(fallback_patterns, text)
+    if fallback_match is None:
+        return None, None, False
+    parsed_value = parse_ocr_rule_value(fallback_match, fallback_parser)
+    if parsed_value is None:
+        return None, None, True
+    return parsed_value, fallback_confidence, False
 
 
 def first_match(patterns: list[str], text: str) -> Optional[str]:
@@ -1130,68 +1274,111 @@ def extract_document_text(path: Path, source_type: str) -> tuple[str, str, Optio
     return text or scanned_text, extracted_from if text else "pdf_vision_ocr", failure_reason
 
 
-def parse_document_text(text: str) -> dict[str, object]:
+def parse_document_text(text: str, db: Session | None = None, *, profile_scope: str | None = None) -> dict[str, object]:
     text = select_best_text_variant(text)
     extracted_fields = {}
     confidence_map = {}
     manual_review_reasons = []
     normalization_notes = []
     extracted_items = extract_line_items(text)
+    rule_map = group_ocr_rules_by_field(load_active_ocr_rules(db, profile_scope=profile_scope)) if db is not None else {}
 
-    order_number = first_match(ORDER_PATTERNS, text)
-    if order_number:
+    order_number, order_number_confidence, _ = extract_header_field(
+        text,
+        target_field="order_number",
+        fallback_patterns=ORDER_PATTERNS,
+        fallback_parser="raw",
+        fallback_confidence=0.74,
+        rule_map=rule_map,
+    )
+    if isinstance(order_number, str) and order_number:
         extracted_fields["order_number"] = order_number
-        confidence_map["order_number"] = 0.74
+        confidence_map["order_number"] = float(order_number_confidence or 0.74)
     else:
         manual_review_reasons.append("order_number_missing")
 
-    repair_date = first_match(DATE_PATTERNS, text)
-    if repair_date:
-        parsed_date = parse_date_value(repair_date)
-        if parsed_date:
-            extracted_fields["repair_date"] = parsed_date.isoformat()
-            confidence_map["repair_date"] = 0.7
-        else:
-            manual_review_reasons.append("repair_date_invalid")
+    repair_date, repair_date_confidence, repair_date_invalid = extract_header_field(
+        text,
+        target_field="repair_date",
+        fallback_patterns=DATE_PATTERNS,
+        fallback_parser="date",
+        fallback_confidence=0.7,
+        rule_map=rule_map,
+    )
+    if isinstance(repair_date, str) and repair_date:
+        extracted_fields["repair_date"] = repair_date
+        confidence_map["repair_date"] = float(repair_date_confidence or 0.7)
+    elif repair_date_invalid:
+        manual_review_reasons.append("repair_date_invalid")
     else:
         manual_review_reasons.append("repair_date_missing")
 
-    mileage = first_match(MILEAGE_PATTERNS, text)
-    if mileage:
-        digits_only = re.sub(r"\D", "", mileage)
-        if digits_only:
-            extracted_fields["mileage"] = int(digits_only)
-            confidence_map["mileage"] = 0.82
+    mileage, mileage_confidence, _ = extract_header_field(
+        text,
+        target_field="mileage",
+        fallback_patterns=MILEAGE_PATTERNS,
+        fallback_parser="digits_int",
+        fallback_confidence=0.82,
+        rule_map=rule_map,
+    )
+    if isinstance(mileage, int):
+        extracted_fields["mileage"] = mileage
+        confidence_map["mileage"] = float(mileage_confidence or 0.82)
     else:
         manual_review_reasons.append("mileage_missing")
 
-    plate_number = first_match(PLATE_PATTERNS, text)
-    if plate_number:
+    plate_number, plate_number_confidence, _ = extract_header_field(
+        text,
+        target_field="plate_number",
+        fallback_patterns=PLATE_PATTERNS,
+        fallback_parser="raw",
+        fallback_confidence=0.77,
+        rule_map=rule_map,
+    )
+    if isinstance(plate_number, str) and plate_number:
         extracted_fields["plate_number"] = plate_number
-        confidence_map["plate_number"] = 0.77
+        confidence_map["plate_number"] = float(plate_number_confidence or 0.77)
 
-    vin = first_match(VIN_PATTERNS, text)
-    if vin:
+    vin, vin_confidence, _ = extract_header_field(
+        text,
+        target_field="vin",
+        fallback_patterns=VIN_PATTERNS,
+        fallback_parser="raw",
+        fallback_confidence=0.88,
+        rule_map=rule_map,
+    )
+    if isinstance(vin, str) and vin:
         extracted_fields["vin"] = vin
-        confidence_map["vin"] = 0.88
+        confidence_map["vin"] = float(vin_confidence or 0.88)
 
-    service_name = first_match(SERVICE_PATTERNS, text)
-    if service_name:
+    service_name, service_name_confidence, _ = extract_header_field(
+        text,
+        target_field="service_name",
+        fallback_patterns=SERVICE_PATTERNS,
+        fallback_parser="raw",
+        fallback_confidence=0.58,
+        rule_map=rule_map,
+    )
+    if isinstance(service_name, str) and service_name:
         if is_service_name_suspicious(service_name):
             manual_review_reasons.append("service_name_suspicious")
         else:
             extracted_fields["service_name"] = service_name[:120]
-            confidence_map["service_name"] = 0.58
+            confidence_map["service_name"] = float(service_name_confidence or 0.58)
 
     for field_name, patterns in TOTAL_PATTERNS.items():
-        match = first_match(patterns, text)
-        if not match:
+        amount, amount_confidence, _ = extract_header_field(
+            text,
+            target_field=field_name,
+            fallback_patterns=patterns,
+            fallback_parser="amount",
+            fallback_confidence=0.8 if field_name == "grand_total" else 0.72,
+            rule_map=rule_map,
+        )
+        if not isinstance(amount, (int, float)):
             continue
-        amount = parse_amount(match)
-        if amount is None:
-            continue
-        extracted_fields[field_name] = amount
-        confidence_map[field_name] = 0.8 if field_name == "grand_total" else 0.72
+        extracted_fields[field_name] = float(amount)
+        confidence_map[field_name] = float(amount_confidence or (0.8 if field_name == "grand_total" else 0.72))
 
     normalization_notes.extend(
         reconcile_header_totals_with_line_items(
@@ -1366,7 +1553,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
             )
 
         text, extracted_from, extraction_failure_reason = extract_document_text(storage_path, document.source_type)
-        parsed = parse_document_text(text) if text else {
+        parsed = parse_document_text(text, db=db) if text else {
             "extracted_fields": {},
             "extracted_items": {"works": [], "parts": []},
             "confidence_map": {},

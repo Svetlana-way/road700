@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user, get_db
@@ -95,7 +95,7 @@ def request_password_reset(
 ) -> PasswordResetRequestResponse:
     email = payload.email.strip().lower()
     generic_message = "Если пользователь с такой почтой найден, инструкция по восстановлению подготовлена"
-    user = db.scalar(select(User).where(User.email == email))
+    user = db.scalar(select(User).where(func.lower(User.email) == email))
     if user is None or not user.is_active:
         return PasswordResetRequestResponse(message=generic_message, delivery_method="none")
 

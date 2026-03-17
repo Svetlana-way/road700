@@ -10,11 +10,12 @@ from app.models.user import User
 
 
 def init_admin() -> None:
+    normalized_email = settings.initial_admin_email.strip().lower()
     with SessionLocal() as db:
         existing_user = db.scalar(
             select(User).where(
                 (User.login == settings.initial_admin_login)
-                | (User.email == settings.initial_admin_email)
+                | (User.email.ilike(normalized_email))
             )
         )
 
@@ -29,6 +30,9 @@ def init_admin() -> None:
             if not existing_user.full_name and settings.initial_admin_full_name:
                 existing_user.full_name = settings.initial_admin_full_name
                 changed = True
+            if existing_user.email != normalized_email:
+                existing_user.email = normalized_email
+                changed = True
 
             if changed:
                 db.add(existing_user)
@@ -41,7 +45,7 @@ def init_admin() -> None:
         admin = User(
             full_name=settings.initial_admin_full_name,
             login=settings.initial_admin_login,
-            email=settings.initial_admin_email,
+            email=normalized_email,
             password_hash=get_password_hash(settings.initial_admin_password),
             role=UserRole.ADMIN,
             is_active=True,

@@ -35,6 +35,13 @@ def normalize_text(value: str | None) -> str | None:
     return normalized or None
 
 
+def normalize_email(value: str | None) -> str | None:
+    normalized = normalize_text(value)
+    if normalized is None:
+        return None
+    return normalized.lower()
+
+
 def validate_password(value: str | None) -> str | None:
     normalized = normalize_text(value)
     if normalized is None:
@@ -111,7 +118,7 @@ def ensure_unique_user_fields(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Пользователь с таким логином уже существует")
 
     if email:
-        stmt = select(User).where(User.email == email)
+        stmt = select(User).where(func.lower(User.email) == email.lower())
         if exclude_user_id is not None:
             stmt = stmt.where(User.id != exclude_user_id)
         if db.scalar(stmt) is not None:
@@ -222,7 +229,7 @@ def create_user(
 ) -> UserRead:
     normalized_full_name = normalize_text(payload.full_name)
     normalized_login = normalize_text(payload.login)
-    normalized_email = normalize_text(str(payload.email))
+    normalized_email = normalize_email(str(payload.email))
     normalized_password = validate_password(payload.password)
     if not normalized_full_name or not normalized_login or not normalized_email or not normalized_password:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Имя, логин, почта и пароль обязательны")
@@ -272,7 +279,7 @@ def update_user(
         return UserRead.model_validate(user)
 
     normalized_login = normalize_text(update_data.get("login"))
-    normalized_email = normalize_text(str(update_data["email"])) if "email" in update_data and update_data["email"] else None
+    normalized_email = normalize_email(str(update_data["email"])) if "email" in update_data and update_data["email"] else None
     ensure_self_admin_protection(
         user,
         current_admin,

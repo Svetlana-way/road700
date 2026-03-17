@@ -11,6 +11,7 @@ from app.api.ocr_profile_matchers import router as ocr_profile_matchers_router
 from app.api.repairs import router as repairs_router
 from app.api.review import router as review_router
 from app.api.services import router as services_router
+from app.api.users import router as users_router
 from app.api.vehicles import router as vehicles_router
 
 
@@ -26,4 +27,5 @@ api_router.include_router(ocr_rules_router)
 api_router.include_router(repairs_router)
 api_router.include_router(review_router)
 api_router.include_router(services_router)
+api_router.include_router(users_router)
 api_router.include_router(vehicles_router)

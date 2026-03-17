@@ -51,6 +51,48 @@ type User = {
   is_active: boolean;
 };
 
+type UserAssignment = {
+  id: number;
+  vehicle_id: number;
+  starts_at: string;
+  ends_at: string | null;
+  comment: string | null;
+  vehicle: {
+    id: number;
+    vehicle_type: VehicleType;
+    plate_number: string | null;
+    brand: string | null;
+    model: string | null;
+  };
+};
+
+type UserItem = User & {
+  created_at: string;
+  updated_at: string;
+  assignments: UserAssignment[];
+};
+
+type UsersResponse = {
+  items: UserItem[];
+  total: number;
+};
+
+type UserFormState = {
+  id: number | null;
+  full_name: string;
+  login: string;
+  email: string;
+  role: UserRole;
+  is_active: "true" | "false";
+  password: string;
+};
+
+type UserAssignmentFormState = {
+  starts_at: string;
+  ends_at: string;
+  comment: string;
+};
+
 type Vehicle = {
   id: number;
   external_id: string | null;
@@ -413,7 +455,7 @@ type LaborNormEntryFormState = {
 type ReviewPriorityBucket = "review" | "critical" | "suspicious";
 type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
 type WorkspaceTab = "documents" | "repair" | "admin" | "tech_admin" | "fleet";
-type AdminTab = "services" | "control" | "labor_norms";
+type AdminTab = "services" | "control" | "labor_norms" | "employees";
 type TechAdminTab = "learning" | "matchers" | "rules";
 type RepairTab = "overview" | "works" | "parts" | "documents" | "checks" | "history";
 type ReviewQueueCategory =
@@ -779,6 +821,7 @@ const adminTabDescriptions: Record<AdminTab, string> = {
   services: "Справочник сервисов для нормализации названий и ручной правки ремонтов.",
   control: "Причины ручной проверки и приоритеты очереди для заказ-нарядов.",
   labor_norms: "Каталоги нормо-часов, импорт справочников и ручная правка записей.",
+  employees: "Пользователи системы, доступ сотрудников и закрепление техники по зонам ответственности.",
 };
 
 const techAdminTabDescriptions: Record<TechAdminTab, string> = {
@@ -1145,6 +1188,38 @@ function createEmptyServiceForm(): ServiceFormState {
   };
 }
 
+function createEmptyUserForm(): UserFormState {
+  return {
+    id: null,
+    full_name: "",
+    login: "",
+    email: "",
+    role: "employee",
+    is_active: "true",
+    password: "",
+  };
+}
+
+function createUserFormFromItem(item: UserItem): UserFormState {
+  return {
+    id: item.id,
+    full_name: item.full_name,
+    login: item.login,
+    email: item.email,
+    role: item.role,
+    is_active: item.is_active ? "true" : "false",
+    password: "",
+  };
+}
+
+function createEmptyUserAssignmentForm(): UserAssignmentFormState {
+  return {
+    starts_at: new Date().toISOString().slice(0, 10),
+    ends_at: "",
+    comment: "",
+  };
+}
+
 function createEmptyDocumentVehicleForm(): DocumentVehicleFormState {
   return {
     vehicle_type: "truck",
@@ -1439,6 +1514,18 @@ function formatVehicleTypeLabel(value: VehicleType | "" | null | undefined) {
     return "Прицеп";
   }
   return "Любой";
+}
+
+function formatUserRoleLabel(value: UserRole) {
+  if (value === "admin") {
+    return "Администратор";
+  }
+  return "Сотрудник";
+}
+
+function isAssignmentActive(assignment: UserAssignment) {
+  const today = new Date().toISOString().slice(0, 10);
+  return assignment.starts_at <= today && (!assignment.ends_at || assignment.ends_at >= today);
 }
 
 function formatVehicleStatusLabel(value: string | null | undefined) {
@@ -1970,6 +2057,19 @@ export default function App() {
   const [selectedFleetVehicle, setSelectedFleetVehicle] = useState<VehicleDetail | null>(null);
   const [selectedFleetVehicleLoading, setSelectedFleetVehicleLoading] = useState(false);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [usersList, setUsersList] = useState<UserItem[]>([]);
+  const [usersTotal, setUsersTotal] = useState(0);
+  const [userLoading, setUserLoading] = useState(false);
+  const [userSaving, setUserSaving] = useState(false);
+  const [userSearch, setUserSearch] = useState("");
+  const [showUserEditor, setShowUserEditor] = useState(false);
+  const [userForm, setUserForm] = useState<UserFormState>(createEmptyUserForm);
+  const [selectedManagedUserId, setSelectedManagedUserId] = useState<number | null>(null);
+  const [userVehicleSearch, setUserVehicleSearch] = useState("");
+  const [userVehicleSearchLoading, setUserVehicleSearchLoading] = useState(false);
+  const [userVehicleSearchResults, setUserVehicleSearchResults] = useState<Vehicle[]>([]);
+  const [userAssignmentForm, setUserAssignmentForm] = useState<UserAssignmentFormState>(createEmptyUserAssignmentForm);
+  const [userAssignmentSaving, setUserAssignmentSaving] = useState(false);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [serviceCities, setServiceCities] = useState<string[]>([]);
   const [serviceQuery, setServiceQuery] = useState("");
@@ -2077,6 +2177,7 @@ export default function App() {
 
   const selectedReviewItem =
     reviewQueue.find((item) => item.document.id === selectedDocumentId) ?? null;
+  const selectedManagedUser = usersList.find((item) => item.id === selectedManagedUserId) ?? null;
   const selectedRepairDocumentPayload = getLatestRepairDocumentPayload(selectedRepair, selectedDocumentId);
   const selectedRepairDocumentExtractedFields = getPayloadExtractedFields(selectedRepairDocumentPayload);
   const canCreateVehicleFromSelectedDocument =
@@ -2350,6 +2451,45 @@ export default function App() {
     }
   }
 
+  async function loadUsers(activeToken: string, search: string = userSearch) {
+    setUserLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("include_inactive", "true");
+      if (search.trim()) {
+        params.set("search", search.trim());
+      }
+      const payload = await apiRequest<UsersResponse>(`/users?${params.toString()}`, { method: "GET" }, activeToken);
+      setUsersList(payload.items);
+      setUsersTotal(payload.total);
+      setSelectedManagedUserId((current) => {
+        if (current && payload.items.some((item) => item.id === current)) {
+          return current;
+        }
+        return payload.items[0]?.id ?? null;
+      });
+    } finally {
+      setUserLoading(false);
+    }
+  }
+
+  async function searchVehiclesForUserAssignment(activeToken: string, search: string) {
+    if (!search.trim()) {
+      setUserVehicleSearchResults([]);
+      return;
+    }
+    setUserVehicleSearchLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", "50");
+      params.set("search", search.trim());
+      const payload = await apiRequest<VehiclesResponse>(`/vehicles?${params.toString()}`, { method: "GET" }, activeToken);
+      setUserVehicleSearchResults(payload.items);
+    } finally {
+      setUserVehicleSearchLoading(false);
+    }
+  }
+
   async function loadWorkspace(activeToken: string, reviewCategory: ReviewQueueCategory = selectedReviewCategory) {
     setBootLoading(true);
     try {
@@ -2366,6 +2506,7 @@ export default function App() {
         ocrRulesPayload,
         ocrProfileMatchersPayload,
         ocrLearningPayload,
+        usersPayload,
       ] = await Promise.all([
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
         apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
@@ -2400,6 +2541,9 @@ export default function App() {
         me.role === "admin"
           ? apiRequest<OcrLearningResponse>("/ocr-learning/signals?limit=50", { method: "GET" }, activeToken)
           : Promise.resolve(null),
+        me.role === "admin"
+          ? apiRequest<UsersResponse>("/users?include_inactive=true", { method: "GET" }, activeToken)
+          : Promise.resolve(null),
       ]);
 
       setUser(me);
@@ -2409,6 +2553,9 @@ export default function App() {
       setFleetVehiclesTotal(vehicleList.total);
       setSelectedFleetVehicleId((current) => current ?? vehicleList.items[0]?.id ?? null);
       setDocuments(recentDocuments.items);
+      setUsersList(usersPayload?.items || []);
+      setUsersTotal(usersPayload?.total || 0);
+      setSelectedManagedUserId((current) => current ?? usersPayload?.items?.[0]?.id ?? null);
       setLaborNorms(laborNormCatalog?.items || []);
       setLaborNormTotal(laborNormCatalog?.total || 0);
       setLaborNormScopes(laborNormCatalog?.scopes || []);
@@ -2466,6 +2613,15 @@ export default function App() {
       setSelectedFleetVehicleId(null);
       setSelectedFleetVehicle(null);
       setDocuments([]);
+      setUsersList([]);
+      setUsersTotal(0);
+      setUserSearch("");
+      setShowUserEditor(false);
+      setUserForm(createEmptyUserForm());
+      setSelectedManagedUserId(null);
+      setUserVehicleSearch("");
+      setUserVehicleSearchResults([]);
+      setUserAssignmentForm(createEmptyUserAssignmentForm());
       setServices([]);
       setServiceCities([]);
       setReviewRules([]);
@@ -3009,6 +3165,153 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось создать карточку техники");
     } finally {
       setDocumentVehicleSaving(false);
+    }
+  }
+
+  function resetUserEditor() {
+    setUserForm(createEmptyUserForm());
+    setUserAssignmentForm(createEmptyUserAssignmentForm());
+    setUserVehicleSearch("");
+    setUserVehicleSearchResults([]);
+  }
+
+  function handleEditUser(item: UserItem) {
+    setUserForm(createUserFormFromItem(item));
+    setSelectedManagedUserId(item.id);
+    setShowUserEditor(true);
+  }
+
+  async function handleUserSearch() {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    setErrorMessage("");
+    try {
+      await loadUsers(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить список сотрудников");
+    }
+  }
+
+  async function handleSaveUser() {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    if (!userForm.full_name.trim() || !userForm.login.trim() || !userForm.email.trim()) {
+      setErrorMessage("Имя, логин и почта обязательны");
+      return;
+    }
+    if (!userForm.id && !userForm.password.trim()) {
+      setErrorMessage("Для нового пользователя нужно задать пароль");
+      return;
+    }
+
+    setUserSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const body = {
+        full_name: userForm.full_name.trim(),
+        login: userForm.login.trim(),
+        email: userForm.email.trim(),
+        role: userForm.role,
+        is_active: userForm.is_active === "true",
+        ...(userForm.password.trim() ? { password: userForm.password.trim() } : {}),
+      };
+
+      if (userForm.id) {
+        await apiRequest<UserItem>(
+          `/users/${userForm.id}`,
+          { method: "PATCH", body: JSON.stringify(body) },
+          token,
+        );
+        setSuccessMessage("Пользователь обновлён");
+      } else {
+        await apiRequest<UserItem>("/users", { method: "POST", body: JSON.stringify(body) }, token);
+        setSuccessMessage("Пользователь создан");
+      }
+      await loadUsers(token);
+      resetUserEditor();
+      setShowUserEditor(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить пользователя");
+    } finally {
+      setUserSaving(false);
+    }
+  }
+
+  async function handleSearchVehiclesForAssignment() {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    setErrorMessage("");
+    try {
+      await searchVehiclesForUserAssignment(token, userVehicleSearch);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось найти технику");
+    }
+  }
+
+  async function handleCreateUserAssignment(vehicleId: number) {
+    if (!token || user?.role !== "admin" || selectedManagedUserId === null) {
+      return;
+    }
+    setUserAssignmentSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      await apiRequest<UserItem>(
+        `/users/${selectedManagedUserId}/vehicle-assignments`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            vehicle_id: vehicleId,
+            starts_at: userAssignmentForm.starts_at,
+            ends_at: userAssignmentForm.ends_at || null,
+            comment: userAssignmentForm.comment.trim() || null,
+          }),
+        },
+        token,
+      );
+      setSuccessMessage("Техника закреплена за сотрудником");
+      setUserAssignmentForm(createEmptyUserAssignmentForm());
+      setUserVehicleSearch("");
+      setUserVehicleSearchResults([]);
+      await loadUsers(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось закрепить технику");
+    } finally {
+      setUserAssignmentSaving(false);
+    }
+  }
+
+  async function handleCloseUserAssignment(assignment: UserAssignment) {
+    if (!token || user?.role !== "admin" || selectedManagedUserId === null) {
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const closeDate = assignment.starts_at > today ? assignment.starts_at : today;
+    setUserAssignmentSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      await apiRequest<UserItem>(
+        `/users/${selectedManagedUserId}/vehicle-assignments/${assignment.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            ends_at: closeDate,
+            comment: assignment.comment,
+          }),
+        },
+        token,
+      );
+      setSuccessMessage("Назначение техники закрыто");
+      await loadUsers(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось закрыть назначение техники");
+    } finally {
+      setUserAssignmentSaving(false);
     }
   }
 
@@ -4204,6 +4507,7 @@ export default function App() {
                         scrollButtons="auto"
                         allowScrollButtonsMobile
                       >
+                        <Tab label="Сотрудники" value="employees" />
                         <Tab label="Сервисы" value="services" />
                         <Tab label="Контроль" value="control" />
                         <Tab label="Нормо-часы" value="labor_norms" />
@@ -4536,6 +4840,379 @@ export default function App() {
                       ) : null}
                     </Stack>
                   </Stack>
+                  </Paper>
+                ) : null}
+
+                {activeWorkspaceTab === "admin" && activeAdminTab === "employees" && user?.role === "admin" ? (
+                  <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={2}>
+                      <Box>
+                        <Typography variant="h5">Сотрудники и доступ</Typography>
+                        <Typography className="muted-copy">
+                          Администратор создаёт учётные записи сотрудников и закрепляет за ними технику.
+                        </Typography>
+                      </Box>
+                      <Grid container spacing={1.5}>
+                        <Grid item xs={12} sm={8}>
+                          <TextField
+                            label="Поиск по имени, логину или почте"
+                            value={userSearch}
+                            onChange={(event) => setUserSearch(event.target.value)}
+                            fullWidth
+                          />
+                        </Grid>
+                        <Grid item xs={12} sm={4}>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Button variant="outlined" onClick={() => void handleUserSearch()} disabled={userLoading}>
+                              {userLoading ? "Загрузка..." : "Обновить"}
+                            </Button>
+                            <Button
+                              variant="text"
+                              disabled={userLoading}
+                              onClick={() => {
+                                setUserSearch("");
+                                if (token) {
+                                  void loadUsers(token, "");
+                                }
+                              }}
+                            >
+                              Сбросить
+                            </Button>
+                          </Stack>
+                        </Grid>
+                      </Grid>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                        <Button
+                          variant={showUserEditor ? "outlined" : "contained"}
+                          onClick={() => setShowUserEditor((current) => !current)}
+                        >
+                          {showUserEditor ? "Скрыть форму сотрудника" : "Добавить сотрудника"}
+                        </Button>
+                      </Stack>
+                      {showUserEditor ? (
+                        <Paper className="repair-line" elevation={0}>
+                          <Stack spacing={1.25}>
+                            <Typography className="metric-label">Создание и редактирование пользователя</Typography>
+                            <Grid container spacing={1.5}>
+                              <Grid item xs={12} sm={4}>
+                                <TextField
+                                  label="ФИО"
+                                  value={userForm.full_name}
+                                  onChange={(event) =>
+                                    setUserForm((current) => ({ ...current, full_name: event.target.value }))
+                                  }
+                                  fullWidth
+                                />
+                              </Grid>
+                              <Grid item xs={12} sm={2}>
+                                <TextField
+                                  label="Логин"
+                                  value={userForm.login}
+                                  onChange={(event) =>
+                                    setUserForm((current) => ({ ...current, login: event.target.value }))
+                                  }
+                                  fullWidth
+                                />
+                              </Grid>
+                              <Grid item xs={12} sm={3}>
+                                <TextField
+                                  label="Почта"
+                                  value={userForm.email}
+                                  onChange={(event) =>
+                                    setUserForm((current) => ({ ...current, email: event.target.value }))
+                                  }
+                                  fullWidth
+                                />
+                              </Grid>
+                              <Grid item xs={12} sm={2}>
+                                <TextField
+                                  select
+                                  label="Роль"
+                                  value={userForm.role}
+                                  onChange={(event) =>
+                                    setUserForm((current) => ({ ...current, role: event.target.value as UserRole }))
+                                  }
+                                  fullWidth
+                                >
+                                  <MenuItem value="employee">Сотрудник</MenuItem>
+                                  <MenuItem value="admin">Админ</MenuItem>
+                                </TextField>
+                              </Grid>
+                              <Grid item xs={12} sm={2}>
+                                <TextField
+                                  select
+                                  label="Статус"
+                                  value={userForm.is_active}
+                                  onChange={(event) =>
+                                    setUserForm((current) => ({
+                                      ...current,
+                                      is_active: event.target.value as "true" | "false",
+                                    }))
+                                  }
+                                  fullWidth
+                                >
+                                  <MenuItem value="true">Активен</MenuItem>
+                                  <MenuItem value="false">Отключен</MenuItem>
+                                </TextField>
+                              </Grid>
+                              <Grid item xs={12} sm={4}>
+                                <TextField
+                                  label={userForm.id ? "Новый пароль, если нужно сменить" : "Пароль"}
+                                  type="password"
+                                  value={userForm.password}
+                                  onChange={(event) =>
+                                    setUserForm((current) => ({ ...current, password: event.target.value }))
+                                  }
+                                  fullWidth
+                                />
+                              </Grid>
+                            </Grid>
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                              <Button
+                                variant="contained"
+                                disabled={userSaving}
+                                onClick={() => {
+                                  void handleSaveUser();
+                                }}
+                              >
+                                {userSaving ? "Сохранение..." : userForm.id ? "Сохранить пользователя" : "Создать пользователя"}
+                              </Button>
+                              <Button
+                                variant="text"
+                                disabled={userSaving}
+                                onClick={() => {
+                                  resetUserEditor();
+                                  setShowUserEditor(false);
+                                }}
+                              >
+                                Сбросить форму
+                              </Button>
+                            </Stack>
+                          </Stack>
+                        </Paper>
+                      ) : null}
+                      <Typography className="muted-copy">Найдено пользователей: {usersTotal}</Typography>
+                      <Grid container spacing={2}>
+                        <Grid item xs={12} lg={5}>
+                          {userLoading ? (
+                            <Stack spacing={1} alignItems="center">
+                              <CircularProgress size={24} />
+                              <Typography className="muted-copy">Загрузка сотрудников...</Typography>
+                            </Stack>
+                          ) : usersList.length > 0 ? (
+                            <Stack spacing={1}>
+                              {usersList.map((item) => {
+                                const activeAssignments = item.assignments.filter((assignment) => isAssignmentActive(assignment)).length;
+                                return (
+                                  <Paper
+                                    className={`document-row${selectedManagedUserId === item.id ? " document-row-active" : ""}`}
+                                    key={`user-${item.id}`}
+                                    elevation={0}
+                                  >
+                                    <Stack spacing={0.75}>
+                                      <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                        <Typography>{item.full_name}</Typography>
+                                        <Stack direction="row" spacing={1}>
+                                          <Chip size="small" variant="outlined" label={formatUserRoleLabel(item.role)} />
+                                          <Chip
+                                            size="small"
+                                            color={item.is_active ? "success" : "default"}
+                                            label={item.is_active ? "Активен" : "Отключен"}
+                                          />
+                                        </Stack>
+                                      </Stack>
+                                      <Typography className="muted-copy">
+                                        {item.login} · {item.email}
+                                      </Typography>
+                                      <Typography className="muted-copy">
+                                        Активных назначений техники: {activeAssignments}
+                                      </Typography>
+                                      <Stack direction="row" spacing={1}>
+                                        <Button
+                                          size="small"
+                                          variant="outlined"
+                                          onClick={() => {
+                                            setSelectedManagedUserId(item.id);
+                                          }}
+                                        >
+                                          Открыть доступы
+                                        </Button>
+                                        <Button
+                                          size="small"
+                                          variant="text"
+                                          onClick={() => handleEditUser(item)}
+                                        >
+                                          Редактировать
+                                        </Button>
+                                      </Stack>
+                                    </Stack>
+                                  </Paper>
+                                );
+                              })}
+                            </Stack>
+                          ) : (
+                            <Typography className="muted-copy">Пользователи пока не заведены.</Typography>
+                          )}
+                        </Grid>
+                        <Grid item xs={12} lg={7}>
+                          {selectedManagedUser ? (
+                            <Stack spacing={1.5}>
+                              <Paper className="repair-line" elevation={0}>
+                                <Stack spacing={0.75}>
+                                  <Typography variant="h6">{selectedManagedUser.full_name}</Typography>
+                                  <Typography className="muted-copy">
+                                    {selectedManagedUser.login} · {selectedManagedUser.email}
+                                  </Typography>
+                                  <Typography className="muted-copy">
+                                    {formatUserRoleLabel(selectedManagedUser.role)} · {selectedManagedUser.is_active ? "активен" : "отключен"}
+                                  </Typography>
+                                </Stack>
+                              </Paper>
+                              <Paper className="repair-line" elevation={0}>
+                                <Stack spacing={1.25}>
+                                  <Typography className="metric-label">Добавить технику в зону ответственности</Typography>
+                                  <Grid container spacing={1.5}>
+                                    <Grid item xs={12} sm={5}>
+                                      <TextField
+                                        label="Найти технику по госномеру, VIN, марке"
+                                        value={userVehicleSearch}
+                                        onChange={(event) => setUserVehicleSearch(event.target.value)}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={12} sm={3}>
+                                      <TextField
+                                        label="Дата начала"
+                                        type="date"
+                                        value={userAssignmentForm.starts_at}
+                                        onChange={(event) =>
+                                          setUserAssignmentForm((current) => ({ ...current, starts_at: event.target.value }))
+                                        }
+                                        InputLabelProps={{ shrink: true }}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={12} sm={3}>
+                                      <TextField
+                                        label="Дата окончания"
+                                        type="date"
+                                        value={userAssignmentForm.ends_at}
+                                        onChange={(event) =>
+                                          setUserAssignmentForm((current) => ({ ...current, ends_at: event.target.value }))
+                                        }
+                                        InputLabelProps={{ shrink: true }}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={12} sm={2}>
+                                      <Button
+                                        fullWidth
+                                        variant="outlined"
+                                        disabled={userVehicleSearchLoading}
+                                        onClick={() => {
+                                          void handleSearchVehiclesForAssignment();
+                                        }}
+                                      >
+                                        {userVehicleSearchLoading ? "Поиск..." : "Найти"}
+                                      </Button>
+                                    </Grid>
+                                    <Grid item xs={12}>
+                                      <TextField
+                                        label="Комментарий к назначению"
+                                        value={userAssignmentForm.comment}
+                                        onChange={(event) =>
+                                          setUserAssignmentForm((current) => ({ ...current, comment: event.target.value }))
+                                        }
+                                        fullWidth
+                                        multiline
+                                        minRows={2}
+                                      />
+                                    </Grid>
+                                  </Grid>
+                                  {userVehicleSearchResults.length > 0 ? (
+                                    <Stack spacing={1}>
+                                      {userVehicleSearchResults.map((vehicle) => (
+                                        <Paper className="repair-line" key={`assign-vehicle-${vehicle.id}`} elevation={0}>
+                                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} justifyContent="space-between">
+                                            <Box>
+                                              <Typography>{formatVehicle(vehicle)}</Typography>
+                                              <Typography className="muted-copy">
+                                                {formatVehicleTypeLabel(vehicle.vehicle_type)} · {vehicle.vin || "VIN не указан"}
+                                              </Typography>
+                                            </Box>
+                                            <Button
+                                              size="small"
+                                              variant="contained"
+                                              disabled={userAssignmentSaving}
+                                              onClick={() => {
+                                                void handleCreateUserAssignment(vehicle.id);
+                                              }}
+                                            >
+                                              Закрепить
+                                            </Button>
+                                          </Stack>
+                                        </Paper>
+                                      ))}
+                                    </Stack>
+                                  ) : (
+                                    <Typography className="muted-copy">
+                                      Введите запрос и нажмите «Найти», чтобы подобрать технику для сотрудника.
+                                    </Typography>
+                                  )}
+                                </Stack>
+                              </Paper>
+                              <Paper className="repair-line" elevation={0}>
+                                <Stack spacing={1.25}>
+                                  <Typography className="metric-label">Текущие и прошлые назначения техники</Typography>
+                                  {selectedManagedUser.assignments.length > 0 ? (
+                                    <Stack spacing={1}>
+                                      {selectedManagedUser.assignments.map((assignment) => (
+                                        <Paper className="repair-line" key={`assignment-${assignment.id}`} elevation={0}>
+                                          <Stack spacing={0.75}>
+                                            <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                              <Typography>{formatVehicle(assignment.vehicle)}</Typography>
+                                              <Chip
+                                                size="small"
+                                                color={isAssignmentActive(assignment) ? "success" : "default"}
+                                                label={isAssignmentActive(assignment) ? "Активно" : "Закрыто"}
+                                              />
+                                            </Stack>
+                                            <Typography className="muted-copy">
+                                              {assignment.starts_at} {assignment.ends_at ? `— ${assignment.ends_at}` : "— без даты окончания"}
+                                            </Typography>
+                                            {assignment.comment ? (
+                                              <Typography className="muted-copy">{assignment.comment}</Typography>
+                                            ) : null}
+                                            {isAssignmentActive(assignment) ? (
+                                              <Stack direction="row" spacing={1}>
+                                                <Button
+                                                  size="small"
+                                                  variant="text"
+                                                  disabled={userAssignmentSaving}
+                                                  onClick={() => {
+                                                    void handleCloseUserAssignment(assignment);
+                                                  }}
+                                                >
+                                                  Закрыть доступ сегодня
+                                                </Button>
+                                              </Stack>
+                                            ) : null}
+                                          </Stack>
+                                        </Paper>
+                                      ))}
+                                    </Stack>
+                                  ) : (
+                                    <Typography className="muted-copy">За этим сотрудником техника ещё не закреплялась.</Typography>
+                                  )}
+                                </Stack>
+                              </Paper>
+                            </Stack>
+                          ) : (
+                            <Typography className="muted-copy">Выберите сотрудника слева, чтобы управлять доступом к технике.</Typography>
+                          )}
+                        </Grid>
+                      </Grid>
+                    </Stack>
                   </Paper>
                 ) : null}
 

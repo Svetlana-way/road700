@@ -28,10 +28,33 @@ Initial project scaffold for the fleet repairs platform.
 
 ## Local bootstrap
 
+### Recommended: Docker Compose
+
 1. Copy or adjust `.env`
 2. Start infrastructure:
    `docker compose up --build`
-3. Run migrations inside `backend/`:
-   `alembic upgrade head`
-4. Create or update the first admin:
-   `python -m app.scripts.init_admin`
+3. Open:
+   - frontend: `http://localhost:5173`
+   - backend docs: `http://localhost:8000/docs`
+
+### Alternative: local backend + frontend
+
+Requirements:
+- Python `3.10+`
+- Node.js + npm
+
+1. Backend:
+   - create a virtualenv with Python `3.10+`
+   - install dependencies: `pip install -e .`
+   - run migrations: `DATABASE_URL=sqlite:///local.db alembic upgrade head`
+   - start API: `DATABASE_URL=sqlite:///local.db python -m uvicorn app.main:app --host 0.0.0.0 --port 8000`
+2. Frontend:
+   - `cd frontend`
+   - `VITE_API_URL=http://localhost:8000 npm run dev -- --host 0.0.0.0`
+3. Open:
+   - frontend: `http://localhost:5173`
+   - backend docs: `http://localhost:8000/docs`
+
+## Current environment note
+
+The current workspace where development was continued does not have `docker` in `PATH` and only has Python `3.9`, so the backend cannot be started there until Docker Desktop or Python `3.10+` is installed.

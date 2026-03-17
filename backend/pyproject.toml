@@ -2,7 +2,7 @@
 name = "road700-backend"
 version = "0.1.0"
 description = "Backend for the Road700 fleet repairs platform"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
   "alembic>=1.14.0",
   "boto3>=1.35.0",

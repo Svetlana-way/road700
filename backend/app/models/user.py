@@ -26,3 +26,7 @@ class User(Base, TimestampMixin):
     uploaded_documents: Mapped[list["Document"]] = relationship(back_populates="uploaded_by")
     created_repairs: Mapped[list["Repair"]] = relationship(back_populates="created_by")
     audit_entries: Mapped[list["AuditLog"]] = relationship(back_populates="user")
+    password_reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )

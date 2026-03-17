@@ -13,3 +13,21 @@ class ChangePasswordRequest(BaseModel):
 
 class ChangePasswordResponse(BaseModel):
     message: str
+
+
+class PasswordResetRequestCreate(BaseModel):
+    email: str
+
+
+class PasswordResetRequestResponse(BaseModel):
+    message: str
+    delivery_method: str
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+class PasswordResetConfirmResponse(BaseModel):
+    message: str

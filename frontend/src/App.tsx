@@ -603,6 +603,15 @@ type ChangePasswordResponse = {
   message: string;
 };
 
+type PasswordResetRequestResponse = {
+  message: string;
+  delivery_method: string;
+};
+
+type PasswordResetConfirmResponse = {
+  message: string;
+};
+
 type CheckSeverity = "normal" | "warning" | "suspicious" | "error";
 
 type RepairDetail = {
@@ -2046,6 +2055,7 @@ export default function App() {
   const [activeRepairTab, setActiveRepairTab] = useState<RepairTab>("overview");
   const [showTechAdminTab, setShowTechAdminTab] = useState(false);
   const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [showPasswordRecoveryRequest, setShowPasswordRecoveryRequest] = useState(false);
   const [showServiceEditor, setShowServiceEditor] = useState(false);
   const [showReviewRuleEditor, setShowReviewRuleEditor] = useState(false);
   const [showLaborNormCatalogEditor, setShowLaborNormCatalogEditor] = useState(false);
@@ -2150,11 +2160,15 @@ export default function App() {
   const [passwordValue, setPasswordValue] = useState("");
   const [currentPasswordValue, setCurrentPasswordValue] = useState("");
   const [newPasswordValue, setNewPasswordValue] = useState("");
+  const [recoveryEmailValue, setRecoveryEmailValue] = useState("");
+  const [recoveryTokenValue, setRecoveryTokenValue] = useState("");
+  const [recoveryNewPasswordValue, setRecoveryNewPasswordValue] = useState("");
   const [uploadForm, setUploadForm] = useState<UploadFormState>(emptyUploadForm);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [bootLoading, setBootLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
+  const [passwordRecoveryLoading, setPasswordRecoveryLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [attachDocumentLoading, setAttachDocumentLoading] = useState(false);
   const [repairLoading, setRepairLoading] = useState(false);
@@ -2757,6 +2771,15 @@ export default function App() {
     setAdminResetPasswordValue("");
   }, [selectedManagedUserId]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const resetToken = params.get("reset_token") || "";
+    setRecoveryTokenValue(resetToken);
+    if (resetToken) {
+      setShowPasswordRecoveryRequest(true);
+    }
+  }, []);
+
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoginLoading(true);
@@ -2822,6 +2845,63 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось сменить пароль");
     } finally {
       setPasswordChangeLoading(false);
+    }
+  }
+
+  async function handleRequestPasswordRecovery() {
+    if (!recoveryEmailValue.trim()) {
+      setErrorMessage("Укажите почту для восстановления");
+      return;
+    }
+    setPasswordRecoveryLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const result = await apiRequest<PasswordResetRequestResponse>(
+        "/auth/password-reset/request",
+        {
+          method: "POST",
+          body: JSON.stringify({ email: recoveryEmailValue.trim() }),
+        },
+      );
+      setSuccessMessage(result.message);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось запросить восстановление пароля");
+    } finally {
+      setPasswordRecoveryLoading(false);
+    }
+  }
+
+  async function handleConfirmPasswordRecovery() {
+    if (!recoveryTokenValue.trim() || !recoveryNewPasswordValue.trim()) {
+      setErrorMessage("Укажите токен восстановления и новый пароль");
+      return;
+    }
+    setPasswordRecoveryLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const result = await apiRequest<PasswordResetConfirmResponse>(
+        "/auth/password-reset/confirm",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            token: recoveryTokenValue.trim(),
+            new_password: recoveryNewPasswordValue,
+          }),
+        },
+      );
+      setSuccessMessage(result.message);
+      setRecoveryNewPasswordValue("");
+      setRecoveryTokenValue("");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("reset_token");
+      window.history.replaceState({}, "", url.toString());
+      setShowPasswordRecoveryRequest(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось восстановить пароль");
+    } finally {
+      setPasswordRecoveryLoading(false);
     }
   }
 
@@ -4231,6 +4311,7 @@ export default function App() {
     setActiveRepairTab("overview");
     setShowTechAdminTab(false);
     setShowPasswordChange(false);
+    setShowPasswordRecoveryRequest(false);
     setShowServiceEditor(false);
     setShowReviewRuleEditor(false);
     setShowLaborNormCatalogEditor(false);
@@ -4238,6 +4319,9 @@ export default function App() {
     setShowLaborNormEntryEditor(false);
     setCurrentPasswordValue("");
     setNewPasswordValue("");
+    setRecoveryEmailValue("");
+    setRecoveryTokenValue("");
+    setRecoveryNewPasswordValue("");
     setAdminResetPasswordValue("");
     setSuccessMessage("");
     setErrorMessage("");
@@ -4260,29 +4344,125 @@ export default function App() {
                 </Typography>
               </Box>
 
-              <Box component="form" onSubmit={handleLogin} className="login-form">
-                <Stack spacing={2}>
-                  <TextField
-                    label="Логин"
-                    value={loginValue}
-                    onChange={(event) => setLoginValue(event.target.value)}
-                    required
-                    fullWidth
-                  />
-                  <TextField
-                    label="Пароль"
-                    type="password"
-                    value={passwordValue}
-                    onChange={(event) => setPasswordValue(event.target.value)}
-                    required
-                    fullWidth
-                  />
-                  {errorMessage ? <Alert severity="error">{errorMessage}</Alert> : null}
-                  <Button type="submit" variant="contained" size="large" disabled={loginLoading}>
-                    {loginLoading ? "Вход..." : "Войти в систему"}
-                  </Button>
-                </Stack>
-              </Box>
+              {!showPasswordRecoveryRequest ? (
+                <Box component="form" onSubmit={handleLogin} className="login-form">
+                  <Stack spacing={2}>
+                    <TextField
+                      label="Логин"
+                      value={loginValue}
+                      onChange={(event) => setLoginValue(event.target.value)}
+                      required
+                      fullWidth
+                    />
+                    <TextField
+                      label="Пароль"
+                      type="password"
+                      value={passwordValue}
+                      onChange={(event) => setPasswordValue(event.target.value)}
+                      required
+                      fullWidth
+                    />
+                    {errorMessage ? <Alert severity="error">{errorMessage}</Alert> : null}
+                    {successMessage ? <Alert severity="success">{successMessage}</Alert> : null}
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                      <Button type="submit" variant="contained" size="large" disabled={loginLoading}>
+                        {loginLoading ? "Вход..." : "Войти в систему"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="text"
+                        onClick={() => {
+                          setShowPasswordRecoveryRequest(true);
+                          setErrorMessage("");
+                          setSuccessMessage("");
+                        }}
+                      >
+                        Забыли пароль?
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </Box>
+              ) : (
+                <Paper className="repair-line" elevation={0}>
+                  <Stack spacing={2}>
+                    <Box>
+                      <Typography variant="h6">Восстановление пароля</Typography>
+                      <Typography className="muted-copy">
+                        Сначала запросите ссылку по почте, затем установите новый пароль по токену из письма.
+                      </Typography>
+                    </Box>
+                    <Grid container spacing={1.5}>
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          label="Почта пользователя"
+                          value={recoveryEmailValue}
+                          onChange={(event) => setRecoveryEmailValue(event.target.value)}
+                          fullWidth
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <Button
+                          variant="outlined"
+                          disabled={passwordRecoveryLoading}
+                          onClick={() => {
+                            void handleRequestPasswordRecovery();
+                          }}
+                        >
+                          {passwordRecoveryLoading ? "Отправка..." : "Запросить восстановление"}
+                        </Button>
+                      </Grid>
+                      <Grid item xs={12}>
+                        <Divider />
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          label="Токен восстановления"
+                          value={recoveryTokenValue}
+                          onChange={(event) => setRecoveryTokenValue(event.target.value)}
+                          fullWidth
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <TextField
+                          label="Новый пароль"
+                          type="password"
+                          value={recoveryNewPasswordValue}
+                          onChange={(event) => setRecoveryNewPasswordValue(event.target.value)}
+                          fullWidth
+                        />
+                      </Grid>
+                    </Grid>
+                    {errorMessage ? <Alert severity="error">{errorMessage}</Alert> : null}
+                    {successMessage ? <Alert severity="success">{successMessage}</Alert> : null}
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                      <Button
+                        variant="contained"
+                        disabled={passwordRecoveryLoading}
+                        onClick={() => {
+                          void handleConfirmPasswordRecovery();
+                        }}
+                      >
+                        {passwordRecoveryLoading ? "Сохранение..." : "Установить новый пароль"}
+                      </Button>
+                      <Button
+                        variant="text"
+                        disabled={passwordRecoveryLoading}
+                        onClick={() => {
+                          setShowPasswordRecoveryRequest(false);
+                          setErrorMessage("");
+                          setSuccessMessage("");
+                          setRecoveryNewPasswordValue("");
+                          if (!window.location.search.includes("reset_token=")) {
+                            setRecoveryTokenValue("");
+                          }
+                        }}
+                      >
+                        Вернуться ко входу
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </Paper>
+              )}
 
               <Grid container spacing={2}>
                 <Grid item xs={12} md={4}>

@@ -6,6 +6,7 @@ from app.models.labor_norm import LaborNorm
 from app.models.ocr_learning_signal import OcrLearningSignal
 from app.models.ocr_rule import OcrRule
 from app.models.ocr_profile_matcher import OcrProfileMatcher
+from app.models.password_reset_token import PasswordResetToken
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.review_rule import ReviewRule
 from app.models.service import Service
@@ -23,6 +24,7 @@ __all__ = [
     "OcrLearningSignal",
     "OcrProfileMatcher",
     "OcrRule",
+    "PasswordResetToken",
     "Repair",
     "RepairCheck",
     "RepairPart",

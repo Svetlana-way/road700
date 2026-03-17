@@ -13,6 +13,8 @@ import {
   MenuItem,
   Paper,
   Stack,
+  Tab,
+  Tabs,
   TextField,
   Typography,
 } from "@mui/material";
@@ -372,6 +374,9 @@ type LaborNormEntryFormState = {
 
 type ReviewPriorityBucket = "review" | "critical" | "suspicious";
 type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
+type WorkspaceTab = "documents" | "repair" | "admin" | "fleet";
+type AdminTab = "services" | "control" | "ocr" | "labor_norms";
+type RepairTab = "overview" | "works" | "parts" | "documents" | "checks" | "history";
 type ReviewQueueCategory =
   | "all"
   | "suspicious"
@@ -702,6 +707,29 @@ const summaryCards: Array<{ key: keyof DashboardSummary; label: string }> = [
   { key: "documents_total", label: "Документов загружено" },
   { key: "documents_review_queue", label: "Очередь проверки" },
 ];
+
+const workspaceTabDescriptions: Record<WorkspaceTab, string> = {
+  documents: "Загрузка, очередь OCR и последние заказ-наряды.",
+  repair: "Карточка выбранного ремонта, проверки, документы и история.",
+  admin: "Справочники и правила системы, доступные администратору.",
+  fleet: "Быстрый обзор техники, доступной текущему пользователю.",
+};
+
+const adminTabDescriptions: Record<AdminTab, string> = {
+  services: "Справочник сервисов для нормализации названий и ручной правки ремонтов.",
+  control: "Причины ручной проверки, приоритеты очереди и сигналы обучения OCR.",
+  ocr: "Профили, matcher-правила и OCR-шаблоны извлечения полей.",
+  labor_norms: "Каталоги нормо-часов, импорт справочников и ручная правка записей.",
+};
+
+const repairTabDescriptions: Record<RepairTab, string> = {
+  overview: "Основные суммы, реквизиты ремонта и действия администратора.",
+  works: "Список работ, нормо-часы и ручное редактирование работ.",
+  parts: "Список запчастей и ручное редактирование материалов.",
+  documents: "Документы ремонта, версии OCR и сравнение файлов.",
+  checks: "Подозрительные проверки и их ручное закрытие.",
+  history: "История изменений ремонта и документов.",
+};
 
 const reviewQueueFilters: Array<{ key: ReviewQueueCategory; label: string }> = [
   { key: "all", label: "Все" },
@@ -1615,6 +1643,9 @@ async function apiRequest<T>(path: string, init: RequestInit = {}, token?: strin
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_STORAGE_KEY) || "");
   const [user, setUser] = useState<User | null>(null);
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("documents");
+  const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>("services");
+  const [activeRepairTab, setActiveRepairTab] = useState<RepairTab>("overview");
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
@@ -1776,6 +1807,12 @@ export default function App() {
         );
       })
     : [];
+
+  useEffect(() => {
+    if (user?.role !== "admin" && activeWorkspaceTab === "admin") {
+      setActiveWorkspaceTab("documents");
+    }
+  }, [activeWorkspaceTab, user?.role]);
 
   function buildLaborNormQueryString(
     query: string = laborNormQuery,
@@ -2208,6 +2245,8 @@ export default function App() {
 
   async function openRepairByIds(documentId: number, repairId: number) {
     setSelectedDocumentId(documentId);
+    setActiveWorkspaceTab("repair");
+    setActiveRepairTab("overview");
     if (!token) {
       return;
     }
@@ -2498,6 +2537,8 @@ export default function App() {
   }
 
   function handleEditReviewRule(item: ReviewRuleItem) {
+    setActiveWorkspaceTab("admin");
+    setActiveAdminTab("control");
     setReviewRuleForm(createReviewRuleFormFromItem(item));
   }
 
@@ -2568,6 +2609,8 @@ export default function App() {
   }
 
   function handleEditOcrRule(item: OcrRuleItem) {
+    setActiveWorkspaceTab("admin");
+    setActiveAdminTab("ocr");
     setOcrRuleForm(createOcrRuleFormFromItem(item));
   }
 
@@ -2631,6 +2674,8 @@ export default function App() {
   }
 
   function handleEditOcrProfileMatcher(item: OcrProfileMatcherItem) {
+    setActiveWorkspaceTab("admin");
+    setActiveAdminTab("ocr");
     setOcrProfileMatcherForm(createOcrProfileMatcherFormFromItem(item));
   }
 
@@ -2737,6 +2782,8 @@ export default function App() {
       );
 
       if (target === "ocr_rule") {
+        setActiveWorkspaceTab("admin");
+        setActiveAdminTab("ocr");
         setOcrRuleForm({
           id: null,
           profile_scope: payload.ocr_rule_draft.profile_scope,
@@ -2751,6 +2798,8 @@ export default function App() {
         setOcrRuleProfileFilter(payload.ocr_rule_draft.profile_scope);
         setSuccessMessage("Черновик OCR-правила перенесён в форму редактирования");
       } else {
+        setActiveWorkspaceTab("admin");
+        setActiveAdminTab("ocr");
         setOcrProfileMatcherForm({
           id: null,
           profile_scope: payload.matcher_draft.profile_scope,
@@ -2774,6 +2823,8 @@ export default function App() {
   }
 
   function handleEditService(item: ServiceItem) {
+    setActiveWorkspaceTab("admin");
+    setActiveAdminTab("services");
     setServiceForm(createServiceFormFromItem(item));
   }
 
@@ -2873,6 +2924,8 @@ export default function App() {
   }
 
   function handleEditLaborNormCatalog(item: LaborNormCatalogConfigItem) {
+    setActiveWorkspaceTab("admin");
+    setActiveAdminTab("labor_norms");
     setEditingLaborNormCatalogId(item.id);
     setLaborNormCatalogForm(createCatalogFormFromItem(item));
   }
@@ -2883,6 +2936,8 @@ export default function App() {
   }
 
   function handleCatalogScopeSelected(scope: string) {
+    setActiveWorkspaceTab("admin");
+    setActiveAdminTab("labor_norms");
     setLaborNormImportScope(scope);
     const selectedCatalog = laborNormCatalogs.find((item) => item.scope === scope);
     if (selectedCatalog) {
@@ -2962,6 +3017,8 @@ export default function App() {
   }
 
   function handleEditLaborNormItem(item: LaborNormCatalogItem) {
+    setActiveWorkspaceTab("admin");
+    setActiveAdminTab("labor_norms");
     setLaborNormEntryForm(createLaborNormEntryFormFromItem(item));
   }
 
@@ -3062,6 +3119,7 @@ export default function App() {
     if (!selectedRepair) {
       return;
     }
+    setActiveRepairTab("overview");
     setRepairDraft(createRepairDraft(selectedRepair));
     setIsEditingRepair(true);
   }
@@ -3268,6 +3326,9 @@ export default function App() {
   function handleLogout() {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     setToken("");
+    setActiveWorkspaceTab("documents");
+    setActiveAdminTab("services");
+    setActiveRepairTab("overview");
     setSuccessMessage("");
     setErrorMessage("");
   }
@@ -3390,6 +3451,24 @@ export default function App() {
             </Paper>
           ) : null}
 
+          <Paper className="workspace-panel" elevation={0}>
+            <Stack spacing={1.5}>
+              <Tabs
+                value={activeWorkspaceTab}
+                onChange={(_event, value: WorkspaceTab) => setActiveWorkspaceTab(value)}
+                variant="scrollable"
+                scrollButtons="auto"
+                allowScrollButtonsMobile
+              >
+                <Tab label={`Документы · ${documents.length}`} value="documents" />
+                <Tab label={selectedRepair ? `Ремонт · #${selectedRepair.id}` : "Ремонт"} value="repair" />
+                {user?.role === "admin" ? <Tab label="Админка" value="admin" /> : null}
+                <Tab label={`Техника · ${vehicles.length}`} value="fleet" />
+              </Tabs>
+              <Typography className="muted-copy">{workspaceTabDescriptions[activeWorkspaceTab]}</Typography>
+            </Stack>
+          </Paper>
+
           <Grid container spacing={2}>
             {summaryCards.map((card) => (
               <Grid item xs={12} sm={6} lg={3} key={card.key}>
@@ -3404,7 +3483,8 @@ export default function App() {
           </Grid>
 
           <Grid container spacing={3}>
-            <Grid item xs={12} lg={7}>
+            {activeWorkspaceTab === "documents" ? (
+              <Grid item xs={12} lg={7}>
               <Paper className="workspace-panel" elevation={0}>
                 <Stack spacing={2}>
                   <Box>
@@ -3572,11 +3652,38 @@ export default function App() {
                   </Box>
                 </Stack>
               </Paper>
-            </Grid>
+              </Grid>
+            ) : null}
 
-            <Grid item xs={12} lg={5}>
+            <Grid item xs={12} lg={activeWorkspaceTab === "documents" ? 5 : 12}>
               <Stack spacing={3}>
-                <Paper className="workspace-panel" elevation={0}>
+                {activeWorkspaceTab === "admin" && user?.role === "admin" ? (
+                  <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={1.5}>
+                      <Box>
+                        <Typography variant="h5">Администрирование</Typography>
+                        <Typography className="muted-copy">
+                          Основные справочники и правила системы разнесены по отдельным вкладкам.
+                        </Typography>
+                      </Box>
+                      <Tabs
+                        value={activeAdminTab}
+                        onChange={(_event, value: AdminTab) => setActiveAdminTab(value)}
+                        variant="scrollable"
+                        scrollButtons="auto"
+                        allowScrollButtonsMobile
+                      >
+                        <Tab label="Сервисы" value="services" />
+                        <Tab label="Контроль" value="control" />
+                        <Tab label="OCR" value="ocr" />
+                        <Tab label="Нормо-часы" value="labor_norms" />
+                      </Tabs>
+                      <Typography className="muted-copy">{adminTabDescriptions[activeAdminTab]}</Typography>
+                    </Stack>
+                  </Paper>
+                ) : null}
+                {activeWorkspaceTab === "documents" ? (
+                  <Paper className="workspace-panel" elevation={0}>
                   <Stack spacing={2}>
                     <Box>
                       <Typography variant="h5">Очередь проверки</Typography>
@@ -3683,9 +3790,11 @@ export default function App() {
                       ) : null}
                     </Stack>
                   </Stack>
-                </Paper>
+                  </Paper>
+                ) : null}
 
-                <Paper className="workspace-panel" elevation={0}>
+                {activeWorkspaceTab === "documents" ? (
+                  <Paper className="workspace-panel" elevation={0}>
                   <Stack spacing={2}>
                     <Box>
                       <Typography variant="h5">Последние документы</Typography>
@@ -3784,9 +3893,10 @@ export default function App() {
                       ) : null}
                     </Stack>
                   </Stack>
-                </Paper>
+                  </Paper>
+                ) : null}
 
-                {user?.role === "admin" ? (
+                {activeWorkspaceTab === "admin" && activeAdminTab === "services" && user?.role === "admin" ? (
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>
@@ -3970,7 +4080,7 @@ export default function App() {
                   </Paper>
                 ) : null}
 
-                {user?.role === "admin" ? (
+                {activeWorkspaceTab === "admin" && activeAdminTab === "control" && user?.role === "admin" ? (
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>
@@ -4160,7 +4270,7 @@ export default function App() {
                   </Paper>
                 ) : null}
 
-                {user?.role === "admin" ? (
+                {activeWorkspaceTab === "admin" && activeAdminTab === "control" && user?.role === "admin" ? (
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>
@@ -4379,7 +4489,7 @@ export default function App() {
                   </Paper>
                 ) : null}
 
-                {user?.role === "admin" ? (
+                {activeWorkspaceTab === "admin" && activeAdminTab === "ocr" && user?.role === "admin" ? (
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>
@@ -4612,7 +4722,7 @@ export default function App() {
                   </Paper>
                 ) : null}
 
-                {user?.role === "admin" ? (
+                {activeWorkspaceTab === "admin" && activeAdminTab === "ocr" && user?.role === "admin" ? (
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>
@@ -4862,7 +4972,7 @@ export default function App() {
                   </Paper>
                 ) : null}
 
-                {user?.role === "admin" ? (
+                {activeWorkspaceTab === "admin" && activeAdminTab === "labor_norms" && user?.role === "admin" ? (
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>
@@ -5475,7 +5585,8 @@ export default function App() {
                   </Paper>
                 ) : null}
 
-                <Paper className="workspace-panel" elevation={0}>
+                {activeWorkspaceTab === "repair" ? (
+                  <Paper className="workspace-panel" elevation={0}>
                   <Stack spacing={2}>
                     <Box>
                       <Typography variant="h5">Карточка ремонта</Typography>
@@ -5568,9 +5679,39 @@ export default function App() {
                           </Paper>
                         ) : null}
 
+                        <Paper className="repair-summary" elevation={0}>
+                          <Stack spacing={1.25}>
+                            <Tabs
+                              value={activeRepairTab}
+                              onChange={(_event, value: RepairTab) => setActiveRepairTab(value)}
+                              variant="scrollable"
+                              scrollButtons="auto"
+                              allowScrollButtonsMobile
+                            >
+                              <Tab label="Итоги" value="overview" />
+                              <Tab label={`Работы · ${selectedRepair.works.length}`} value="works" />
+                              <Tab label={`Запчасти · ${selectedRepair.parts.length}`} value="parts" />
+                              {!isEditingRepair ? (
+                                <Tab label={`Документы · ${selectedRepair.documents.length}`} value="documents" />
+                              ) : null}
+                              {!isEditingRepair ? (
+                                <Tab label={`Проверки · ${selectedRepair.checks.length}`} value="checks" />
+                              ) : null}
+                              {!isEditingRepair ? (
+                                <Tab
+                                  label={`История · ${filteredDocumentHistory.length + filteredRepairHistory.length}`}
+                                  value="history"
+                                />
+                              ) : null}
+                            </Tabs>
+                            <Typography className="muted-copy">{repairTabDescriptions[activeRepairTab]}</Typography>
+                          </Stack>
+                        </Paper>
+
                         {isEditingRepair && repairDraft ? (
                           <Stack spacing={2}>
-                            <Paper className="repair-summary" elevation={0}>
+                            {activeRepairTab === "overview" ? (
+                              <Paper className="repair-summary" elevation={0}>
                               <Grid container spacing={2}>
                                 <Grid item xs={12} sm={6}>
                                   <TextField
@@ -5671,9 +5812,11 @@ export default function App() {
                                   />
                                 </Grid>
                               </Grid>
-                            </Paper>
+                              </Paper>
+                            ) : null}
 
-                            <Stack spacing={1}>
+                            {activeRepairTab === "works" ? (
+                              <Stack spacing={1}>
                               <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
                                 <Typography variant="h6">Работы</Typography>
                                 <Button size="small" variant="text" onClick={addWorkDraft}>Добавить работу</Button>
@@ -5750,9 +5893,11 @@ export default function App() {
                                   </Grid>
                                 </Paper>
                               ))}
-                            </Stack>
+                              </Stack>
+                            ) : null}
 
-                            <Stack spacing={1}>
+                            {activeRepairTab === "parts" ? (
+                              <Stack spacing={1}>
                               <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
                                 <Typography variant="h6">Запчасти</Typography>
                                 <Button size="small" variant="text" onClick={addPartDraft}>Добавить запчасть</Button>
@@ -5819,11 +5964,13 @@ export default function App() {
                                   </Grid>
                                 </Paper>
                               ))}
-                            </Stack>
+                              </Stack>
+                            ) : null}
                           </Stack>
                         ) : (
                           <>
-                            <Paper className="repair-summary" elevation={0}>
+                            {activeRepairTab === "overview" ? (
+                              <Paper className="repair-summary" elevation={0}>
                               <Grid container spacing={2}>
                                 <Grid item xs={12} sm={6}>
                                   <Typography className="metric-label">Заказ-наряд</Typography>
@@ -5850,9 +5997,11 @@ export default function App() {
                                   <Typography>{formatMoney(selectedRepair.grand_total) || "—"}</Typography>
                                 </Grid>
                               </Grid>
-                            </Paper>
+                              </Paper>
+                            ) : null}
 
-                            <Stack spacing={1}>
+                            {activeRepairTab === "documents" ? (
+                              <Stack spacing={1}>
                               <Typography variant="h6">Документы ремонта</Typography>
                               <Paper className="repair-line" elevation={0}>
                                 <Stack spacing={1.5}>
@@ -6029,9 +6178,10 @@ export default function App() {
                               ) : (
                                 <Typography className="muted-copy">Документы к ремонту пока не привязаны.</Typography>
                               )}
-                            </Stack>
+                              </Stack>
+                            ) : null}
 
-                            {documentComparison ? (
+                            {activeRepairTab === "documents" && documentComparison ? (
                               <Stack spacing={1}>
                                 <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
                                   <Typography variant="h6">Сравнение документов</Typography>
@@ -6106,7 +6256,8 @@ export default function App() {
                               </Stack>
                             ) : null}
 
-                            <Stack spacing={1}>
+                            {activeRepairTab === "works" ? (
+                              <Stack spacing={1}>
                               <Typography variant="h6">Работы</Typography>
                               {selectedRepair.works.length > 0 ? (
                                 selectedRepair.works.map((item) => (
@@ -6135,9 +6286,11 @@ export default function App() {
                               ) : (
                                 <Typography className="muted-copy">Строки работ не распознаны.</Typography>
                               )}
-                            </Stack>
+                              </Stack>
+                            ) : null}
 
-                            <Stack spacing={1}>
+                            {activeRepairTab === "parts" ? (
+                              <Stack spacing={1}>
                               <Typography variant="h6">Запчасти</Typography>
                               {selectedRepair.parts.length > 0 ? (
                                 selectedRepair.parts.map((item) => (
@@ -6157,9 +6310,11 @@ export default function App() {
                               ) : (
                                 <Typography className="muted-copy">Строки запчастей не распознаны.</Typography>
                               )}
-                            </Stack>
+                              </Stack>
+                            ) : null}
 
-                            <Stack spacing={1}>
+                            {activeRepairTab === "checks" ? (
+                              <Stack spacing={1}>
                               <Typography variant="h6">Проверки</Typography>
                               {selectedRepair.checks.length > 0 ? (
                                 selectedRepair.checks.map((check) => (
@@ -6235,9 +6390,11 @@ export default function App() {
                               ) : (
                                 <Typography className="muted-copy">Подозрительные проверки не найдены.</Typography>
                               )}
-                            </Stack>
+                              </Stack>
+                            ) : null}
 
-                            <Stack spacing={1}>
+                            {activeRepairTab === "history" ? (
+                              <Stack spacing={1}>
                               <Typography variant="h6">Журнал событий</Typography>
                               <TextField
                                 label="Поиск по истории"
@@ -6261,9 +6418,11 @@ export default function App() {
                               <Typography className="muted-copy">
                                 Найдено событий: {filteredDocumentHistory.length + filteredRepairHistory.length}
                               </Typography>
-                            </Stack>
+                              </Stack>
+                            ) : null}
 
-                            <Stack spacing={1}>
+                            {activeRepairTab === "history" ? (
+                              <Stack spacing={1}>
                               <Typography variant="h6">История по документам</Typography>
                               {filteredDocumentHistory.length > 0 ? (
                                 filteredDocumentHistory.map((entry) => (
@@ -6289,9 +6448,11 @@ export default function App() {
                               ) : (
                                 <Typography className="muted-copy">По текущему фильтру событий по документам нет.</Typography>
                               )}
-                            </Stack>
+                              </Stack>
+                            ) : null}
 
-                            <Stack spacing={1}>
+                            {activeRepairTab === "history" ? (
+                              <Stack spacing={1}>
                               <Typography variant="h6">История изменений</Typography>
                               {filteredRepairHistory.length > 0 ? (
                                 filteredRepairHistory.map((entry) => (
@@ -6313,7 +6474,8 @@ export default function App() {
                               ) : (
                                 <Typography className="muted-copy">По текущему фильтру событий по ремонту нет.</Typography>
                               )}
-                            </Stack>
+                              </Stack>
+                            ) : null}
                           </>
                         )}
                       </Stack>
@@ -6325,9 +6487,11 @@ export default function App() {
                       </Stack>
                     )}
                   </Stack>
-                </Paper>
+                  </Paper>
+                ) : null}
 
-                <Paper className="workspace-panel" elevation={0}>
+                {activeWorkspaceTab === "fleet" ? (
+                  <Paper className="workspace-panel" elevation={0}>
                   <Stack spacing={2}>
                     <Box>
                       <Typography variant="h5">Срез по технике</Typography>
@@ -6355,7 +6519,8 @@ export default function App() {
                       ))}
                     </Stack>
                   </Stack>
-                </Paper>
+                  </Paper>
+                ) : null}
               </Stack>
             </Grid>
           </Grid>

@@ -62,6 +62,7 @@ The repository includes a dedicated server stack:
 - `docker-compose.server.yml` runs `postgres`, `app`, and `caddy`
 - `deploy/server/Caddyfile` serves the application over HTTPS
 - `deploy/server/.env.example` contains the required production variables
+- `scripts/deploy-server.sh` safely syncs the project to the server without deleting `.env.server` and `storage/`
 
 Typical server bootstrap:
 
@@ -71,6 +72,17 @@ Typical server bootstrap:
    - `docker compose --env-file .env.server -f docker-compose.server.yml up -d --build`
 4. Open:
    - `https://your-domain`
+
+Typical update deploy from the local workstation:
+
+1. Keep the server `.env.server` in the project root on the server
+2. Run:
+   - `DEPLOY_HOST=46.8.220.177 DEPLOY_PASSWORD=your-password ./scripts/deploy-server.sh`
+3. The script:
+   - syncs the repository
+   - protects `.env.server` and `storage/` from deletion during `rsync --delete`
+   - rebuilds `app` and `caddy`
+   - prints `docker compose ps`
 
 ### Alternative: local backend + frontend
 

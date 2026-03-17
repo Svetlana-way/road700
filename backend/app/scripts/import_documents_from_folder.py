@@ -3,13 +3,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import mimetypes
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -25,6 +26,8 @@ from app.services.document_processing import process_document
 DEFAULT_SOURCE_DIR = PROJECT_ROOT / "Заказ-наряды"
 PLACEHOLDER_EXTERNAL_ID = "__batch_import_placeholder__"
 SUPPORTED_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".tif", ".tiff"}
+PLATE_PATTERN = re.compile(r"[АВЕКМНОРСТУХABEKMHOPCTYX]\d{3}[АВЕКМНОРСТУХABEKMHOPCTYX]{2}\d{2,3}", re.IGNORECASE)
+VIN_PATTERN = re.compile(r"\b[A-HJ-NPR-Z0-9]{17}\b", re.IGNORECASE)
 
 
 @dataclass
@@ -49,6 +52,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Batch import repair documents from a folder")
     parser.add_argument("--path", default=str(DEFAULT_SOURCE_DIR), help="Folder with source PDF/image files")
     parser.add_argument("--limit", type=int, default=None, help="Maximum number of files to import")
+    parser.add_argument(
+        "--retry-unmatched-only",
+        action="store_true",
+        help="Retry vehicle matching for already imported documents linked to the placeholder vehicle",
+    )
     return parser
 
 
@@ -87,6 +95,15 @@ def normalize_identifier(value: Optional[str]) -> Optional[str]:
     return normalized or None
 
 
+def extract_identifiers_from_text(value: Optional[str]) -> tuple[list[str], list[str]]:
+    if not value:
+        return [], []
+    text = value.upper()
+    plate_numbers = [normalized for normalized in (normalize_identifier(match) for match in PLATE_PATTERN.findall(text)) if normalized]
+    vins = [normalized for normalized in (normalize_identifier(match) for match in VIN_PATTERN.findall(text)) if normalized]
+    return list(dict.fromkeys(plate_numbers)), list(dict.fromkeys(vins))
+
+
 def get_admin_user(db: Session) -> User:
     preferred_login = (settings.initial_admin_login or "").strip()
     stmt = select(User).where(User.role == UserRole.ADMIN)
@@ -120,27 +137,75 @@ def ensure_placeholder_vehicle(db: Session) -> Vehicle:
     return vehicle
 
 
-def match_vehicle_from_document(db: Session, document: Document) -> Optional[Vehicle]:
+def build_vehicle_lookup(db: Session) -> tuple[dict[str, Vehicle], dict[str, Vehicle]]:
+    vehicles = db.scalars(select(Vehicle).where(Vehicle.external_id != PLACEHOLDER_EXTERNAL_ID)).all()
+    by_vin: dict[str, Vehicle] = {}
+    by_plate: dict[str, Vehicle] = {}
+    for vehicle in vehicles:
+        vin = normalize_identifier(vehicle.vin)
+        plate = normalize_identifier(vehicle.plate_number)
+        if vin and vin not in by_vin:
+            by_vin[vin] = vehicle
+        if plate and plate not in by_plate:
+            by_plate[plate] = vehicle
+    return by_vin, by_plate
+
+
+def match_vehicle_from_document(
+    db: Session,
+    document: Document,
+    *,
+    by_vin: dict[str, Vehicle],
+    by_plate: dict[str, Vehicle],
+) -> Optional[Vehicle]:
     latest_version = max(document.versions, key=lambda version: version.version_number, default=None)
     parsed_payload = latest_version.parsed_payload if latest_version and isinstance(latest_version.parsed_payload, dict) else {}
     extracted_fields = parsed_payload.get("extracted_fields") if isinstance(parsed_payload.get("extracted_fields"), dict) else {}
 
+    candidates_vin: list[str] = []
+    candidates_plate: list[str] = []
+
     vin = normalize_identifier(str(extracted_fields.get("vin"))) if extracted_fields.get("vin") else None
     plate_number = normalize_identifier(str(extracted_fields.get("plate_number"))) if extracted_fields.get("plate_number") else None
-    if not vin and not plate_number:
-        return None
+    if vin:
+        candidates_vin.append(vin)
+    if plate_number:
+        candidates_plate.append(plate_number)
 
-    candidates = db.scalars(
-        select(Vehicle).where(Vehicle.external_id != PLACEHOLDER_EXTERNAL_ID)
-    ).all()
+    filename_plates, filename_vins = extract_identifiers_from_text(document.original_filename)
+    candidates_plate.extend(filename_plates)
+    candidates_vin.extend(filename_vins)
 
-    for vehicle in candidates:
-        if vin and normalize_identifier(vehicle.vin) == vin:
+    for candidate in candidates_vin:
+        vehicle = by_vin.get(candidate)
+        if vehicle is not None:
             return vehicle
-    for vehicle in candidates:
-        if plate_number and normalize_identifier(vehicle.plate_number) == plate_number:
+    for candidate in candidates_plate:
+        vehicle = by_plate.get(candidate)
+        if vehicle is not None:
             return vehicle
     return None
+
+
+def rebind_document_vehicle(
+    db: Session,
+    document: Document,
+    *,
+    by_vin: dict[str, Vehicle],
+    by_plate: dict[str, Vehicle],
+) -> bool:
+    if document.repair is None:
+        return False
+
+    vehicle = match_vehicle_from_document(db, document, by_vin=by_vin, by_plate=by_plate)
+    if vehicle is None or document.repair.vehicle_id == vehicle.id:
+        return False
+
+    document.repair.vehicle_id = vehicle.id
+    db.add(document.repair)
+    db.commit()
+    process_document(db, document.id)
+    return True
 
 
 def create_document_record(
@@ -223,6 +288,7 @@ def import_documents_with_session(
     admin_user = get_admin_user(db)
     placeholder_vehicle = ensure_placeholder_vehicle(db)
     db.commit()
+    by_vin, by_plate = build_vehicle_lookup(db)
 
     files = iter_source_files(source_dir)
     if limit is not None:
@@ -262,12 +328,7 @@ def import_documents_with_session(
             if refreshed_document is None or refreshed_document.repair is None:
                 raise RuntimeError(f"Document {created_document_id} was not found after OCR")
 
-            vehicle = match_vehicle_from_document(db, refreshed_document)
-            if vehicle is not None and refreshed_document.repair.vehicle_id != vehicle.id:
-                refreshed_document.repair.vehicle_id = vehicle.id
-                db.add(refreshed_document.repair)
-                db.commit()
-                process_document(db, refreshed_document.id)
+            if rebind_document_vehicle(db, refreshed_document, by_vin=by_vin, by_plate=by_plate):
                 stats.matched_vehicle += 1
             else:
                 stats.unmatched_vehicle += 1
@@ -283,13 +344,45 @@ def import_documents_with_session(
     return stats
 
 
+def retry_unmatched_documents_with_session(
+    db: Session,
+    *,
+    limit: int | None = None,
+) -> ImportStats:
+    stats = ImportStats()
+    placeholder_vehicle = ensure_placeholder_vehicle(db)
+    db.commit()
+    by_vin, by_plate = build_vehicle_lookup(db)
+
+    stmt = (
+        select(Document)
+        .join(Repair, Repair.id == Document.repair_id)
+        .where(Repair.vehicle_id == placeholder_vehicle.id)
+        .order_by(Document.id.asc())
+    )
+    documents = db.scalars(stmt).all()
+    if limit is not None:
+        documents = documents[:limit]
+
+    for document in documents:
+        if rebind_document_vehicle(db, document, by_vin=by_vin, by_plate=by_plate):
+            stats.matched_vehicle += 1
+        else:
+            stats.unmatched_vehicle += 1
+
+    return stats
+
+
 def main() -> None:
     parser = build_argument_parser()
     args = parser.parse_args()
     source_dir = Path(args.path).expanduser().resolve()
 
     with SessionLocal() as db:
-        stats = import_documents_with_session(db, source_dir=source_dir, limit=args.limit)
+        if args.retry_unmatched_only:
+            stats = retry_unmatched_documents_with_session(db, limit=args.limit)
+        else:
+            stats = import_documents_with_session(db, source_dir=source_dir, limit=args.limit)
 
     print(stats.as_dict())
 

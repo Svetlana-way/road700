@@ -47,6 +47,7 @@ Initial project scaffold for the fleet repairs platform.
 4. Codespaces will start:
    - frontend on port `5173`
    - backend on port `8000`
+   - if the workspace revision changed or one of the services stopped responding, startup will automatically restart the frontend and backend
 5. Open the forwarded frontend port preview and sign in with:
    - login: `admin`
    - password: `Road700Admin!2026`

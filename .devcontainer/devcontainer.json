@@ -1,0 +1,30 @@
+{
+  "name": "Road700",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "forwardPorts": [5173, 8000],
+  "portsAttributes": {
+    "5173": {
+      "label": "Road700 Frontend",
+      "onAutoForward": "openBrowser"
+    },
+    "8000": {
+      "label": "Road700 Backend API",
+      "onAutoForward": "openPreview"
+    }
+  },
+  "postCreateCommand": "bash scripts/bootstrap-codespace.sh",
+  "postStartCommand": "bash scripts/start-codespace.sh",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-azuretools.vscode-docker",
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  }
+}

@@ -17,3 +17,4 @@ backend/.venv/
 backend/*.egg-info/
 backend/local.db
 storage/
+.codespaces/

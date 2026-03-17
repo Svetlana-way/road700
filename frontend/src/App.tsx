@@ -680,9 +680,10 @@ type UploadFormState = {
 
 const TOKEN_STORAGE_KEY = "road700.access_token";
 const API_BASE_URL =
-  window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+  import.meta.env.VITE_API_URL?.replace(/\/$/, "") ??
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
     ? "http://localhost:8000/api"
-    : "/api";
+    : "/api");
 
 const emptyUploadForm = (): UploadFormState => ({
   vehicleId: "",

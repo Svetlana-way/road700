@@ -8,9 +8,7 @@ LOG_DIR="$RUNTIME_DIR/logs"
 mkdir -p "$LOG_DIR"
 
 BACKEND_PID_FILE="$RUNTIME_DIR/backend.pid"
-FRONTEND_PID_FILE="$RUNTIME_DIR/frontend.pid"
 BACKEND_LOG="$LOG_DIR/backend.log"
-FRONTEND_LOG="$LOG_DIR/frontend.log"
 REVISION_FILE="$RUNTIME_DIR/revision.txt"
 
 export DATABASE_URL="sqlite:///$ROOT_DIR/backend/local.db"
@@ -33,6 +31,10 @@ force_restart="false"
 if [[ "$current_revision" != "$previous_revision" ]]; then
   force_restart="true"
 fi
+
+# Codespaces now serves the built frontend through the backend on port 8000.
+# Stop any leftover Vite process from older revisions so users see one stable app port.
+pkill -f "vite --host 0.0.0.0 --port 5173" 2>/dev/null || true
 
 is_running() {
   local pid_file="$1"
@@ -84,7 +86,12 @@ backend_is_healthy() {
 }
 
 frontend_is_healthy() {
-  wait_for_url "http://127.0.0.1:5173" 3 1
+  wait_for_url "http://127.0.0.1:8000" 3 1
+}
+
+build_frontend() {
+  cd "$ROOT_DIR/frontend"
+  npm run build >/dev/null
 }
 
 start_backend() {
@@ -113,29 +120,9 @@ start_backend() {
   wait_for_url "http://127.0.0.1:8000/api/health" 30 1
 }
 
-start_frontend() {
-  if [[ "$force_restart" == "true" ]]; then
-    stop_process "$FRONTEND_PID_FILE"
-  fi
-
-  if is_running "$FRONTEND_PID_FILE" && frontend_is_healthy; then
-    return
-  fi
-
-  stop_process "$FRONTEND_PID_FILE"
-
-  (
-    cd "$ROOT_DIR/frontend"
-    nohup env VITE_BACKEND_PROXY_TARGET="http://127.0.0.1:8000" \
-      npm run dev -- --host 0.0.0.0 --port 5173 --strictPort \
-      >"$FRONTEND_LOG" 2>&1 &
-    echo $! >"$FRONTEND_PID_FILE"
-  )
-
-  wait_for_url "http://127.0.0.1:5173" 30 1
-}
+build_frontend
 
 start_backend
-start_frontend
+frontend_is_healthy
 
 printf '%s\n' "$current_revision" >"$REVISION_FILE"

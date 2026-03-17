@@ -44,18 +44,16 @@ Initial project scaffold for the fleet repairs platform.
 1. Open the repository on GitHub.
 2. Click `Code` -> `Codespaces` -> `Create codespace on main`.
 3. Wait for the post-create setup to finish.
-4. Codespaces will start:
-   - frontend on port `5173`
-   - backend on port `8000`
-   - if the workspace revision changed or one of the services stopped responding, startup will automatically restart the frontend and backend
-5. Open the forwarded frontend port preview and sign in with:
+4. Codespaces will build the frontend and open the application on port `8000`.
+5. If the workspace revision changed or the application stopped responding, startup will automatically rebuild the frontend and restart the backend.
+6. Open the forwarded application port and sign in with:
    - login: `admin`
    - password: `Road700Admin!2026`
 
 The repository now includes:
 - `.devcontainer/devcontainer.json` for Codespaces
 - `scripts/bootstrap-codespace.sh` for dependency installation
-- `scripts/start-codespace.sh` for migrations, admin initialization and service startup
+- `scripts/start-codespace.sh` for frontend build, migrations, admin initialization and app startup
 - `.github/workflows/ci.yml` for automatic backend and frontend checks on GitHub
 
 ### Alternative: local backend + frontend

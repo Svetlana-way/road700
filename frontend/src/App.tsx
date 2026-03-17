@@ -1647,6 +1647,11 @@ export default function App() {
   const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>("services");
   const [activeRepairTab, setActiveRepairTab] = useState<RepairTab>("overview");
   const [showTechnicalOcrSettings, setShowTechnicalOcrSettings] = useState(false);
+  const [showServiceEditor, setShowServiceEditor] = useState(false);
+  const [showReviewRuleEditor, setShowReviewRuleEditor] = useState(false);
+  const [showLaborNormCatalogEditor, setShowLaborNormCatalogEditor] = useState(false);
+  const [showLaborNormImport, setShowLaborNormImport] = useState(false);
+  const [showLaborNormEntryEditor, setShowLaborNormEntryEditor] = useState(false);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
@@ -2540,6 +2545,7 @@ export default function App() {
   function handleEditReviewRule(item: ReviewRuleItem) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("control");
+    setShowReviewRuleEditor(true);
     setReviewRuleForm(createReviewRuleFormFromItem(item));
   }
 
@@ -2830,6 +2836,7 @@ export default function App() {
   function handleEditService(item: ServiceItem) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("services");
+    setShowServiceEditor(true);
     setServiceForm(createServiceFormFromItem(item));
   }
 
@@ -2931,6 +2938,7 @@ export default function App() {
   function handleEditLaborNormCatalog(item: LaborNormCatalogConfigItem) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("labor_norms");
+    setShowLaborNormCatalogEditor(true);
     setEditingLaborNormCatalogId(item.id);
     setLaborNormCatalogForm(createCatalogFormFromItem(item));
   }
@@ -2943,6 +2951,7 @@ export default function App() {
   function handleCatalogScopeSelected(scope: string) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("labor_norms");
+    setShowLaborNormImport(true);
     setLaborNormImportScope(scope);
     const selectedCatalog = laborNormCatalogs.find((item) => item.scope === scope);
     if (selectedCatalog) {
@@ -3024,6 +3033,7 @@ export default function App() {
   function handleEditLaborNormItem(item: LaborNormCatalogItem) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("labor_norms");
+    setShowLaborNormEntryEditor(true);
     setLaborNormEntryForm(createLaborNormEntryFormFromItem(item));
   }
 
@@ -3335,6 +3345,11 @@ export default function App() {
     setActiveAdminTab("services");
     setActiveRepairTab("overview");
     setShowTechnicalOcrSettings(false);
+    setShowServiceEditor(false);
+    setShowReviewRuleEditor(false);
+    setShowLaborNormCatalogEditor(false);
+    setShowLaborNormImport(false);
+    setShowLaborNormEntryEditor(false);
     setSuccessMessage("");
     setErrorMessage("");
   }
@@ -3957,89 +3972,106 @@ export default function App() {
                           </Stack>
                         </Grid>
                       </Grid>
-                      <Paper className="repair-line" elevation={0}>
-                        <Stack spacing={1.25}>
-                          <Typography className="metric-label">
-                            Создание и редактирование сервиса
-                          </Typography>
-                          <Grid container spacing={1.5}>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Название"
-                                value={serviceForm.name}
-                                onChange={(event) =>
-                                  setServiceForm((current) => ({ ...current, name: event.target.value }))
-                                }
-                                fullWidth
-                              />
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                        <Button
+                          variant={showServiceEditor ? "outlined" : "contained"}
+                          onClick={() => setShowServiceEditor((current) => !current)}
+                        >
+                          {showServiceEditor ? "Скрыть форму сервиса" : "Добавить сервис"}
+                        </Button>
+                      </Stack>
+                      {showServiceEditor ? (
+                        <Paper className="repair-line" elevation={0}>
+                          <Stack spacing={1.25}>
+                            <Typography className="metric-label">
+                              Создание и редактирование сервиса
+                            </Typography>
+                            <Grid container spacing={1.5}>
+                              <Grid item xs={12} sm={4}>
+                                <TextField
+                                  label="Название"
+                                  value={serviceForm.name}
+                                  onChange={(event) =>
+                                    setServiceForm((current) => ({ ...current, name: event.target.value }))
+                                  }
+                                  fullWidth
+                                />
+                              </Grid>
+                              <Grid item xs={12} sm={3}>
+                                <TextField
+                                  label="Город"
+                                  value={serviceForm.city}
+                                  onChange={(event) =>
+                                    setServiceForm((current) => ({ ...current, city: event.target.value }))
+                                  }
+                                  fullWidth
+                                />
+                              </Grid>
+                              <Grid item xs={12} sm={3}>
+                                <TextField
+                                  label="Контакт"
+                                  value={serviceForm.contact}
+                                  onChange={(event) =>
+                                    setServiceForm((current) => ({ ...current, contact: event.target.value }))
+                                  }
+                                  fullWidth
+                                />
+                              </Grid>
+                              <Grid item xs={12} sm={2}>
+                                <TextField
+                                  select
+                                  label="Статус"
+                                  value={serviceForm.status}
+                                  onChange={(event) =>
+                                    setServiceForm((current) => ({
+                                      ...current,
+                                      status: event.target.value as ServiceStatus,
+                                    }))
+                                  }
+                                  fullWidth
+                                >
+                                  <MenuItem value="preliminary">Предварительный</MenuItem>
+                                  <MenuItem value="confirmed">Подтверждён</MenuItem>
+                                  <MenuItem value="archived">Архив</MenuItem>
+                                </TextField>
+                              </Grid>
+                              <Grid item xs={12}>
+                                <TextField
+                                  label="Комментарий"
+                                  value={serviceForm.comment}
+                                  onChange={(event) =>
+                                    setServiceForm((current) => ({ ...current, comment: event.target.value }))
+                                  }
+                                  fullWidth
+                                  multiline
+                                  minRows={2}
+                                />
+                              </Grid>
                             </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Город"
-                                value={serviceForm.city}
-                                onChange={(event) =>
-                                  setServiceForm((current) => ({ ...current, city: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Контакт"
-                                value={serviceForm.contact}
-                                onChange={(event) =>
-                                  setServiceForm((current) => ({ ...current, contact: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={2}>
-                              <TextField
-                                select
-                                label="Статус"
-                                value={serviceForm.status}
-                                onChange={(event) =>
-                                  setServiceForm((current) => ({
-                                    ...current,
-                                    status: event.target.value as ServiceStatus,
-                                  }))
-                                }
-                                fullWidth
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                              <Button
+                                variant="contained"
+                                disabled={serviceSaving}
+                                onClick={() => {
+                                  void handleSaveService();
+                                }}
                               >
-                                <MenuItem value="preliminary">Предварительный</MenuItem>
-                                <MenuItem value="confirmed">Подтверждён</MenuItem>
-                                <MenuItem value="archived">Архив</MenuItem>
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12}>
-                              <TextField
-                                label="Комментарий"
-                                value={serviceForm.comment}
-                                onChange={(event) =>
-                                  setServiceForm((current) => ({ ...current, comment: event.target.value }))
-                                }
-                                fullWidth
-                                multiline
-                                minRows={2}
-                              />
-                            </Grid>
-                          </Grid>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <Button
-                              variant="contained"
-                              disabled={serviceSaving}
-                              onClick={() => {
-                                void handleSaveService();
-                              }}
-                            >
-                              {serviceSaving ? "Сохранение..." : serviceForm.id ? "Сохранить сервис" : "Создать сервис"}
-                            </Button>
-                            <Button variant="text" disabled={serviceSaving} onClick={resetServiceEditor}>
-                              Сбросить форму
-                            </Button>
+                                {serviceSaving ? "Сохранение..." : serviceForm.id ? "Сохранить сервис" : "Создать сервис"}
+                              </Button>
+                              <Button
+                                variant="text"
+                                disabled={serviceSaving}
+                                onClick={() => {
+                                  resetServiceEditor();
+                                  setShowServiceEditor(false);
+                                }}
+                              >
+                                Сбросить форму
+                              </Button>
+                            </Stack>
                           </Stack>
-                        </Stack>
-                      </Paper>
+                        </Paper>
+                      ) : null}
                       <Typography className="muted-copy">
                         В справочнике сервисов {services.length} записей по текущему фильтру.
                       </Typography>
@@ -4095,12 +4127,21 @@ export default function App() {
                           Настройка причин ручной проверки, весов приоритета и bucket без участия разработчика.
                         </Typography>
                       </Box>
-                      <Paper className="repair-line" elevation={0}>
-                        <Stack spacing={1.25}>
-                          <Typography className="metric-label">
-                            Создание и редактирование правила
-                          </Typography>
-                          <Grid container spacing={1.5}>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                        <Button
+                          variant={showReviewRuleEditor ? "outlined" : "contained"}
+                          onClick={() => setShowReviewRuleEditor((current) => !current)}
+                        >
+                          {showReviewRuleEditor ? "Скрыть форму правила" : "Добавить правило"}
+                        </Button>
+                      </Stack>
+                      {showReviewRuleEditor ? (
+                        <Paper className="repair-line" elevation={0}>
+                          <Stack spacing={1.25}>
+                            <Typography className="metric-label">
+                              Создание и редактирование правила
+                            </Typography>
+                            <Grid container spacing={1.5}>
                             <Grid item xs={12} sm={3}>
                               <TextField
                                 select
@@ -4225,12 +4266,20 @@ export default function App() {
                             >
                               {reviewRuleSaving ? "Сохранение..." : reviewRuleForm.id ? "Сохранить правило" : "Создать правило"}
                             </Button>
-                            <Button variant="text" disabled={reviewRuleSaving} onClick={resetReviewRuleEditor}>
+                            <Button
+                              variant="text"
+                              disabled={reviewRuleSaving}
+                              onClick={() => {
+                                resetReviewRuleEditor();
+                                setShowReviewRuleEditor(false);
+                              }}
+                            >
                               Сбросить форму
                             </Button>
                           </Stack>
-                        </Stack>
-                      </Paper>
+                          </Stack>
+                        </Paper>
+                      ) : null}
                       <Typography className="muted-copy">
                         В справочнике правил {reviewRules.length} записей.
                       </Typography>
@@ -5017,6 +5066,27 @@ export default function App() {
                           Администратор управляет каталогами, правилами применимости, импортом и отдельными строками без участия разработчика.
                         </Typography>
                       </Box>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} flexWrap="wrap" useFlexGap>
+                        <Button
+                          variant={showLaborNormCatalogEditor ? "outlined" : "contained"}
+                          onClick={() => setShowLaborNormCatalogEditor((current) => !current)}
+                        >
+                          {showLaborNormCatalogEditor ? "Скрыть каталог" : "Каталоги и применимость"}
+                        </Button>
+                        <Button
+                          variant={showLaborNormImport ? "outlined" : "contained"}
+                          onClick={() => setShowLaborNormImport((current) => !current)}
+                        >
+                          {showLaborNormImport ? "Скрыть импорт" : "Импорт справочника"}
+                        </Button>
+                        <Button
+                          variant={showLaborNormEntryEditor ? "outlined" : "contained"}
+                          onClick={() => setShowLaborNormEntryEditor((current) => !current)}
+                        >
+                          {showLaborNormEntryEditor ? "Скрыть форму записи" : "Добавить запись"}
+                        </Button>
+                      </Stack>
+                      {showLaborNormCatalogEditor ? (
                       <Paper className="repair-line" elevation={0}>
                         <Stack spacing={1.25}>
                           <Typography className="metric-label">
@@ -5204,7 +5274,14 @@ export default function App() {
                                   ? "Сохранить каталог"
                                   : "Создать каталог"}
                             </Button>
-                            <Button variant="text" onClick={resetLaborNormCatalogEditor} disabled={laborNormCatalogSaving}>
+                            <Button
+                              variant="text"
+                              onClick={() => {
+                                resetLaborNormCatalogEditor();
+                                setShowLaborNormCatalogEditor(false);
+                              }}
+                              disabled={laborNormCatalogSaving}
+                            >
                               Сбросить форму
                             </Button>
                           </Stack>
@@ -5270,6 +5347,7 @@ export default function App() {
                           )}
                         </Stack>
                       </Paper>
+                      ) : null}
                       <Grid container spacing={1.5}>
                         <Grid item xs={12} sm={4}>
                           <TextField
@@ -5331,6 +5409,7 @@ export default function App() {
                           Сбросить фильтр
                         </Button>
                       </Stack>
+                      {showLaborNormImport ? (
                       <Paper className="repair-line" elevation={0}>
                         <Stack spacing={1.25}>
                           <Typography className="metric-label">
@@ -5401,6 +5480,8 @@ export default function App() {
                           </Stack>
                         </Stack>
                       </Paper>
+                      ) : null}
+                      {showLaborNormEntryEditor ? (
                       <Paper className="repair-line" elevation={0}>
                         <Stack spacing={1.25}>
                           <Typography className="metric-label">
@@ -5553,13 +5634,17 @@ export default function App() {
                             <Button
                               variant="text"
                               disabled={laborNormEntrySaving}
-                              onClick={() => resetLaborNormEntryEditor()}
+                              onClick={() => {
+                                resetLaborNormEntryEditor();
+                                setShowLaborNormEntryEditor(false);
+                              }}
                             >
                               Сбросить форму
                             </Button>
                           </Stack>
                         </Stack>
                       </Paper>
+                      ) : null}
                       <Typography className="muted-copy">
                         В каталоге {laborNormTotal} записей
                         {laborNormSourceFiles.length > 0 ? ` · источники: ${laborNormSourceFiles.join(", ")}` : ""}

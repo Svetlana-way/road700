@@ -128,12 +128,19 @@ def import_labor_norms(
     content_type = (file.content_type or "").lower()
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Catalog file name is missing")
-    if not file.filename.lower().endswith(".xlsx"):
+    if not (file.filename.lower().endswith(".xlsx") or file.filename.lower().endswith(".csv")):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Поддерживается импорт только .xlsx каталога нормо-часов",
+            detail="Поддерживается импорт каталога нормо-часов в форматах .xlsx и .csv",
         )
-    if content_type and "sheet" not in content_type and "excel" not in content_type and "octet-stream" not in content_type:
+    if (
+        content_type
+        and "sheet" not in content_type
+        and "excel" not in content_type
+        and "csv" not in content_type
+        and "octet-stream" not in content_type
+        and "text/plain" not in content_type
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Некорректный тип файла каталога",

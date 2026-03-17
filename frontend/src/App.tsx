@@ -2657,11 +2657,11 @@ export default function App() {
                           </Grid>
                           <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
                             <Button component="label" variant="outlined">
-                              Выбрать .xlsx
+                              Выбрать .xlsx/.csv
                               <input
                                 hidden
                                 type="file"
-                                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
                                 onChange={(event) => setLaborNormFile(event.target.files?.[0] ?? null)}
                               />
                             </Button>

@@ -333,6 +333,15 @@ def find_best_labor_norm_match(
     ):
         return None
 
+    if (
+        best.matched_by != "code"
+        and runner_up is not None
+        and abs(best.score - runner_up.score) < 0.0001
+        and best.norm.scope == runner_up.norm.scope
+        and best.norm.name_ru == runner_up.norm.name_ru
+    ):
+        return None
+
     if best.matched_by == "code":
         return best
     if best.score >= 0.9:

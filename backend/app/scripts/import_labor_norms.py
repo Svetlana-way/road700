@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -68,6 +69,50 @@ def normalize_hours(value: object) -> Optional[float]:
         return None
 
 
+def read_xlsx_rows(path: Path) -> list[dict[str, object]]:
+    workbook = load_workbook(path, data_only=True, read_only=True)
+    rows: list[dict[str, object]] = []
+
+    for sheet_name in workbook.sheetnames:
+        if sheet_name in SKIPPED_SHEETS:
+            continue
+        worksheet = workbook[sheet_name]
+        for row in worksheet.iter_rows(values_only=True):
+            rows.append(
+                {
+                    "category": sheet_name,
+                    "source_sheet": sheet_name,
+                    "code": row[0] if len(row) > 0 else None,
+                    "name_ru": row[1] if len(row) > 1 else None,
+                    "name_cn": row[2] if len(row) > 2 else None,
+                    "name_en": row[3] if len(row) > 3 else None,
+                    "standard_hours": row[4] if len(row) > 4 else None,
+                    "name_ru_alt": row[5] if len(row) > 5 else None,
+                }
+            )
+    return rows
+
+
+def read_csv_rows(path: Path) -> list[dict[str, object]]:
+    with path.open("r", encoding="utf-8-sig", newline="") as source:
+        reader = csv.DictReader(source)
+        rows: list[dict[str, object]] = []
+        for row in reader:
+            rows.append(
+                {
+                    "category": row.get("category"),
+                    "source_sheet": row.get("source_sheet") or row.get("category"),
+                    "code": row.get("code"),
+                    "name_ru": row.get("name_ru"),
+                    "name_cn": row.get("name_cn"),
+                    "name_en": row.get("name_en"),
+                    "standard_hours": row.get("standard_hours"),
+                    "name_ru_alt": row.get("name_ru_alt"),
+                }
+            )
+    return rows
+
+
 def upsert_labor_norm(
     db: Session,
     *,
@@ -126,41 +171,46 @@ def import_labor_norms_with_session(
         raise ValueError("Labor norm scope is required")
 
     normalized_brand_family = normalize_brand_family(brand_family)
-    workbook = load_workbook(path, data_only=True, read_only=True)
     stats = ImportStats()
+    normalized_catalog_name = catalog_name.strip() if isinstance(catalog_name, str) and catalog_name.strip() else None
+    suffix = path.suffix.lower()
+    if suffix == ".xlsx":
+        source_rows = read_xlsx_rows(path)
+    elif suffix == ".csv":
+        source_rows = read_csv_rows(path)
+    else:
+        raise ValueError(f"Unsupported labor norms file format: {path.suffix}")
 
-    for sheet_name in workbook.sheetnames:
-        if sheet_name in SKIPPED_SHEETS:
+    for row in source_rows:
+        code = normalize_labor_norm_code(normalize_text(row.get("code")))
+        name_ru = normalize_text(row.get("name_ru"))
+        name_cn = normalize_text(row.get("name_cn"))
+        name_en = normalize_text(row.get("name_en"))
+        standard_hours = normalize_hours(row.get("standard_hours"))
+        name_ru_alt = normalize_text(row.get("name_ru_alt"))
+        category = normalize_text(row.get("category")) or "Общее"
+        source_sheet = normalize_text(row.get("source_sheet")) or category
+
+        if not code or not name_ru or standard_hours is None:
+            stats.skipped += 1
             continue
-        worksheet = workbook[sheet_name]
-        for row in worksheet.iter_rows(values_only=True):
-            code = normalize_labor_norm_code(normalize_text(row[0] if len(row) > 0 else None))
-            name_ru = normalize_text(row[1] if len(row) > 1 else None)
-            name_cn = normalize_text(row[2] if len(row) > 2 else None)
-            name_en = normalize_text(row[3] if len(row) > 3 else None)
-            standard_hours = normalize_hours(row[4] if len(row) > 4 else None)
-            name_ru_alt = normalize_text(row[5] if len(row) > 5 else None)
 
-            if not code or not name_ru or standard_hours is None:
-                stats.skipped += 1
-                continue
-
-            upsert_labor_norm(
-                db,
-                scope=normalized_scope,
-                brand_family=normalized_brand_family,
-                catalog_name=catalog_name.strip() if isinstance(catalog_name, str) and catalog_name.strip() else None,
-                code=code,
-                category=sheet_name,
-                name_ru=name_ru,
-                name_ru_alt=name_ru_alt,
-                name_cn=name_cn,
-                name_en=name_en,
-                standard_hours=standard_hours,
-                source_sheet=sheet_name,
-                source_file=path.name,
-                stats=stats,
-            )
+        upsert_labor_norm(
+            db,
+            scope=normalized_scope,
+            brand_family=normalized_brand_family,
+            catalog_name=normalized_catalog_name,
+            code=code,
+            category=category,
+            name_ru=name_ru,
+            name_ru_alt=name_ru_alt,
+            name_cn=name_cn,
+            name_en=name_en,
+            standard_hours=standard_hours,
+            source_sheet=source_sheet,
+            source_file=path.name,
+            stats=stats,
+        )
 
     db.commit()
     return stats

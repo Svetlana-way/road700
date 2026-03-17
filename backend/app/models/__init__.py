@@ -1,6 +1,7 @@
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
 from app.models.imports import ImportConflict, ImportJob
+from app.models.labor_norm_catalog import LaborNormCatalog
 from app.models.labor_norm import LaborNorm
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
@@ -13,6 +14,7 @@ __all__ = [
     "DocumentVersion",
     "ImportConflict",
     "ImportJob",
+    "LaborNormCatalog",
     "LaborNorm",
     "Repair",
     "RepairCheck",

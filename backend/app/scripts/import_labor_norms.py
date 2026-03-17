@@ -22,6 +22,7 @@ from app.services.labor_norms import (
     normalize_brand_family,
     normalize_labor_norm_code,
     normalize_labor_norm_scope,
+    upsert_labor_norm_catalog,
 )
 
 
@@ -173,6 +174,13 @@ def import_labor_norms_with_session(
     normalized_brand_family = normalize_brand_family(brand_family)
     stats = ImportStats()
     normalized_catalog_name = catalog_name.strip() if isinstance(catalog_name, str) and catalog_name.strip() else None
+    upsert_labor_norm_catalog(
+        db,
+        scope=normalized_scope,
+        catalog_name=normalized_catalog_name,
+        brand_family=normalized_brand_family,
+        auto_match_enabled=False if normalized_scope != DEFAULT_DONGFENG_LABOR_NORM_SCOPE else True,
+    )
     suffix = path.suffix.lower()
     if suffix == ".xlsx":
         source_rows = read_xlsx_rows(path)

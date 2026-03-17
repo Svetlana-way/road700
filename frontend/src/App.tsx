@@ -136,6 +136,30 @@ type LaborNormCatalogItem = {
   updated_at: string;
 };
 
+type LaborNormCatalogConfigItem = {
+  id: number;
+  scope: string;
+  catalog_name: string;
+  brand_family: string | null;
+  vehicle_type: VehicleType | null;
+  year_from: number | null;
+  year_to: number | null;
+  brand_keywords: string[] | null;
+  model_keywords: string[] | null;
+  vin_prefixes: string[] | null;
+  priority: number;
+  auto_match_enabled: boolean;
+  status: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type LaborNormCatalogConfigResponse = {
+  items: LaborNormCatalogConfigItem[];
+  scopes: string[];
+};
+
 type LaborNormCatalogResponse = {
   items: LaborNormCatalogItem[];
   total: number;
@@ -153,6 +177,37 @@ type LaborNormImportResponse = {
   created: number;
   updated: number;
   skipped: number;
+};
+
+type LaborNormCatalogFormState = {
+  scope: string;
+  catalog_name: string;
+  brand_family: string;
+  vehicle_type: "" | VehicleType;
+  year_from: string;
+  year_to: string;
+  brand_keywords: string;
+  model_keywords: string;
+  vin_prefixes: string;
+  priority: string;
+  auto_match_enabled: "true" | "false";
+  status: string;
+  notes: string;
+};
+
+type LaborNormEntryFormState = {
+  id: number | null;
+  scope: string;
+  code: string;
+  category: string;
+  name_ru: string;
+  name_ru_alt: string;
+  name_cn: string;
+  name_en: string;
+  standard_hours: string;
+  source_sheet: string;
+  source_file: string;
+  status: string;
 };
 
 type ReviewPriorityBucket = "review" | "critical" | "suspicious";
@@ -582,6 +637,87 @@ function formatHours(value: number | null | undefined) {
     return null;
   }
   return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(value)} ч`;
+}
+
+function splitEditorLines(value: string) {
+  return value
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function joinEditorLines(values: string[] | null | undefined) {
+  return (values || []).join("\n");
+}
+
+function createEmptyCatalogForm(): LaborNormCatalogFormState {
+  return {
+    scope: "",
+    catalog_name: "",
+    brand_family: "",
+    vehicle_type: "",
+    year_from: "",
+    year_to: "",
+    brand_keywords: "",
+    model_keywords: "",
+    vin_prefixes: "",
+    priority: "100",
+    auto_match_enabled: "true",
+    status: "confirmed",
+    notes: "",
+  };
+}
+
+function createCatalogFormFromItem(item: LaborNormCatalogConfigItem): LaborNormCatalogFormState {
+  return {
+    scope: item.scope,
+    catalog_name: item.catalog_name,
+    brand_family: item.brand_family || "",
+    vehicle_type: item.vehicle_type || "",
+    year_from: item.year_from !== null ? String(item.year_from) : "",
+    year_to: item.year_to !== null ? String(item.year_to) : "",
+    brand_keywords: joinEditorLines(item.brand_keywords),
+    model_keywords: joinEditorLines(item.model_keywords),
+    vin_prefixes: joinEditorLines(item.vin_prefixes),
+    priority: String(item.priority),
+    auto_match_enabled: item.auto_match_enabled ? "true" : "false",
+    status: item.status,
+    notes: item.notes || "",
+  };
+}
+
+function createEmptyLaborNormEntryForm(scope = ""): LaborNormEntryFormState {
+  return {
+    id: null,
+    scope,
+    code: "",
+    category: "",
+    name_ru: "",
+    name_ru_alt: "",
+    name_cn: "",
+    name_en: "",
+    standard_hours: "",
+    source_sheet: "",
+    source_file: "",
+    status: "confirmed",
+  };
+}
+
+function createLaborNormEntryFormFromItem(item: LaborNormCatalogItem): LaborNormEntryFormState {
+  return {
+    id: item.id,
+    scope: item.scope,
+    code: item.code,
+    category: item.category || "",
+    name_ru: item.name_ru,
+    name_ru_alt: item.name_ru_alt || "",
+    name_cn: item.name_cn || "",
+    name_en: item.name_en || "",
+    standard_hours: String(item.standard_hours),
+    source_sheet: item.source_sheet || "",
+    source_file: item.source_file || "",
+    status: item.status,
+  };
 }
 
 function formatMatchMethod(value: string | null | undefined) {
@@ -1156,6 +1292,7 @@ export default function App() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [laborNorms, setLaborNorms] = useState<LaborNormCatalogItem[]>([]);
+  const [laborNormCatalogs, setLaborNormCatalogs] = useState<LaborNormCatalogConfigItem[]>([]);
   const [laborNormTotal, setLaborNormTotal] = useState(0);
   const [laborNormScopes, setLaborNormScopes] = useState<string[]>([]);
   const [laborNormCategories, setLaborNormCategories] = useState<string[]>([]);
@@ -1166,9 +1303,14 @@ export default function App() {
   const [laborNormLoading, setLaborNormLoading] = useState(false);
   const [laborNormImportLoading, setLaborNormImportLoading] = useState(false);
   const [laborNormFile, setLaborNormFile] = useState<File | null>(null);
-  const [laborNormImportScope, setLaborNormImportScope] = useState("dongfeng_2025");
-  const [laborNormImportBrandFamily, setLaborNormImportBrandFamily] = useState("dongfeng");
-  const [laborNormImportCatalogName, setLaborNormImportCatalogName] = useState("Dong Feng 2025");
+  const [laborNormImportScope, setLaborNormImportScope] = useState("");
+  const [laborNormImportBrandFamily, setLaborNormImportBrandFamily] = useState("");
+  const [laborNormImportCatalogName, setLaborNormImportCatalogName] = useState("");
+  const [laborNormCatalogSaving, setLaborNormCatalogSaving] = useState(false);
+  const [laborNormEntrySaving, setLaborNormEntrySaving] = useState(false);
+  const [editingLaborNormCatalogId, setEditingLaborNormCatalogId] = useState<number | null>(null);
+  const [laborNormCatalogForm, setLaborNormCatalogForm] = useState<LaborNormCatalogFormState>(createEmptyCatalogForm);
+  const [laborNormEntryForm, setLaborNormEntryForm] = useState<LaborNormEntryFormState>(createEmptyLaborNormEntryForm);
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
   const [reviewQueueCounts, setReviewQueueCounts] = useState<Record<ReviewQueueCategory, number>>({
     all: 0,
@@ -1315,6 +1457,23 @@ export default function App() {
     }
   }
 
+  async function loadLaborNormCatalogConfigs(activeToken: string) {
+    const payload = await apiRequest<LaborNormCatalogConfigResponse>(
+      "/labor-norms/catalogs",
+      { method: "GET" },
+      activeToken,
+    );
+    setLaborNormCatalogs(payload.items);
+    if (!editingLaborNormCatalogId) {
+      setLaborNormCatalogForm((current) => {
+        if (current.scope || current.catalog_name || current.brand_family || current.notes) {
+          return current;
+        }
+        return createEmptyCatalogForm();
+      });
+    }
+  }
+
   async function loadWorkspace(activeToken: string, reviewCategory: ReviewQueueCategory = selectedReviewCategory) {
     setBootLoading(true);
     try {
@@ -1325,6 +1484,7 @@ export default function App() {
         recentDocuments,
         reviewQueueData,
         laborNormCatalog,
+        laborNormCatalogConfigs,
       ] = await Promise.all([
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
         apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
@@ -1341,6 +1501,9 @@ export default function App() {
               activeToken,
             )
           : Promise.resolve(null),
+        me.role === "admin"
+          ? apiRequest<LaborNormCatalogConfigResponse>("/labor-norms/catalogs", { method: "GET" }, activeToken)
+          : Promise.resolve(null),
       ]);
 
       setUser(me);
@@ -1352,6 +1515,7 @@ export default function App() {
       setLaborNormScopes(laborNormCatalog?.scopes || []);
       setLaborNormCategories(laborNormCatalog?.categories || []);
       setLaborNormSourceFiles(laborNormCatalog?.source_files || []);
+      setLaborNormCatalogs(laborNormCatalogConfigs?.items || []);
       setReviewQueue(reviewQueueData.items);
       setReviewQueueCounts(reviewQueueData.counts);
       if (selectedDocumentId === null) {
@@ -1382,10 +1546,13 @@ export default function App() {
       setVehicles([]);
       setDocuments([]);
       setLaborNorms([]);
+      setLaborNormCatalogs([]);
       setLaborNormTotal(0);
       setLaborNormScopes([]);
       setLaborNormCategories([]);
       setLaborNormSourceFiles([]);
+      setLaborNormCatalogForm(createEmptyCatalogForm());
+      setLaborNormEntryForm(createEmptyLaborNormEntryForm());
       setReviewQueue([]);
       setReviewQueueCounts({
         all: 0,
@@ -1401,6 +1568,18 @@ export default function App() {
     }
     void loadWorkspace(token, selectedReviewCategory);
   }, [selectedReviewCategory, token]);
+
+  useEffect(() => {
+    if (laborNormCatalogs.length === 0) {
+      return;
+    }
+    if (!laborNormEntryForm.scope) {
+      setLaborNormEntryForm((current) => ({ ...current, scope: laborNormCatalogs[0].scope }));
+    }
+    if (!laborNormImportScope) {
+      handleCatalogScopeSelected(laborNormCatalogs[0].scope);
+    }
+  }, [laborNormCatalogs, laborNormEntryForm.scope, laborNormImportScope]);
 
   useEffect(() => {
     if (!token || selectedDocumentId === null) {
@@ -1823,11 +2002,198 @@ export default function App() {
       );
       setLaborNormFile(null);
       setLaborNormScope(laborNormImportScope);
+      await loadLaborNormCatalogConfigs(token);
       await loadLaborNormCatalog(token);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to import labor norms catalog");
     } finally {
       setLaborNormImportLoading(false);
+    }
+  }
+
+  function handleEditLaborNormCatalog(item: LaborNormCatalogConfigItem) {
+    setEditingLaborNormCatalogId(item.id);
+    setLaborNormCatalogForm(createCatalogFormFromItem(item));
+  }
+
+  function resetLaborNormCatalogEditor() {
+    setEditingLaborNormCatalogId(null);
+    setLaborNormCatalogForm(createEmptyCatalogForm());
+  }
+
+  function handleCatalogScopeSelected(scope: string) {
+    setLaborNormImportScope(scope);
+    const selectedCatalog = laborNormCatalogs.find((item) => item.scope === scope);
+    if (selectedCatalog) {
+      setLaborNormImportBrandFamily(selectedCatalog.brand_family || "");
+      setLaborNormImportCatalogName(selectedCatalog.catalog_name);
+      if (!laborNormEntryForm.scope) {
+        setLaborNormEntryForm((current) => ({ ...current, scope }));
+      }
+    }
+  }
+
+  async function handleSaveLaborNormCatalog() {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+
+    if (!laborNormCatalogForm.scope.trim() || !laborNormCatalogForm.catalog_name.trim()) {
+      setErrorMessage("Для каталога обязательны scope и название");
+      return;
+    }
+
+    setLaborNormCatalogSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const payload = {
+        catalog_name: laborNormCatalogForm.catalog_name.trim(),
+        brand_family: laborNormCatalogForm.brand_family.trim() || null,
+        vehicle_type: laborNormCatalogForm.vehicle_type || null,
+        year_from: laborNormCatalogForm.year_from.trim() ? Number(laborNormCatalogForm.year_from) : null,
+        year_to: laborNormCatalogForm.year_to.trim() ? Number(laborNormCatalogForm.year_to) : null,
+        brand_keywords: splitEditorLines(laborNormCatalogForm.brand_keywords),
+        model_keywords: splitEditorLines(laborNormCatalogForm.model_keywords),
+        vin_prefixes: splitEditorLines(laborNormCatalogForm.vin_prefixes),
+        priority: Number(laborNormCatalogForm.priority || "100"),
+        auto_match_enabled: laborNormCatalogForm.auto_match_enabled === "true",
+        status: laborNormCatalogForm.status,
+        notes: laborNormCatalogForm.notes.trim() || null,
+      };
+
+      if (editingLaborNormCatalogId) {
+        await apiRequest<LaborNormCatalogConfigItem>(
+          `/labor-norms/catalogs/${editingLaborNormCatalogId}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          },
+          token,
+        );
+        setSuccessMessage("Каталог нормо-часов обновлён");
+      } else {
+        await apiRequest<LaborNormCatalogConfigItem>(
+          "/labor-norms/catalogs",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              scope: laborNormCatalogForm.scope.trim(),
+              ...payload,
+            }),
+          },
+          token,
+        );
+        setSuccessMessage("Каталог нормо-часов создан");
+      }
+
+      await loadLaborNormCatalogConfigs(token);
+      handleCatalogScopeSelected(laborNormCatalogForm.scope.trim());
+      if (laborNormScope === laborNormCatalogForm.scope.trim()) {
+        await loadLaborNormCatalog(token);
+      }
+      resetLaborNormCatalogEditor();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save labor norm catalog");
+    } finally {
+      setLaborNormCatalogSaving(false);
+    }
+  }
+
+  function handleEditLaborNormItem(item: LaborNormCatalogItem) {
+    setLaborNormEntryForm(createLaborNormEntryFormFromItem(item));
+  }
+
+  function resetLaborNormEntryEditor(scope = laborNormScope || laborNormImportScope || laborNormCatalogs[0]?.scope || "") {
+    setLaborNormEntryForm(createEmptyLaborNormEntryForm(scope));
+  }
+
+  async function handleSaveLaborNormEntry() {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    if (!laborNormEntryForm.scope.trim() || !laborNormEntryForm.code.trim() || !laborNormEntryForm.name_ru.trim()) {
+      setErrorMessage("Для записи обязательны scope, код и русское название");
+      return;
+    }
+    if (!laborNormEntryForm.standard_hours.trim()) {
+      setErrorMessage("Укажите норматив в часах");
+      return;
+    }
+
+    setLaborNormEntrySaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const payload = {
+        scope: laborNormEntryForm.scope.trim(),
+        code: laborNormEntryForm.code.trim(),
+        category: laborNormEntryForm.category.trim() || null,
+        name_ru: laborNormEntryForm.name_ru.trim(),
+        name_ru_alt: laborNormEntryForm.name_ru_alt.trim() || null,
+        name_cn: laborNormEntryForm.name_cn.trim() || null,
+        name_en: laborNormEntryForm.name_en.trim() || null,
+        standard_hours: Number(laborNormEntryForm.standard_hours.replace(",", ".")),
+        source_sheet: laborNormEntryForm.source_sheet.trim() || null,
+        source_file: laborNormEntryForm.source_file.trim() || null,
+        status: laborNormEntryForm.status,
+      };
+
+      if (laborNormEntryForm.id) {
+        await apiRequest<LaborNormCatalogItem>(
+          `/labor-norms/${laborNormEntryForm.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          },
+          token,
+        );
+        setSuccessMessage("Запись нормо-часов обновлена");
+      } else {
+        await apiRequest<LaborNormCatalogItem>(
+          "/labor-norms",
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          },
+          token,
+        );
+        setSuccessMessage("Запись нормо-часов создана");
+      }
+
+      setLaborNormScope(laborNormEntryForm.scope.trim());
+      await loadLaborNormCatalogConfigs(token);
+      await loadLaborNormCatalog(token, laborNormQuery, laborNormEntryForm.scope.trim(), laborNormCategory);
+      resetLaborNormEntryEditor(laborNormEntryForm.scope.trim());
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save labor norm entry");
+    } finally {
+      setLaborNormEntrySaving(false);
+    }
+  }
+
+  async function handleArchiveLaborNormItem(item: LaborNormCatalogItem) {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    setLaborNormEntrySaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      await apiRequest<LaborNormCatalogItem>(
+        `/labor-norms/${item.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status: "archived" }),
+        },
+        token,
+      );
+      setSuccessMessage(`Запись ${item.code} отправлена в архив`);
+      await loadLaborNormCatalog(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to archive labor norm entry");
+    } finally {
+      setLaborNormEntrySaving(false);
     }
   }
 
@@ -2560,9 +2926,262 @@ export default function App() {
                       <Box>
                         <Typography variant="h5">Справочник нормо-часов</Typography>
                         <Typography className="muted-copy">
-                          Каталог нормативных работ, импортируемый через админку и используемый для автоматического матчинга.
+                          Администратор управляет каталогами, правилами применимости, импортом и отдельными строками без участия разработчика.
                         </Typography>
                       </Box>
+                      <Paper className="repair-line" elevation={0}>
+                        <Stack spacing={1.25}>
+                          <Typography className="metric-label">
+                            Каталоги и правила применимости
+                          </Typography>
+                          <Grid container spacing={1.5}>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Scope"
+                                value={laborNormCatalogForm.scope}
+                                onChange={(event) =>
+                                  setLaborNormCatalogForm((current) => ({ ...current, scope: event.target.value }))
+                                }
+                                fullWidth
+                                disabled={editingLaborNormCatalogId !== null}
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Название каталога"
+                                value={laborNormCatalogForm.catalog_name}
+                                onChange={(event) =>
+                                  setLaborNormCatalogForm((current) => ({ ...current, catalog_name: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Семейство бренда"
+                                value={laborNormCatalogForm.brand_family}
+                                onChange={(event) =>
+                                  setLaborNormCatalogForm((current) => ({ ...current, brand_family: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                select
+                                label="Тип техники"
+                                value={laborNormCatalogForm.vehicle_type}
+                                onChange={(event) =>
+                                  setLaborNormCatalogForm((current) => ({
+                                    ...current,
+                                    vehicle_type: event.target.value as "" | VehicleType,
+                                  }))
+                                }
+                                fullWidth
+                              >
+                                <MenuItem value="">Любой</MenuItem>
+                                <MenuItem value="truck">Грузовик</MenuItem>
+                                <MenuItem value="trailer">Прицеп</MenuItem>
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Год от"
+                                type="number"
+                                value={laborNormCatalogForm.year_from}
+                                onChange={(event) =>
+                                  setLaborNormCatalogForm((current) => ({ ...current, year_from: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Год до"
+                                type="number"
+                                value={laborNormCatalogForm.year_to}
+                                onChange={(event) =>
+                                  setLaborNormCatalogForm((current) => ({ ...current, year_to: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Приоритет"
+                                type="number"
+                                value={laborNormCatalogForm.priority}
+                                onChange={(event) =>
+                                  setLaborNormCatalogForm((current) => ({ ...current, priority: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                select
+                                label="Авто-матчинг"
+                                value={laborNormCatalogForm.auto_match_enabled}
+                                onChange={(event) =>
+                                  setLaborNormCatalogForm((current) => ({
+                                    ...current,
+                                    auto_match_enabled: event.target.value as "true" | "false",
+                                  }))
+                                }
+                                fullWidth
+                              >
+                                <MenuItem value="true">Включён</MenuItem>
+                                <MenuItem value="false">Выключен</MenuItem>
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                select
+                                label="Статус"
+                                value={laborNormCatalogForm.status}
+                                onChange={(event) =>
+                                  setLaborNormCatalogForm((current) => ({ ...current, status: event.target.value }))
+                                }
+                                fullWidth
+                              >
+                                <MenuItem value="preliminary">Предварительный</MenuItem>
+                                <MenuItem value="confirmed">Подтверждён</MenuItem>
+                                <MenuItem value="merged">Объединён</MenuItem>
+                                <MenuItem value="archived">Архив</MenuItem>
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="VIN-префиксы"
+                                value={laborNormCatalogForm.vin_prefixes}
+                                onChange={(event) =>
+                                  setLaborNormCatalogForm((current) => ({ ...current, vin_prefixes: event.target.value }))
+                                }
+                                helperText="По одному значению в строке"
+                                fullWidth
+                                multiline
+                                minRows={3}
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Ключевые бренды"
+                                value={laborNormCatalogForm.brand_keywords}
+                                onChange={(event) =>
+                                  setLaborNormCatalogForm((current) => ({ ...current, brand_keywords: event.target.value }))
+                                }
+                                helperText="Например: dongfeng, dfh4180"
+                                fullWidth
+                                multiline
+                                minRows={3}
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Ключевые модели"
+                                value={laborNormCatalogForm.model_keywords}
+                                onChange={(event) =>
+                                  setLaborNormCatalogForm((current) => ({ ...current, model_keywords: event.target.value }))
+                                }
+                                helperText="Например: тягач"
+                                fullWidth
+                                multiline
+                                minRows={3}
+                              />
+                            </Grid>
+                            <Grid item xs={12}>
+                              <TextField
+                                label="Примечание"
+                                value={laborNormCatalogForm.notes}
+                                onChange={(event) =>
+                                  setLaborNormCatalogForm((current) => ({ ...current, notes: event.target.value }))
+                                }
+                                fullWidth
+                                multiline
+                                minRows={2}
+                              />
+                            </Grid>
+                          </Grid>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Button
+                              variant="contained"
+                              disabled={laborNormCatalogSaving}
+                              onClick={() => {
+                                void handleSaveLaborNormCatalog();
+                              }}
+                            >
+                              {laborNormCatalogSaving
+                                ? "Сохранение..."
+                                : editingLaborNormCatalogId
+                                  ? "Сохранить каталог"
+                                  : "Создать каталог"}
+                            </Button>
+                            <Button variant="text" onClick={resetLaborNormCatalogEditor} disabled={laborNormCatalogSaving}>
+                              Сбросить форму
+                            </Button>
+                          </Stack>
+                          {laborNormCatalogs.length > 0 ? (
+                            <Stack spacing={1}>
+                              {laborNormCatalogs.map((item) => (
+                                <Paper className="repair-line" key={`catalog-${item.id}`} elevation={0}>
+                                  <Stack spacing={0.75}>
+                                    <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                      <Typography>{item.catalog_name}</Typography>
+                                      <Stack direction="row" spacing={1}>
+                                        <Chip
+                                          size="small"
+                                          color={item.auto_match_enabled ? "success" : "default"}
+                                          label={item.auto_match_enabled ? "Авто-матчинг" : "Только вручную"}
+                                        />
+                                        <Chip size="small" variant="outlined" label={item.scope} />
+                                      </Stack>
+                                    </Stack>
+                                    <Typography className="muted-copy">
+                                      {item.brand_family ? `${item.brand_family} · ` : ""}
+                                      {item.vehicle_type === "truck"
+                                        ? "Грузовик"
+                                        : item.vehicle_type === "trailer"
+                                          ? "Прицеп"
+                                          : "Тип не ограничен"}
+                                      {item.year_from !== null || item.year_to !== null
+                                        ? ` · годы ${item.year_from ?? "—"}-${item.year_to ?? "—"}`
+                                        : ""}
+                                      {` · приоритет ${item.priority}`}
+                                      {` · статус ${formatStatus(item.status)}`}
+                                    </Typography>
+                                    <Typography className="muted-copy">
+                                      Бренды: {(item.brand_keywords || []).join(", ") || "—"}
+                                      {` · модели: ${(item.model_keywords || []).join(", ") || "—"}`}
+                                      {` · VIN: ${(item.vin_prefixes || []).join(", ") || "—"}`}
+                                    </Typography>
+                                    {item.notes ? <Typography className="muted-copy">{item.notes}</Typography> : null}
+                                    <Stack direction="row" spacing={1} flexWrap="wrap">
+                                      <Button
+                                        size="small"
+                                        variant="outlined"
+                                        onClick={() => handleEditLaborNormCatalog(item)}
+                                      >
+                                        Редактировать
+                                      </Button>
+                                      <Button
+                                        size="small"
+                                        variant="text"
+                                        onClick={() => handleCatalogScopeSelected(item.scope)}
+                                      >
+                                        Использовать в импорте
+                                      </Button>
+                                    </Stack>
+                                  </Stack>
+                                </Paper>
+                              ))}
+                            </Stack>
+                          ) : (
+                            <Typography className="muted-copy">
+                              Каталоги ещё не настроены.
+                            </Typography>
+                          )}
+                        </Stack>
+                      </Paper>
                       <Grid container spacing={1.5}>
                         <Grid item xs={12} sm={4}>
                           <TextField
@@ -2632,11 +3251,23 @@ export default function App() {
                           <Grid container spacing={1.5}>
                             <Grid item xs={12} sm={4}>
                               <TextField
-                                label="Scope"
+                                select
+                                label="Каталог"
                                 value={laborNormImportScope}
-                                onChange={(event) => setLaborNormImportScope(event.target.value)}
+                                onChange={(event) => handleCatalogScopeSelected(event.target.value)}
                                 fullWidth
-                              />
+                              >
+                                {laborNormCatalogs.length === 0 ? (
+                                  <MenuItem value="" disabled>
+                                    Сначала создайте каталог
+                                  </MenuItem>
+                                ) : null}
+                                {laborNormCatalogs.map((item) => (
+                                  <MenuItem key={`import-${item.scope}`} value={item.scope}>
+                                    {item.catalog_name} · {item.scope}
+                                  </MenuItem>
+                                ))}
+                              </TextField>
                             </Grid>
                             <Grid item xs={12} sm={4}>
                               <TextField
@@ -2672,12 +3303,171 @@ export default function App() {
                           <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                             <Button
                               variant="contained"
-                              disabled={laborNormImportLoading || !laborNormFile}
+                              disabled={laborNormImportLoading || !laborNormFile || !laborNormImportScope}
                               onClick={() => {
                                 void handleLaborNormImport();
                               }}
                             >
                               {laborNormImportLoading ? "Импорт..." : "Импортировать справочник"}
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                      <Paper className="repair-line" elevation={0}>
+                        <Stack spacing={1.25}>
+                          <Typography className="metric-label">
+                            Ручное добавление и правка строк
+                          </Typography>
+                          <Grid container spacing={1.5}>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                select
+                                label="Каталог"
+                                value={laborNormEntryForm.scope}
+                                onChange={(event) =>
+                                  setLaborNormEntryForm((current) => ({ ...current, scope: event.target.value }))
+                                }
+                                fullWidth
+                              >
+                                {laborNormCatalogs.length === 0 ? (
+                                  <MenuItem value="" disabled>
+                                    Сначала создайте каталог
+                                  </MenuItem>
+                                ) : null}
+                                {laborNormCatalogs.map((item) => (
+                                  <MenuItem key={`entry-${item.scope}`} value={item.scope}>
+                                    {item.catalog_name} · {item.scope}
+                                  </MenuItem>
+                                ))}
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Код"
+                                value={laborNormEntryForm.code}
+                                onChange={(event) =>
+                                  setLaborNormEntryForm((current) => ({ ...current, code: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Категория"
+                                value={laborNormEntryForm.category}
+                                onChange={(event) =>
+                                  setLaborNormEntryForm((current) => ({ ...current, category: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Нормо-часы"
+                                value={laborNormEntryForm.standard_hours}
+                                onChange={(event) =>
+                                  setLaborNormEntryForm((current) => ({ ...current, standard_hours: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                              <TextField
+                                label="Название RU"
+                                value={laborNormEntryForm.name_ru}
+                                onChange={(event) =>
+                                  setLaborNormEntryForm((current) => ({ ...current, name_ru: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                              <TextField
+                                label="Альтернативное название RU"
+                                value={laborNormEntryForm.name_ru_alt}
+                                onChange={(event) =>
+                                  setLaborNormEntryForm((current) => ({ ...current, name_ru_alt: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Название CN"
+                                value={laborNormEntryForm.name_cn}
+                                onChange={(event) =>
+                                  setLaborNormEntryForm((current) => ({ ...current, name_cn: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Название EN"
+                                value={laborNormEntryForm.name_en}
+                                onChange={(event) =>
+                                  setLaborNormEntryForm((current) => ({ ...current, name_en: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={2}>
+                              <TextField
+                                label="Лист"
+                                value={laborNormEntryForm.source_sheet}
+                                onChange={(event) =>
+                                  setLaborNormEntryForm((current) => ({ ...current, source_sheet: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={2}>
+                              <TextField
+                                label="Источник"
+                                value={laborNormEntryForm.source_file}
+                                onChange={(event) =>
+                                  setLaborNormEntryForm((current) => ({ ...current, source_file: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={2}>
+                              <TextField
+                                select
+                                label="Статус"
+                                value={laborNormEntryForm.status}
+                                onChange={(event) =>
+                                  setLaborNormEntryForm((current) => ({ ...current, status: event.target.value }))
+                                }
+                                fullWidth
+                              >
+                                <MenuItem value="preliminary">Предварительный</MenuItem>
+                                <MenuItem value="confirmed">Подтверждён</MenuItem>
+                                <MenuItem value="merged">Объединён</MenuItem>
+                                <MenuItem value="archived">Архив</MenuItem>
+                              </TextField>
+                            </Grid>
+                          </Grid>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Button
+                              variant="contained"
+                              disabled={laborNormEntrySaving}
+                              onClick={() => {
+                                void handleSaveLaborNormEntry();
+                              }}
+                            >
+                              {laborNormEntrySaving
+                                ? "Сохранение..."
+                                : laborNormEntryForm.id
+                                  ? "Сохранить запись"
+                                  : "Создать запись"}
+                            </Button>
+                            <Button
+                              variant="text"
+                              disabled={laborNormEntrySaving}
+                              onClick={() => resetLaborNormEntryEditor()}
+                            >
+                              Сбросить форму
                             </Button>
                           </Stack>
                         </Stack>
@@ -2701,15 +3491,37 @@ export default function App() {
                                   <Typography>{formatHours(item.standard_hours) || "—"}</Typography>
                                 </Stack>
                                 <Typography className="muted-copy">
-                                  {item.catalog_name || item.scope}
-                                  {item.brand_family ? ` · ${item.brand_family}` : ""}
-                                  {item.category ? ` · ${item.category}` : " · Без категории"}
-                                  {item.name_ru_alt ? ` · alt: ${item.name_ru_alt}` : ""}
-                                </Typography>
+                                    {item.catalog_name || item.scope}
+                                    {item.brand_family ? ` · ${item.brand_family}` : ""}
+                                    {item.category ? ` · ${item.category}` : " · Без категории"}
+                                    {item.name_ru_alt ? ` · alt: ${item.name_ru_alt}` : ""}
+                                    {` · статус ${formatStatus(item.status)}`}
+                                  </Typography>
                                 <Typography className="muted-copy">
                                   Источник: {item.source_file || "—"}
                                   {item.source_sheet ? ` · лист ${item.source_sheet}` : ""}
                                 </Typography>
+                                <Stack direction="row" spacing={1} flexWrap="wrap">
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={() => handleEditLaborNormItem(item)}
+                                  >
+                                    Редактировать
+                                  </Button>
+                                  {item.status !== "archived" ? (
+                                    <Button
+                                      size="small"
+                                      variant="text"
+                                      disabled={laborNormEntrySaving}
+                                      onClick={() => {
+                                        void handleArchiveLaborNormItem(item);
+                                      }}
+                                    >
+                                      В архив
+                                    </Button>
+                                  ) : null}
+                                </Stack>
                               </Stack>
                             </Paper>
                           ))}

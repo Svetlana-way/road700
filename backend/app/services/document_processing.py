@@ -1379,7 +1379,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         manual_review_reasons = parsed["manual_review_reasons"]
         normalization_notes = parsed.get("normalization_notes", [])
         repair = document.repair
-        labor_norm_applicability = assess_labor_norm_applicability(repair.vehicle)
+        labor_norm_applicability = assess_labor_norm_applicability(db, repair.vehicle)
         labor_norm_notes, labor_norm_summary = enrich_work_payloads_with_labor_norms(
             db,
             extracted_items["works"],

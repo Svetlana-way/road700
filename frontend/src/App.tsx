@@ -1646,6 +1646,7 @@ export default function App() {
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("documents");
   const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>("services");
   const [activeRepairTab, setActiveRepairTab] = useState<RepairTab>("overview");
+  const [showTechnicalOcrSettings, setShowTechnicalOcrSettings] = useState(false);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
@@ -2611,6 +2612,7 @@ export default function App() {
   function handleEditOcrRule(item: OcrRuleItem) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("ocr");
+    setShowTechnicalOcrSettings(true);
     setOcrRuleForm(createOcrRuleFormFromItem(item));
   }
 
@@ -2676,6 +2678,7 @@ export default function App() {
   function handleEditOcrProfileMatcher(item: OcrProfileMatcherItem) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("ocr");
+    setShowTechnicalOcrSettings(true);
     setOcrProfileMatcherForm(createOcrProfileMatcherFormFromItem(item));
   }
 
@@ -2784,6 +2787,7 @@ export default function App() {
       if (target === "ocr_rule") {
         setActiveWorkspaceTab("admin");
         setActiveAdminTab("ocr");
+        setShowTechnicalOcrSettings(true);
         setOcrRuleForm({
           id: null,
           profile_scope: payload.ocr_rule_draft.profile_scope,
@@ -2800,6 +2804,7 @@ export default function App() {
       } else {
         setActiveWorkspaceTab("admin");
         setActiveAdminTab("ocr");
+        setShowTechnicalOcrSettings(true);
         setOcrProfileMatcherForm({
           id: null,
           profile_scope: payload.matcher_draft.profile_scope,
@@ -3329,6 +3334,7 @@ export default function App() {
     setActiveWorkspaceTab("documents");
     setActiveAdminTab("services");
     setActiveRepairTab("overview");
+    setShowTechnicalOcrSettings(false);
     setSuccessMessage("");
     setErrorMessage("");
   }
@@ -4491,6 +4497,33 @@ export default function App() {
 
                 {activeWorkspaceTab === "admin" && activeAdminTab === "ocr" && user?.role === "admin" ? (
                   <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={1.5}>
+                      <Box>
+                        <Typography variant="h5">Технические настройки OCR</Typography>
+                        <Typography className="muted-copy">
+                          Regex-правила и matcher нужны только для тонкой настройки распознавания и не должны мешать основной работе.
+                        </Typography>
+                      </Box>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
+                        <Button
+                          variant={showTechnicalOcrSettings ? "outlined" : "contained"}
+                          onClick={() => setShowTechnicalOcrSettings((current) => !current)}
+                        >
+                          {showTechnicalOcrSettings ? "Скрыть технические настройки OCR" : "Показать технические настройки OCR"}
+                        </Button>
+                        <Typography className="muted-copy">
+                          Внутри находятся профили, matcher и regex-шаблоны для разработчика или администратора.
+                        </Typography>
+                      </Stack>
+                    </Stack>
+                  </Paper>
+                ) : null}
+
+                {activeWorkspaceTab === "admin" &&
+                activeAdminTab === "ocr" &&
+                user?.role === "admin" &&
+                showTechnicalOcrSettings ? (
+                  <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>
                         <Typography variant="h5">Автовыбор OCR-профиля</Typography>
@@ -4722,7 +4755,10 @@ export default function App() {
                   </Paper>
                 ) : null}
 
-                {activeWorkspaceTab === "admin" && activeAdminTab === "ocr" && user?.role === "admin" ? (
+                {activeWorkspaceTab === "admin" &&
+                activeAdminTab === "ocr" &&
+                user?.role === "admin" &&
+                showTechnicalOcrSettings ? (
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>

@@ -259,6 +259,11 @@ type OcrLearningSummaryItem = {
   example_filenames: string[];
 };
 
+type SystemStatus = {
+  password_recovery_delivery_mode: "email" | "manual";
+  password_recovery_email_configured: boolean;
+};
+
 type OcrLearningResponse = {
   items: OcrLearningSignalItem[];
   summaries: OcrLearningSummaryItem[];
@@ -2136,6 +2141,7 @@ export default function App() {
   const [ocrLearningStatuses, setOcrLearningStatuses] = useState<string[]>([]);
   const [ocrLearningTargetFields, setOcrLearningTargetFields] = useState<string[]>([]);
   const [ocrLearningProfileScopes, setOcrLearningProfileScopes] = useState<string[]>([]);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [ocrLearningStatusFilter, setOcrLearningStatusFilter] = useState("");
   const [ocrLearningTargetFieldFilter, setOcrLearningTargetFieldFilter] = useState("");
   const [ocrLearningProfileScopeFilter, setOcrLearningProfileScopeFilter] = useState("");
@@ -2530,6 +2536,7 @@ export default function App() {
         ocrProfileMatchersPayload,
         ocrLearningPayload,
         usersPayload,
+        systemStatusPayload,
       ] = await Promise.all([
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
         apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
@@ -2567,6 +2574,9 @@ export default function App() {
         me.role === "admin"
           ? apiRequest<UsersResponse>("/users?include_inactive=true", { method: "GET" }, activeToken)
           : Promise.resolve(null),
+        me.role === "admin"
+          ? apiRequest<SystemStatus>("/system/status", { method: "GET" }, activeToken)
+          : Promise.resolve(null),
       ]);
 
       setUser(me);
@@ -2601,6 +2611,7 @@ export default function App() {
       setOcrLearningStatuses(ocrLearningPayload?.statuses || []);
       setOcrLearningTargetFields(ocrLearningPayload?.target_fields || []);
       setOcrLearningProfileScopes(ocrLearningPayload?.profile_scopes || []);
+      setSystemStatus(systemStatusPayload);
       if (selectedDocumentId === null) {
         const defaultDocumentId =
           reviewQueueData.items[0]?.document.id ?? recentDocuments.items[0]?.id ?? null;
@@ -2661,6 +2672,7 @@ export default function App() {
       setOcrLearningStatuses([]);
       setOcrLearningTargetFields([]);
       setOcrLearningProfileScopes([]);
+      setSystemStatus(null);
       setLaborNorms([]);
       setLaborNormCatalogs([]);
       setLaborNormTotal(0);
@@ -4877,6 +4889,11 @@ export default function App() {
                         <Tab label="Извлечение полей" value="rules" />
                       </Tabs>
                       <Typography className="muted-copy">{techAdminTabDescriptions[activeTechAdminTab]}</Typography>
+                      <Alert severity={systemStatus?.password_recovery_email_configured ? "success" : "warning"}>
+                        {systemStatus?.password_recovery_email_configured
+                          ? "Письма для восстановления пароля отправляются автоматически."
+                          : "Письма для восстановления пароля пока не настроены. Сейчас система работает в ручном режиме."}
+                      </Alert>
                     </Stack>
                   </Paper>
                 ) : null}

@@ -68,9 +68,10 @@ Typical server bootstrap:
 
 1. Copy `deploy/server/.env.example` to `.env.server`
 2. Set a real domain, strong PostgreSQL password, strong JWT secret, and strong admin password
-3. Run:
+3. If password recovery by email is needed, fill in `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`
+4. Run:
    - `docker compose --env-file .env.server -f docker-compose.server.yml up -d --build`
-4. Open:
+5. Open:
    - `https://your-domain`
 
 Typical update deploy from the local workstation:
@@ -83,6 +84,12 @@ Typical update deploy from the local workstation:
    - protects `.env.server` and `storage/` from deletion during `rsync --delete`
    - rebuilds `app` and `caddy`
    - prints `docker compose ps`
+
+Password recovery email:
+
+- if SMTP variables are not set, password recovery still works in manual mode
+- if SMTP variables are set correctly, recovery links are sent by email automatically
+- the current delivery mode is shown to the administrator inside the technical admin screen
 
 ### Alternative: local backend + frontend
 

@@ -407,8 +407,9 @@ type LaborNormEntryFormState = {
 
 type ReviewPriorityBucket = "review" | "critical" | "suspicious";
 type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
-type WorkspaceTab = "documents" | "repair" | "admin" | "fleet";
-type AdminTab = "services" | "control" | "ocr" | "labor_norms";
+type WorkspaceTab = "documents" | "repair" | "admin" | "tech_admin" | "fleet";
+type AdminTab = "services" | "control" | "labor_norms";
+type TechAdminTab = "learning" | "matchers" | "rules";
 type RepairTab = "overview" | "works" | "parts" | "documents" | "checks" | "history";
 type ReviewQueueCategory =
   | "all"
@@ -745,14 +746,20 @@ const workspaceTabDescriptions: Record<WorkspaceTab, string> = {
   documents: "Загрузка, очередь OCR и последние заказ-наряды.",
   repair: "Карточка выбранного ремонта, проверки, документы и история.",
   admin: "Справочники и правила системы, доступные администратору.",
+  tech_admin: "Отдельный экран для OCR-обучения и тонкой технической настройки.",
   fleet: "Быстрый обзор техники, доступной текущему пользователю.",
 };
 
 const adminTabDescriptions: Record<AdminTab, string> = {
   services: "Справочник сервисов для нормализации названий и ручной правки ремонтов.",
-  control: "Причины ручной проверки, приоритеты очереди и сигналы обучения OCR.",
-  ocr: "Шаблоны документов, правила автовыбора и настройки распознавания полей.",
+  control: "Причины ручной проверки и приоритеты очереди для заказ-нарядов.",
   labor_norms: "Каталоги нормо-часов, импорт справочников и ручная правка записей.",
+};
+
+const techAdminTabDescriptions: Record<TechAdminTab, string> = {
+  learning: "Сигналы из ручных исправлений, которые помогают улучшать OCR на реальных документах.",
+  matchers: "Правила выбора шаблона OCR по файлу, сервису и текстовым признакам документа.",
+  rules: "Правила извлечения полей из PDF, фото и сканов заказ-нарядов.",
 };
 
 const repairTabDescriptions: Record<RepairTab, string> = {
@@ -1832,8 +1839,9 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("documents");
   const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>("services");
+  const [activeTechAdminTab, setActiveTechAdminTab] = useState<TechAdminTab>("learning");
   const [activeRepairTab, setActiveRepairTab] = useState<RepairTab>("overview");
-  const [showTechnicalOcrSettings, setShowTechnicalOcrSettings] = useState(false);
+  const [showTechAdminTab, setShowTechAdminTab] = useState(false);
   const [showServiceEditor, setShowServiceEditor] = useState(false);
   const [showReviewRuleEditor, setShowReviewRuleEditor] = useState(false);
   const [showLaborNormCatalogEditor, setShowLaborNormCatalogEditor] = useState(false);
@@ -2014,10 +2022,16 @@ export default function App() {
     : [];
 
   useEffect(() => {
-    if (user?.role !== "admin" && activeWorkspaceTab === "admin") {
+    if (user?.role === "admin") {
+      return;
+    }
+    if (activeWorkspaceTab === "admin" || activeWorkspaceTab === "tech_admin") {
       setActiveWorkspaceTab("documents");
     }
-  }, [activeWorkspaceTab, user?.role]);
+    if (showTechAdminTab) {
+      setShowTechAdminTab(false);
+    }
+  }, [activeWorkspaceTab, showTechAdminTab, user?.role]);
 
   function buildLaborNormQueryString(
     query: string = laborNormQuery,
@@ -2321,6 +2335,8 @@ export default function App() {
   useEffect(() => {
     if (!token) {
       setUser(null);
+      setShowTechAdminTab(false);
+      setActiveTechAdminTab("learning");
       setSummary(null);
       setVehicles([]);
       setFleetVehicles([]);
@@ -2853,6 +2869,18 @@ export default function App() {
     }
   }
 
+  function openTechAdmin(tab: TechAdminTab = "learning") {
+    setShowTechAdminTab(true);
+    setActiveWorkspaceTab("tech_admin");
+    setActiveTechAdminTab(tab);
+  }
+
+  function closeTechAdmin() {
+    setShowTechAdminTab(false);
+    setActiveTechAdminTab("learning");
+    setActiveWorkspaceTab("admin");
+  }
+
   function handleEditReviewRule(item: ReviewRuleItem) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("control");
@@ -2927,9 +2955,7 @@ export default function App() {
   }
 
   function handleEditOcrRule(item: OcrRuleItem) {
-    setActiveWorkspaceTab("admin");
-    setActiveAdminTab("ocr");
-    setShowTechnicalOcrSettings(true);
+    openTechAdmin("rules");
     setOcrRuleForm(createOcrRuleFormFromItem(item));
   }
 
@@ -2993,9 +3019,7 @@ export default function App() {
   }
 
   function handleEditOcrProfileMatcher(item: OcrProfileMatcherItem) {
-    setActiveWorkspaceTab("admin");
-    setActiveAdminTab("ocr");
-    setShowTechnicalOcrSettings(true);
+    openTechAdmin("matchers");
     setOcrProfileMatcherForm(createOcrProfileMatcherFormFromItem(item));
   }
 
@@ -3102,9 +3126,7 @@ export default function App() {
       );
 
       if (target === "ocr_rule") {
-        setActiveWorkspaceTab("admin");
-        setActiveAdminTab("ocr");
-        setShowTechnicalOcrSettings(true);
+        openTechAdmin("rules");
         setOcrRuleForm({
           id: null,
           profile_scope: payload.ocr_rule_draft.profile_scope,
@@ -3119,9 +3141,7 @@ export default function App() {
         setOcrRuleProfileFilter(payload.ocr_rule_draft.profile_scope);
         setSuccessMessage("Черновик OCR-правила перенесён в форму редактирования");
       } else {
-        setActiveWorkspaceTab("admin");
-        setActiveAdminTab("ocr");
-        setShowTechnicalOcrSettings(true);
+        openTechAdmin("matchers");
         setOcrProfileMatcherForm({
           id: null,
           profile_scope: payload.matcher_draft.profile_scope,
@@ -3654,8 +3674,9 @@ export default function App() {
     setToken("");
     setActiveWorkspaceTab("documents");
     setActiveAdminTab("services");
+    setActiveTechAdminTab("learning");
     setActiveRepairTab("overview");
-    setShowTechnicalOcrSettings(false);
+    setShowTechAdminTab(false);
     setShowServiceEditor(false);
     setShowReviewRuleEditor(false);
     setShowLaborNormCatalogEditor(false);
@@ -3795,6 +3816,7 @@ export default function App() {
                 <Tab label={`Документы · ${documents.length}`} value="documents" />
                 <Tab label={selectedRepair ? `Ремонт · #${selectedRepair.id}` : "Ремонт"} value="repair" />
                 {user?.role === "admin" ? <Tab label="Админка" value="admin" /> : null}
+                {user?.role === "admin" && showTechAdminTab ? <Tab label="Тех. админка" value="tech_admin" /> : null}
                 <Tab label={`Техника · ${vehicles.length}`} value="fleet" />
               </Tabs>
               <Typography className="muted-copy">{workspaceTabDescriptions[activeWorkspaceTab]}</Typography>
@@ -3992,12 +4014,22 @@ export default function App() {
                 {activeWorkspaceTab === "admin" && user?.role === "admin" ? (
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={1.5}>
-                      <Box>
-                        <Typography variant="h5">Администрирование</Typography>
-                        <Typography className="muted-copy">
-                          Основные справочники и правила системы разнесены по отдельным вкладкам.
-                        </Typography>
-                      </Box>
+                      <Stack
+                        direction={{ xs: "column", md: "row" }}
+                        spacing={1.5}
+                        justifyContent="space-between"
+                        alignItems={{ xs: "flex-start", md: "center" }}
+                      >
+                        <Box>
+                          <Typography variant="h5">Администрирование</Typography>
+                          <Typography className="muted-copy">
+                            Основные справочники и правила системы разнесены по отдельным вкладкам.
+                          </Typography>
+                        </Box>
+                        <Button variant="outlined" onClick={() => openTechAdmin()}>
+                          Открыть тех. админку
+                        </Button>
+                      </Stack>
                       <Tabs
                         value={activeAdminTab}
                         onChange={(_event, value: AdminTab) => setActiveAdminTab(value)}
@@ -4007,10 +4039,43 @@ export default function App() {
                       >
                         <Tab label="Сервисы" value="services" />
                         <Tab label="Контроль" value="control" />
-                        <Tab label="OCR" value="ocr" />
                         <Tab label="Нормо-часы" value="labor_norms" />
                       </Tabs>
                       <Typography className="muted-copy">{adminTabDescriptions[activeAdminTab]}</Typography>
+                    </Stack>
+                  </Paper>
+                ) : null}
+                {activeWorkspaceTab === "tech_admin" && user?.role === "admin" ? (
+                  <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={1.5}>
+                      <Stack
+                        direction={{ xs: "column", md: "row" }}
+                        spacing={1.5}
+                        justifyContent="space-between"
+                        alignItems={{ xs: "flex-start", md: "center" }}
+                      >
+                        <Box>
+                          <Typography variant="h5">Техническая админка</Typography>
+                          <Typography className="muted-copy">
+                            Отдельный экран для OCR-обучения, выбора шаблонов и правил извлечения полей.
+                          </Typography>
+                        </Box>
+                        <Button variant="outlined" onClick={closeTechAdmin}>
+                          Вернуться в админку
+                        </Button>
+                      </Stack>
+                      <Tabs
+                        value={activeTechAdminTab}
+                        onChange={(_event, value: TechAdminTab) => setActiveTechAdminTab(value)}
+                        variant="scrollable"
+                        scrollButtons="auto"
+                        allowScrollButtonsMobile
+                      >
+                        <Tab label="Обучение OCR" value="learning" />
+                        <Tab label="Выбор шаблона" value="matchers" />
+                        <Tab label="Извлечение полей" value="rules" />
+                      </Tabs>
+                      <Typography className="muted-copy">{techAdminTabDescriptions[activeTechAdminTab]}</Typography>
                     </Stack>
                   </Paper>
                 ) : null}
@@ -4699,7 +4764,7 @@ export default function App() {
                   </Paper>
                 ) : null}
 
-                {activeWorkspaceTab === "admin" && activeAdminTab === "control" && user?.role === "admin" ? (
+                {activeWorkspaceTab === "tech_admin" && activeTechAdminTab === "learning" && user?.role === "admin" ? (
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>
@@ -4918,34 +4983,9 @@ export default function App() {
                   </Paper>
                 ) : null}
 
-                {activeWorkspaceTab === "admin" && activeAdminTab === "ocr" && user?.role === "admin" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                    <Stack spacing={1.5}>
-                      <Box>
-                        <Typography variant="h5">Технические настройки OCR</Typography>
-                        <Typography className="muted-copy">
-                          Правила поиска и выбора шаблона нужны только для тонкой настройки распознавания и не должны мешать основной работе.
-                        </Typography>
-                      </Box>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
-                        <Button
-                          variant={showTechnicalOcrSettings ? "outlined" : "contained"}
-                          onClick={() => setShowTechnicalOcrSettings((current) => !current)}
-                        >
-                          {showTechnicalOcrSettings ? "Скрыть технические настройки OCR" : "Показать технические настройки OCR"}
-                        </Button>
-                        <Typography className="muted-copy">
-                          Внутри находятся шаблоны документов, правила выбора и шаблоны поиска для разработчика или администратора.
-                        </Typography>
-                      </Stack>
-                    </Stack>
-                  </Paper>
-                ) : null}
-
-                {activeWorkspaceTab === "admin" &&
-                activeAdminTab === "ocr" &&
-                user?.role === "admin" &&
-                showTechnicalOcrSettings ? (
+                {activeWorkspaceTab === "tech_admin" &&
+                activeTechAdminTab === "matchers" &&
+                user?.role === "admin" ? (
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>
@@ -5178,10 +5218,9 @@ export default function App() {
                   </Paper>
                 ) : null}
 
-                {activeWorkspaceTab === "admin" &&
-                activeAdminTab === "ocr" &&
-                user?.role === "admin" &&
-                showTechnicalOcrSettings ? (
+                {activeWorkspaceTab === "tech_admin" &&
+                activeTechAdminTab === "rules" &&
+                user?.role === "admin" ? (
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>

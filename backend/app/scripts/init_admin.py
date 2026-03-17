@@ -19,15 +19,23 @@ def init_admin() -> None:
         )
 
         if existing_user:
-            existing_user.full_name = settings.initial_admin_full_name
-            existing_user.login = settings.initial_admin_login
-            existing_user.email = settings.initial_admin_email
-            existing_user.password_hash = get_password_hash(settings.initial_admin_password)
-            existing_user.role = UserRole.ADMIN
-            existing_user.is_active = True
-            db.add(existing_user)
-            db.commit()
-            print(f"Updated admin user: {existing_user.login}")
+            changed = False
+            if existing_user.role != UserRole.ADMIN:
+                existing_user.role = UserRole.ADMIN
+                changed = True
+            if not existing_user.is_active:
+                existing_user.is_active = True
+                changed = True
+            if not existing_user.full_name and settings.initial_admin_full_name:
+                existing_user.full_name = settings.initial_admin_full_name
+                changed = True
+
+            if changed:
+                db.add(existing_user)
+                db.commit()
+                print(f"Updated admin access: {existing_user.login}")
+            else:
+                print(f"Admin user already exists: {existing_user.login}")
             return
 
         admin = User(

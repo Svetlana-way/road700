@@ -11,6 +11,7 @@ import json
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision = "20260317_0006"
@@ -19,8 +20,22 @@ branch_labels = None
 depends_on = None
 
 
-catalog_status = sa.Enum("PRELIMINARY", "CONFIRMED", "MERGED", "ARCHIVED", name="catalogstatus")
-vehicle_type = sa.Enum("TRUCK", "TRAILER", name="vehicletype")
+catalog_status = postgresql.ENUM(
+    "PRELIMINARY",
+    "CONFIRMED",
+    "MERGED",
+    "ARCHIVED",
+    name="catalogstatus",
+    create_type=False,
+    _create_events=False,
+)
+vehicle_type = postgresql.ENUM(
+    "TRUCK",
+    "TRAILER",
+    name="vehicletype",
+    create_type=False,
+    _create_events=False,
+)
 
 DEFAULT_SCOPE = "dongfeng_2025"
 DEFAULT_BRAND_FAMILY = "dongfeng"

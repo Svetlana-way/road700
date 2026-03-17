@@ -7,6 +7,7 @@ Create Date: 2026-03-16 23:40:00
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision = "20260316_0004"
@@ -15,7 +16,15 @@ branch_labels = None
 depends_on = None
 
 
-catalog_status = sa.Enum("PRELIMINARY", "CONFIRMED", "MERGED", "ARCHIVED", name="catalogstatus")
+catalog_status = postgresql.ENUM(
+    "PRELIMINARY",
+    "CONFIRMED",
+    "MERGED",
+    "ARCHIVED",
+    name="catalogstatus",
+    create_type=False,
+    _create_events=False,
+)
 
 
 def upgrade() -> None:

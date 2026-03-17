@@ -9,6 +9,7 @@ from sqlalchemy import distinct, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.core.paths import STORAGE_ROOT
 from app.models.enums import CatalogStatus
 from app.models.labor_norm import LaborNorm
 from app.models.labor_norm_catalog import LaborNormCatalog
@@ -38,10 +39,6 @@ from app.services.labor_norms import (
     sync_labor_norm_catalog_metadata,
     upsert_labor_norm_catalog,
 )
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-LOCAL_STORAGE_ROOT = PROJECT_ROOT / "storage"
 
 router = APIRouter(prefix="/labor-norms", tags=["labor-norms"])
 
@@ -417,7 +414,7 @@ def import_labor_norms(
     effective_catalog_name = normalized_catalog_name if normalized_catalog_name is not None else catalog.catalog_name if catalog else normalized_scope
 
     timestamp = datetime.now(timezone.utc)
-    storage_dir = LOCAL_STORAGE_ROOT / "catalogs" / "labor-norms" / timestamp.strftime("%Y/%m")
+    storage_dir = STORAGE_ROOT / "catalogs" / "labor-norms" / timestamp.strftime("%Y/%m")
     storage_dir.mkdir(parents=True, exist_ok=True)
     stored_filename = normalize_catalog_filename(file.filename)
     stored_path = storage_dir / f"{timestamp.strftime('%Y%m%d_%H%M%S')}_{stored_filename}"

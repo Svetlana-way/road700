@@ -43,10 +43,10 @@ from app.services.labor_norms import (
     find_best_labor_norm_match,
     normalize_labor_norm_code,
 )
+from app.core.paths import STORAGE_ROOT
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-LOCAL_STORAGE_ROOT = PROJECT_ROOT / "storage"
+LOCAL_STORAGE_ROOT = STORAGE_ROOT
 VISION_OCR_SCRIPT = Path(__file__).with_name("vision_ocr.swift")
 
 OCR_CONFUSABLE_CHARSETS = {

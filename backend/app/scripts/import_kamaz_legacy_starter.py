@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-
+from app.core.paths import BACKEND_ROOT
 from app.db.session import SessionLocal
 from app.scripts.import_labor_norms import import_labor_norms_with_session
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_SOURCE_PATH = PROJECT_ROOT / "backend" / "data" / "labor_norms" / "kamaz_legacy_starter.csv"
+DEFAULT_SOURCE_PATH = BACKEND_ROOT / "data" / "labor_norms" / "kamaz_legacy_starter.csv"
 
 
 def main() -> None:

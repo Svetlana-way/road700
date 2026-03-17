@@ -9,12 +9,11 @@ import xlrd
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.core.paths import PROJECT_ROOT
 from app.db.session import SessionLocal
 from app.models.enums import VehicleStatus, VehicleType
 from app.models.vehicle import Vehicle, VehicleLinkHistory
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TRUCKS_PATH = PROJECT_ROOT / "Реестр автомобилей" / "Грузовики Парк.xls"
 DEFAULT_TRAILERS_PATH = PROJECT_ROOT / "Реестр автомобилей" / "Прицепы Парк.xls"
 

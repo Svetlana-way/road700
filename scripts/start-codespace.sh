@@ -11,12 +11,50 @@ BACKEND_PID_FILE="$RUNTIME_DIR/backend.pid"
 BACKEND_LOG="$LOG_DIR/backend.log"
 FRONTEND_BUILD_LOG="$LOG_DIR/frontend-build.log"
 REVISION_FILE="$RUNTIME_DIR/revision.txt"
+ADMIN_ENV_FILE="$RUNTIME_DIR/admin.env"
+ADMIN_CREDENTIALS_FILE="$RUNTIME_DIR/admin-credentials.txt"
 
 export DATABASE_URL="sqlite:///$ROOT_DIR/backend/local.db"
-export INITIAL_ADMIN_FULL_NAME="${INITIAL_ADMIN_FULL_NAME:-System Administrator}"
-export INITIAL_ADMIN_LOGIN="${INITIAL_ADMIN_LOGIN:-admin}"
-export INITIAL_ADMIN_EMAIL="${INITIAL_ADMIN_EMAIL:-Kide_16rus@mail.ru}"
-export INITIAL_ADMIN_PASSWORD="${INITIAL_ADMIN_PASSWORD:-Road700Admin!2026}"
+
+generate_admin_password() {
+  python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(14))
+PY
+}
+
+prepare_admin_credentials() {
+  if [[ -f "$ADMIN_ENV_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$ADMIN_ENV_FILE"
+  else
+    local generated_password
+    generated_password="$(generate_admin_password)"
+    cat >"$ADMIN_ENV_FILE" <<EOF
+INITIAL_ADMIN_FULL_NAME=${INITIAL_ADMIN_FULL_NAME:-System Administrator}
+INITIAL_ADMIN_LOGIN=${INITIAL_ADMIN_LOGIN:-admin}
+INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL:-admin@road700.local}
+INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-$generated_password}
+EOF
+    chmod 600 "$ADMIN_ENV_FILE"
+    cat >"$ADMIN_CREDENTIALS_FILE" <<EOF
+Road700 Codespaces admin credentials
+login: ${INITIAL_ADMIN_LOGIN:-admin}
+email: ${INITIAL_ADMIN_EMAIL:-admin@road700.local}
+password: ${INITIAL_ADMIN_PASSWORD:-$generated_password}
+EOF
+    chmod 600 "$ADMIN_CREDENTIALS_FILE"
+    # shellcheck disable=SC1090
+    source "$ADMIN_ENV_FILE"
+  fi
+
+  export INITIAL_ADMIN_FULL_NAME
+  export INITIAL_ADMIN_LOGIN
+  export INITIAL_ADMIN_EMAIL
+  export INITIAL_ADMIN_PASSWORD
+}
+
+prepare_admin_credentials
 
 cd "$ROOT_DIR/backend"
 ./.venv/bin/alembic upgrade head

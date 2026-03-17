@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.access import get_allowed_vehicle_ids_query
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.core.paths import STORAGE_ROOT
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, UserRole
@@ -31,10 +32,6 @@ from app.schemas.document import (
     DocumentVehicleRead,
 )
 from app.services.document_processing import process_document
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-LOCAL_STORAGE_ROOT = PROJECT_ROOT / "storage"
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 COMPARISON_REVIEW_ACTIONS = {"keep_current_primary", "make_document_primary", "mark_reviewed"}
@@ -323,7 +320,7 @@ def upload_document(
 
     source_type = detect_source_type(file)
     storage_key = build_storage_key(file.filename or "document")
-    destination = LOCAL_STORAGE_ROOT / storage_key
+    destination = STORAGE_ROOT / storage_key
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     created_document_id = None
@@ -418,7 +415,7 @@ def upload_document_to_repair(
 
     source_type = detect_source_type(file)
     storage_key = build_storage_key(file.filename or "document")
-    destination = LOCAL_STORAGE_ROOT / storage_key
+    destination = STORAGE_ROOT / storage_key
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     created_document_id = None
@@ -525,7 +522,7 @@ def download_document(
     current_user: User = Depends(get_current_active_user),
 ) -> FileResponse:
     document = get_visible_document(db, current_user, document_id)
-    storage_path = LOCAL_STORAGE_ROOT / document.storage_key
+    storage_path = STORAGE_ROOT / document.storage_key
     if not storage_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
 

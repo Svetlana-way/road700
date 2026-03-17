@@ -9,6 +9,7 @@ from openpyxl import load_workbook
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.paths import PROJECT_ROOT
 from app.db.session import SessionLocal
 from app.models.enums import CatalogStatus
 from app.models.labor_norm import LaborNorm
@@ -25,8 +26,6 @@ from app.services.labor_norms import (
     upsert_labor_norm_catalog,
 )
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_LABOR_NORMS_PATH = default_labor_norms_path(PROJECT_ROOT)
 SKIPPED_SHEETS = {"Лист1", "00 Все нормы времени"}
 

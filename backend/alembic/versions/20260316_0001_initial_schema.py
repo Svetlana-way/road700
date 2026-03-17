@@ -7,6 +7,7 @@ Create Date: 2026-03-16 12:30:00
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision = "20260316_0001"
@@ -15,9 +16,9 @@ branch_labels = None
 depends_on = None
 
 
-user_role = sa.Enum("ADMIN", "EMPLOYEE", name="userrole")
-vehicle_type = sa.Enum("TRUCK", "TRAILER", name="vehicletype")
-vehicle_status = sa.Enum(
+user_role = postgresql.ENUM("ADMIN", "EMPLOYEE", name="userrole", create_type=False, _create_events=False)
+vehicle_type = postgresql.ENUM("TRUCK", "TRAILER", name="vehicletype", create_type=False, _create_events=False)
+vehicle_status = postgresql.ENUM(
     "ACTIVE",
     "IN_REPAIR",
     "WAITING_REPAIR",
@@ -25,9 +26,18 @@ vehicle_status = sa.Enum(
     "DECOMMISSIONED",
     "ARCHIVED",
     name="vehiclestatus",
+    create_type=False,
+    _create_events=False,
 )
-service_status = sa.Enum("PRELIMINARY", "CONFIRMED", "ARCHIVED", name="servicestatus")
-document_status = sa.Enum(
+service_status = postgresql.ENUM(
+    "PRELIMINARY",
+    "CONFIRMED",
+    "ARCHIVED",
+    name="servicestatus",
+    create_type=False,
+    _create_events=False,
+)
+document_status = postgresql.ENUM(
     "UPLOADED",
     "RECOGNIZED",
     "PARTIALLY_RECOGNIZED",
@@ -36,8 +46,10 @@ document_status = sa.Enum(
     "OCR_ERROR",
     "ARCHIVED",
     name="documentstatus",
+    create_type=False,
+    _create_events=False,
 )
-repair_status = sa.Enum(
+repair_status = postgresql.ENUM(
     "DRAFT",
     "IN_REVIEW",
     "EMPLOYEE_CONFIRMED",
@@ -46,16 +58,36 @@ repair_status = sa.Enum(
     "OCR_ERROR",
     "ARCHIVED",
     name="repairstatus",
+    create_type=False,
+    _create_events=False,
 )
-catalog_status = sa.Enum("PRELIMINARY", "CONFIRMED", "MERGED", "ARCHIVED", name="catalogstatus")
-check_severity = sa.Enum("NORMAL", "WARNING", "SUSPICIOUS", "ERROR", name="checkseverity")
-import_status = sa.Enum(
+catalog_status = postgresql.ENUM(
+    "PRELIMINARY",
+    "CONFIRMED",
+    "MERGED",
+    "ARCHIVED",
+    name="catalogstatus",
+    create_type=False,
+    _create_events=False,
+)
+check_severity = postgresql.ENUM(
+    "NORMAL",
+    "WARNING",
+    "SUSPICIOUS",
+    "ERROR",
+    name="checkseverity",
+    create_type=False,
+    _create_events=False,
+)
+import_status = postgresql.ENUM(
     "DRAFT",
     "PROCESSING",
     "COMPLETED",
     "COMPLETED_WITH_CONFLICTS",
     "FAILED",
     name="importstatus",
+    create_type=False,
+    _create_events=False,
 )
 
 
@@ -329,6 +361,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+
     op.drop_index("ix_import_conflicts_conflict_key", table_name="import_conflicts")
     op.drop_index("ix_import_conflicts_entity_type", table_name="import_conflicts")
     op.drop_index("ix_import_conflicts_import_job_id", table_name="import_conflicts")
@@ -396,7 +430,6 @@ def downgrade() -> None:
     op.drop_index("ix_users_login", table_name="users")
     op.drop_table("users")
 
-    bind = op.get_bind()
     import_status.drop(bind, checkfirst=True)
     check_severity.drop(bind, checkfirst=True)
     catalog_status.drop(bind, checkfirst=True)

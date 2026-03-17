@@ -46,15 +46,31 @@ Initial project scaffold for the fleet repairs platform.
 3. Wait for the post-create setup to finish.
 4. Codespaces will build the frontend and open the application on port `8000`.
 5. If the workspace revision changed or the application stopped responding, startup will automatically rebuild the frontend and restart the backend.
-6. Open the forwarded application port and sign in with:
-   - login: `admin`
-   - password: `Road700Admin!2026`
+6. Open the forwarded application port and sign in with the credentials stored in `.codespaces/admin-credentials.txt`.
 
 The repository now includes:
 - `.devcontainer/devcontainer.json` for Codespaces
 - `scripts/bootstrap-codespace.sh` for dependency installation
 - `scripts/start-codespace.sh` for frontend build, migrations, admin initialization and app startup
 - `.github/workflows/ci.yml` for automatic backend and frontend checks on GitHub
+
+## Production deploy
+
+The repository includes a dedicated server stack:
+
+- `Dockerfile.app` builds the frontend and backend into one application image
+- `docker-compose.server.yml` runs `postgres`, `app`, and `caddy`
+- `deploy/server/Caddyfile` serves the application over HTTPS
+- `deploy/server/.env.example` contains the required production variables
+
+Typical server bootstrap:
+
+1. Copy `deploy/server/.env.example` to `.env.server`
+2. Set a real domain, strong PostgreSQL password, strong JWT secret, and strong admin password
+3. Run:
+   - `docker compose --env-file .env.server -f docker-compose.server.yml up -d --build`
+4. Open:
+   - `https://your-domain`
 
 ### Alternative: local backend + frontend
 

@@ -798,6 +798,8 @@ def enrich_work_payloads_with_labor_norms(
         reference_payload["labor_norm_scope"] = applicability.scope
         reference_payload["labor_norm_applicability_reason_code"] = applicability.reason_code
         reference_payload["labor_norm_applicability_reason"] = applicability.reason
+        if applicability.catalog_name:
+            reference_payload["labor_norm_catalog_name"] = applicability.catalog_name
         if applicability.brand_family:
             reference_payload["labor_norm_brand_family"] = applicability.brand_family
 
@@ -809,6 +811,7 @@ def enrich_work_payloads_with_labor_norms(
             db,
             work_code=work_code,
             work_name=work_name,
+            scope=applicability.scope,
         )
         if match is None:
             item["reference_payload"] = reference_payload
@@ -822,6 +825,9 @@ def enrich_work_payloads_with_labor_norms(
             {
                 "labor_norm_id": match.norm.id,
                 "labor_norm_code": match.norm.code,
+                "labor_norm_scope": match.norm.scope,
+                "labor_norm_catalog_name": match.norm.catalog_name,
+                "labor_norm_brand_family": match.norm.brand_family,
                 "labor_norm_name": match.norm.name_ru,
                 "labor_norm_category": match.norm.category,
                 "labor_norm_standard_hours": float(match.norm.standard_hours),
@@ -1533,6 +1539,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
                 "reason_code": labor_norm_applicability.reason_code,
                 "reason": labor_norm_applicability.reason,
                 "brand_family": labor_norm_applicability.brand_family,
+                "catalog_name": labor_norm_applicability.catalog_name,
                 "matched_count": labor_norm_summary.matched_count,
                 "unmatched_count": labor_norm_summary.unmatched_count,
             },

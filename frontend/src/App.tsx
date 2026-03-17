@@ -118,6 +118,9 @@ type DocumentsResponse = {
 
 type LaborNormCatalogItem = {
   id: number;
+  scope: string;
+  brand_family: string | null;
+  catalog_name: string | null;
   code: string;
   category: string | null;
   name_ru: string;
@@ -138,6 +141,7 @@ type LaborNormCatalogResponse = {
   total: number;
   limit: number;
   offset: number;
+  scopes: string[];
   categories: string[];
   source_files: string[];
 };
@@ -363,6 +367,8 @@ type CheckResolutionMeta = {
 type WorkLaborNormMeta = {
   applicable: boolean | null;
   applicabilityReason: string | null;
+  scope: string | null;
+  catalogName: string | null;
   code: string | null;
   name: string | null;
   category: string | null;
@@ -604,6 +610,12 @@ function readWorkLaborNormMeta(referencePayload: Record<string, unknown> | null 
       typeof referencePayload.labor_norm_applicability_reason === "string"
         ? referencePayload.labor_norm_applicability_reason
         : null,
+    scope:
+      typeof referencePayload.labor_norm_scope === "string" ? referencePayload.labor_norm_scope : null,
+    catalogName:
+      typeof referencePayload.labor_norm_catalog_name === "string"
+        ? referencePayload.labor_norm_catalog_name
+        : null,
     code:
       typeof referencePayload.labor_norm_code === "string" ? referencePayload.labor_norm_code : null,
     name:
@@ -639,11 +651,13 @@ function formatWorkLaborNormMeta(item: RepairDetail["works"][number]) {
     const methodSuffix = formatMatchMethod(meta.matchedBy) ? ` · ${formatMatchMethod(meta.matchedBy)}` : "";
     const hoursSuffix = formatHours(meta.standardHours) ? ` · норма ${formatHours(meta.standardHours)}` : "";
     const categorySuffix = meta.category ? ` · ${meta.category}` : "";
-    return `Матчинг: ${meta.code} · ${meta.name}${categorySuffix}${hoursSuffix}${methodSuffix}${scoreSuffix}`;
+    const catalogSuffix = meta.catalogName ? ` · ${meta.catalogName}` : meta.scope ? ` · ${meta.scope}` : "";
+    return `Матчинг: ${meta.code} · ${meta.name}${categorySuffix}${catalogSuffix}${hoursSuffix}${methodSuffix}${scoreSuffix}`;
   }
 
   if (meta.applicable === false) {
-    return `Матчинг: справочник не применён${meta.applicabilityReason ? ` · ${meta.applicabilityReason}` : ""}`;
+    const scopeSuffix = meta.catalogName ? ` · ${meta.catalogName}` : meta.scope ? ` · ${meta.scope}` : "";
+    return `Матчинг: справочник не применён${scopeSuffix}${meta.applicabilityReason ? ` · ${meta.applicabilityReason}` : ""}`;
   }
 
   if (meta.applicable === true) {
@@ -1143,13 +1157,18 @@ export default function App() {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [laborNorms, setLaborNorms] = useState<LaborNormCatalogItem[]>([]);
   const [laborNormTotal, setLaborNormTotal] = useState(0);
+  const [laborNormScopes, setLaborNormScopes] = useState<string[]>([]);
   const [laborNormCategories, setLaborNormCategories] = useState<string[]>([]);
   const [laborNormSourceFiles, setLaborNormSourceFiles] = useState<string[]>([]);
   const [laborNormQuery, setLaborNormQuery] = useState("");
+  const [laborNormScope, setLaborNormScope] = useState("");
   const [laborNormCategory, setLaborNormCategory] = useState("");
   const [laborNormLoading, setLaborNormLoading] = useState(false);
   const [laborNormImportLoading, setLaborNormImportLoading] = useState(false);
   const [laborNormFile, setLaborNormFile] = useState<File | null>(null);
+  const [laborNormImportScope, setLaborNormImportScope] = useState("dongfeng_2025");
+  const [laborNormImportBrandFamily, setLaborNormImportBrandFamily] = useState("dongfeng");
+  const [laborNormImportCatalogName, setLaborNormImportCatalogName] = useState("Dong Feng 2025");
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
   const [reviewQueueCounts, setReviewQueueCounts] = useState<Record<ReviewQueueCategory, number>>({
     all: 0,
@@ -1256,6 +1275,7 @@ export default function App() {
 
   function buildLaborNormQueryString(
     query: string = laborNormQuery,
+    scope: string = laborNormScope,
     category: string = laborNormCategory,
   ) {
     const params = new URLSearchParams();
@@ -1263,22 +1283,31 @@ export default function App() {
     if (query.trim()) {
       params.set("q", query.trim());
     }
+    if (scope) {
+      params.set("scope", scope);
+    }
     if (category) {
       params.set("category", category);
     }
     return params.toString();
   }
 
-  async function loadLaborNormCatalog(activeToken: string, query: string = laborNormQuery, category: string = laborNormCategory) {
+  async function loadLaborNormCatalog(
+    activeToken: string,
+    query: string = laborNormQuery,
+    scope: string = laborNormScope,
+    category: string = laborNormCategory,
+  ) {
     setLaborNormLoading(true);
     try {
       const payload = await apiRequest<LaborNormCatalogResponse>(
-        `/labor-norms?${buildLaborNormQueryString(query, category)}`,
+        `/labor-norms?${buildLaborNormQueryString(query, scope, category)}`,
         { method: "GET" },
         activeToken,
       );
       setLaborNorms(payload.items);
       setLaborNormTotal(payload.total);
+      setLaborNormScopes(payload.scopes);
       setLaborNormCategories(payload.categories);
       setLaborNormSourceFiles(payload.source_files);
     } finally {
@@ -1320,6 +1349,7 @@ export default function App() {
       setDocuments(recentDocuments.items);
       setLaborNorms(laborNormCatalog?.items || []);
       setLaborNormTotal(laborNormCatalog?.total || 0);
+      setLaborNormScopes(laborNormCatalog?.scopes || []);
       setLaborNormCategories(laborNormCatalog?.categories || []);
       setLaborNormSourceFiles(laborNormCatalog?.source_files || []);
       setReviewQueue(reviewQueueData.items);
@@ -1353,6 +1383,7 @@ export default function App() {
       setDocuments([]);
       setLaborNorms([]);
       setLaborNormTotal(0);
+      setLaborNormScopes([]);
       setLaborNormCategories([]);
       setLaborNormSourceFiles([]);
       setReviewQueue([]);
@@ -1774,6 +1805,9 @@ export default function App() {
     try {
       const body = new FormData();
       body.append("file", laborNormFile);
+      body.append("scope", laborNormImportScope);
+      body.append("brand_family", laborNormImportBrandFamily);
+      body.append("catalog_name", laborNormImportCatalogName);
 
       const result = await apiRequest<LaborNormImportResponse>(
         "/labor-norms/import",
@@ -1788,6 +1822,7 @@ export default function App() {
         `${result.message}. Создано ${result.created}, обновлено ${result.updated}, пропущено ${result.skipped}.`,
       );
       setLaborNormFile(null);
+      setLaborNormScope(laborNormImportScope);
       await loadLaborNormCatalog(token);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to import labor norms catalog");
@@ -2529,7 +2564,7 @@ export default function App() {
                         </Typography>
                       </Box>
                       <Grid container spacing={1.5}>
-                        <Grid item xs={12} sm={6}>
+                        <Grid item xs={12} sm={4}>
                           <TextField
                             label="Поиск по коду или названию"
                             value={laborNormQuery}
@@ -2537,7 +2572,23 @@ export default function App() {
                             fullWidth
                           />
                         </Grid>
-                        <Grid item xs={12} sm={6}>
+                        <Grid item xs={12} sm={4}>
+                          <TextField
+                            select
+                            label="Scope"
+                            value={laborNormScope}
+                            onChange={(event) => setLaborNormScope(event.target.value)}
+                            fullWidth
+                          >
+                            <MenuItem value="">Все scope</MenuItem>
+                            {laborNormScopes.map((scope) => (
+                              <MenuItem key={scope} value={scope}>
+                                {scope}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+                        <Grid item xs={12} sm={4}>
                           <TextField
                             select
                             label="Категория"
@@ -2562,9 +2613,10 @@ export default function App() {
                           variant="text"
                           onClick={() => {
                             setLaborNormQuery("");
+                            setLaborNormScope("");
                             setLaborNormCategory("");
                             if (token) {
-                              void loadLaborNormCatalog(token, "", "");
+                              void loadLaborNormCatalog(token, "", "", "");
                             }
                           }}
                           disabled={laborNormLoading}
@@ -2577,6 +2629,32 @@ export default function App() {
                           <Typography className="metric-label">
                             Импорт / обновление каталога
                           </Typography>
+                          <Grid container spacing={1.5}>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Scope"
+                                value={laborNormImportScope}
+                                onChange={(event) => setLaborNormImportScope(event.target.value)}
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Семейство бренда"
+                                value={laborNormImportBrandFamily}
+                                onChange={(event) => setLaborNormImportBrandFamily(event.target.value)}
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Название каталога"
+                                value={laborNormImportCatalogName}
+                                onChange={(event) => setLaborNormImportCatalogName(event.target.value)}
+                                fullWidth
+                              />
+                            </Grid>
+                          </Grid>
                           <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
                             <Button component="label" variant="outlined">
                               Выбрать .xlsx
@@ -2623,7 +2701,9 @@ export default function App() {
                                   <Typography>{formatHours(item.standard_hours) || "—"}</Typography>
                                 </Stack>
                                 <Typography className="muted-copy">
-                                  {item.category || "Без категории"}
+                                  {item.catalog_name || item.scope}
+                                  {item.brand_family ? ` · ${item.brand_family}` : ""}
+                                  {item.category ? ` · ${item.category}` : " · Без категории"}
                                   {item.name_ru_alt ? ` · alt: ${item.name_ru_alt}` : ""}
                                 </Typography>
                                 <Typography className="muted-copy">

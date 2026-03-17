@@ -10,6 +10,9 @@ class LaborNormRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    scope: str
+    brand_family: Optional[str]
+    catalog_name: Optional[str]
     code: str
     category: Optional[str]
     name_ru: str
@@ -30,6 +33,7 @@ class LaborNormListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    scopes: list[str]
     categories: list[str]
     source_files: list[str]
 

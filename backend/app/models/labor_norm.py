@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import Enum, Float, String, Text
+from sqlalchemy import Enum, Float, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -11,9 +11,15 @@ from app.models.enums import CatalogStatus
 
 class LaborNorm(Base, TimestampMixin):
     __tablename__ = "labor_norms"
+    __table_args__ = (
+        UniqueConstraint("scope", "code", name="uq_labor_norms_scope_code"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    scope: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    brand_family: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    catalog_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     category: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     name_ru: Mapped[str] = mapped_column(String(500), nullable=False)
     name_ru_alt: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)

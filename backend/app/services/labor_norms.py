@@ -74,7 +74,9 @@ MATCH_STOPWORDS = {
     "деталь",
     "узел",
 }
-DONGFENG_LABOR_NORM_SCOPE = "dongfeng_2025"
+DEFAULT_DONGFENG_LABOR_NORM_SCOPE = "dongfeng_2025"
+DEFAULT_DONGFENG_BRAND_FAMILY = "dongfeng"
+DEFAULT_DONGFENG_CATALOG_NAME = "Dong Feng 2025"
 SUPPORTED_DONGFENG_BRANDS = ("DONGFENG", "DFH4180")
 SUPPORTED_DONGFENG_VIN_PREFIXES = ("LGAG3DV2",)
 VEHICLE_TEXT_REPLACEMENTS = str.maketrans(
@@ -97,6 +99,22 @@ def normalize_vehicle_match_text(value: Optional[str]) -> str:
     normalized_value = str(value).strip().translate(VEHICLE_TEXT_REPLACEMENTS).lower()
     normalized_value = re.sub(r"\s+", " ", normalized_value)
     return normalized_value
+
+
+def normalize_labor_norm_scope(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized_value = normalize_vehicle_match_text(value)
+    normalized_value = re.sub(r"[^a-zа-я0-9]+", "_", normalized_value)
+    normalized_value = normalized_value.strip("_")
+    return normalized_value or None
+
+
+def normalize_brand_family(value: Optional[str]) -> Optional[str]:
+    normalized_value = normalize_labor_norm_scope(value)
+    if normalized_value is None:
+        return None
+    return normalized_value.replace("_", "-")
 
 
 def normalize_labor_norm_code(value: Optional[str]) -> Optional[str]:
@@ -149,6 +167,7 @@ class LaborNormApplicability:
     reason_code: str
     reason: str
     brand_family: Optional[str] = None
+    catalog_name: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -180,18 +199,20 @@ def assess_labor_norm_applicability(vehicle: object | None) -> LaborNormApplicab
     if vehicle is None:
         return LaborNormApplicability(
             eligible=False,
-            scope=DONGFENG_LABOR_NORM_SCOPE,
+            scope=DEFAULT_DONGFENG_LABOR_NORM_SCOPE,
             reason_code="vehicle_missing",
             reason="Карточка техники не привязана к ремонту, применимость норм определить нельзя",
+            catalog_name=DEFAULT_DONGFENG_CATALOG_NAME,
         )
 
     vehicle_type = getattr(vehicle, "vehicle_type", None)
     if vehicle_type != VehicleType.TRUCK:
         return LaborNormApplicability(
             eligible=False,
-            scope=DONGFENG_LABOR_NORM_SCOPE,
+            scope=DEFAULT_DONGFENG_LABOR_NORM_SCOPE,
             reason_code="vehicle_type_not_supported",
             reason="Справочник нормо-часов Dong Feng применяется только к грузовикам",
+            catalog_name=DEFAULT_DONGFENG_CATALOG_NAME,
         )
 
     brand = getattr(vehicle, "brand", None)
@@ -201,36 +222,42 @@ def assess_labor_norm_applicability(vehicle: object | None) -> LaborNormApplicab
     if brand_family != "dongfeng":
         return LaborNormApplicability(
             eligible=False,
-            scope=DONGFENG_LABOR_NORM_SCOPE,
+            scope=DEFAULT_DONGFENG_LABOR_NORM_SCOPE,
             reason_code="brand_not_supported",
             reason="Текущий справочник покрывает только Dong Feng / DFH4180",
+            catalog_name=DEFAULT_DONGFENG_CATALOG_NAME,
         )
 
     normalized_model = normalize_vehicle_match_text(model)
     if normalized_model and "тягач" not in normalized_model:
         return LaborNormApplicability(
             eligible=False,
-            scope=DONGFENG_LABOR_NORM_SCOPE,
+            scope=DEFAULT_DONGFENG_LABOR_NORM_SCOPE,
             reason_code="model_not_supported",
             reason="Текущий справочник подтверждён только для сегмента седельных тягачей Dong Feng",
             brand_family=brand_family,
+            catalog_name=DEFAULT_DONGFENG_CATALOG_NAME,
         )
 
     return LaborNormApplicability(
         eligible=True,
-        scope=DONGFENG_LABOR_NORM_SCOPE,
+        scope=DEFAULT_DONGFENG_LABOR_NORM_SCOPE,
         reason_code="supported",
         reason="Справочник нормо-часов Dong Feng может быть применён автоматически",
         brand_family=brand_family,
+        catalog_name=DEFAULT_DONGFENG_CATALOG_NAME,
     )
 
 
-def load_active_labor_norms(db: Session) -> list[LaborNorm]:
+def load_active_labor_norms(db: Session, *, scope: Optional[str] = None) -> list[LaborNorm]:
     stmt = (
         select(LaborNorm)
         .where(LaborNorm.status != CatalogStatus.ARCHIVED)
-        .order_by(LaborNorm.code.asc())
+        .order_by(LaborNorm.scope.asc(), LaborNorm.code.asc())
     )
+    normalized_scope = normalize_labor_norm_scope(scope)
+    if normalized_scope:
+        stmt = stmt.where(LaborNorm.scope == normalized_scope)
     return db.scalars(stmt).all()
 
 
@@ -280,9 +307,11 @@ def find_best_labor_norm_match(
     *,
     work_code: Optional[str],
     work_name: str,
+    scope: Optional[str] = None,
 ) -> Optional[LaborNormMatch]:
+    normalized_scope = normalize_labor_norm_scope(scope)
     candidates = []
-    for norm in load_active_labor_norms(db):
+    for norm in load_active_labor_norms(db, scope=normalized_scope):
         scored = score_labor_norm_match(work_code=work_code, work_name=work_name, norm=norm)
         if scored is not None:
             candidates.append(scored)
@@ -293,6 +322,16 @@ def find_best_labor_norm_match(
     candidates.sort(key=lambda item: (item.score, item.norm.standard_hours, item.norm.code), reverse=True)
     best = candidates[0]
     runner_up = candidates[1] if len(candidates) > 1 else None
+
+    if (
+        normalized_scope is None
+        and best.matched_by == "code"
+        and runner_up is not None
+        and runner_up.matched_by == "code"
+        and runner_up.norm.code == best.norm.code
+        and runner_up.norm.scope != best.norm.scope
+    ):
+        return None
 
     if best.matched_by == "code":
         return best

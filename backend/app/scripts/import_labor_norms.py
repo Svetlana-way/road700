@@ -12,10 +12,15 @@ from app.db.session import SessionLocal
 from app.models.enums import CatalogStatus
 from app.models.labor_norm import LaborNorm
 from app.services.labor_norms import (
+    DEFAULT_DONGFENG_BRAND_FAMILY,
+    DEFAULT_DONGFENG_CATALOG_NAME,
+    DEFAULT_DONGFENG_LABOR_NORM_SCOPE,
     build_normalized_name,
     build_search_text,
     default_labor_norms_path,
+    normalize_brand_family,
     normalize_labor_norm_code,
+    normalize_labor_norm_scope,
 )
 
 
@@ -66,6 +71,9 @@ def normalize_hours(value: object) -> Optional[float]:
 def upsert_labor_norm(
     db: Session,
     *,
+    scope: str,
+    brand_family: Optional[str],
+    catalog_name: Optional[str],
     code: str,
     category: str,
     name_ru: str,
@@ -77,10 +85,13 @@ def upsert_labor_norm(
     source_file: str,
     stats: ImportStats,
 ) -> None:
-    existing = db.scalar(select(LaborNorm).where(LaborNorm.code == code))
+    existing = db.scalar(select(LaborNorm).where(LaborNorm.scope == scope, LaborNorm.code == code))
     is_new = existing is None
-    labor_norm = existing or LaborNorm(code=code)
+    labor_norm = existing or LaborNorm(scope=scope, code=code)
 
+    labor_norm.scope = scope
+    labor_norm.brand_family = brand_family
+    labor_norm.catalog_name = catalog_name
     labor_norm.category = category
     labor_norm.name_ru = name_ru
     labor_norm.name_ru_alt = name_ru_alt
@@ -105,7 +116,16 @@ def upsert_labor_norm(
 def import_labor_norms_with_session(
     db: Session,
     path: Path = DEFAULT_LABOR_NORMS_PATH,
+    *,
+    scope: str = DEFAULT_DONGFENG_LABOR_NORM_SCOPE,
+    brand_family: Optional[str] = DEFAULT_DONGFENG_BRAND_FAMILY,
+    catalog_name: Optional[str] = DEFAULT_DONGFENG_CATALOG_NAME,
 ) -> ImportStats:
+    normalized_scope = normalize_labor_norm_scope(scope)
+    if not normalized_scope:
+        raise ValueError("Labor norm scope is required")
+
+    normalized_brand_family = normalize_brand_family(brand_family)
     workbook = load_workbook(path, data_only=True, read_only=True)
     stats = ImportStats()
 
@@ -127,6 +147,9 @@ def import_labor_norms_with_session(
 
             upsert_labor_norm(
                 db,
+                scope=normalized_scope,
+                brand_family=normalized_brand_family,
+                catalog_name=catalog_name.strip() if isinstance(catalog_name, str) and catalog_name.strip() else None,
                 code=code,
                 category=sheet_name,
                 name_ru=name_ru,

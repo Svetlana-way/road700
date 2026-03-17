@@ -718,7 +718,7 @@ const workspaceTabDescriptions: Record<WorkspaceTab, string> = {
 const adminTabDescriptions: Record<AdminTab, string> = {
   services: "Справочник сервисов для нормализации названий и ручной правки ремонтов.",
   control: "Причины ручной проверки, приоритеты очереди и сигналы обучения OCR.",
-  ocr: "Профили, matcher-правила и OCR-шаблоны извлечения полей.",
+  ocr: "Шаблоны документов, правила автовыбора и настройки распознавания полей.",
   labor_norms: "Каталоги нормо-часов, импорт справочников и ручная правка записей.",
 };
 
@@ -876,7 +876,50 @@ function formatOcrProfileMeta(payload: Record<string, unknown> | null | undefine
   }
   const sourceSuffix = meta.source ? ` · ${meta.source}` : "";
   const reasonSuffix = meta.reason ? ` · ${meta.reason}` : "";
-  return `OCR-профиль: ${meta.scope}${sourceSuffix}${reasonSuffix}`;
+  return `Шаблон OCR: ${formatOcrProfileName(meta.scope)}${sourceSuffix}${reasonSuffix}`;
+}
+
+function formatOcrProfileName(value: string | null | undefined) {
+  if (!value) {
+    return "Не указан";
+  }
+  if (value === "default") {
+    return "Базовый";
+  }
+  return value;
+}
+
+function formatValueParserLabel(value: string) {
+  const labels: Record<string, string> = {
+    raw: "Без обработки",
+    date: "Дата",
+    amount: "Сумма",
+    digits_int: "Целое число",
+  };
+  return labels[value] || value;
+}
+
+function formatReviewBucketLabel(value: string | null | undefined) {
+  if (!value) {
+    return "Без переопределения";
+  }
+  const labels: Record<string, string> = {
+    review: "Обычный",
+    critical: "Критичный",
+    suspicious: "Подозрительный",
+  };
+  return labels[value] || value;
+}
+
+function formatReviewRuleTypeLabel(value: string) {
+  const labels: Record<string, string> = {
+    manual_review_reason: "Причина ручной проверки",
+    document_status: "Статус документа",
+    repair_status: "Статус ремонта",
+    check_severity: "Уровень проверки",
+    signal: "Сигнал системы",
+  };
+  return labels[value] || value;
 }
 
 function formatHours(value: number | null | undefined) {
@@ -4124,7 +4167,7 @@ export default function App() {
                       <Box>
                         <Typography variant="h5">Правила OCR и очереди проверки</Typography>
                         <Typography className="muted-copy">
-                          Настройка причин ручной проверки, весов приоритета и bucket без участия разработчика.
+                          Настройка причин ручной проверки, весов приоритета и группы приоритета без участия разработчика.
                         </Typography>
                       </Box>
                       <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
@@ -4157,14 +4200,14 @@ export default function App() {
                                   .filter((item, index, array) => array.indexOf(item) === index)
                                   .map((item) => (
                                     <MenuItem key={item} value={item}>
-                                      {item}
+                                      {formatReviewRuleTypeLabel(item)}
                                     </MenuItem>
                                   ))}
                                 {reviewRuleTypes
                                   .filter((item) => !["manual_review_reason", "document_status", "repair_status", "check_severity", "signal"].includes(item))
                                   .map((item) => (
                                     <MenuItem key={item} value={item}>
-                                      {item}
+                                      {formatReviewRuleTypeLabel(item)}
                                     </MenuItem>
                                   ))}
                               </TextField>
@@ -4204,17 +4247,17 @@ export default function App() {
                             <Grid item xs={12} sm={3}>
                               <TextField
                                 select
-                                label="Bucket"
+                                label="Группа приоритета"
                                 value={reviewRuleForm.bucket_override}
                                 onChange={(event) =>
                                   setReviewRuleForm((current) => ({ ...current, bucket_override: event.target.value }))
                                 }
                                 fullWidth
                               >
-                                <MenuItem value="">Без override</MenuItem>
-                                <MenuItem value="review">review</MenuItem>
-                                <MenuItem value="critical">critical</MenuItem>
-                                <MenuItem value="suspicious">suspicious</MenuItem>
+                                <MenuItem value="">Без переопределения</MenuItem>
+                                <MenuItem value="review">Обычный</MenuItem>
+                                <MenuItem value="critical">Критичный</MenuItem>
+                                <MenuItem value="suspicious">Подозрительный</MenuItem>
                               </TextField>
                             </Grid>
                             <Grid item xs={12} sm={3}>
@@ -4296,12 +4339,12 @@ export default function App() {
                                       color={item.is_active ? "success" : "default"}
                                       label={item.is_active ? "Активно" : "Отключено"}
                                     />
-                                    <Chip size="small" variant="outlined" label={`${item.rule_type}:${item.code}`} />
+                                      <Chip size="small" variant="outlined" label={`${formatReviewRuleTypeLabel(item.rule_type)}: ${item.code}`} />
                                   </Stack>
                                 </Stack>
                                 <Typography className="muted-copy">
                                   Вес {item.weight}
-                                  {item.bucket_override ? ` · bucket ${item.bucket_override}` : ""}
+                                  {item.bucket_override ? ` · группа ${formatReviewBucketLabel(item.bucket_override)}` : ""}
                                   {` · порядок ${item.sort_order}`}
                                 </Typography>
                                 {item.notes ? <Typography className="muted-copy">{item.notes}</Typography> : null}
@@ -4550,7 +4593,7 @@ export default function App() {
                       <Box>
                         <Typography variant="h5">Технические настройки OCR</Typography>
                         <Typography className="muted-copy">
-                          Regex-правила и matcher нужны только для тонкой настройки распознавания и не должны мешать основной работе.
+                          Regex-правила и правила выбора шаблона нужны только для тонкой настройки распознавания и не должны мешать основной работе.
                         </Typography>
                       </Box>
                       <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
@@ -4561,7 +4604,7 @@ export default function App() {
                           {showTechnicalOcrSettings ? "Скрыть технические настройки OCR" : "Показать технические настройки OCR"}
                         </Button>
                         <Typography className="muted-copy">
-                          Внутри находятся профили, matcher и regex-шаблоны для разработчика или администратора.
+                          Внутри находятся шаблоны документов, правила выбора и regex-шаблоны для разработчика или администратора.
                         </Typography>
                       </Stack>
                     </Stack>
@@ -4575,24 +4618,24 @@ export default function App() {
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>
-                        <Typography variant="h5">Автовыбор OCR-профиля</Typography>
+                        <Typography variant="h5">Автовыбор шаблона OCR</Typography>
                         <Typography className="muted-copy">
-                          Правила выбора OCR-профиля по типу файла, имени файла, сервису и текстовым признакам документа. Если правил нет, используется история ремонта и затем default.
+                          Правила выбора шаблона распознавания по типу файла, имени файла, сервису и текстовым признакам документа. Если правил нет, используется история ремонта и затем базовый шаблон.
                         </Typography>
                       </Box>
                       <Grid container spacing={1.5}>
                         <Grid item xs={12} sm={4}>
                           <TextField
                             select
-                            label="Профиль"
+                            label="Шаблон OCR"
                             value={ocrProfileMatcherProfileFilter}
                             onChange={(event) => setOcrProfileMatcherProfileFilter(event.target.value)}
                             fullWidth
                           >
-                            <MenuItem value="">Все профили</MenuItem>
+                            <MenuItem value="">Все шаблоны</MenuItem>
                             {ocrProfileMatcherProfiles.map((item) => (
                               <MenuItem key={item} value={item}>
-                                {item}
+                                {formatOcrProfileName(item)}
                               </MenuItem>
                             ))}
                           </TextField>
@@ -4626,12 +4669,12 @@ export default function App() {
                       <Paper className="repair-line" elevation={0}>
                         <Stack spacing={1.25}>
                           <Typography className="metric-label">
-                            Создание и редактирование matcher
+                            Создание и редактирование правила выбора шаблона
                           </Typography>
                           <Grid container spacing={1.5}>
                             <Grid item xs={12} sm={3}>
                               <TextField
-                                label="Профиль"
+                                label="Шаблон OCR"
                                 value={ocrProfileMatcherForm.profile_scope}
                                 onChange={(event) =>
                                   setOcrProfileMatcherForm((current) => ({ ...current, profile_scope: event.target.value }))
@@ -4676,7 +4719,7 @@ export default function App() {
                             </Grid>
                             <Grid item xs={12} sm={4}>
                               <TextField
-                                label="Regex имени файла"
+                                label="Шаблон имени файла"
                                 value={ocrProfileMatcherForm.filename_pattern}
                                 onChange={(event) =>
                                   setOcrProfileMatcherForm((current) => ({ ...current, filename_pattern: event.target.value }))
@@ -4686,7 +4729,7 @@ export default function App() {
                             </Grid>
                             <Grid item xs={12} sm={4}>
                               <TextField
-                                label="Regex текста документа"
+                                label="Текстовый признак"
                                 value={ocrProfileMatcherForm.text_pattern}
                                 onChange={(event) =>
                                   setOcrProfileMatcherForm((current) => ({ ...current, text_pattern: event.target.value }))
@@ -4696,7 +4739,7 @@ export default function App() {
                             </Grid>
                             <Grid item xs={12} sm={4}>
                               <TextField
-                                label="Regex сервиса"
+                                label="Признак сервиса"
                                 value={ocrProfileMatcherForm.service_name_pattern}
                                 onChange={(event) =>
                                   setOcrProfileMatcherForm((current) => ({
@@ -4746,8 +4789,8 @@ export default function App() {
                               {ocrProfileMatcherSaving
                                 ? "Сохранение..."
                                 : ocrProfileMatcherForm.id
-                                  ? "Сохранить matcher"
-                                  : "Создать matcher"}
+                                  ? "Сохранить правило выбора"
+                                  : "Создать правило выбора"}
                             </Button>
                             <Button variant="text" disabled={ocrProfileMatcherSaving} onClick={resetOcrProfileMatcherEditor}>
                               Сбросить форму
@@ -4756,7 +4799,7 @@ export default function App() {
                         </Stack>
                       </Paper>
                       <Typography className="muted-copy">
-                        В правилах выбора профиля {ocrProfileMatchers.length} записей.
+                        В правилах выбора шаблона {ocrProfileMatchers.length} записей.
                       </Typography>
                       {ocrProfileMatchers.length > 0 ? (
                         <Stack spacing={1}>
@@ -4771,11 +4814,11 @@ export default function App() {
                                       color={item.is_active ? "success" : "default"}
                                       label={item.is_active ? "Активно" : "Отключено"}
                                     />
-                                    <Chip size="small" variant="outlined" label={item.profile_scope} />
+                                    <Chip size="small" variant="outlined" label={formatOcrProfileName(item.profile_scope)} />
                                   </Stack>
                                 </Stack>
                                 <Typography className="muted-copy">
-                                  {item.source_type ? `source ${item.source_type} · ` : ""}
+                                  {item.source_type ? `тип файла ${item.source_type} · ` : ""}
                                   {`приоритет ${item.priority}`}
                                 </Typography>
                                 <Typography className="muted-copy">
@@ -4798,7 +4841,7 @@ export default function App() {
                           ))}
                         </Stack>
                       ) : (
-                        <Typography className="muted-copy">Matcher-правила по текущему фильтру не найдены.</Typography>
+                        <Typography className="muted-copy">Правила выбора шаблона по текущему фильтру не найдены.</Typography>
                       )}
                     </Stack>
                   </Paper>
@@ -4811,24 +4854,24 @@ export default function App() {
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>
-                        <Typography variant="h5">OCR-шаблоны извлечения полей</Typography>
+                        <Typography variant="h5">Правила извлечения полей OCR</Typography>
                         <Typography className="muted-copy">
-                          Профили и regex-правила для извлечения номера заказ-наряда, даты, пробега, VIN, сервиса и сумм из разных форматов документов.
+                          Шаблоны и regex-правила для извлечения номера заказ-наряда, даты, пробега, VIN, сервиса и сумм из разных форматов документов.
                         </Typography>
                       </Box>
                       <Grid container spacing={1.5}>
                         <Grid item xs={12} sm={4}>
                           <TextField
                             select
-                            label="Профиль"
+                            label="Шаблон OCR"
                             value={ocrRuleProfileFilter}
                             onChange={(event) => setOcrRuleProfileFilter(event.target.value)}
                             fullWidth
                           >
-                            <MenuItem value="">Все профили</MenuItem>
+                            <MenuItem value="">Все шаблоны</MenuItem>
                             {ocrRuleProfiles.map((item) => (
                               <MenuItem key={item} value={item}>
-                                {item}
+                                {formatOcrProfileName(item)}
                               </MenuItem>
                             ))}
                           </TextField>
@@ -4867,12 +4910,12 @@ export default function App() {
                           <Grid container spacing={1.5}>
                             <Grid item xs={12} sm={3}>
                               <TextField
-                                label="Профиль"
+                                label="Шаблон OCR"
                                 value={ocrRuleForm.profile_scope}
                                 onChange={(event) =>
                                   setOcrRuleForm((current) => ({ ...current, profile_scope: event.target.value }))
                                 }
-                                helperText="Например: default, volvo_service_a"
+                                helperText="Например: Базовый или код шаблона сервиса"
                                 fullWidth
                               />
                             </Grid>
@@ -4922,17 +4965,17 @@ export default function App() {
                             <Grid item xs={12} sm={2}>
                               <TextField
                                 select
-                                label="Парсер"
+                                label="Обработка значения"
                                 value={ocrRuleForm.value_parser}
                                 onChange={(event) =>
                                   setOcrRuleForm((current) => ({ ...current, value_parser: event.target.value }))
                                 }
                                 fullWidth
                               >
-                                <MenuItem value="raw">raw</MenuItem>
-                                <MenuItem value="date">date</MenuItem>
-                                <MenuItem value="amount">amount</MenuItem>
-                                <MenuItem value="digits_int">digits_int</MenuItem>
+                                <MenuItem value="raw">Без обработки</MenuItem>
+                                <MenuItem value="date">Дата</MenuItem>
+                                <MenuItem value="amount">Сумма</MenuItem>
+                                <MenuItem value="digits_int">Целое число</MenuItem>
                               </TextField>
                             </Grid>
                             <Grid item xs={12} sm={2}>
@@ -5031,7 +5074,7 @@ export default function App() {
                                   </Stack>
                                 </Stack>
                                 <Typography className="muted-copy">
-                                  parser {item.value_parser} · confidence {item.confidence} · приоритет {item.priority}
+                                  обработка {formatValueParserLabel(item.value_parser)} · уверенность {item.confidence} · приоритет {item.priority}
                                 </Typography>
                                 <Typography className="muted-copy" sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                                   {item.pattern}
@@ -5095,7 +5138,7 @@ export default function App() {
                           <Grid container spacing={1.5}>
                             <Grid item xs={12} sm={4}>
                               <TextField
-                                label="Scope"
+                                label="Код каталога"
                                 value={laborNormCatalogForm.scope}
                                 onChange={(event) =>
                                   setLaborNormCatalogForm((current) => ({ ...current, scope: event.target.value }))
@@ -5360,12 +5403,12 @@ export default function App() {
                         <Grid item xs={12} sm={4}>
                           <TextField
                             select
-                            label="Scope"
+                            label="Каталог"
                             value={laborNormScope}
                             onChange={(event) => setLaborNormScope(event.target.value)}
                             fullWidth
                           >
-                            <MenuItem value="">Все scope</MenuItem>
+                            <MenuItem value="">Все каталоги</MenuItem>
                             {laborNormScopes.map((scope) => (
                               <MenuItem key={scope} value={scope}>
                                 {scope}

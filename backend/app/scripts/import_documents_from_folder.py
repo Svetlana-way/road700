@@ -26,7 +26,38 @@ from app.services.document_processing import process_document
 DEFAULT_SOURCE_DIR = PROJECT_ROOT / "Заказ-наряды"
 PLACEHOLDER_EXTERNAL_ID = "__batch_import_placeholder__"
 SUPPORTED_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".tif", ".tiff"}
-PLATE_PATTERN = re.compile(r"[АВЕКМНОРСТУХABEKMHOPCTYX]\d{3}[АВЕКМНОРСТУХABEKMHOPCTYX]{2}\d{2,3}", re.IGNORECASE)
+IDENTIFIER_CHAR_TRANSLATION = str.maketrans(
+    {
+        "О": "O",
+        "о": "O",
+        "А": "A",
+        "а": "A",
+        "В": "B",
+        "в": "B",
+        "Е": "E",
+        "е": "E",
+        "К": "K",
+        "к": "K",
+        "М": "M",
+        "м": "M",
+        "Н": "H",
+        "н": "H",
+        "Р": "P",
+        "р": "P",
+        "С": "C",
+        "с": "C",
+        "Т": "T",
+        "т": "T",
+        "У": "Y",
+        "у": "Y",
+        "Х": "X",
+        "х": "X",
+    }
+)
+PLATE_PATTERN = re.compile(
+    r"(?:[АВЕКМНОРСТУХABEKMHOPCTYX]\d{3}[АВЕКМНОРСТУХABEKMHOPCTYX]{2}\d{2,3}|[АВЕКМНОРСТУХABEKMHOPCTYX]{2}\d{4}\d{2,3})",
+    re.IGNORECASE,
+)
 VIN_PATTERN = re.compile(r"\b[A-HJ-NPR-Z0-9]{17}\b", re.IGNORECASE)
 
 
@@ -91,7 +122,7 @@ def build_storage_key_from_hash(file_hash: str, suffix: str) -> str:
 def normalize_identifier(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
-    normalized = "".join(ch for ch in value.upper() if ch.isalnum())
+    normalized = "".join(ch for ch in value.translate(IDENTIFIER_CHAR_TRANSLATION).upper() if ch.isalnum())
     return normalized or None
 
 

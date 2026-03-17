@@ -74,3 +74,7 @@ class UserAssignmentUpdateRequest(BaseModel):
     starts_at: Optional[date] = None
     ends_at: Optional[date] = None
     comment: Optional[str] = None
+
+
+class UserResetPasswordRequest(BaseModel):
+    new_password: str

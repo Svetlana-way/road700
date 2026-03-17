@@ -19,6 +19,7 @@ from app.schemas.user import (
     UserDetailRead,
     UserListResponse,
     UserRead,
+    UserResetPasswordRequest,
     UserUpdateRequest,
     UserCreateRequest,
 )
@@ -325,6 +326,33 @@ def update_user(
             "is_active": user.is_active,
             "password_updated": "password" in update_data and bool(normalize_text(update_data.get("password"))),
         },
+    )
+    db.commit()
+    db.refresh(user)
+    return UserRead.model_validate(user)
+
+
+@router.post("/{user_id}/reset-password", response_model=UserRead)
+def reset_user_password(
+    user_id: int,
+    payload: UserResetPasswordRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> UserRead:
+    user = load_user_or_404(db, user_id)
+    normalized_password = validate_password(payload.new_password)
+    if normalized_password is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Новый пароль обязателен")
+
+    user.password_hash = get_password_hash(normalized_password)
+    db.add(user)
+    log_user_event(
+        db,
+        current_admin=current_admin,
+        target_user=user,
+        action_type="user_password_reset",
+        old_value=None,
+        new_value={"password_reset": True},
     )
     db.commit()
     db.refresh(user)

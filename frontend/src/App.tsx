@@ -599,6 +599,10 @@ type LoginResponse = {
   access_token: string;
 };
 
+type ChangePasswordResponse = {
+  message: string;
+};
+
 type CheckSeverity = "normal" | "warning" | "suspicious" | "error";
 
 type RepairDetail = {
@@ -2041,6 +2045,7 @@ export default function App() {
   const [activeTechAdminTab, setActiveTechAdminTab] = useState<TechAdminTab>("learning");
   const [activeRepairTab, setActiveRepairTab] = useState<RepairTab>("overview");
   const [showTechAdminTab, setShowTechAdminTab] = useState(false);
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [showServiceEditor, setShowServiceEditor] = useState(false);
   const [showReviewRuleEditor, setShowReviewRuleEditor] = useState(false);
   const [showLaborNormCatalogEditor, setShowLaborNormCatalogEditor] = useState(false);
@@ -2070,6 +2075,7 @@ export default function App() {
   const [userVehicleSearchResults, setUserVehicleSearchResults] = useState<Vehicle[]>([]);
   const [userAssignmentForm, setUserAssignmentForm] = useState<UserAssignmentFormState>(createEmptyUserAssignmentForm);
   const [userAssignmentSaving, setUserAssignmentSaving] = useState(false);
+  const [adminResetPasswordValue, setAdminResetPasswordValue] = useState("");
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [serviceCities, setServiceCities] = useState<string[]>([]);
   const [serviceQuery, setServiceQuery] = useState("");
@@ -2142,10 +2148,13 @@ export default function App() {
   const [isEditingRepair, setIsEditingRepair] = useState(false);
   const [loginValue, setLoginValue] = useState("");
   const [passwordValue, setPasswordValue] = useState("");
+  const [currentPasswordValue, setCurrentPasswordValue] = useState("");
+  const [newPasswordValue, setNewPasswordValue] = useState("");
   const [uploadForm, setUploadForm] = useState<UploadFormState>(emptyUploadForm);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [bootLoading, setBootLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
+  const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [attachDocumentLoading, setAttachDocumentLoading] = useState(false);
   const [repairLoading, setRepairLoading] = useState(false);
@@ -2603,6 +2612,7 @@ export default function App() {
     if (!token) {
       setUser(null);
       setShowTechAdminTab(false);
+      setShowPasswordChange(false);
       setActiveTechAdminTab("learning");
       setSummary(null);
       setVehicles([]);
@@ -2622,6 +2632,7 @@ export default function App() {
       setUserVehicleSearch("");
       setUserVehicleSearchResults([]);
       setUserAssignmentForm(createEmptyUserAssignmentForm());
+      setAdminResetPasswordValue("");
       setServices([]);
       setServiceCities([]);
       setReviewRules([]);
@@ -2660,6 +2671,8 @@ export default function App() {
       setSelectedDocumentId(null);
       setSelectedRepair(null);
       setDocumentVehicleForm(createEmptyDocumentVehicleForm());
+      setCurrentPasswordValue("");
+      setNewPasswordValue("");
       return;
     }
     void loadWorkspace(token, selectedReviewCategory);
@@ -2740,6 +2753,10 @@ export default function App() {
     setDocumentVehicleForm(createVehicleFormFromPayload(selectedRepairDocumentPayload));
   }, [selectedDocumentId, selectedRepairDocumentPayload]);
 
+  useEffect(() => {
+    setAdminResetPasswordValue("");
+  }, [selectedManagedUserId]);
+
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoginLoading(true);
@@ -2770,6 +2787,41 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось выполнить вход");
     } finally {
       setLoginLoading(false);
+    }
+  }
+
+  async function handleChangePassword() {
+    if (!token) {
+      return;
+    }
+    if (!currentPasswordValue.trim() || !newPasswordValue.trim()) {
+      setErrorMessage("Укажите текущий и новый пароль");
+      return;
+    }
+
+    setPasswordChangeLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const result = await apiRequest<ChangePasswordResponse>(
+        "/auth/change-password",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            current_password: currentPasswordValue,
+            new_password: newPasswordValue,
+          }),
+        },
+        token,
+      );
+      setSuccessMessage(result.message);
+      setCurrentPasswordValue("");
+      setNewPasswordValue("");
+      setShowPasswordChange(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось сменить пароль");
+    } finally {
+      setPasswordChangeLoading(false);
     }
   }
 
@@ -3282,6 +3334,37 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось закрепить технику");
     } finally {
       setUserAssignmentSaving(false);
+    }
+  }
+
+  async function handleAdminResetUserPassword() {
+    if (!token || user?.role !== "admin" || selectedManagedUserId === null) {
+      return;
+    }
+    if (!adminResetPasswordValue.trim()) {
+      setErrorMessage("Укажите новый пароль для сотрудника");
+      return;
+    }
+
+    setUserSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      await apiRequest<UserItem>(
+        `/users/${selectedManagedUserId}/reset-password`,
+        {
+          method: "POST",
+          body: JSON.stringify({ new_password: adminResetPasswordValue.trim() }),
+        },
+        token,
+      );
+      setSuccessMessage("Пароль сотрудника обновлён");
+      setAdminResetPasswordValue("");
+      await loadUsers(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось сбросить пароль сотрудника");
+    } finally {
+      setUserSaving(false);
     }
   }
 
@@ -4147,11 +4230,15 @@ export default function App() {
     setActiveTechAdminTab("learning");
     setActiveRepairTab("overview");
     setShowTechAdminTab(false);
+    setShowPasswordChange(false);
     setShowServiceEditor(false);
     setShowReviewRuleEditor(false);
     setShowLaborNormCatalogEditor(false);
     setShowLaborNormImport(false);
     setShowLaborNormEntryEditor(false);
+    setCurrentPasswordValue("");
+    setNewPasswordValue("");
+    setAdminResetPasswordValue("");
     setSuccessMessage("");
     setErrorMessage("");
   }
@@ -4255,12 +4342,75 @@ export default function App() {
               </Box>
               <Stack direction="row" spacing={1} alignItems="center">
                 <Chip label={user?.email || "user"} />
+                <Button
+                  variant={showPasswordChange ? "contained" : "outlined"}
+                  onClick={() => setShowPasswordChange((current) => !current)}
+                >
+                  Сменить пароль
+                </Button>
                 <Button variant="outlined" onClick={handleLogout}>
                   Выйти
                 </Button>
               </Stack>
             </Stack>
           </Paper>
+
+          {showPasswordChange ? (
+            <Paper className="workspace-panel" elevation={0}>
+              <Stack spacing={1.5}>
+                <Box>
+                  <Typography variant="h6">Смена пароля</Typography>
+                  <Typography className="muted-copy">
+                    Новый пароль должен быть не короче 8 символов.
+                  </Typography>
+                </Box>
+                <Grid container spacing={1.5}>
+                  <Grid item xs={12} md={4}>
+                    <TextField
+                      label="Текущий пароль"
+                      type="password"
+                      value={currentPasswordValue}
+                      onChange={(event) => setCurrentPasswordValue(event.target.value)}
+                      fullWidth
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <TextField
+                      label="Новый пароль"
+                      type="password"
+                      value={newPasswordValue}
+                      onChange={(event) => setNewPasswordValue(event.target.value)}
+                      fullWidth
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                      <Button
+                        variant="contained"
+                        disabled={passwordChangeLoading}
+                        onClick={() => {
+                          void handleChangePassword();
+                        }}
+                      >
+                        {passwordChangeLoading ? "Сохранение..." : "Обновить пароль"}
+                      </Button>
+                      <Button
+                        variant="text"
+                        disabled={passwordChangeLoading}
+                        onClick={() => {
+                          setShowPasswordChange(false);
+                          setCurrentPasswordValue("");
+                          setNewPasswordValue("");
+                        }}
+                      >
+                        Отмена
+                      </Button>
+                    </Stack>
+                  </Grid>
+                </Grid>
+              </Stack>
+            </Paper>
+          ) : null}
 
           {errorMessage ? <Alert severity="error">{errorMessage}</Alert> : null}
           {successMessage ? <Alert severity="success">{successMessage}</Alert> : null}
@@ -5066,6 +5216,34 @@ export default function App() {
                                   <Typography className="muted-copy">
                                     {formatUserRoleLabel(selectedManagedUser.role)} · {selectedManagedUser.is_active ? "активен" : "отключен"}
                                   </Typography>
+                                </Stack>
+                              </Paper>
+                              <Paper className="repair-line" elevation={0}>
+                                <Stack spacing={1.25}>
+                                  <Typography className="metric-label">Сброс пароля сотрудника</Typography>
+                                  <Grid container spacing={1.5}>
+                                    <Grid item xs={12} sm={8}>
+                                      <TextField
+                                        label="Новый пароль для сотрудника"
+                                        type="password"
+                                        value={adminResetPasswordValue}
+                                        onChange={(event) => setAdminResetPasswordValue(event.target.value)}
+                                        fullWidth
+                                      />
+                                    </Grid>
+                                    <Grid item xs={12} sm={4}>
+                                      <Button
+                                        fullWidth
+                                        variant="contained"
+                                        disabled={userSaving}
+                                        onClick={() => {
+                                          void handleAdminResetUserPassword();
+                                        }}
+                                      >
+                                        {userSaving ? "Сохранение..." : "Сбросить пароль"}
+                                      </Button>
+                                    </Grid>
+                                  </Grid>
                                 </Stack>
                               </Paper>
                               <Paper className="repair-line" elevation={0}>

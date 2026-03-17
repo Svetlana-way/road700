@@ -7,9 +7,10 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user, get_db
 from app.core.config import settings
-from app.core.security import create_access_token, verify_password
+from app.core.security import create_access_token, get_password_hash, verify_password
+from app.models.audit import AuditLog
 from app.models.user import User
-from app.schemas.auth import TokenResponse
+from app.schemas.auth import ChangePasswordRequest, ChangePasswordResponse, TokenResponse
 from app.schemas.user import UserRead
 
 
@@ -44,3 +45,33 @@ def login(
 def me(current_user: User = Depends(get_current_active_user)) -> UserRead:
     return UserRead.model_validate(current_user)
 
+
+@router.post("/change-password", response_model=ChangePasswordResponse)
+def change_password(
+    payload: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> ChangePasswordResponse:
+    current_password = payload.current_password.strip()
+    new_password = payload.new_password.strip()
+    if len(new_password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Новый пароль должен быть не короче 8 символов")
+    if not verify_password(current_password, current_user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Текущий пароль указан неверно")
+    if current_password == new_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Новый пароль должен отличаться от текущего")
+
+    current_user.password_hash = get_password_hash(new_password)
+    db.add(current_user)
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            entity_type="user",
+            entity_id=str(current_user.id),
+            action_type="user_password_changed",
+            old_value=None,
+            new_value={"self_service": True},
+        )
+    )
+    db.commit()
+    return ChangePasswordResponse(message="Пароль обновлён")

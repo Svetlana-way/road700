@@ -792,9 +792,29 @@ const documentStatusLabels: Record<string, string> = {
   ocr_error: "Ошибка OCR",
   archived: "Архив",
 };
+const genericStatusLabels: Record<string, string> = {
+  preliminary: "Предварительный",
+  confirmed: "Подтверждено",
+  archived: "Архив",
+  merged: "Объединён",
+  uploaded: "Загружен",
+  recognized: "Распознан",
+  partially_recognized: "Распознан частично",
+  needs_review: "Требует ручной проверки",
+  ocr_error: "Ошибка OCR",
+  draft: "Черновик",
+  in_review: "На проверке",
+  employee_confirmed: "Подтверждено сотрудником",
+  suspicious: "Подозрительный",
+  review: "Обычный",
+  critical: "Критичный",
+  normal: "Норма",
+  warning: "Предупреждение",
+  error: "Ошибка",
+};
 
 function formatStatus(status: string) {
-  return status.split("_").join(" ");
+  return genericStatusLabels[status] || status.split("_").join(" ");
 }
 
 function formatMoney(value?: number) {
@@ -966,6 +986,13 @@ function formatSourceTypeLabel(value: string | null | undefined) {
     return "Любой";
   }
   return labels[value] || value.toUpperCase();
+}
+
+function formatCatalogCodeLabel(value: string | null | undefined) {
+  if (!value) {
+    return "Не указан";
+  }
+  return value;
 }
 
 function formatHours(value: number | null | undefined) {
@@ -1700,7 +1727,7 @@ async function downloadDocumentFile(documentId: number, token: string): Promise<
 
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(payload?.detail || `Request failed: ${response.status}`);
+    throw new Error(payload?.detail || `Ошибка запроса: ${response.status}`);
   }
 
   const blob = await response.blob();
@@ -1723,7 +1750,7 @@ async function apiRequest<T>(path: string, init: RequestInit = {}, token?: strin
 
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(payload?.detail || `Request failed: ${response.status}`);
+    throw new Error(payload?.detail || `Ошибка запроса: ${response.status}`);
   }
 
   return (await response.json()) as T;
@@ -2154,7 +2181,7 @@ export default function App() {
       }
       setErrorMessage("");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to load workspace";
+      const message = error instanceof Error ? error.message : "Не удалось загрузить рабочее пространство";
       setErrorMessage(message);
       if (message.toLowerCase().includes("validate credentials")) {
         localStorage.removeItem(TOKEN_STORAGE_KEY);
@@ -2259,7 +2286,7 @@ export default function App() {
         }
       })
       .catch((error) => {
-        setErrorMessage(error instanceof Error ? error.message : "Failed to load repair");
+        setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить ремонт");
       })
       .finally(() => {
         setRepairLoading(false);
@@ -2285,7 +2312,7 @@ export default function App() {
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
-        throw new Error(payload?.detail || "Login failed");
+        throw new Error(payload?.detail || "Не удалось выполнить вход");
       }
 
       const payload = (await response.json()) as LoginResponse;
@@ -2293,7 +2320,7 @@ export default function App() {
       setToken(payload.access_token);
       setPasswordValue("");
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Login failed");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось выполнить вход");
     } finally {
       setLoginLoading(false);
     }
@@ -2302,7 +2329,7 @@ export default function App() {
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!token || !selectedFile) {
-      setErrorMessage("Select a file before uploading");
+      setErrorMessage("Сначала выберите файл");
       return;
     }
 
@@ -2332,7 +2359,7 @@ export default function App() {
       setSelectedFile(null);
       await loadWorkspace(token);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Upload failed");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить документ");
     } finally {
       setUploadLoading(false);
     }
@@ -2359,7 +2386,7 @@ export default function App() {
       setAttachedDocumentNotes("");
       setAttachedDocumentFile(null);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to load repair");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить ремонт");
     } finally {
       setRepairLoading(false);
     }
@@ -2390,7 +2417,7 @@ export default function App() {
       await loadWorkspace(token);
       await openRepairByIds(documentId, repairId);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to reprocess document");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось повторно распознать документ");
     } finally {
       setReprocessLoading(false);
     }
@@ -2412,7 +2439,7 @@ export default function App() {
       window.open(objectUrl, "_blank", "noopener,noreferrer");
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to open document");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось открыть документ");
     } finally {
       setDocumentOpenLoadingId(null);
     }
@@ -2420,7 +2447,7 @@ export default function App() {
 
   async function handleAttachDocumentToRepair() {
     if (!token || !selectedRepair || !attachedDocumentFile) {
-      setErrorMessage("Select a file before uploading");
+      setErrorMessage("Сначала выберите файл");
       return;
     }
 
@@ -2449,7 +2476,7 @@ export default function App() {
       await loadWorkspace(token);
       await openRepairByIds(result.document.id, selectedRepair.id);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to upload document to repair");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось прикрепить документ к ремонту");
     } finally {
       setAttachDocumentLoading(false);
     }
@@ -2475,7 +2502,7 @@ export default function App() {
       await loadWorkspace(token);
       await openRepairByIds(result.id, selectedRepair.id);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to set primary document");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось назначить основной документ");
     } finally {
       setPrimaryDocumentLoadingId(null);
     }
@@ -2504,7 +2531,7 @@ export default function App() {
       setDocumentComparison(result);
       setDocumentComparisonComment("");
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to compare documents");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось сравнить документы");
     } finally {
       setDocumentComparisonLoadingId(null);
     }
@@ -2539,7 +2566,7 @@ export default function App() {
       await loadWorkspace(token);
       await openRepairByIds(result.document_id, result.repair_id);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to review document comparison");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить решение по сверке документов");
     } finally {
       setDocumentComparisonReviewLoading(false);
     }
@@ -2570,7 +2597,7 @@ export default function App() {
       setSuccessMessage(isResolved ? "Проверка закрыта" : "Проверка возвращена в работу");
       await loadWorkspace(token);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to update repair check");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось обновить проверку ремонта");
     } finally {
       setCheckActionLoadingId(null);
     }
@@ -2601,7 +2628,7 @@ export default function App() {
       await loadWorkspace(token);
       await openRepairByIds(result.document_id, result.repair_id);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to apply review action");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось применить действие по проверке");
     } finally {
       setReviewActionLoading(false);
     }
@@ -2615,7 +2642,7 @@ export default function App() {
     try {
       await loadLaborNormCatalog(token);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to load labor norms catalog");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить справочник нормо-часов");
     }
   }
 
@@ -2627,7 +2654,7 @@ export default function App() {
     try {
       await loadServices(token);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to load services");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить сервисы");
     }
   }
 
@@ -2698,7 +2725,7 @@ export default function App() {
       await loadReviewRules(token);
       resetReviewRuleEditor();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to save review rule");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить правило проверки");
     } finally {
       setReviewRuleSaving(false);
     }
@@ -2720,7 +2747,7 @@ export default function App() {
       return;
     }
     if (!ocrRuleForm.profile_scope.trim() || !ocrRuleForm.target_field.trim() || !ocrRuleForm.pattern.trim()) {
-      setErrorMessage("Для OCR-правила обязательны профиль, поле и regex");
+      setErrorMessage("Для OCR-правила обязательны шаблон, поле и выражение поиска");
       return;
     }
 
@@ -2764,7 +2791,7 @@ export default function App() {
       await loadOcrRules(token, ocrRuleProfileFilter);
       resetOcrRuleEditor();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to save OCR rule");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить OCR-правило");
     } finally {
       setOcrRuleSaving(false);
     }
@@ -2786,7 +2813,7 @@ export default function App() {
       return;
     }
     if (!ocrProfileMatcherForm.profile_scope.trim() || !ocrProfileMatcherForm.title.trim()) {
-      setErrorMessage("Для matcher обязательны профиль и название");
+      setErrorMessage("Для правила выбора шаблона обязательны шаблон и название");
       return;
     }
 
@@ -2815,7 +2842,7 @@ export default function App() {
           },
           token,
         );
-        setSuccessMessage("Matcher OCR-профиля обновлён");
+        setSuccessMessage("Правило выбора шаблона обновлено");
       } else {
         await apiRequest<OcrProfileMatcherItem>(
           "/ocr-profile-matchers",
@@ -2825,13 +2852,13 @@ export default function App() {
           },
           token,
         );
-        setSuccessMessage("Matcher OCR-профиля создан");
+        setSuccessMessage("Правило выбора шаблона создано");
       }
 
       await loadOcrProfileMatchers(token, ocrProfileMatcherProfileFilter);
       resetOcrProfileMatcherEditor();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to save OCR profile matcher");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить правило выбора шаблона");
     } finally {
       setOcrProfileMatcherSaving(false);
     }
@@ -2856,7 +2883,7 @@ export default function App() {
       setSuccessMessage("OCR-сигнал обновлён");
       await loadOcrLearningSignals(token);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to update OCR learning signal");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось обновить OCR-сигнал");
     } finally {
       setOcrLearningUpdateId(null);
     }
@@ -2913,10 +2940,10 @@ export default function App() {
           notes: payload.matcher_draft.notes || "",
         });
         setOcrProfileMatcherProfileFilter(payload.matcher_draft.profile_scope);
-        setSuccessMessage("Черновик matcher перенесён в форму редактирования");
+        setSuccessMessage("Черновик правила выбора перенесён в форму редактирования");
       }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to load OCR learning draft");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить черновик из OCR-обучения");
     } finally {
       setOcrLearningDraftId(null);
     }
@@ -2979,7 +3006,7 @@ export default function App() {
       await loadServices(token);
       resetServiceEditor();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to save service");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить сервис");
     } finally {
       setServiceSaving(false);
     }
@@ -3018,7 +3045,7 @@ export default function App() {
       await loadLaborNormCatalogConfigs(token);
       await loadLaborNormCatalog(token);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to import labor norms catalog");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось импортировать справочник нормо-часов");
     } finally {
       setLaborNormImportLoading(false);
     }
@@ -3058,7 +3085,7 @@ export default function App() {
     }
 
     if (!laborNormCatalogForm.scope.trim() || !laborNormCatalogForm.catalog_name.trim()) {
-      setErrorMessage("Для каталога обязательны scope и название");
+      setErrorMessage("Для каталога обязательны код и название");
       return;
     }
 
@@ -3113,7 +3140,7 @@ export default function App() {
       }
       resetLaborNormCatalogEditor();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to save labor norm catalog");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить каталог нормо-часов");
     } finally {
       setLaborNormCatalogSaving(false);
     }
@@ -3135,7 +3162,7 @@ export default function App() {
       return;
     }
     if (!laborNormEntryForm.scope.trim() || !laborNormEntryForm.code.trim() || !laborNormEntryForm.name_ru.trim()) {
-      setErrorMessage("Для записи обязательны scope, код и русское название");
+      setErrorMessage("Для записи обязательны каталог, код и русское название");
       return;
     }
     if (!laborNormEntryForm.standard_hours.trim()) {
@@ -3188,7 +3215,7 @@ export default function App() {
       await loadLaborNormCatalog(token, laborNormQuery, laborNormEntryForm.scope.trim(), laborNormCategory);
       resetLaborNormEntryEditor(laborNormEntryForm.scope.trim());
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to save labor norm entry");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить запись нормо-часов");
     } finally {
       setLaborNormEntrySaving(false);
     }
@@ -3213,7 +3240,7 @@ export default function App() {
       setSuccessMessage(`Запись ${item.code} отправлена в архив`);
       await loadLaborNormCatalog(token);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to archive labor norm entry");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось отправить запись в архив");
     } finally {
       setLaborNormEntrySaving(false);
     }
@@ -3421,7 +3448,7 @@ export default function App() {
       setSuccessMessage("Карточка ремонта обновлена");
       await loadWorkspace(token);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to save repair");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить ремонт");
     } finally {
       setSaveRepairLoading(false);
     }
@@ -3837,7 +3864,7 @@ export default function App() {
                                 <Chip
                                   size="small"
                                   color={statusColor(item.document.status)}
-                                  label={formatStatus(item.document.status)}
+                                  label={formatDocumentStatusLabel(item.document.status)}
                                 />
                               </Stack>
                             </Stack>
@@ -3927,7 +3954,7 @@ export default function App() {
                                 <Chip
                                   size="small"
                                   color={statusColor(document.status)}
-                                  label={formatStatus(document.status)}
+                                  label={formatDocumentStatusLabel(document.status)}
                                 />
                               </Stack>
                             </Stack>
@@ -4581,7 +4608,7 @@ export default function App() {
                                       void handleLoadOcrLearningDraft(item.id, "matcher");
                                     }}
                                   >
-                                    В matcher
+                                    В правило выбора
                                   </Button>
                                   {item.status !== "reviewed" ? (
                                     <Button
@@ -4639,7 +4666,7 @@ export default function App() {
                       <Box>
                         <Typography variant="h5">Технические настройки OCR</Typography>
                         <Typography className="muted-copy">
-                          Regex-правила и правила выбора шаблона нужны только для тонкой настройки распознавания и не должны мешать основной работе.
+                          Правила поиска и выбора шаблона нужны только для тонкой настройки распознавания и не должны мешать основной работе.
                         </Typography>
                       </Box>
                       <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
@@ -4650,7 +4677,7 @@ export default function App() {
                           {showTechnicalOcrSettings ? "Скрыть технические настройки OCR" : "Показать технические настройки OCR"}
                         </Button>
                         <Typography className="muted-copy">
-                          Внутри находятся шаблоны документов, правила выбора и regex-шаблоны для разработчика или администратора.
+                          Внутри находятся шаблоны документов, правила выбора и шаблоны поиска для разработчика или администратора.
                         </Typography>
                       </Stack>
                     </Stack>
@@ -4902,7 +4929,7 @@ export default function App() {
                       <Box>
                         <Typography variant="h5">Правила извлечения полей OCR</Typography>
                         <Typography className="muted-copy">
-                          Шаблоны и regex-правила для извлечения номера заказ-наряда, даты, пробега, VIN, сервиса и сумм из разных форматов документов.
+                          Шаблоны и правила поиска для извлечения номера заказ-наряда, даты, пробега, VIN, сервиса и сумм из разных форматов документов.
                         </Typography>
                       </Box>
                       <Grid container spacing={1.5}>
@@ -5063,7 +5090,7 @@ export default function App() {
                             </Grid>
                             <Grid item xs={12} sm={9}>
                               <TextField
-                                label="Regex"
+                                label="Выражение поиска"
                                 value={ocrRuleForm.pattern}
                                 onChange={(event) =>
                                   setOcrRuleForm((current) => ({ ...current, pattern: event.target.value }))
@@ -5109,7 +5136,7 @@ export default function App() {
                             <Paper className="repair-line" key={`ocr-rule-${item.id}`} elevation={0}>
                               <Stack spacing={0.5}>
                                 <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                  <Typography>{item.target_field}</Typography>
+                                  <Typography>{formatOcrFieldLabel(item.target_field)}</Typography>
                                   <Stack direction="row" spacing={1}>
                                     <Chip
                                       size="small"
@@ -5387,7 +5414,7 @@ export default function App() {
                                           color={item.auto_match_enabled ? "success" : "default"}
                                           label={item.auto_match_enabled ? "Авто-матчинг" : "Только вручную"}
                                         />
-                                        <Chip size="small" variant="outlined" label={item.scope} />
+                                        <Chip size="small" variant="outlined" label={formatCatalogCodeLabel(item.scope)} />
                                       </Stack>
                                     </Stack>
                                     <Typography className="muted-copy">
@@ -5457,7 +5484,7 @@ export default function App() {
                             <MenuItem value="">Все каталоги</MenuItem>
                             {laborNormScopes.map((scope) => (
                               <MenuItem key={scope} value={scope}>
-                                {scope}
+                                {formatCatalogCodeLabel(scope)}
                               </MenuItem>
                             ))}
                           </TextField>
@@ -5520,7 +5547,7 @@ export default function App() {
                                 ) : null}
                                 {laborNormCatalogs.map((item) => (
                                   <MenuItem key={`import-${item.scope}`} value={item.scope}>
-                                    {item.catalog_name} · {item.scope}
+                                    {item.catalog_name} · {formatCatalogCodeLabel(item.scope)}
                                   </MenuItem>
                                 ))}
                               </TextField>
@@ -5631,7 +5658,7 @@ export default function App() {
                             </Grid>
                             <Grid item xs={12} sm={6}>
                               <TextField
-                                label="Название RU"
+                                label="Название на русском"
                                 value={laborNormEntryForm.name_ru}
                                 onChange={(event) =>
                                   setLaborNormEntryForm((current) => ({ ...current, name_ru: event.target.value }))
@@ -5641,7 +5668,7 @@ export default function App() {
                             </Grid>
                             <Grid item xs={12} sm={6}>
                               <TextField
-                                label="Альтернативное название RU"
+                                label="Альтернативное название на русском"
                                 value={laborNormEntryForm.name_ru_alt}
                                 onChange={(event) =>
                                   setLaborNormEntryForm((current) => ({ ...current, name_ru_alt: event.target.value }))
@@ -5651,7 +5678,7 @@ export default function App() {
                             </Grid>
                             <Grid item xs={12} sm={4}>
                               <TextField
-                                label="Название CN"
+                                label="Название на китайском"
                                 value={laborNormEntryForm.name_cn}
                                 onChange={(event) =>
                                   setLaborNormEntryForm((current) => ({ ...current, name_cn: event.target.value }))
@@ -5661,7 +5688,7 @@ export default function App() {
                             </Grid>
                             <Grid item xs={12} sm={4}>
                               <TextField
-                                label="Название EN"
+                                label="Название на английском"
                                 value={laborNormEntryForm.name_en}
                                 onChange={(event) =>
                                   setLaborNormEntryForm((current) => ({ ...current, name_en: event.target.value }))
@@ -5756,7 +5783,7 @@ export default function App() {
                                     {item.catalog_name || item.scope}
                                     {item.brand_family ? ` · ${item.brand_family}` : ""}
                                     {item.category ? ` · ${item.category}` : " · Без категории"}
-                                    {item.name_ru_alt ? ` · alt: ${item.name_ru_alt}` : ""}
+                                    {item.name_ru_alt ? ` · доп. название: ${item.name_ru_alt}` : ""}
                                     {` · статус ${formatStatus(item.status)}`}
                                   </Typography>
                                 <Typography className="muted-copy">
@@ -5813,7 +5840,7 @@ export default function App() {
                       <Stack spacing={2}>
                         <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="center">
                           <Stack direction="row" spacing={1} alignItems="center">
-                            <Chip size="small" label={formatStatus(selectedRepair.status)} />
+                            <Chip size="small" label={formatRepairStatus(selectedRepair.status)} />
                             {selectedReviewItem ? (
                               <Chip
                                 size="small"
@@ -6287,12 +6314,12 @@ export default function App() {
                                           <Chip
                                             size="small"
                                             color={statusColor(document.status as DocumentStatus)}
-                                            label={formatStatus(document.status)}
+                                            label={formatDocumentStatusLabel(document.status)}
                                           />
                                         </Stack>
                                       </Stack>
                                       <Typography className="muted-copy">
-                                        {formatDateTime(document.created_at)} · {document.source_type.toUpperCase()} · OCR {formatConfidence(document.ocr_confidence)}
+                                        {formatDateTime(document.created_at)} · {formatSourceTypeLabel(document.source_type)} · OCR {formatConfidence(document.ocr_confidence)}
                                       </Typography>
                                       {document.notes ? (
                                         <Typography className="muted-copy">{document.notes}</Typography>

@@ -4,6 +4,7 @@ from app.models.document import Document, DocumentVersion
 from app.models.imports import ImportConflict, ImportJob
 from app.models.labor_norm_catalog import LaborNormCatalog
 from app.models.labor_norm import LaborNorm
+from app.models.ocr_learning_signal import OcrLearningSignal
 from app.models.ocr_profile_matcher import OcrProfileMatcher
 from app.models.ocr_rule import OcrRule
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
@@ -21,6 +22,7 @@ __all__ = [
     "ImportJob",
     "LaborNormCatalog",
     "LaborNorm",
+    "OcrLearningSignal",
     "OcrProfileMatcher",
     "OcrRule",
     "Repair",

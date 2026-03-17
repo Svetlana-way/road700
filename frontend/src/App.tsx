@@ -157,6 +157,47 @@ type OcrProfileMatcherFormState = {
   notes: string;
 };
 
+type OcrLearningSignalItem = {
+  id: number;
+  repair_id: number;
+  document_id: number | null;
+  document_version_id: number | null;
+  created_by_user_id: number | null;
+  signal_type: string;
+  target_field: string;
+  ocr_profile_scope: string | null;
+  extracted_value: string | null;
+  corrected_value: string;
+  service_name: string | null;
+  source_type: string | null;
+  document_filename: string | null;
+  text_excerpt: string | null;
+  suggestion_summary: string | null;
+  status: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type OcrLearningSummaryItem = {
+  target_field: string;
+  ocr_profile_scope: string | null;
+  signal_type: string;
+  count: number;
+  suggestion_summary: string;
+  example_services: string[];
+  example_filenames: string[];
+};
+
+type OcrLearningResponse = {
+  items: OcrLearningSignalItem[];
+  summaries: OcrLearningSummaryItem[];
+  total: number;
+  statuses: string[];
+  target_fields: string[];
+  profile_scopes: string[];
+};
+
 type VehiclePreview = {
   id: number;
   plate_number: string | null;
@@ -1598,6 +1639,16 @@ export default function App() {
   const [ocrProfileMatcherForm, setOcrProfileMatcherForm] = useState<OcrProfileMatcherFormState>(
     createEmptyOcrProfileMatcherForm,
   );
+  const [ocrLearningSignals, setOcrLearningSignals] = useState<OcrLearningSignalItem[]>([]);
+  const [ocrLearningSummaries, setOcrLearningSummaries] = useState<OcrLearningSummaryItem[]>([]);
+  const [ocrLearningStatuses, setOcrLearningStatuses] = useState<string[]>([]);
+  const [ocrLearningTargetFields, setOcrLearningTargetFields] = useState<string[]>([]);
+  const [ocrLearningProfileScopes, setOcrLearningProfileScopes] = useState<string[]>([]);
+  const [ocrLearningStatusFilter, setOcrLearningStatusFilter] = useState("");
+  const [ocrLearningTargetFieldFilter, setOcrLearningTargetFieldFilter] = useState("");
+  const [ocrLearningProfileScopeFilter, setOcrLearningProfileScopeFilter] = useState("");
+  const [ocrLearningLoading, setOcrLearningLoading] = useState(false);
+  const [ocrLearningUpdateId, setOcrLearningUpdateId] = useState<number | null>(null);
   const [reviewQueueCounts, setReviewQueueCounts] = useState<Record<ReviewQueueCategory, number>>({
     all: 0,
     suspicious: 0,
@@ -1808,6 +1859,40 @@ export default function App() {
     setOcrProfileMatcherProfiles(payload.profile_scopes);
   }
 
+  async function loadOcrLearningSignals(
+    activeToken: string,
+    statusFilter: string = ocrLearningStatusFilter,
+    targetFieldFilter: string = ocrLearningTargetFieldFilter,
+    profileScopeFilter: string = ocrLearningProfileScopeFilter,
+  ) {
+    setOcrLearningLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", "50");
+      if (statusFilter) {
+        params.set("status", statusFilter);
+      }
+      if (targetFieldFilter) {
+        params.set("target_field", targetFieldFilter);
+      }
+      if (profileScopeFilter) {
+        params.set("profile_scope", profileScopeFilter);
+      }
+      const payload = await apiRequest<OcrLearningResponse>(
+        `/ocr-learning/signals?${params.toString()}`,
+        { method: "GET" },
+        activeToken,
+      );
+      setOcrLearningSignals(payload.items);
+      setOcrLearningSummaries(payload.summaries);
+      setOcrLearningStatuses(payload.statuses);
+      setOcrLearningTargetFields(payload.target_fields);
+      setOcrLearningProfileScopes(payload.profile_scopes);
+    } finally {
+      setOcrLearningLoading(false);
+    }
+  }
+
   async function loadLaborNormCatalogConfigs(activeToken: string) {
     const payload = await apiRequest<LaborNormCatalogConfigResponse>(
       "/labor-norms/catalogs",
@@ -1840,6 +1925,7 @@ export default function App() {
         reviewRulesPayload,
         ocrRulesPayload,
         ocrProfileMatchersPayload,
+        ocrLearningPayload,
       ] = await Promise.all([
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
         apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
@@ -1871,6 +1957,9 @@ export default function App() {
         me.role === "admin"
           ? apiRequest<OcrProfileMatcherResponse>("/ocr-profile-matchers", { method: "GET" }, activeToken)
           : Promise.resolve(null),
+        me.role === "admin"
+          ? apiRequest<OcrLearningResponse>("/ocr-learning/signals?limit=50", { method: "GET" }, activeToken)
+          : Promise.resolve(null),
       ]);
 
       setUser(me);
@@ -1894,6 +1983,11 @@ export default function App() {
       setOcrRuleTargetFields(ocrRulesPayload?.target_fields || []);
       setOcrProfileMatchers(ocrProfileMatchersPayload?.items || []);
       setOcrProfileMatcherProfiles(ocrProfileMatchersPayload?.profile_scopes || []);
+      setOcrLearningSignals(ocrLearningPayload?.items || []);
+      setOcrLearningSummaries(ocrLearningPayload?.summaries || []);
+      setOcrLearningStatuses(ocrLearningPayload?.statuses || []);
+      setOcrLearningTargetFields(ocrLearningPayload?.target_fields || []);
+      setOcrLearningProfileScopes(ocrLearningPayload?.profile_scopes || []);
       if (selectedDocumentId === null) {
         const defaultDocumentId =
           reviewQueueData.items[0]?.document.id ?? recentDocuments.items[0]?.id ?? null;
@@ -1930,6 +2024,11 @@ export default function App() {
       setOcrRuleTargetFields([]);
       setOcrProfileMatchers([]);
       setOcrProfileMatcherProfiles([]);
+      setOcrLearningSignals([]);
+      setOcrLearningSummaries([]);
+      setOcrLearningStatuses([]);
+      setOcrLearningTargetFields([]);
+      setOcrLearningProfileScopes([]);
       setLaborNorms([]);
       setLaborNormCatalogs([]);
       setLaborNormTotal(0);
@@ -2567,6 +2666,31 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Failed to save OCR profile matcher");
     } finally {
       setOcrProfileMatcherSaving(false);
+    }
+  }
+
+  async function handleUpdateOcrLearningSignal(signalId: number, nextStatus: string) {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    setOcrLearningUpdateId(signalId);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      await apiRequest<OcrLearningSignalItem>(
+        `/ocr-learning/signals/${signalId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status: nextStatus }),
+        },
+        token,
+      );
+      setSuccessMessage("OCR-сигнал обновлён");
+      await loadOcrLearningSignals(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to update OCR learning signal");
+    } finally {
+      setOcrLearningUpdateId(null);
     }
   }
 
@@ -3952,6 +4076,205 @@ export default function App() {
                         </Stack>
                       ) : (
                         <Typography className="muted-copy">Правила пока не загружены.</Typography>
+                      )}
+                    </Stack>
+                  </Paper>
+                ) : null}
+
+                {user?.role === "admin" ? (
+                  <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={2}>
+                      <Box>
+                        <Typography variant="h5">Очередь обучения OCR</Typography>
+                        <Typography className="muted-copy">
+                          Сигналы строятся из ручных исправлений администратора и показывают, где OCR регулярно ошибается или ничего не извлекает.
+                        </Typography>
+                      </Box>
+                      <Grid container spacing={1.5}>
+                        <Grid item xs={12} sm={4}>
+                          <TextField
+                            select
+                            label="Статус"
+                            value={ocrLearningStatusFilter}
+                            onChange={(event) => setOcrLearningStatusFilter(event.target.value)}
+                            fullWidth
+                          >
+                            <MenuItem value="">Все кроме rejected</MenuItem>
+                            {ocrLearningStatuses.map((item) => (
+                              <MenuItem key={item} value={item}>
+                                {item}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+                        <Grid item xs={12} sm={4}>
+                          <TextField
+                            select
+                            label="Поле"
+                            value={ocrLearningTargetFieldFilter}
+                            onChange={(event) => setOcrLearningTargetFieldFilter(event.target.value)}
+                            fullWidth
+                          >
+                            <MenuItem value="">Все поля</MenuItem>
+                            {ocrLearningTargetFields.map((item) => (
+                              <MenuItem key={item} value={item}>
+                                {item}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+                        <Grid item xs={12} sm={4}>
+                          <TextField
+                            select
+                            label="OCR-профиль"
+                            value={ocrLearningProfileScopeFilter}
+                            onChange={(event) => setOcrLearningProfileScopeFilter(event.target.value)}
+                            fullWidth
+                          >
+                            <MenuItem value="">Все профили</MenuItem>
+                            {ocrLearningProfileScopes.map((item) => (
+                              <MenuItem key={item} value={item}>
+                                {item}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+                      </Grid>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                        <Button
+                          variant="outlined"
+                          onClick={() => {
+                            if (token) {
+                              void loadOcrLearningSignals(token);
+                            }
+                          }}
+                          disabled={ocrLearningLoading}
+                        >
+                          {ocrLearningLoading ? "Загрузка..." : "Обновить"}
+                        </Button>
+                        <Button
+                          variant="text"
+                          disabled={ocrLearningLoading}
+                          onClick={() => {
+                            setOcrLearningStatusFilter("");
+                            setOcrLearningTargetFieldFilter("");
+                            setOcrLearningProfileScopeFilter("");
+                            if (token) {
+                              void loadOcrLearningSignals(token, "", "", "");
+                            }
+                          }}
+                        >
+                          Сбросить фильтр
+                        </Button>
+                      </Stack>
+                      {ocrLearningSummaries.length > 0 ? (
+                        <Stack spacing={1}>
+                          {ocrLearningSummaries.slice(0, 6).map((item, index) => (
+                            <Paper className="repair-line" key={`ocr-learning-summary-${index}`} elevation={0}>
+                              <Stack spacing={0.5}>
+                                <Typography>{item.suggestion_summary}</Typography>
+                                <Typography className="muted-copy">
+                                  Сигналов {item.count}
+                                  {item.ocr_profile_scope ? ` · профиль ${item.ocr_profile_scope}` : ""}
+                                  {` · поле ${item.target_field}`}
+                                  {` · тип ${item.signal_type}`}
+                                </Typography>
+                                {item.example_services.length > 0 ? (
+                                  <Typography className="muted-copy">
+                                    Сервисы: {item.example_services.join(", ")}
+                                  </Typography>
+                                ) : null}
+                                {item.example_filenames.length > 0 ? (
+                                  <Typography className="muted-copy">
+                                    Файлы: {item.example_filenames.join(", ")}
+                                  </Typography>
+                                ) : null}
+                              </Stack>
+                            </Paper>
+                          ))}
+                        </Stack>
+                      ) : null}
+                      {ocrLearningSignals.length > 0 ? (
+                        <Stack spacing={1}>
+                          {ocrLearningSignals.map((item) => (
+                            <Paper className="repair-line" key={`ocr-learning-${item.id}`} elevation={0}>
+                              <Stack spacing={0.5}>
+                                <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                  <Typography>
+                                    {item.target_field} · {item.signal_type}
+                                  </Typography>
+                                  <Stack direction="row" spacing={1}>
+                                    <Chip size="small" variant="outlined" label={item.status} />
+                                    {item.ocr_profile_scope ? (
+                                      <Chip size="small" variant="outlined" label={item.ocr_profile_scope} />
+                                    ) : null}
+                                  </Stack>
+                                </Stack>
+                                <Typography className="muted-copy">
+                                  Ремонт #{item.repair_id}
+                                  {item.document_id ? ` · документ #${item.document_id}` : ""}
+                                  {item.service_name ? ` · ${item.service_name}` : ""}
+                                  {item.document_filename ? ` · ${item.document_filename}` : ""}
+                                </Typography>
+                                <Typography className="muted-copy">
+                                  OCR: {item.extracted_value || "не извлечено"}
+                                  {` · Исправлено: ${item.corrected_value}`}
+                                </Typography>
+                                {item.suggestion_summary ? (
+                                  <Typography className="muted-copy">{item.suggestion_summary}</Typography>
+                                ) : null}
+                                {item.text_excerpt ? (
+                                  <Typography className="muted-copy">
+                                    Фрагмент: {item.text_excerpt.slice(0, 180)}
+                                    {item.text_excerpt.length > 180 ? "..." : ""}
+                                  </Typography>
+                                ) : null}
+                                <Stack direction="row" spacing={1} flexWrap="wrap">
+                                  {item.status !== "reviewed" ? (
+                                    <Button
+                                      size="small"
+                                      variant="outlined"
+                                      disabled={ocrLearningUpdateId === item.id}
+                                      onClick={() => {
+                                        void handleUpdateOcrLearningSignal(item.id, "reviewed");
+                                      }}
+                                    >
+                                      Reviewed
+                                    </Button>
+                                  ) : null}
+                                  {item.status !== "applied" ? (
+                                    <Button
+                                      size="small"
+                                      variant="text"
+                                      disabled={ocrLearningUpdateId === item.id}
+                                      onClick={() => {
+                                        void handleUpdateOcrLearningSignal(item.id, "applied");
+                                      }}
+                                    >
+                                      Applied
+                                    </Button>
+                                  ) : null}
+                                  {item.status !== "rejected" ? (
+                                    <Button
+                                      size="small"
+                                      variant="text"
+                                      disabled={ocrLearningUpdateId === item.id}
+                                      onClick={() => {
+                                        void handleUpdateOcrLearningSignal(item.id, "rejected");
+                                      }}
+                                    >
+                                      Reject
+                                    </Button>
+                                  ) : null}
+                                </Stack>
+                              </Stack>
+                            </Paper>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Typography className="muted-copy">
+                          Сигналы обучения пока не накоплены.
+                        </Typography>
                       )}
                     </Stack>
                   </Paper>

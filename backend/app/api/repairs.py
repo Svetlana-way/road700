@@ -11,6 +11,7 @@ from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.models.audit import AuditLog
 from app.models.document import Document
 from app.models.enums import CheckSeverity, RepairStatus, UserRole
+from app.models.ocr_learning_signal import OcrLearningSignal
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.user import User
 from app.schemas.repair import RepairCheckUpdateRequest, RepairDetailResponse, RepairUpdateRequest
@@ -18,6 +19,17 @@ from app.services.document_processing import replace_ocr_checks, resolve_service
 
 
 router = APIRouter(prefix="/repairs", tags=["repairs"])
+
+LEARNING_HEADER_FIELDS = (
+    "order_number",
+    "repair_date",
+    "mileage",
+    "service_name",
+    "work_total",
+    "parts_total",
+    "vat_total",
+    "grand_total",
+)
 
 
 def build_repair_snapshot(repair: Repair) -> dict:
@@ -269,6 +281,110 @@ def replace_manual_lines(
                 )
             )
 
+
+def get_learning_source_document(repair: Repair) -> Document | None:
+    if repair.source_document_id is not None:
+        matched = next((item for item in repair.documents if item.id == repair.source_document_id), None)
+        if matched is not None:
+            return matched
+    primary = next((item for item in repair.documents if item.is_primary), None)
+    if primary is not None:
+        return primary
+    return repair.documents[0] if repair.documents else None
+
+
+def get_latest_document_version(document: Document | None):
+    if document is None or not document.versions:
+        return None
+    return max(document.versions, key=lambda item: item.version_number)
+
+
+def stringify_learning_value(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, float):
+        return f"{value:.2f}"
+    return str(value)
+
+
+def build_repair_learning_snapshot(repair: Repair) -> dict[str, str | None]:
+    return {
+        "order_number": stringify_learning_value(repair.order_number),
+        "repair_date": stringify_learning_value(repair.repair_date.isoformat()),
+        "mileage": stringify_learning_value(repair.mileage),
+        "service_name": stringify_learning_value(repair.service.name if repair.service is not None else None),
+        "work_total": stringify_learning_value(float(repair.work_total)),
+        "parts_total": stringify_learning_value(float(repair.parts_total)),
+        "vat_total": stringify_learning_value(float(repair.vat_total)),
+        "grand_total": stringify_learning_value(float(repair.grand_total)),
+    }
+
+
+def suggestion_for_learning_signal(target_field: str, signal_type: str, profile_scope: str | None) -> str:
+    action = "Добавить правило извлечения" if signal_type == "missing" else "Уточнить правило извлечения"
+    if profile_scope and profile_scope != "default":
+        return f"{action} для поля `{target_field}` в профиле `{profile_scope}`"
+    return f"{action} для поля `{target_field}` и проверить необходимость отдельного OCR-профиля"
+
+
+def create_ocr_learning_signals_for_repair(
+    db: Session,
+    repair: Repair,
+    *,
+    current_admin: User,
+) -> None:
+    source_document = get_learning_source_document(repair)
+    latest_version = get_latest_document_version(source_document)
+    if latest_version is None:
+        return
+
+    parsed_payload = latest_version.parsed_payload if isinstance(latest_version.parsed_payload, dict) else {}
+    extracted_fields = parsed_payload.get("extracted_fields") if isinstance(parsed_payload.get("extracted_fields"), dict) else {}
+    text_excerpt = parsed_payload.get("text_excerpt") if isinstance(parsed_payload.get("text_excerpt"), str) else None
+    profile_scope = parsed_payload.get("ocr_profile_scope") if isinstance(parsed_payload.get("ocr_profile_scope"), str) else None
+    repair_snapshot = build_repair_learning_snapshot(repair)
+
+    for field_name in LEARNING_HEADER_FIELDS:
+        corrected_value = repair_snapshot.get(field_name)
+        if not corrected_value:
+            continue
+        extracted_value = stringify_learning_value(extracted_fields.get(field_name))
+        if extracted_value == corrected_value:
+            continue
+
+        signal_type = "missing" if not extracted_value else "mismatch"
+        existing = db.scalar(
+            select(OcrLearningSignal).where(
+                OcrLearningSignal.repair_id == repair.id,
+                OcrLearningSignal.document_version_id == latest_version.id,
+                OcrLearningSignal.target_field == field_name,
+                OcrLearningSignal.extracted_value == extracted_value,
+                OcrLearningSignal.corrected_value == corrected_value,
+            )
+        )
+        if existing is not None:
+            continue
+
+        db.add(
+            OcrLearningSignal(
+                repair_id=repair.id,
+                document_id=source_document.id if source_document is not None else None,
+                document_version_id=latest_version.id,
+                created_by_user_id=current_admin.id,
+                signal_type=signal_type,
+                target_field=field_name,
+                ocr_profile_scope=profile_scope,
+                extracted_value=extracted_value,
+                corrected_value=corrected_value,
+                service_name=repair.service.name if repair.service is not None else None,
+                source_type=source_document.source_type if source_document is not None else None,
+                document_filename=source_document.original_filename if source_document is not None else None,
+                text_excerpt=text_excerpt,
+                suggestion_summary=suggestion_for_learning_signal(field_name, signal_type, profile_scope),
+                status="new",
+            )
+        )
+
     if parts_payload is not None:
         db.execute(delete(RepairPart).where(RepairPart.repair_id == repair.id))
         for item in parts_payload:
@@ -347,6 +463,7 @@ def update_repair(
     refreshed = db.execute(stmt).unique().scalar_one_or_none()
     if refreshed is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repair could not be reloaded")
+    create_ocr_learning_signals_for_repair(db, refreshed, current_admin=current_admin)
     new_snapshot = build_repair_snapshot(refreshed)
     db.add(
         AuditLog(

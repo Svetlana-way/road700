@@ -5,6 +5,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.documents import router as documents_router
 from app.api.health import router as health_router
 from app.api.labor_norms import router as labor_norms_router
+from app.api.ocr_learning import router as ocr_learning_router
 from app.api.ocr_rules import router as ocr_rules_router
 from app.api.ocr_profile_matchers import router as ocr_profile_matchers_router
 from app.api.repairs import router as repairs_router
@@ -19,6 +20,7 @@ api_router.include_router(dashboard_router)
 api_router.include_router(documents_router)
 api_router.include_router(health_router, tags=["health"])
 api_router.include_router(labor_norms_router)
+api_router.include_router(ocr_learning_router)
 api_router.include_router(ocr_profile_matchers_router)
 api_router.include_router(ocr_rules_router)
 api_router.include_router(repairs_router)

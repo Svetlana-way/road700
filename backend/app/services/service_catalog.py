@@ -10,6 +10,7 @@ from xml.etree import ElementTree
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.paths import PROJECT_ROOT
 from app.models.enums import ServiceStatus
 from app.models.service import Service
 
@@ -33,7 +34,7 @@ class ServiceCatalogEntry:
 
 
 def get_service_catalog_dir() -> Path:
-    return Path(__file__).resolve().parents[3] / "Сервисы"
+    return PROJECT_ROOT / "Сервисы"
 
 
 def normalize_service_key(value: str | None) -> str:

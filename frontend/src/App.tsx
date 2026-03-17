@@ -42,6 +42,18 @@ type DashboardSummary = {
   documents_review_queue: number;
 };
 
+type DashboardDataQuality = {
+  average_ocr_confidence: number | null;
+  documents_low_confidence: number;
+  documents_ocr_error: number;
+  documents_needs_review: number;
+  services_preliminary: number;
+  works_preliminary: number;
+  parts_preliminary: number;
+  import_conflicts_pending: number;
+  repairs_suspicious: number;
+};
+
 type User = {
   id: number;
   full_name: string;
@@ -825,6 +837,17 @@ const summaryCards: Array<{ key: keyof DashboardSummary; label: string }> = [
   { key: "repairs_total", label: "Ремонтов в базе" },
   { key: "documents_total", label: "Документов загружено" },
   { key: "documents_review_queue", label: "Очередь проверки" },
+];
+
+const qualityCards: Array<{ key: keyof DashboardDataQuality; label: string }> = [
+  { key: "documents_needs_review", label: "Документы на проверке" },
+  { key: "documents_ocr_error", label: "Ошибки OCR" },
+  { key: "documents_low_confidence", label: "Низкая уверенность OCR" },
+  { key: "repairs_suspicious", label: "Подозрительные ремонты" },
+  { key: "services_preliminary", label: "Неподтверждённые сервисы" },
+  { key: "works_preliminary", label: "Неподтверждённые работы" },
+  { key: "parts_preliminary", label: "Неподтверждённые материалы" },
+  { key: "import_conflicts_pending", label: "Конфликты импорта" },
 ];
 
 const workspaceTabDescriptions: Record<WorkspaceTab, string> = {
@@ -2067,6 +2090,7 @@ export default function App() {
   const [showLaborNormImport, setShowLaborNormImport] = useState(false);
   const [showLaborNormEntryEditor, setShowLaborNormEntryEditor] = useState(false);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [dataQuality, setDataQuality] = useState<DashboardDataQuality | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [fleetVehicles, setFleetVehicles] = useState<Vehicle[]>([]);
   const [fleetVehiclesTotal, setFleetVehiclesTotal] = useState(0);
@@ -2525,6 +2549,7 @@ export default function App() {
       const me = await apiRequest<User>("/auth/me", { method: "GET" }, activeToken);
       const [
         dashboard,
+        dataQualityPayload,
         vehicleList,
         recentDocuments,
         reviewQueueData,
@@ -2539,6 +2564,7 @@ export default function App() {
         systemStatusPayload,
       ] = await Promise.all([
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
+        apiRequest<DashboardDataQuality>("/dashboard/data-quality", { method: "GET" }, activeToken),
         apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
         apiRequest<DocumentsResponse>("/documents?limit=8", { method: "GET" }, activeToken),
         apiRequest<ReviewQueueResponse>(
@@ -2581,6 +2607,7 @@ export default function App() {
 
       setUser(me);
       setSummary(dashboard);
+      setDataQuality(dataQualityPayload);
       setVehicles(vehicleList.items);
       setFleetVehicles(vehicleList.items);
       setFleetVehiclesTotal(vehicleList.total);
@@ -2640,6 +2667,7 @@ export default function App() {
       setShowPasswordChange(false);
       setActiveTechAdminTab("learning");
       setSummary(null);
+      setDataQuality(null);
       setVehicles([]);
       setFleetVehicles([]);
       setFleetVehiclesTotal(0);
@@ -4647,6 +4675,37 @@ export default function App() {
               </Grid>
             ))}
           </Grid>
+
+          <Paper className="workspace-panel" elevation={0}>
+            <Stack spacing={2}>
+              <Box>
+                <Typography variant="h5">Качество данных</Typography>
+                <Typography className="muted-copy">
+                  Контроль OCR, очереди проверки, предварительных справочников и конфликтов импорта.
+                </Typography>
+              </Box>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6} lg={3}>
+                  <Paper className="metric-card" elevation={0}>
+                    <Typography className="metric-label">Средняя уверенность OCR</Typography>
+                    <Typography variant="h3">
+                      {dataQuality ? formatConfidence(dataQuality.average_ocr_confidence) : "—"}
+                    </Typography>
+                  </Paper>
+                </Grid>
+                {qualityCards.map((card) => (
+                  <Grid item xs={12} sm={6} lg={3} key={card.key}>
+                    <Paper className="metric-card" elevation={0}>
+                      <Typography className="metric-label">{card.label}</Typography>
+                      <Typography variant="h3">
+                        {dataQuality ? dataQuality[card.key] : "—"}
+                      </Typography>
+                    </Paper>
+                  </Grid>
+                ))}
+              </Grid>
+            </Stack>
+          </Paper>
 
           <Grid container spacing={3}>
             {activeWorkspaceTab === "documents" ? (

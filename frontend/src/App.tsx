@@ -20,6 +20,7 @@ import {
 type UserRole = "admin" | "employee";
 type VehicleType = "truck" | "trailer";
 type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
+type ServiceStatus = "preliminary" | "confirmed" | "archived";
 type DocumentStatus =
   | "uploaded"
   | "recognized"
@@ -59,6 +60,36 @@ type Vehicle = {
 type VehiclesResponse = {
   items: Vehicle[];
   total: number;
+};
+
+type ServiceItem = {
+  id: number;
+  name: string;
+  city: string | null;
+  contact: string | null;
+  comment: string | null;
+  status: ServiceStatus;
+  created_by_user_id: number | null;
+  confirmed_by_user_id: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ServicesResponse = {
+  items: ServiceItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  cities: string[];
+};
+
+type ServiceFormState = {
+  id: number | null;
+  name: string;
+  city: string;
+  contact: string;
+  comment: string;
+  status: ServiceStatus;
 };
 
 type VehiclePreview = {
@@ -703,6 +734,28 @@ function createEmptyLaborNormEntryForm(scope = ""): LaborNormEntryFormState {
   };
 }
 
+function createEmptyServiceForm(): ServiceFormState {
+  return {
+    id: null,
+    name: "",
+    city: "",
+    contact: "",
+    comment: "",
+    status: "confirmed",
+  };
+}
+
+function createServiceFormFromItem(item: ServiceItem): ServiceFormState {
+  return {
+    id: item.id,
+    name: item.name,
+    city: item.city || "",
+    contact: item.contact || "",
+    comment: item.comment || "",
+    status: item.status,
+  };
+}
+
 function createLaborNormEntryFormFromItem(item: LaborNormCatalogItem): LaborNormEntryFormState {
   return {
     id: item.id,
@@ -1291,6 +1344,13 @@ export default function App() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [services, setServices] = useState<ServiceItem[]>([]);
+  const [serviceCities, setServiceCities] = useState<string[]>([]);
+  const [serviceQuery, setServiceQuery] = useState("");
+  const [serviceCityFilter, setServiceCityFilter] = useState("");
+  const [serviceLoading, setServiceLoading] = useState(false);
+  const [serviceSaving, setServiceSaving] = useState(false);
+  const [serviceForm, setServiceForm] = useState<ServiceFormState>(createEmptyServiceForm);
   const [laborNorms, setLaborNorms] = useState<LaborNormCatalogItem[]>([]);
   const [laborNormCatalogs, setLaborNormCatalogs] = useState<LaborNormCatalogConfigItem[]>([]);
   const [laborNormTotal, setLaborNormTotal] = useState(0);
@@ -1457,6 +1517,33 @@ export default function App() {
     }
   }
 
+  async function loadServices(
+    activeToken: string,
+    query: string = serviceQuery,
+    city: string = serviceCityFilter,
+  ) {
+    setServiceLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", "100");
+      if (query.trim()) {
+        params.set("q", query.trim());
+      }
+      if (city) {
+        params.set("city", city);
+      }
+      const payload = await apiRequest<ServicesResponse>(
+        `/services?${params.toString()}`,
+        { method: "GET" },
+        activeToken,
+      );
+      setServices(payload.items);
+      setServiceCities(payload.cities);
+    } finally {
+      setServiceLoading(false);
+    }
+  }
+
   async function loadLaborNormCatalogConfigs(activeToken: string) {
     const payload = await apiRequest<LaborNormCatalogConfigResponse>(
       "/labor-norms/catalogs",
@@ -1485,6 +1572,7 @@ export default function App() {
         reviewQueueData,
         laborNormCatalog,
         laborNormCatalogConfigs,
+        servicesPayload,
       ] = await Promise.all([
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
         apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
@@ -1504,6 +1592,9 @@ export default function App() {
         me.role === "admin"
           ? apiRequest<LaborNormCatalogConfigResponse>("/labor-norms/catalogs", { method: "GET" }, activeToken)
           : Promise.resolve(null),
+        me.role === "admin"
+          ? apiRequest<ServicesResponse>("/services?limit=100", { method: "GET" }, activeToken)
+          : Promise.resolve(null),
       ]);
 
       setUser(me);
@@ -1518,6 +1609,8 @@ export default function App() {
       setLaborNormCatalogs(laborNormCatalogConfigs?.items || []);
       setReviewQueue(reviewQueueData.items);
       setReviewQueueCounts(reviewQueueData.counts);
+      setServices(servicesPayload?.items || []);
+      setServiceCities(servicesPayload?.cities || []);
       if (selectedDocumentId === null) {
         const defaultDocumentId =
           reviewQueueData.items[0]?.document.id ?? recentDocuments.items[0]?.id ?? null;
@@ -1545,6 +1638,8 @@ export default function App() {
       setSummary(null);
       setVehicles([]);
       setDocuments([]);
+      setServices([]);
+      setServiceCities([]);
       setLaborNorms([]);
       setLaborNormCatalogs([]);
       setLaborNormTotal(0);
@@ -1553,6 +1648,7 @@ export default function App() {
       setLaborNormSourceFiles([]);
       setLaborNormCatalogForm(createEmptyCatalogForm());
       setLaborNormEntryForm(createEmptyLaborNormEntryForm());
+      setServiceForm(createEmptyServiceForm());
       setReviewQueue([]);
       setReviewQueueCounts({
         all: 0,
@@ -1969,6 +2065,78 @@ export default function App() {
       await loadLaborNormCatalog(token);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load labor norms catalog");
+    }
+  }
+
+  async function handleServiceSearch() {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    setErrorMessage("");
+    try {
+      await loadServices(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load services");
+    }
+  }
+
+  function handleEditService(item: ServiceItem) {
+    setServiceForm(createServiceFormFromItem(item));
+  }
+
+  function resetServiceEditor() {
+    setServiceForm(createEmptyServiceForm());
+  }
+
+  async function handleSaveService() {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    if (!serviceForm.name.trim()) {
+      setErrorMessage("Название сервиса обязательно");
+      return;
+    }
+
+    setServiceSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const payload = {
+        name: serviceForm.name.trim(),
+        city: serviceForm.city.trim() || null,
+        contact: serviceForm.contact.trim() || null,
+        comment: serviceForm.comment.trim() || null,
+        status: serviceForm.status,
+      };
+
+      if (serviceForm.id) {
+        await apiRequest<ServiceItem>(
+          `/services/${serviceForm.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          },
+          token,
+        );
+        setSuccessMessage("Сервис обновлён");
+      } else {
+        await apiRequest<ServiceItem>(
+          "/services",
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          },
+          token,
+        );
+        setSuccessMessage("Сервис создан");
+      }
+
+      await loadServices(token);
+      resetServiceEditor();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save service");
+    } finally {
+      setServiceSaving(false);
     }
   }
 
@@ -2924,6 +3092,190 @@ export default function App() {
                   <Paper className="workspace-panel" elevation={0}>
                     <Stack spacing={2}>
                       <Box>
+                        <Typography variant="h5">Справочник сервисов</Typography>
+                        <Typography className="muted-copy">
+                          Каталог сервисов для OCR, ручной правки ремонтов и нормализации названий.
+                        </Typography>
+                      </Box>
+                      <Grid container spacing={1.5}>
+                        <Grid item xs={12} sm={5}>
+                          <TextField
+                            label="Поиск по названию, городу или контакту"
+                            value={serviceQuery}
+                            onChange={(event) => setServiceQuery(event.target.value)}
+                            fullWidth
+                          />
+                        </Grid>
+                        <Grid item xs={12} sm={4}>
+                          <TextField
+                            select
+                            label="Город"
+                            value={serviceCityFilter}
+                            onChange={(event) => setServiceCityFilter(event.target.value)}
+                            fullWidth
+                          >
+                            <MenuItem value="">Все города</MenuItem>
+                            {serviceCities.map((city) => (
+                              <MenuItem key={city} value={city}>
+                                {city}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+                        <Grid item xs={12} sm={3}>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Button variant="outlined" onClick={() => void handleServiceSearch()} disabled={serviceLoading}>
+                              {serviceLoading ? "Загрузка..." : "Обновить"}
+                            </Button>
+                            <Button
+                              variant="text"
+                              disabled={serviceLoading}
+                              onClick={() => {
+                                setServiceQuery("");
+                                setServiceCityFilter("");
+                                if (token) {
+                                  void loadServices(token, "", "");
+                                }
+                              }}
+                            >
+                              Сбросить
+                            </Button>
+                          </Stack>
+                        </Grid>
+                      </Grid>
+                      <Paper className="repair-line" elevation={0}>
+                        <Stack spacing={1.25}>
+                          <Typography className="metric-label">
+                            Создание и редактирование сервиса
+                          </Typography>
+                          <Grid container spacing={1.5}>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Название"
+                                value={serviceForm.name}
+                                onChange={(event) =>
+                                  setServiceForm((current) => ({ ...current, name: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Город"
+                                value={serviceForm.city}
+                                onChange={(event) =>
+                                  setServiceForm((current) => ({ ...current, city: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Контакт"
+                                value={serviceForm.contact}
+                                onChange={(event) =>
+                                  setServiceForm((current) => ({ ...current, contact: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={2}>
+                              <TextField
+                                select
+                                label="Статус"
+                                value={serviceForm.status}
+                                onChange={(event) =>
+                                  setServiceForm((current) => ({
+                                    ...current,
+                                    status: event.target.value as ServiceStatus,
+                                  }))
+                                }
+                                fullWidth
+                              >
+                                <MenuItem value="preliminary">Предварительный</MenuItem>
+                                <MenuItem value="confirmed">Подтверждён</MenuItem>
+                                <MenuItem value="archived">Архив</MenuItem>
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12}>
+                              <TextField
+                                label="Комментарий"
+                                value={serviceForm.comment}
+                                onChange={(event) =>
+                                  setServiceForm((current) => ({ ...current, comment: event.target.value }))
+                                }
+                                fullWidth
+                                multiline
+                                minRows={2}
+                              />
+                            </Grid>
+                          </Grid>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Button
+                              variant="contained"
+                              disabled={serviceSaving}
+                              onClick={() => {
+                                void handleSaveService();
+                              }}
+                            >
+                              {serviceSaving ? "Сохранение..." : serviceForm.id ? "Сохранить сервис" : "Создать сервис"}
+                            </Button>
+                            <Button variant="text" disabled={serviceSaving} onClick={resetServiceEditor}>
+                              Сбросить форму
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                      <Typography className="muted-copy">
+                        В справочнике сервисов {services.length} записей по текущему фильтру.
+                      </Typography>
+                      {serviceLoading ? (
+                        <Stack spacing={1} alignItems="center">
+                          <CircularProgress size={24} />
+                          <Typography className="muted-copy">Загрузка сервисов...</Typography>
+                        </Stack>
+                      ) : services.length > 0 ? (
+                        <Stack spacing={1}>
+                          {services.map((item) => (
+                            <Paper className="repair-line" key={`service-${item.id}`} elevation={0}>
+                              <Stack spacing={0.5}>
+                                <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                  <Typography>{item.name}</Typography>
+                                  <Chip
+                                    size="small"
+                                    color={item.status === "confirmed" ? "success" : item.status === "preliminary" ? "warning" : "default"}
+                                    label={formatStatus(item.status)}
+                                  />
+                                </Stack>
+                                <Typography className="muted-copy">
+                                  {item.city || "Без города"}
+                                  {item.contact ? ` · ${item.contact}` : ""}
+                                </Typography>
+                                {item.comment ? <Typography className="muted-copy">{item.comment}</Typography> : null}
+                                <Stack direction="row" spacing={1}>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={() => handleEditService(item)}
+                                  >
+                                    Редактировать
+                                  </Button>
+                                </Stack>
+                              </Stack>
+                            </Paper>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Typography className="muted-copy">По текущему фильтру сервисы не найдены.</Typography>
+                      )}
+                    </Stack>
+                  </Paper>
+                ) : null}
+
+                {user?.role === "admin" ? (
+                  <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={2}>
+                      <Box>
                         <Typography variant="h5">Справочник нормо-часов</Typography>
                         <Typography className="muted-copy">
                           Администратор управляет каталогами, правилами применимости, импортом и отдельными строками без участия разработчика.
@@ -3643,8 +3995,15 @@ export default function App() {
                                     label="Сервис"
                                     value={repairDraft.service_name}
                                     onChange={(event) => updateRepairDraftField("service_name", event.target.value)}
+                                    inputProps={{ list: "known-services-list" }}
+                                    helperText={services.length > 0 ? "Можно выбрать существующий сервис из подсказки или ввести новый" : undefined}
                                     fullWidth
                                   />
+                                  <datalist id="known-services-list">
+                                    {services.map((item) => (
+                                      <option key={`service-option-${item.id}`} value={item.name} />
+                                    ))}
+                                  </datalist>
                                 </Grid>
                                 <Grid item xs={12} sm={6}>
                                   <TextField

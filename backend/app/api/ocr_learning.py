@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import distinct, func, select, true
@@ -10,6 +11,9 @@ from app.api.deps import get_current_admin, get_db
 from app.models.ocr_learning_signal import OcrLearningSignal
 from app.models.user import User
 from app.schemas.ocr_learning import (
+    OcrLearningDraftsResponse,
+    OcrLearningMatcherDraftRead,
+    OcrLearningOcrRuleDraftRead,
     OcrLearningSignalListResponse,
     OcrLearningSignalRead,
     OcrLearningSignalUpdate,
@@ -20,6 +24,72 @@ from app.schemas.ocr_learning import (
 router = APIRouter(prefix="/ocr-learning", tags=["ocr-learning"])
 
 ALLOWED_SIGNAL_STATUSES = {"new", "reviewed", "applied", "rejected"}
+AMOUNT_FIELDS = {"work_total", "parts_total", "vat_total", "grand_total"}
+
+
+def regex_escape_literal(value: str) -> str:
+    return re.escape(value.strip())
+
+
+def filename_stem_pattern(filename: str | None) -> str | None:
+    normalized_filename = normalize_optional_text(filename)
+    if not normalized_filename:
+        return None
+    stem = normalized_filename.rsplit(".", 1)[0].strip()
+    if not stem:
+        return None
+    compact = re.sub(r"\s+", r"\\s+", regex_escape_literal(stem))
+    return compact
+
+
+def build_ocr_rule_pattern(signal: OcrLearningSignal) -> str:
+    corrected_value = signal.corrected_value.strip()
+    if not corrected_value:
+        return r"()"
+    escaped_value = regex_escape_literal(corrected_value)
+    escaped_value = escaped_value.replace(r"\ ", r"\s+")
+
+    field_label_hints = {
+        "order_number": r"(?:заказ[\s-]*наряд|наряд[\s-]*заказ|№|N|#)",
+        "repair_date": r"(?:дата|от)",
+        "mileage": r"(?:пробег|одометр)",
+        "service_name": r"(?:сервис|сто|исполнитель|подрядчик)",
+        "work_total": r"(?:работы[\s-]*итого|стоимость[\s-]*работ|итого[\s-]*работ)",
+        "parts_total": r"(?:запчасти[\s-]*итого|материалы[\s-]*итого|стоимость[\s-]*запчастей|стоимость[\s-]*материалов)",
+        "vat_total": r"(?:ндс)",
+        "grand_total": r"(?:итого[\s-]*к[\s-]*оплате|к[\s-]*оплате|итого|всего)",
+    }
+    prefix = field_label_hints.get(signal.target_field)
+    if prefix:
+        return rf"(?:{prefix})[^\n\r\dA-Za-zА-Яа-я]{{0,20}}({escaped_value})"
+    return rf"({escaped_value})"
+
+
+def infer_value_parser(signal: OcrLearningSignal) -> str:
+    if signal.target_field == "repair_date":
+        return "date"
+    if signal.target_field == "mileage":
+        return "digits_int"
+    if signal.target_field in AMOUNT_FIELDS:
+        return "amount"
+    return "raw"
+
+
+def build_matcher_title(signal: OcrLearningSignal) -> str:
+    if signal.service_name:
+        return f"Авто-профиль {signal.service_name}"
+    if signal.document_filename:
+        return f"Авто-профиль {signal.document_filename}"
+    return f"Авто-профиль {signal.target_field}"
+
+
+def build_matcher_text_pattern(signal: OcrLearningSignal) -> str | None:
+    if signal.service_name:
+        return None
+    if signal.corrected_value:
+        escaped = regex_escape_literal(signal.corrected_value).replace(r"\ ", r"\s+")
+        return escaped
+    return None
 
 
 def normalize_optional_text(value: str | None) -> str | None:
@@ -165,3 +235,38 @@ def update_ocr_learning_signal(
     db.commit()
     db.refresh(item)
     return OcrLearningSignalRead.model_validate(item)
+
+
+@router.get("/signals/{signal_id}/drafts", response_model=OcrLearningDraftsResponse)
+def get_ocr_learning_signal_drafts(
+    signal_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> OcrLearningDraftsResponse:
+    _ = current_admin
+    item = get_signal_or_404(db, signal_id)
+    profile_scope = item.ocr_profile_scope or "default"
+    ocr_rule_draft = OcrLearningOcrRuleDraftRead(
+        profile_scope=profile_scope,
+        target_field=item.target_field,
+        pattern=build_ocr_rule_pattern(item),
+        value_parser=infer_value_parser(item),
+        confidence=0.7 if item.signal_type == "mismatch" else 0.6,
+        priority=40 if item.signal_type == "mismatch" else 60,
+        notes=item.suggestion_summary or "Черновик создан из OCR-сигнала обучения",
+    )
+    matcher_draft = OcrLearningMatcherDraftRead(
+        profile_scope=profile_scope,
+        title=build_matcher_title(item),
+        source_type=item.source_type,
+        filename_pattern=filename_stem_pattern(item.document_filename),
+        text_pattern=build_matcher_text_pattern(item),
+        service_name_pattern=regex_escape_literal(item.service_name) if item.service_name else None,
+        priority=80,
+        notes=item.suggestion_summary or "Черновик matcher создан из OCR-сигнала обучения",
+    )
+    return OcrLearningDraftsResponse(
+        signal=OcrLearningSignalRead.model_validate(item),
+        ocr_rule_draft=ocr_rule_draft,
+        matcher_draft=matcher_draft,
+    )

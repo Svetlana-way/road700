@@ -198,6 +198,29 @@ type OcrLearningResponse = {
   profile_scopes: string[];
 };
 
+type OcrLearningDraftsResponse = {
+  signal: OcrLearningSignalItem;
+  ocr_rule_draft: {
+    profile_scope: string;
+    target_field: string;
+    pattern: string;
+    value_parser: string;
+    confidence: number;
+    priority: number;
+    notes: string | null;
+  };
+  matcher_draft: {
+    profile_scope: string;
+    title: string;
+    source_type: string | null;
+    filename_pattern: string | null;
+    text_pattern: string | null;
+    service_name_pattern: string | null;
+    priority: number;
+    notes: string | null;
+  };
+};
+
 type VehiclePreview = {
   id: number;
   plate_number: string | null;
@@ -1649,6 +1672,7 @@ export default function App() {
   const [ocrLearningProfileScopeFilter, setOcrLearningProfileScopeFilter] = useState("");
   const [ocrLearningLoading, setOcrLearningLoading] = useState(false);
   const [ocrLearningUpdateId, setOcrLearningUpdateId] = useState<number | null>(null);
+  const [ocrLearningDraftId, setOcrLearningDraftId] = useState<number | null>(null);
   const [reviewQueueCounts, setReviewQueueCounts] = useState<Record<ReviewQueueCategory, number>>({
     all: 0,
     suspicious: 0,
@@ -2691,6 +2715,60 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Failed to update OCR learning signal");
     } finally {
       setOcrLearningUpdateId(null);
+    }
+  }
+
+  async function handleLoadOcrLearningDraft(
+    signalId: number,
+    target: "ocr_rule" | "matcher",
+  ) {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    setOcrLearningDraftId(signalId);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const payload = await apiRequest<OcrLearningDraftsResponse>(
+        `/ocr-learning/signals/${signalId}/drafts`,
+        { method: "GET" },
+        token,
+      );
+
+      if (target === "ocr_rule") {
+        setOcrRuleForm({
+          id: null,
+          profile_scope: payload.ocr_rule_draft.profile_scope,
+          target_field: payload.ocr_rule_draft.target_field,
+          pattern: payload.ocr_rule_draft.pattern,
+          value_parser: payload.ocr_rule_draft.value_parser,
+          confidence: String(payload.ocr_rule_draft.confidence),
+          priority: String(payload.ocr_rule_draft.priority),
+          is_active: "true",
+          notes: payload.ocr_rule_draft.notes || "",
+        });
+        setOcrRuleProfileFilter(payload.ocr_rule_draft.profile_scope);
+        setSuccessMessage("Черновик OCR-правила перенесён в форму редактирования");
+      } else {
+        setOcrProfileMatcherForm({
+          id: null,
+          profile_scope: payload.matcher_draft.profile_scope,
+          title: payload.matcher_draft.title,
+          source_type: payload.matcher_draft.source_type || "",
+          filename_pattern: payload.matcher_draft.filename_pattern || "",
+          text_pattern: payload.matcher_draft.text_pattern || "",
+          service_name_pattern: payload.matcher_draft.service_name_pattern || "",
+          priority: String(payload.matcher_draft.priority),
+          is_active: "true",
+          notes: payload.matcher_draft.notes || "",
+        });
+        setOcrProfileMatcherProfileFilter(payload.matcher_draft.profile_scope);
+        setSuccessMessage("Черновик matcher перенесён в форму редактирования");
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load OCR learning draft");
+    } finally {
+      setOcrLearningDraftId(null);
     }
   }
 
@@ -4230,6 +4308,26 @@ export default function App() {
                                   </Typography>
                                 ) : null}
                                 <Stack direction="row" spacing={1} flexWrap="wrap">
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    disabled={ocrLearningDraftId === item.id}
+                                    onClick={() => {
+                                      void handleLoadOcrLearningDraft(item.id, "ocr_rule");
+                                    }}
+                                  >
+                                    В OCR-правило
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    disabled={ocrLearningDraftId === item.id}
+                                    onClick={() => {
+                                      void handleLoadOcrLearningDraft(item.id, "matcher");
+                                    }}
+                                  >
+                                    В matcher
+                                  </Button>
                                   {item.status !== "reviewed" ? (
                                     <Button
                                       size="small"

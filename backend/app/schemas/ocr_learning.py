@@ -50,3 +50,30 @@ class OcrLearningSignalListResponse(BaseModel):
 class OcrLearningSignalUpdate(BaseModel):
     status: Optional[str] = None
     notes: Optional[str] = None
+
+
+class OcrLearningOcrRuleDraftRead(BaseModel):
+    profile_scope: str
+    target_field: str
+    pattern: str
+    value_parser: str
+    confidence: float
+    priority: int
+    notes: Optional[str] = None
+
+
+class OcrLearningMatcherDraftRead(BaseModel):
+    profile_scope: str
+    title: str
+    source_type: Optional[str]
+    filename_pattern: Optional[str]
+    text_pattern: Optional[str]
+    service_name_pattern: Optional[str]
+    priority: int
+    notes: Optional[str] = None
+
+
+class OcrLearningDraftsResponse(BaseModel):
+    signal: OcrLearningSignalRead
+    ocr_rule_draft: OcrLearningOcrRuleDraftRead
+    matcher_draft: OcrLearningMatcherDraftRead

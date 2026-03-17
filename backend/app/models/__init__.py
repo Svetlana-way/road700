@@ -4,6 +4,7 @@ from app.models.imports import ImportConflict, ImportJob
 from app.models.labor_norm_catalog import LaborNormCatalog
 from app.models.labor_norm import LaborNorm
 from app.models.ocr_rule import OcrRule
+from app.models.ocr_profile_matcher import OcrProfileMatcher
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.review_rule import ReviewRule
 from app.models.service import Service
@@ -18,6 +19,7 @@ __all__ = [
     "ImportJob",
     "LaborNormCatalog",
     "LaborNorm",
+    "OcrProfileMatcher",
     "OcrRule",
     "Repair",
     "RepairCheck",

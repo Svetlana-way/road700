@@ -31,6 +31,7 @@ from app.models.enums import (
     ServiceStatus,
 )
 from app.models.imports import ImportJob
+from app.models.ocr_profile_matcher import OcrProfileMatcher
 from app.models.ocr_rule import OcrRule
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
@@ -349,6 +350,13 @@ class ProcessingResult:
     message: str
 
 
+@dataclass(frozen=True)
+class OcrProfileSelection:
+    profile_scope: str
+    source: str
+    reason: str
+
+
 DEFAULT_OCR_RULE_DEFINITIONS: list[dict[str, object]] = [
     {"profile_scope": "default", "target_field": "order_number", "pattern": pattern, "value_parser": "raw", "confidence": 0.74, "priority": (index + 1) * 10}
     for index, pattern in enumerate(ORDER_PATTERNS)
@@ -504,6 +512,113 @@ def load_active_ocr_rules(db: Session, *, profile_scope: str | None = None) -> l
     if normalized_profile_scope:
         stmt = stmt.where(OcrRule.profile_scope.in_(("default", normalized_profile_scope)))
     return db.scalars(stmt).all()
+
+
+def load_active_ocr_profile_matchers(db: Session) -> list[OcrProfileMatcher]:
+    stmt = (
+        select(OcrProfileMatcher)
+        .where(OcrProfileMatcher.is_active.is_(True))
+        .order_by(OcrProfileMatcher.priority.asc(), OcrProfileMatcher.id.asc())
+    )
+    return db.scalars(stmt).all()
+
+
+def extract_profile_history_scope(document: Document) -> Optional[str]:
+    repair = document.repair
+    if repair is None:
+        return None
+    candidate_versions = []
+    for sibling in repair.documents:
+        if sibling.id == document.id:
+            continue
+        for version in sibling.versions:
+            payload = version.parsed_payload if isinstance(version.parsed_payload, dict) else {}
+            profile_scope = payload.get("ocr_profile_scope")
+            if isinstance(profile_scope, str) and profile_scope.strip():
+                candidate_versions.append((version.created_at, profile_scope.strip()))
+    if not candidate_versions:
+        return None
+    candidate_versions.sort(key=lambda item: item[0], reverse=True)
+    return candidate_versions[0][1]
+
+
+def profile_matcher_applies(
+    matcher: OcrProfileMatcher,
+    *,
+    document: Document,
+    text: str,
+) -> bool:
+    if matcher.source_type and matcher.source_type != document.source_type:
+        return False
+
+    filename = document.original_filename or ""
+    if matcher.filename_pattern:
+        try:
+            if re.search(matcher.filename_pattern, filename, re.IGNORECASE | re.MULTILINE) is None:
+                return False
+        except re.error:
+            return False
+
+    if matcher.text_pattern:
+        try:
+            if re.search(matcher.text_pattern, text, re.IGNORECASE | re.MULTILINE) is None:
+                return False
+        except re.error:
+            return False
+
+    if matcher.service_name_pattern:
+        service_name = document.repair.service.name if document.repair and document.repair.service else ""
+        try:
+            if re.search(matcher.service_name_pattern, service_name, re.IGNORECASE | re.MULTILINE) is None:
+                return False
+        except re.error:
+            return False
+
+    return True
+
+
+def select_ocr_profile_scope(db: Session, document: Document, text: str) -> OcrProfileSelection:
+    history_scope = extract_profile_history_scope(document)
+    matchers = load_active_ocr_profile_matchers(db)
+    matched = [item for item in matchers if profile_matcher_applies(item, document=document, text=text)]
+    if matched:
+        matched.sort(key=lambda item: (item.priority, item.id))
+        best = matched[0]
+        runner_up = matched[1] if len(matched) > 1 else None
+        if (
+            runner_up is not None
+            and runner_up.priority == best.priority
+            and runner_up.profile_scope != best.profile_scope
+        ):
+            if history_scope:
+                return OcrProfileSelection(
+                    profile_scope=history_scope,
+                    source="history_fallback",
+                    reason="Есть несколько одинаково подходящих matcher-правил, выбран последний профиль ремонта",
+                )
+            return OcrProfileSelection(
+                profile_scope="default",
+                source="ambiguous_fallback",
+                reason="Есть несколько одинаково подходящих matcher-правил, выбран default-профиль",
+            )
+        return OcrProfileSelection(
+            profile_scope=best.profile_scope,
+            source="matcher",
+            reason=best.title,
+        )
+
+    if history_scope:
+        return OcrProfileSelection(
+            profile_scope=history_scope,
+            source="history",
+            reason="Использован последний OCR-профиль из истории ремонта",
+        )
+
+    return OcrProfileSelection(
+        profile_scope="default",
+        source="default",
+        reason="Подходящий профиль не найден, использован default",
+    )
 
 
 def group_ocr_rules_by_field(rules: list[OcrRule]) -> dict[str, list[OcrRule]]:
@@ -1553,7 +1668,12 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
             )
 
         text, extracted_from, extraction_failure_reason = extract_document_text(storage_path, document.source_type)
-        parsed = parse_document_text(text, db=db) if text else {
+        profile_selection = select_ocr_profile_scope(db, document, text) if text else OcrProfileSelection(
+            profile_scope="default",
+            source="default",
+            reason="Текст не извлечён, использован default",
+        )
+        parsed = parse_document_text(text, db=db, profile_scope=profile_selection.profile_scope) if text else {
             "extracted_fields": {},
             "extracted_items": {"works": [], "parts": []},
             "confidence_map": {},
@@ -1712,6 +1832,9 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         text_excerpt = normalize_text(text.replace("\n", " "))[:500] if text else None
         parsed_payload = {
             "processor": "hybrid_document_ocr_v2",
+            "ocr_profile_scope": profile_selection.profile_scope,
+            "ocr_profile_source": profile_selection.source,
+            "ocr_profile_reason": profile_selection.reason,
             "document_kind": document.kind.value,
             "extracted_from": extracted_from,
             "text_length": len(text),

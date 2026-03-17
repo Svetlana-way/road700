@@ -124,6 +124,39 @@ type OcrRuleFormState = {
   notes: string;
 };
 
+type OcrProfileMatcherItem = {
+  id: number;
+  profile_scope: string;
+  title: string;
+  source_type: string | null;
+  filename_pattern: string | null;
+  text_pattern: string | null;
+  service_name_pattern: string | null;
+  priority: number;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type OcrProfileMatcherResponse = {
+  items: OcrProfileMatcherItem[];
+  profile_scopes: string[];
+};
+
+type OcrProfileMatcherFormState = {
+  id: number | null;
+  profile_scope: string;
+  title: string;
+  source_type: string;
+  filename_pattern: string;
+  text_pattern: string;
+  service_name_pattern: string;
+  priority: string;
+  is_active: "true" | "false";
+  notes: string;
+};
+
 type VehiclePreview = {
   id: number;
   plate_number: string | null;
@@ -526,6 +559,12 @@ type WorkLaborNormMeta = {
   standardHours: number | null;
 };
 
+type OcrProfileMeta = {
+  scope: string | null;
+  source: string | null;
+  reason: string | null;
+};
+
 type EditableWorkDraft = {
   work_code: string;
   work_name: string;
@@ -726,6 +765,27 @@ function formatLaborNormApplicability(payload: Record<string, unknown> | null | 
   return "Нормо-часы: применимость проверена";
 }
 
+function readOcrProfileMeta(payload: Record<string, unknown> | null | undefined): OcrProfileMeta | null {
+  if (!payload) {
+    return null;
+  }
+  return {
+    scope: typeof payload.ocr_profile_scope === "string" ? payload.ocr_profile_scope : null,
+    source: typeof payload.ocr_profile_source === "string" ? payload.ocr_profile_source : null,
+    reason: typeof payload.ocr_profile_reason === "string" ? payload.ocr_profile_reason : null,
+  };
+}
+
+function formatOcrProfileMeta(payload: Record<string, unknown> | null | undefined) {
+  const meta = readOcrProfileMeta(payload);
+  if (!meta?.scope) {
+    return null;
+  }
+  const sourceSuffix = meta.source ? ` · ${meta.source}` : "";
+  const reasonSuffix = meta.reason ? ` · ${meta.reason}` : "";
+  return `OCR-профиль: ${meta.scope}${sourceSuffix}${reasonSuffix}`;
+}
+
 function formatHours(value: number | null | undefined) {
   if (typeof value !== "number") {
     return null;
@@ -869,6 +929,36 @@ function createOcrRuleFormFromItem(item: OcrRuleItem): OcrRuleFormState {
     pattern: item.pattern,
     value_parser: item.value_parser,
     confidence: String(item.confidence),
+    priority: String(item.priority),
+    is_active: item.is_active ? "true" : "false",
+    notes: item.notes || "",
+  };
+}
+
+function createEmptyOcrProfileMatcherForm(): OcrProfileMatcherFormState {
+  return {
+    id: null,
+    profile_scope: "default",
+    title: "",
+    source_type: "",
+    filename_pattern: "",
+    text_pattern: "",
+    service_name_pattern: "",
+    priority: "100",
+    is_active: "true",
+    notes: "",
+  };
+}
+
+function createOcrProfileMatcherFormFromItem(item: OcrProfileMatcherItem): OcrProfileMatcherFormState {
+  return {
+    id: item.id,
+    profile_scope: item.profile_scope,
+    title: item.title,
+    source_type: item.source_type || "",
+    filename_pattern: item.filename_pattern || "",
+    text_pattern: item.text_pattern || "",
+    service_name_pattern: item.service_name_pattern || "",
     priority: String(item.priority),
     is_active: item.is_active ? "true" : "false",
     notes: item.notes || "",
@@ -1501,6 +1591,13 @@ export default function App() {
   const [ocrRuleProfileFilter, setOcrRuleProfileFilter] = useState("");
   const [ocrRuleSaving, setOcrRuleSaving] = useState(false);
   const [ocrRuleForm, setOcrRuleForm] = useState<OcrRuleFormState>(createEmptyOcrRuleForm);
+  const [ocrProfileMatchers, setOcrProfileMatchers] = useState<OcrProfileMatcherItem[]>([]);
+  const [ocrProfileMatcherProfiles, setOcrProfileMatcherProfiles] = useState<string[]>([]);
+  const [ocrProfileMatcherProfileFilter, setOcrProfileMatcherProfileFilter] = useState("");
+  const [ocrProfileMatcherSaving, setOcrProfileMatcherSaving] = useState(false);
+  const [ocrProfileMatcherForm, setOcrProfileMatcherForm] = useState<OcrProfileMatcherFormState>(
+    createEmptyOcrProfileMatcherForm,
+  );
   const [reviewQueueCounts, setReviewQueueCounts] = useState<Record<ReviewQueueCategory, number>>({
     all: 0,
     suspicious: 0,
@@ -1694,6 +1791,23 @@ export default function App() {
     setOcrRuleTargetFields(payload.target_fields);
   }
 
+  async function loadOcrProfileMatchers(
+    activeToken: string,
+    profileScope: string = ocrProfileMatcherProfileFilter,
+  ) {
+    const params = new URLSearchParams();
+    if (profileScope) {
+      params.set("profile_scope", profileScope);
+    }
+    const payload = await apiRequest<OcrProfileMatcherResponse>(
+      `/ocr-profile-matchers${params.toString() ? `?${params.toString()}` : ""}`,
+      { method: "GET" },
+      activeToken,
+    );
+    setOcrProfileMatchers(payload.items);
+    setOcrProfileMatcherProfiles(payload.profile_scopes);
+  }
+
   async function loadLaborNormCatalogConfigs(activeToken: string) {
     const payload = await apiRequest<LaborNormCatalogConfigResponse>(
       "/labor-norms/catalogs",
@@ -1725,6 +1839,7 @@ export default function App() {
         servicesPayload,
         reviewRulesPayload,
         ocrRulesPayload,
+        ocrProfileMatchersPayload,
       ] = await Promise.all([
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
         apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
@@ -1753,6 +1868,9 @@ export default function App() {
         me.role === "admin"
           ? apiRequest<OcrRuleResponse>("/ocr-rules", { method: "GET" }, activeToken)
           : Promise.resolve(null),
+        me.role === "admin"
+          ? apiRequest<OcrProfileMatcherResponse>("/ocr-profile-matchers", { method: "GET" }, activeToken)
+          : Promise.resolve(null),
       ]);
 
       setUser(me);
@@ -1774,6 +1892,8 @@ export default function App() {
       setOcrRules(ocrRulesPayload?.items || []);
       setOcrRuleProfiles(ocrRulesPayload?.profile_scopes || []);
       setOcrRuleTargetFields(ocrRulesPayload?.target_fields || []);
+      setOcrProfileMatchers(ocrProfileMatchersPayload?.items || []);
+      setOcrProfileMatcherProfiles(ocrProfileMatchersPayload?.profile_scopes || []);
       if (selectedDocumentId === null) {
         const defaultDocumentId =
           reviewQueueData.items[0]?.document.id ?? recentDocuments.items[0]?.id ?? null;
@@ -1808,6 +1928,8 @@ export default function App() {
       setOcrRules([]);
       setOcrRuleProfiles([]);
       setOcrRuleTargetFields([]);
+      setOcrProfileMatchers([]);
+      setOcrProfileMatcherProfiles([]);
       setLaborNorms([]);
       setLaborNormCatalogs([]);
       setLaborNormTotal(0);
@@ -1819,6 +1941,7 @@ export default function App() {
       setServiceForm(createEmptyServiceForm());
       setReviewRuleForm(createEmptyReviewRuleForm());
       setOcrRuleForm(createEmptyOcrRuleForm());
+      setOcrProfileMatcherForm(createEmptyOcrProfileMatcherForm());
       setReviewQueue([]);
       setReviewQueueCounts({
         all: 0,
@@ -2380,6 +2503,70 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Failed to save OCR rule");
     } finally {
       setOcrRuleSaving(false);
+    }
+  }
+
+  function handleEditOcrProfileMatcher(item: OcrProfileMatcherItem) {
+    setOcrProfileMatcherForm(createOcrProfileMatcherFormFromItem(item));
+  }
+
+  function resetOcrProfileMatcherEditor() {
+    setOcrProfileMatcherForm(createEmptyOcrProfileMatcherForm());
+  }
+
+  async function handleSaveOcrProfileMatcher() {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    if (!ocrProfileMatcherForm.profile_scope.trim() || !ocrProfileMatcherForm.title.trim()) {
+      setErrorMessage("Для matcher обязательны профиль и название");
+      return;
+    }
+
+    setOcrProfileMatcherSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const payload = {
+        profile_scope: ocrProfileMatcherForm.profile_scope.trim(),
+        title: ocrProfileMatcherForm.title.trim(),
+        source_type: ocrProfileMatcherForm.source_type || null,
+        filename_pattern: ocrProfileMatcherForm.filename_pattern.trim() || null,
+        text_pattern: ocrProfileMatcherForm.text_pattern.trim() || null,
+        service_name_pattern: ocrProfileMatcherForm.service_name_pattern.trim() || null,
+        priority: Number(ocrProfileMatcherForm.priority || "100"),
+        is_active: ocrProfileMatcherForm.is_active === "true",
+        notes: ocrProfileMatcherForm.notes.trim() || null,
+      };
+
+      if (ocrProfileMatcherForm.id) {
+        await apiRequest<OcrProfileMatcherItem>(
+          `/ocr-profile-matchers/${ocrProfileMatcherForm.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          },
+          token,
+        );
+        setSuccessMessage("Matcher OCR-профиля обновлён");
+      } else {
+        await apiRequest<OcrProfileMatcherItem>(
+          "/ocr-profile-matchers",
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          },
+          token,
+        );
+        setSuccessMessage("Matcher OCR-профиля создан");
+      }
+
+      await loadOcrProfileMatchers(token, ocrProfileMatcherProfileFilter);
+      resetOcrProfileMatcherEditor();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save OCR profile matcher");
+    } finally {
+      setOcrProfileMatcherSaving(false);
     }
   }
 
@@ -3348,6 +3535,11 @@ export default function App() {
                                 Проверить вручную: {document.parsed_payload.manual_review_reasons.join(", ")}
                               </Typography>
                             ) : null}
+                            {formatOcrProfileMeta(document.parsed_payload ?? null) ? (
+                              <Typography className="muted-copy">
+                                {formatOcrProfileMeta(document.parsed_payload ?? null)}
+                              </Typography>
+                            ) : null}
                             {formatLaborNormApplicability(document.parsed_payload ?? null) ? (
                               <Typography className="muted-copy">
                                 {formatLaborNormApplicability(document.parsed_payload ?? null)}
@@ -3760,6 +3952,239 @@ export default function App() {
                         </Stack>
                       ) : (
                         <Typography className="muted-copy">Правила пока не загружены.</Typography>
+                      )}
+                    </Stack>
+                  </Paper>
+                ) : null}
+
+                {user?.role === "admin" ? (
+                  <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={2}>
+                      <Box>
+                        <Typography variant="h5">Автовыбор OCR-профиля</Typography>
+                        <Typography className="muted-copy">
+                          Правила выбора OCR-профиля по типу файла, имени файла, сервису и текстовым признакам документа. Если правил нет, используется история ремонта и затем default.
+                        </Typography>
+                      </Box>
+                      <Grid container spacing={1.5}>
+                        <Grid item xs={12} sm={4}>
+                          <TextField
+                            select
+                            label="Профиль"
+                            value={ocrProfileMatcherProfileFilter}
+                            onChange={(event) => setOcrProfileMatcherProfileFilter(event.target.value)}
+                            fullWidth
+                          >
+                            <MenuItem value="">Все профили</MenuItem>
+                            {ocrProfileMatcherProfiles.map((item) => (
+                              <MenuItem key={item} value={item}>
+                                {item}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+                        <Grid item xs={12} sm={8}>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Button
+                              variant="outlined"
+                              onClick={() => {
+                                if (token) {
+                                  void loadOcrProfileMatchers(token, ocrProfileMatcherProfileFilter);
+                                }
+                              }}
+                            >
+                              Обновить список
+                            </Button>
+                            <Button
+                              variant="text"
+                              onClick={() => {
+                                setOcrProfileMatcherProfileFilter("");
+                                if (token) {
+                                  void loadOcrProfileMatchers(token, "");
+                                }
+                              }}
+                            >
+                              Сбросить фильтр
+                            </Button>
+                          </Stack>
+                        </Grid>
+                      </Grid>
+                      <Paper className="repair-line" elevation={0}>
+                        <Stack spacing={1.25}>
+                          <Typography className="metric-label">
+                            Создание и редактирование matcher
+                          </Typography>
+                          <Grid container spacing={1.5}>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Профиль"
+                                value={ocrProfileMatcherForm.profile_scope}
+                                onChange={(event) =>
+                                  setOcrProfileMatcherForm((current) => ({ ...current, profile_scope: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={5}>
+                              <TextField
+                                label="Название"
+                                value={ocrProfileMatcherForm.title}
+                                onChange={(event) =>
+                                  setOcrProfileMatcherForm((current) => ({ ...current, title: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={2}>
+                              <TextField
+                                select
+                                label="Тип файла"
+                                value={ocrProfileMatcherForm.source_type}
+                                onChange={(event) =>
+                                  setOcrProfileMatcherForm((current) => ({ ...current, source_type: event.target.value }))
+                                }
+                                fullWidth
+                              >
+                                <MenuItem value="">Любой</MenuItem>
+                                <MenuItem value="pdf">pdf</MenuItem>
+                                <MenuItem value="image">image</MenuItem>
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={2}>
+                              <TextField
+                                label="Приоритет"
+                                value={ocrProfileMatcherForm.priority}
+                                onChange={(event) =>
+                                  setOcrProfileMatcherForm((current) => ({ ...current, priority: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Regex имени файла"
+                                value={ocrProfileMatcherForm.filename_pattern}
+                                onChange={(event) =>
+                                  setOcrProfileMatcherForm((current) => ({ ...current, filename_pattern: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Regex текста документа"
+                                value={ocrProfileMatcherForm.text_pattern}
+                                onChange={(event) =>
+                                  setOcrProfileMatcherForm((current) => ({ ...current, text_pattern: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Regex сервиса"
+                                value={ocrProfileMatcherForm.service_name_pattern}
+                                onChange={(event) =>
+                                  setOcrProfileMatcherForm((current) => ({
+                                    ...current,
+                                    service_name_pattern: event.target.value,
+                                  }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                select
+                                label="Активность"
+                                value={ocrProfileMatcherForm.is_active}
+                                onChange={(event) =>
+                                  setOcrProfileMatcherForm((current) => ({
+                                    ...current,
+                                    is_active: event.target.value as "true" | "false",
+                                  }))
+                                }
+                                fullWidth
+                              >
+                                <MenuItem value="true">Активно</MenuItem>
+                                <MenuItem value="false">Отключено</MenuItem>
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={9}>
+                              <TextField
+                                label="Примечание"
+                                value={ocrProfileMatcherForm.notes}
+                                onChange={(event) =>
+                                  setOcrProfileMatcherForm((current) => ({ ...current, notes: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                          </Grid>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Button
+                              variant="contained"
+                              disabled={ocrProfileMatcherSaving}
+                              onClick={() => {
+                                void handleSaveOcrProfileMatcher();
+                              }}
+                            >
+                              {ocrProfileMatcherSaving
+                                ? "Сохранение..."
+                                : ocrProfileMatcherForm.id
+                                  ? "Сохранить matcher"
+                                  : "Создать matcher"}
+                            </Button>
+                            <Button variant="text" disabled={ocrProfileMatcherSaving} onClick={resetOcrProfileMatcherEditor}>
+                              Сбросить форму
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                      <Typography className="muted-copy">
+                        В правилах выбора профиля {ocrProfileMatchers.length} записей.
+                      </Typography>
+                      {ocrProfileMatchers.length > 0 ? (
+                        <Stack spacing={1}>
+                          {ocrProfileMatchers.map((item) => (
+                            <Paper className="repair-line" key={`ocr-matcher-${item.id}`} elevation={0}>
+                              <Stack spacing={0.5}>
+                                <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                  <Typography>{item.title}</Typography>
+                                  <Stack direction="row" spacing={1}>
+                                    <Chip
+                                      size="small"
+                                      color={item.is_active ? "success" : "default"}
+                                      label={item.is_active ? "Активно" : "Отключено"}
+                                    />
+                                    <Chip size="small" variant="outlined" label={item.profile_scope} />
+                                  </Stack>
+                                </Stack>
+                                <Typography className="muted-copy">
+                                  {item.source_type ? `source ${item.source_type} · ` : ""}
+                                  {`приоритет ${item.priority}`}
+                                </Typography>
+                                <Typography className="muted-copy">
+                                  Файл: {item.filename_pattern || "—"}
+                                  {` · Текст: ${item.text_pattern || "—"}`}
+                                  {` · Сервис: ${item.service_name_pattern || "—"}`}
+                                </Typography>
+                                {item.notes ? <Typography className="muted-copy">{item.notes}</Typography> : null}
+                                <Stack direction="row" spacing={1}>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={() => handleEditOcrProfileMatcher(item)}
+                                  >
+                                    Редактировать
+                                  </Button>
+                                </Stack>
+                              </Stack>
+                            </Paper>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Typography className="muted-copy">Matcher-правила по текущему фильтру не найдены.</Typography>
                       )}
                     </Stack>
                   </Paper>
@@ -5161,6 +5586,11 @@ export default function App() {
                                             version.parsed_payload.manual_review_reasons.length > 0 ? (
                                               <Typography className="muted-copy">
                                                 Ручная проверка: {version.parsed_payload.manual_review_reasons.join(", ")}
+                                              </Typography>
+                                            ) : null}
+                                            {formatOcrProfileMeta(version.parsed_payload) ? (
+                                              <Typography className="muted-copy">
+                                                {formatOcrProfileMeta(version.parsed_payload)}
                                               </Typography>
                                             ) : null}
                                             {formatLaborNormApplicability(version.parsed_payload) ? (

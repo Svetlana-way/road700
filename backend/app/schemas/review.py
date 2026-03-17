@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, VehicleType
 
@@ -71,3 +71,44 @@ class ReviewActionResponse(BaseModel):
     document_status: DocumentStatus
     repair_status: RepairStatus
     queue_item: Optional[ReviewQueueItemRead] = None
+
+
+class ReviewRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    rule_type: str
+    code: str
+    title: str
+    weight: int
+    bucket_override: Optional[str]
+    is_active: bool
+    sort_order: int
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReviewRuleListResponse(BaseModel):
+    items: list[ReviewRuleRead]
+    rule_types: list[str]
+
+
+class ReviewRuleCreate(BaseModel):
+    rule_type: str
+    code: str
+    title: str
+    weight: int = 0
+    bucket_override: Optional[str] = None
+    is_active: bool = True
+    sort_order: int = 100
+    notes: Optional[str] = None
+
+
+class ReviewRuleUpdate(BaseModel):
+    title: Optional[str] = None
+    weight: Optional[int] = None
+    bucket_override: Optional[str] = None
+    is_active: Optional[bool] = None
+    sort_order: Optional[int] = None
+    notes: Optional[str] = None

@@ -298,6 +298,37 @@ type ReviewQueueResponse = {
   offset: number;
 };
 
+type ReviewRuleItem = {
+  id: number;
+  rule_type: string;
+  code: string;
+  title: string;
+  weight: number;
+  bucket_override: string | null;
+  is_active: boolean;
+  sort_order: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ReviewRuleResponse = {
+  items: ReviewRuleItem[];
+  rule_types: string[];
+};
+
+type ReviewRuleFormState = {
+  id: number | null;
+  rule_type: string;
+  code: string;
+  title: string;
+  weight: string;
+  bucket_override: string;
+  is_active: "true" | "false";
+  sort_order: string;
+  notes: string;
+};
+
 type ReviewActionResponse = {
   message: string;
   document_id: number;
@@ -753,6 +784,34 @@ function createServiceFormFromItem(item: ServiceItem): ServiceFormState {
     contact: item.contact || "",
     comment: item.comment || "",
     status: item.status,
+  };
+}
+
+function createEmptyReviewRuleForm(): ReviewRuleFormState {
+  return {
+    id: null,
+    rule_type: "manual_review_reason",
+    code: "",
+    title: "",
+    weight: "0",
+    bucket_override: "",
+    is_active: "true",
+    sort_order: "100",
+    notes: "",
+  };
+}
+
+function createReviewRuleFormFromItem(item: ReviewRuleItem): ReviewRuleFormState {
+  return {
+    id: item.id,
+    rule_type: item.rule_type,
+    code: item.code,
+    title: item.title,
+    weight: String(item.weight),
+    bucket_override: item.bucket_override || "",
+    is_active: item.is_active ? "true" : "false",
+    sort_order: String(item.sort_order),
+    notes: item.notes || "",
   };
 }
 
@@ -1372,6 +1431,10 @@ export default function App() {
   const [laborNormCatalogForm, setLaborNormCatalogForm] = useState<LaborNormCatalogFormState>(createEmptyCatalogForm);
   const [laborNormEntryForm, setLaborNormEntryForm] = useState<LaborNormEntryFormState>(createEmptyLaborNormEntryForm);
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
+  const [reviewRules, setReviewRules] = useState<ReviewRuleItem[]>([]);
+  const [reviewRuleTypes, setReviewRuleTypes] = useState<string[]>([]);
+  const [reviewRuleSaving, setReviewRuleSaving] = useState(false);
+  const [reviewRuleForm, setReviewRuleForm] = useState<ReviewRuleFormState>(createEmptyReviewRuleForm);
   const [reviewQueueCounts, setReviewQueueCounts] = useState<Record<ReviewQueueCategory, number>>({
     all: 0,
     suspicious: 0,
@@ -1544,6 +1607,12 @@ export default function App() {
     }
   }
 
+  async function loadReviewRules(activeToken: string) {
+    const payload = await apiRequest<ReviewRuleResponse>("/review/rules", { method: "GET" }, activeToken);
+    setReviewRules(payload.items);
+    setReviewRuleTypes(payload.rule_types);
+  }
+
   async function loadLaborNormCatalogConfigs(activeToken: string) {
     const payload = await apiRequest<LaborNormCatalogConfigResponse>(
       "/labor-norms/catalogs",
@@ -1573,6 +1642,7 @@ export default function App() {
         laborNormCatalog,
         laborNormCatalogConfigs,
         servicesPayload,
+        reviewRulesPayload,
       ] = await Promise.all([
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
         apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
@@ -1595,6 +1665,9 @@ export default function App() {
         me.role === "admin"
           ? apiRequest<ServicesResponse>("/services?limit=100", { method: "GET" }, activeToken)
           : Promise.resolve(null),
+        me.role === "admin"
+          ? apiRequest<ReviewRuleResponse>("/review/rules", { method: "GET" }, activeToken)
+          : Promise.resolve(null),
       ]);
 
       setUser(me);
@@ -1611,6 +1684,8 @@ export default function App() {
       setReviewQueueCounts(reviewQueueData.counts);
       setServices(servicesPayload?.items || []);
       setServiceCities(servicesPayload?.cities || []);
+      setReviewRules(reviewRulesPayload?.items || []);
+      setReviewRuleTypes(reviewRulesPayload?.rule_types || []);
       if (selectedDocumentId === null) {
         const defaultDocumentId =
           reviewQueueData.items[0]?.document.id ?? recentDocuments.items[0]?.id ?? null;
@@ -1640,6 +1715,8 @@ export default function App() {
       setDocuments([]);
       setServices([]);
       setServiceCities([]);
+      setReviewRules([]);
+      setReviewRuleTypes([]);
       setLaborNorms([]);
       setLaborNormCatalogs([]);
       setLaborNormTotal(0);
@@ -1649,6 +1726,7 @@ export default function App() {
       setLaborNormCatalogForm(createEmptyCatalogForm());
       setLaborNormEntryForm(createEmptyLaborNormEntryForm());
       setServiceForm(createEmptyServiceForm());
+      setReviewRuleForm(createEmptyReviewRuleForm());
       setReviewQueue([]);
       setReviewQueueCounts({
         all: 0,
@@ -2077,6 +2155,76 @@ export default function App() {
       await loadServices(token);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load services");
+    }
+  }
+
+  function handleEditReviewRule(item: ReviewRuleItem) {
+    setReviewRuleForm(createReviewRuleFormFromItem(item));
+  }
+
+  function resetReviewRuleEditor() {
+    setReviewRuleForm(createEmptyReviewRuleForm());
+  }
+
+  async function handleSaveReviewRule() {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    if (!reviewRuleForm.rule_type.trim() || !reviewRuleForm.code.trim() || !reviewRuleForm.title.trim()) {
+      setErrorMessage("Для правила обязательны тип, код и название");
+      return;
+    }
+
+    setReviewRuleSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const payload = {
+        rule_type: reviewRuleForm.rule_type.trim(),
+        code: reviewRuleForm.code.trim(),
+        title: reviewRuleForm.title.trim(),
+        weight: Number(reviewRuleForm.weight || "0"),
+        bucket_override: reviewRuleForm.bucket_override || null,
+        is_active: reviewRuleForm.is_active === "true",
+        sort_order: Number(reviewRuleForm.sort_order || "100"),
+        notes: reviewRuleForm.notes.trim() || null,
+      };
+
+      if (reviewRuleForm.id) {
+        await apiRequest<ReviewRuleItem>(
+          `/review/rules/${reviewRuleForm.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              title: payload.title,
+              weight: payload.weight,
+              bucket_override: payload.bucket_override,
+              is_active: payload.is_active,
+              sort_order: payload.sort_order,
+              notes: payload.notes,
+            }),
+          },
+          token,
+        );
+        setSuccessMessage("Правило очереди проверки обновлено");
+      } else {
+        await apiRequest<ReviewRuleItem>(
+          "/review/rules",
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          },
+          token,
+        );
+        setSuccessMessage("Правило очереди проверки создано");
+      }
+
+      await loadReviewRules(token);
+      resetReviewRuleEditor();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save review rule");
+    } finally {
+      setReviewRuleSaving(false);
     }
   }
 
@@ -3267,6 +3415,196 @@ export default function App() {
                         </Stack>
                       ) : (
                         <Typography className="muted-copy">По текущему фильтру сервисы не найдены.</Typography>
+                      )}
+                    </Stack>
+                  </Paper>
+                ) : null}
+
+                {user?.role === "admin" ? (
+                  <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={2}>
+                      <Box>
+                        <Typography variant="h5">Правила OCR и очереди проверки</Typography>
+                        <Typography className="muted-copy">
+                          Настройка причин ручной проверки, весов приоритета и bucket без участия разработчика.
+                        </Typography>
+                      </Box>
+                      <Paper className="repair-line" elevation={0}>
+                        <Stack spacing={1.25}>
+                          <Typography className="metric-label">
+                            Создание и редактирование правила
+                          </Typography>
+                          <Grid container spacing={1.5}>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                select
+                                label="Тип правила"
+                                value={reviewRuleForm.rule_type}
+                                onChange={(event) =>
+                                  setReviewRuleForm((current) => ({ ...current, rule_type: event.target.value }))
+                                }
+                                fullWidth
+                                disabled={reviewRuleForm.id !== null}
+                              >
+                                {["manual_review_reason", "document_status", "repair_status", "check_severity", "signal"]
+                                  .filter((item, index, array) => array.indexOf(item) === index)
+                                  .map((item) => (
+                                    <MenuItem key={item} value={item}>
+                                      {item}
+                                    </MenuItem>
+                                  ))}
+                                {reviewRuleTypes
+                                  .filter((item) => !["manual_review_reason", "document_status", "repair_status", "check_severity", "signal"].includes(item))
+                                  .map((item) => (
+                                    <MenuItem key={item} value={item}>
+                                      {item}
+                                    </MenuItem>
+                                  ))}
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Код"
+                                value={reviewRuleForm.code}
+                                onChange={(event) =>
+                                  setReviewRuleForm((current) => ({ ...current, code: event.target.value }))
+                                }
+                                fullWidth
+                                disabled={reviewRuleForm.id !== null}
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                label="Название"
+                                value={reviewRuleForm.title}
+                                onChange={(event) =>
+                                  setReviewRuleForm((current) => ({ ...current, title: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={2}>
+                              <TextField
+                                label="Вес"
+                                type="number"
+                                value={reviewRuleForm.weight}
+                                onChange={(event) =>
+                                  setReviewRuleForm((current) => ({ ...current, weight: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                select
+                                label="Bucket"
+                                value={reviewRuleForm.bucket_override}
+                                onChange={(event) =>
+                                  setReviewRuleForm((current) => ({ ...current, bucket_override: event.target.value }))
+                                }
+                                fullWidth
+                              >
+                                <MenuItem value="">Без override</MenuItem>
+                                <MenuItem value="review">review</MenuItem>
+                                <MenuItem value="critical">critical</MenuItem>
+                                <MenuItem value="suspicious">suspicious</MenuItem>
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                select
+                                label="Активность"
+                                value={reviewRuleForm.is_active}
+                                onChange={(event) =>
+                                  setReviewRuleForm((current) => ({
+                                    ...current,
+                                    is_active: event.target.value as "true" | "false",
+                                  }))
+                                }
+                                fullWidth
+                              >
+                                <MenuItem value="true">Активно</MenuItem>
+                                <MenuItem value="false">Отключено</MenuItem>
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Порядок"
+                                type="number"
+                                value={reviewRuleForm.sort_order}
+                                onChange={(event) =>
+                                  setReviewRuleForm((current) => ({ ...current, sort_order: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Примечание"
+                                value={reviewRuleForm.notes}
+                                onChange={(event) =>
+                                  setReviewRuleForm((current) => ({ ...current, notes: event.target.value }))
+                                }
+                                fullWidth
+                              />
+                            </Grid>
+                          </Grid>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Button
+                              variant="contained"
+                              disabled={reviewRuleSaving}
+                              onClick={() => {
+                                void handleSaveReviewRule();
+                              }}
+                            >
+                              {reviewRuleSaving ? "Сохранение..." : reviewRuleForm.id ? "Сохранить правило" : "Создать правило"}
+                            </Button>
+                            <Button variant="text" disabled={reviewRuleSaving} onClick={resetReviewRuleEditor}>
+                              Сбросить форму
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                      <Typography className="muted-copy">
+                        В справочнике правил {reviewRules.length} записей.
+                      </Typography>
+                      {reviewRules.length > 0 ? (
+                        <Stack spacing={1}>
+                          {reviewRules.map((item) => (
+                            <Paper className="repair-line" key={`review-rule-${item.id}`} elevation={0}>
+                              <Stack spacing={0.5}>
+                                <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                  <Typography>{item.title}</Typography>
+                                  <Stack direction="row" spacing={1}>
+                                    <Chip
+                                      size="small"
+                                      color={item.is_active ? "success" : "default"}
+                                      label={item.is_active ? "Активно" : "Отключено"}
+                                    />
+                                    <Chip size="small" variant="outlined" label={`${item.rule_type}:${item.code}`} />
+                                  </Stack>
+                                </Stack>
+                                <Typography className="muted-copy">
+                                  Вес {item.weight}
+                                  {item.bucket_override ? ` · bucket ${item.bucket_override}` : ""}
+                                  {` · порядок ${item.sort_order}`}
+                                </Typography>
+                                {item.notes ? <Typography className="muted-copy">{item.notes}</Typography> : null}
+                                <Stack direction="row" spacing={1}>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={() => handleEditReviewRule(item)}
+                                  >
+                                    Редактировать
+                                  </Button>
+                                </Stack>
+                              </Stack>
+                            </Paper>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Typography className="muted-copy">Правила пока не загружены.</Typography>
                       )}
                     </Stack>
                   </Paper>

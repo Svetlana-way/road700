@@ -5,13 +5,22 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.access import get_allowed_vehicle_ids_query
-from app.api.deps import get_current_active_user, get_db
+from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
 from app.models.enums import CheckSeverity, DocumentKind, DocumentStatus, RepairStatus, UserRole
 from app.models.repair import Repair, RepairCheck
+from app.models.review_rule import ReviewRule
 from app.models.user import User
-from app.schemas.review import ReviewActionRequest, ReviewActionResponse, ReviewQueueResponse
+from app.schemas.review import (
+    ReviewActionRequest,
+    ReviewActionResponse,
+    ReviewQueueResponse,
+    ReviewRuleCreate,
+    ReviewRuleListResponse,
+    ReviewRuleRead,
+    ReviewRuleUpdate,
+)
 
 
 router = APIRouter(prefix="/review", tags=["review"])
@@ -32,30 +41,6 @@ REVIEWABLE_REPAIR_STATUSES = (
     RepairStatus.SUSPICIOUS,
     RepairStatus.OCR_ERROR,
 )
-MANUAL_REVIEW_REASON_LABELS = {
-    "order_number_missing": "Не найден номер заказ-наряда",
-    "repair_date_missing": "Не найдена дата ремонта",
-    "repair_date_invalid": "Дата ремонта распознана с ошибкой",
-    "mileage_missing": "Не найден пробег",
-    "service_name_suspicious": "Название сервиса распознано сомнительно",
-    "text_not_found": "Текст документа не извлечён",
-    "image_text_not_found": "На изображении не удалось распознать текст",
-    "pdf_text_not_found": "В PDF не удалось распознать текст",
-    "pdf_ocr_unavailable": "OCR для PDF недоступен",
-    "image_ocr_unavailable": "OCR для изображений недоступен",
-}
-DOCUMENT_STATUS_LABELS = {
-    DocumentStatus.UPLOADED: "Документ ждёт обработки",
-    DocumentStatus.PARTIALLY_RECOGNIZED: "Документ распознан частично",
-    DocumentStatus.NEEDS_REVIEW: "Документ отправлен на ручную проверку",
-    DocumentStatus.OCR_ERROR: "Ошибка автоматической обработки документа",
-}
-REPAIR_STATUS_LABELS = {
-    RepairStatus.IN_REVIEW: "Ремонт ждёт проверки",
-    RepairStatus.EMPLOYEE_CONFIRMED: "Ремонт подготовлен сотрудником и ждёт подтверждения",
-    RepairStatus.SUSPICIOUS: "Ремонт помечен как подозрительный",
-    RepairStatus.OCR_ERROR: "Ремонт требует ручного восстановления после OCR",
-}
 REVIEW_ACTIONS = {"confirm", "send_to_review"}
 REVIEW_QUEUE_CATEGORIES = {
     "all",
@@ -65,6 +50,93 @@ REVIEW_QUEUE_CATEGORIES = {
     "employee_confirmation",
     "manual_review",
 }
+REVIEW_BUCKET_PRIORITIES = {
+    "review": 0,
+    "critical": 1,
+    "suspicious": 2,
+}
+ALLOWED_REVIEW_BUCKETS = set(REVIEW_BUCKET_PRIORITIES)
+ALLOWED_REVIEW_RULE_TYPES = {
+    "manual_review_reason",
+    "document_status",
+    "repair_status",
+    "check_severity",
+    "signal",
+}
+
+
+def normalize_rule_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized_value = value.strip()
+    return normalized_value or None
+
+
+def normalize_rule_code(value: str | None) -> str | None:
+    normalized_value = normalize_rule_text(value)
+    if not normalized_value:
+        return None
+    return normalized_value.lower().replace(" ", "_")
+
+
+def humanize_review_code(value: str) -> str:
+    return value.replace("_", " ")
+
+
+def build_review_rule_map(db: Session, *, include_inactive: bool = False) -> dict[tuple[str, str], ReviewRule]:
+    stmt = select(ReviewRule).order_by(ReviewRule.sort_order.asc(), ReviewRule.rule_type.asc(), ReviewRule.code.asc())
+    if not include_inactive:
+        stmt = stmt.where(ReviewRule.is_active.is_(True))
+    rules = db.scalars(stmt).all()
+    return {(rule.rule_type, rule.code): rule for rule in rules}
+
+
+def get_review_rule(
+    rule_map: dict[tuple[str, str], ReviewRule],
+    rule_type: str,
+    code: str,
+) -> Optional[ReviewRule]:
+    return rule_map.get((rule_type, code))
+
+
+def apply_bucket_override(bucket: str, bucket_override: str | None) -> str:
+    if not bucket_override:
+        return bucket
+    if bucket_override not in REVIEW_BUCKET_PRIORITIES:
+        return bucket
+    if REVIEW_BUCKET_PRIORITIES[bucket_override] > REVIEW_BUCKET_PRIORITIES[bucket]:
+        return bucket_override
+    return bucket
+
+
+def get_review_rule_or_404(db: Session, rule_id: int) -> ReviewRule:
+    rule = db.scalar(select(ReviewRule).where(ReviewRule.id == rule_id))
+    if rule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Правило очереди проверки не найдено")
+    return rule
+
+
+def validate_review_rule_payload(
+    *,
+    rule_type: str | None,
+    code: str | None,
+    title: str | None,
+    bucket_override: str | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    normalized_rule_type = normalize_rule_text(rule_type)
+    if normalized_rule_type is not None and normalized_rule_type not in ALLOWED_REVIEW_RULE_TYPES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректный тип правила")
+
+    normalized_code = normalize_rule_code(code)
+    normalized_title = normalize_rule_text(title)
+    if title is not None and not normalized_title:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Название правила обязательно")
+
+    normalized_bucket_override = normalize_rule_text(bucket_override)
+    if normalized_bucket_override is not None and normalized_bucket_override not in ALLOWED_REVIEW_BUCKETS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректный bucket правила")
+
+    return normalized_rule_type, normalized_code, normalized_title, normalized_bucket_override
 
 
 def latest_document_version(document: Document) -> Optional[DocumentVersion]:
@@ -87,15 +159,32 @@ def load_document_for_review(db: Session, document_id: int) -> Optional[Document
     return db.execute(stmt).unique().scalar_one_or_none()
 
 
-def normalize_manual_review_reasons(raw_reasons: object) -> list[str]:
+def parse_manual_review_reason_codes(raw_reasons: object) -> list[str]:
     if not isinstance(raw_reasons, list):
         return []
     reasons: list[str] = []
     for item in raw_reasons:
         if not isinstance(item, str):
             continue
-        reasons.append(MANUAL_REVIEW_REASON_LABELS.get(item, item.replace("_", " ")))
+        normalized_code = normalize_rule_code(item)
+        if normalized_code:
+            reasons.append(normalized_code)
     return reasons
+
+
+def label_manual_review_reasons(
+    raw_reasons: object,
+    rule_map: dict[tuple[str, str], ReviewRule],
+) -> tuple[list[str], list[str]]:
+    codes = parse_manual_review_reason_codes(raw_reasons)
+    labels: list[str] = []
+    for code in codes:
+        rule = get_review_rule(rule_map, "manual_review_reason", code)
+        if rule is not None:
+            labels.append(rule.title)
+            continue
+        labels.append(humanize_review_code(code))
+    return codes, labels
 
 
 def append_issue(issues: list[str], issue: Optional[str]) -> None:
@@ -123,48 +212,87 @@ def get_visible_document(db: Session, current_user: User, document_id: int) -> D
     return document
 
 
-def build_priority(document: Document, unresolved_checks: list[RepairCheck], manual_review_reasons: list[str]) -> tuple[int, str]:
+def build_priority(
+    document: Document,
+    unresolved_checks: list[RepairCheck],
+    manual_review_reason_codes: list[str],
+    rule_map: dict[tuple[str, str], ReviewRule],
+) -> tuple[int, str]:
     score = int(document.review_queue_priority or 0)
     bucket = "review"
 
-    if document.repair.status == RepairStatus.SUSPICIOUS:
-        score += 200
-        bucket = "suspicious"
+    repair_status_rule = (
+        get_review_rule(rule_map, "repair_status", RepairStatus.SUSPICIOUS.value)
+        if document.repair.status == RepairStatus.SUSPICIOUS
+        else None
+    )
+    if repair_status_rule is not None:
+        score += repair_status_rule.weight
+        bucket = apply_bucket_override(bucket, repair_status_rule.bucket_override)
 
     if any(check.severity == CheckSeverity.SUSPICIOUS for check in unresolved_checks):
-        score += 180
-        bucket = "suspicious"
+        suspicious_rule = get_review_rule(rule_map, "check_severity", CheckSeverity.SUSPICIOUS.value)
+        if suspicious_rule is not None:
+            score += suspicious_rule.weight
+            bucket = apply_bucket_override(bucket, suspicious_rule.bucket_override)
 
     if any(check.severity == CheckSeverity.ERROR for check in unresolved_checks):
-        score += 140
-        if bucket != "suspicious":
-            bucket = "critical"
+        error_rule = get_review_rule(rule_map, "check_severity", CheckSeverity.ERROR.value)
+        if error_rule is not None:
+            score += error_rule.weight
+            bucket = apply_bucket_override(bucket, error_rule.bucket_override)
 
     if document.status == DocumentStatus.OCR_ERROR or document.repair.status == RepairStatus.OCR_ERROR:
-        score += 130
-        if bucket == "review":
-            bucket = "critical"
+        ocr_rules = [
+            rule
+            for rule in (
+                get_review_rule(rule_map, "document_status", DocumentStatus.OCR_ERROR.value),
+                get_review_rule(rule_map, "repair_status", RepairStatus.OCR_ERROR.value),
+            )
+            if rule is not None
+        ]
+        if ocr_rules:
+            strongest = max(ocr_rules, key=lambda item: item.weight)
+            score += strongest.weight
+            bucket = apply_bucket_override(bucket, strongest.bucket_override)
 
-    if document.status == DocumentStatus.PARTIALLY_RECOGNIZED:
-        score += 80
-    elif document.status == DocumentStatus.NEEDS_REVIEW:
-        score += 70
-    elif document.status == DocumentStatus.UPLOADED:
-        score += 50
+    document_status_rule = get_review_rule(rule_map, "document_status", document.status.value)
+    if document_status_rule is not None and document.status != DocumentStatus.OCR_ERROR:
+        score += document_status_rule.weight
+        bucket = apply_bucket_override(bucket, document_status_rule.bucket_override)
 
-    if document.repair.status == RepairStatus.IN_REVIEW:
-        score += 40
-    elif document.repair.status == RepairStatus.EMPLOYEE_CONFIRMED:
-        score += 60
+    if document.repair.status in {RepairStatus.IN_REVIEW, RepairStatus.EMPLOYEE_CONFIRMED}:
+        repair_progress_rule = get_review_rule(rule_map, "repair_status", document.repair.status.value)
+        if repair_progress_rule is not None:
+            score += repair_progress_rule.weight
+            bucket = apply_bucket_override(bucket, repair_progress_rule.bucket_override)
 
     if document.repair.is_partially_recognized:
-        score += 25
+        partial_rule = get_review_rule(rule_map, "signal", "repair_partial")
+        if partial_rule is not None:
+            score += partial_rule.weight
+            bucket = apply_bucket_override(bucket, partial_rule.bucket_override)
 
-    if manual_review_reasons:
-        score += min(len(manual_review_reasons) * 8, 32)
+    if manual_review_reason_codes:
+        reason_score = 0
+        reason_bucket = bucket
+        for code in manual_review_reason_codes:
+            reason_rule = get_review_rule(rule_map, "manual_review_reason", code)
+            if reason_rule is None:
+                continue
+            reason_score += reason_rule.weight
+            reason_bucket = apply_bucket_override(reason_bucket, reason_rule.bucket_override)
+        cap_rule = get_review_rule(rule_map, "signal", "manual_review_cap")
+        if cap_rule is not None and cap_rule.weight >= 0:
+            reason_score = min(reason_score, cap_rule.weight)
+        score += reason_score
+        bucket = reason_bucket
 
     if document.ocr_confidence is not None:
-        score += max(0, round((1 - float(document.ocr_confidence)) * 40))
+        confidence_rule = get_review_rule(rule_map, "signal", "low_ocr_confidence")
+        if confidence_rule is not None:
+            score += max(0, round((1 - float(document.ocr_confidence)) * confidence_rule.weight))
+            bucket = apply_bucket_override(bucket, confidence_rule.bucket_override)
 
     return score, bucket
 
@@ -240,7 +368,10 @@ def apply_review_action(document: Document, action: str, comment: Optional[str],
     return message
 
 
-def serialize_review_item(document: Document) -> dict:
+def serialize_review_item(
+    document: Document,
+    rule_map: dict[tuple[str, str], ReviewRule],
+) -> dict:
     repair = document.repair
     vehicle = repair.vehicle
     latest_version = latest_document_version(document)
@@ -251,20 +382,23 @@ def serialize_review_item(document: Document) -> dict:
         key=lambda item: (item.created_at, item.id),
         reverse=True,
     )
-    manual_review_reasons = normalize_manual_review_reasons(
-        parsed_payload.get("manual_review_reasons") if isinstance(parsed_payload, dict) else None
+    manual_review_reason_codes, manual_review_reasons = label_manual_review_reasons(
+        parsed_payload.get("manual_review_reasons") if isinstance(parsed_payload, dict) else None,
+        rule_map,
     )
     category = determine_review_category(document, unresolved_checks)
 
     issue_titles: list[str] = []
-    append_issue(issue_titles, DOCUMENT_STATUS_LABELS.get(document.status))
-    append_issue(issue_titles, REPAIR_STATUS_LABELS.get(repair.status))
+    document_status_rule = get_review_rule(rule_map, "document_status", document.status.value)
+    append_issue(issue_titles, document_status_rule.title if document_status_rule is not None else None)
+    repair_status_rule = get_review_rule(rule_map, "repair_status", repair.status.value)
+    append_issue(issue_titles, repair_status_rule.title if repair_status_rule is not None else None)
     for reason in manual_review_reasons:
         append_issue(issue_titles, reason)
     for check in unresolved_checks:
         append_issue(issue_titles, check.title)
 
-    priority_score, priority_bucket = build_priority(document, unresolved_checks, manual_review_reasons)
+    priority_score, priority_bucket = build_priority(document, unresolved_checks, manual_review_reason_codes, rule_map)
 
     grand_total = None
     if isinstance(extracted_fields, dict):
@@ -324,6 +458,100 @@ def serialize_review_item(document: Document) -> dict:
     }
 
 
+@router.get("/rules", response_model=ReviewRuleListResponse)
+def list_review_rules(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> ReviewRuleListResponse:
+    _ = current_user
+    stmt = select(ReviewRule).order_by(ReviewRule.sort_order.asc(), ReviewRule.rule_type.asc(), ReviewRule.code.asc())
+    items = db.scalars(stmt).all()
+    return ReviewRuleListResponse(
+        items=[ReviewRuleRead.model_validate(item) for item in items],
+        rule_types=sorted({item.rule_type for item in items}),
+    )
+
+
+@router.post("/rules", response_model=ReviewRuleRead)
+def create_review_rule(
+    payload: ReviewRuleCreate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> ReviewRuleRead:
+    _ = current_admin
+    normalized_rule_type, normalized_code, normalized_title, normalized_bucket_override = validate_review_rule_payload(
+        rule_type=payload.rule_type,
+        code=payload.code,
+        title=payload.title,
+        bucket_override=payload.bucket_override,
+    )
+    if not normalized_rule_type or not normalized_code or not normalized_title:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Тип, код и название правила обязательны")
+
+    existing = db.scalar(
+        select(ReviewRule).where(
+            ReviewRule.rule_type == normalized_rule_type,
+            ReviewRule.code == normalized_code,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Такое правило уже существует")
+
+    rule = ReviewRule(
+        rule_type=normalized_rule_type,
+        code=normalized_code,
+        title=normalized_title,
+        weight=payload.weight,
+        bucket_override=normalized_bucket_override,
+        is_active=payload.is_active,
+        sort_order=payload.sort_order,
+        notes=normalize_rule_text(payload.notes),
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return ReviewRuleRead.model_validate(rule)
+
+
+@router.patch("/rules/{rule_id}", response_model=ReviewRuleRead)
+def update_review_rule(
+    rule_id: int,
+    payload: ReviewRuleUpdate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> ReviewRuleRead:
+    _ = current_admin
+    rule = get_review_rule_or_404(db, rule_id)
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        return ReviewRuleRead.model_validate(rule)
+
+    _, _, normalized_title, normalized_bucket_override = validate_review_rule_payload(
+        rule_type=None,
+        code=None,
+        title=update_data.get("title"),
+        bucket_override=update_data.get("bucket_override"),
+    )
+
+    if "title" in update_data:
+        rule.title = normalized_title or rule.title
+    if "weight" in update_data:
+        rule.weight = int(update_data["weight"])
+    if "bucket_override" in update_data:
+        rule.bucket_override = normalized_bucket_override
+    if "is_active" in update_data:
+        rule.is_active = bool(update_data["is_active"])
+    if "sort_order" in update_data:
+        rule.sort_order = int(update_data["sort_order"])
+    if "notes" in update_data:
+        rule.notes = normalize_rule_text(update_data["notes"])
+
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return ReviewRuleRead.model_validate(rule)
+
+
 @router.get("/queue", response_model=ReviewQueueResponse)
 def get_review_queue(
     limit: int = Query(default=10, ge=1, le=100),
@@ -366,7 +594,8 @@ def get_review_queue(
 
     total = db.scalar(count_stmt) or 0
     documents = db.execute(stmt).unique().scalars().all()
-    serialized_items = [serialize_review_item(document) for document in documents]
+    rule_map = build_review_rule_map(db)
+    serialized_items = [serialize_review_item(document, rule_map) for document in documents]
     counts = {name: 0 for name in REVIEW_QUEUE_CATEGORIES}
     counts["all"] = len(serialized_items)
     for item in serialized_items:
@@ -438,7 +667,8 @@ def execute_review_action(
     refreshed_document = get_visible_document(db, current_user, document_id)
     review_item = None
     if refreshed_document.status in REVIEWABLE_DOCUMENT_STATUSES or refreshed_document.repair.status in REVIEWABLE_REPAIR_STATUSES:
-        review_item = serialize_review_item(refreshed_document)
+        rule_map = build_review_rule_map(db)
+        review_item = serialize_review_item(refreshed_document, rule_map)
 
     return ReviewActionResponse(
         message=message,

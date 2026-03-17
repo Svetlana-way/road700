@@ -65,6 +65,7 @@ class DocumentProcessResponse(BaseModel):
 class DocumentBatchProcessResponse(BaseModel):
     processed_count: int
     document_ids: list[int]
+    status_counts: dict[str, int]
     message: str
 
 

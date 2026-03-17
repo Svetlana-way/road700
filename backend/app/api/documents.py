@@ -38,6 +38,15 @@ LOCAL_STORAGE_ROOT = PROJECT_ROOT / "storage"
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 COMPARISON_REVIEW_ACTIONS = {"keep_current_primary", "make_document_primary", "mark_reviewed"}
+REPROCESSABLE_DOCUMENT_KINDS = {DocumentKind.ORDER, DocumentKind.REPEAT_SCAN}
+REPROCESSABLE_DOCUMENT_STATUSES = {
+    DocumentStatus.UPLOADED,
+    DocumentStatus.RECOGNIZED,
+    DocumentStatus.PARTIALLY_RECOGNIZED,
+    DocumentStatus.NEEDS_REVIEW,
+    DocumentStatus.CONFIRMED,
+    DocumentStatus.OCR_ERROR,
+}
 
 
 def get_visible_vehicle(
@@ -759,5 +768,46 @@ def process_pending_documents(
     return DocumentBatchProcessResponse(
         processed_count=len(processed_ids),
         document_ids=processed_ids,
+        status_counts={},
         message="Pending documents processed",
+    )
+
+
+@router.post("/reprocess-existing", response_model=DocumentBatchProcessResponse)
+def reprocess_existing_documents(
+    limit: int = Query(default=50, ge=1, le=500),
+    status_filter: Optional[DocumentStatus] = Query(default=None, alias="status"),
+    only_primary: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> DocumentBatchProcessResponse:
+    stmt = select(Document.id).where(
+        Document.kind.in_(REPROCESSABLE_DOCUMENT_KINDS),
+    )
+
+    if status_filter is not None:
+        stmt = stmt.where(Document.status == status_filter)
+    else:
+        stmt = stmt.where(Document.status.in_(REPROCESSABLE_DOCUMENT_STATUSES))
+
+    if only_primary:
+        stmt = stmt.where(Document.is_primary.is_(True))
+
+    document_ids = db.execute(
+        stmt.order_by(Document.created_at.asc(), Document.id.asc()).limit(limit)
+    ).scalars().all()
+
+    processed_ids: list[int] = []
+    status_counts: dict[str, int] = {}
+    for document_id in document_ids:
+        result = process_document(db, document_id)
+        processed_ids.append(document_id)
+        status_key = result.document.status.value
+        status_counts[status_key] = status_counts.get(status_key, 0) + 1
+
+    return DocumentBatchProcessResponse(
+        processed_count=len(processed_ids),
+        document_ids=processed_ids,
+        status_counts=status_counts,
+        message="Existing documents reprocessed",
     )

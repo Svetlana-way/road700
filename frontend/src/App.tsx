@@ -304,6 +304,13 @@ type DocumentsResponse = {
   items: DocumentItem[];
 };
 
+type DocumentBatchProcessResponse = {
+  processed_count: number;
+  document_ids: number[];
+  status_counts: Record<string, number>;
+  message: string;
+};
+
 type LaborNormCatalogItem = {
   id: number;
   scope: string;
@@ -1922,6 +1929,10 @@ export default function App() {
   const [attachDocumentLoading, setAttachDocumentLoading] = useState(false);
   const [repairLoading, setRepairLoading] = useState(false);
   const [reprocessLoading, setReprocessLoading] = useState(false);
+  const [batchReprocessLoading, setBatchReprocessLoading] = useState(false);
+  const [batchReprocessLimit, setBatchReprocessLimit] = useState("50");
+  const [batchReprocessStatusFilter, setBatchReprocessStatusFilter] = useState("");
+  const [batchReprocessPrimaryOnly, setBatchReprocessPrimaryOnly] = useState<"false" | "true">("false");
   const [reviewActionLoading, setReviewActionLoading] = useState(false);
   const [checkActionLoadingId, setCheckActionLoadingId] = useState<number | null>(null);
   const [documentOpenLoadingId, setDocumentOpenLoadingId] = useState<number | null>(null);
@@ -2564,6 +2575,51 @@ export default function App() {
 
   async function handleReprocessDocument(document: DocumentItem) {
     await handleReprocessDocumentById(document.id, document.repair.id);
+  }
+
+  async function handleBatchReprocessDocuments() {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+
+    setBatchReprocessLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const normalizedLimit = String(Math.min(500, Math.max(1, Number(batchReprocessLimit || "50") || 50)));
+      const params = new URLSearchParams();
+      params.set("limit", normalizedLimit);
+      if (batchReprocessStatusFilter) {
+        params.set("status", batchReprocessStatusFilter);
+      }
+      if (batchReprocessPrimaryOnly === "true") {
+        params.set("only_primary", "true");
+      }
+
+      const result = await apiRequest<DocumentBatchProcessResponse>(
+        `/documents/reprocess-existing?${params.toString()}`,
+        { method: "POST" },
+        token,
+      );
+
+      const statusSummary = Object.entries(result.status_counts)
+        .map(([status, count]) => `${formatDocumentStatusLabel(status)}: ${count}`)
+        .join(", ");
+
+      setSuccessMessage(
+        statusSummary
+          ? `Переобработано ${result.processed_count} документов. ${statusSummary}`
+          : `Переобработано ${result.processed_count} документов.`,
+      );
+      await loadWorkspace(token);
+      if (selectedDocumentId !== null && selectedRepair) {
+        await openRepairByIds(selectedDocumentId, selectedRepair.id);
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось запустить массовую переобработку");
+    } finally {
+      setBatchReprocessLoading(false);
+    }
   }
 
   async function handleOpenDocumentFile(documentId: number) {
@@ -4078,6 +4134,69 @@ export default function App() {
                         Последние загруженные заказ-наряды и сканы по доступной технике.
                       </Typography>
                     </Box>
+                    {user?.role === "admin" ? (
+                      <Paper className="repair-line" elevation={0}>
+                        <Stack spacing={1.25}>
+                          <Box>
+                            <Typography className="metric-label">Массовая переобработка заказ-нарядов</Typography>
+                            <Typography className="muted-copy">
+                              Пересчитывает OCR, строки работ и применимость нормо-часов по уже загруженным документам.
+                            </Typography>
+                          </Box>
+                          <Grid container spacing={1.5}>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Сколько документов"
+                                type="number"
+                                value={batchReprocessLimit}
+                                onChange={(event) => setBatchReprocessLimit(event.target.value)}
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={5}>
+                              <TextField
+                                select
+                                label="Статус документов"
+                                value={batchReprocessStatusFilter}
+                                onChange={(event) => setBatchReprocessStatusFilter(event.target.value)}
+                                fullWidth
+                              >
+                                <MenuItem value="">Все рабочие статусы</MenuItem>
+                                <MenuItem value="uploaded">Загружен</MenuItem>
+                                <MenuItem value="recognized">Распознан</MenuItem>
+                                <MenuItem value="partially_recognized">Распознан частично</MenuItem>
+                                <MenuItem value="needs_review">Требует ручной проверки</MenuItem>
+                                <MenuItem value="confirmed">Подтвержден</MenuItem>
+                                <MenuItem value="ocr_error">Ошибка OCR</MenuItem>
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <TextField
+                                select
+                                label="Какие документы брать"
+                                value={batchReprocessPrimaryOnly}
+                                onChange={(event) => setBatchReprocessPrimaryOnly(event.target.value as "false" | "true")}
+                                fullWidth
+                              >
+                                <MenuItem value="false">Все заказ-наряды и повторные сканы</MenuItem>
+                                <MenuItem value="true">Только основные документы</MenuItem>
+                              </TextField>
+                            </Grid>
+                          </Grid>
+                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Button
+                              variant="contained"
+                              disabled={batchReprocessLoading}
+                              onClick={() => {
+                                void handleBatchReprocessDocuments();
+                              }}
+                            >
+                              {batchReprocessLoading ? "Переобработка..." : "Массово пересчитать документы"}
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                    ) : null}
                     <Stack spacing={1.5}>
                       {documents.map((document) => (
                         <Paper

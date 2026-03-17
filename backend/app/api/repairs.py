@@ -448,7 +448,13 @@ def update_repair(
     if "service_name" in update_data:
         service_name = update_data["service_name"]
         if service_name:
-            service = resolve_service(db, service_name)
+            try:
+                service = resolve_service(db, service_name)
+            except ValueError as error:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Разрешены только сервисы из папки `Сервисы`",
+                ) from error
             repair.service_id = service.id
         else:
             repair.service_id = None

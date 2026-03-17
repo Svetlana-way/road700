@@ -28,13 +28,13 @@ from app.models.enums import (
     DocumentStatus,
     ImportStatus,
     RepairStatus,
-    ServiceStatus,
 )
 from app.models.imports import ImportJob
 from app.models.ocr_profile_matcher import OcrProfileMatcher
 from app.models.ocr_rule import OcrRule
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
+from app.services.service_catalog import resolve_catalog_service
 from app.services.labor_norms import (
     LaborNormApplicability,
     LaborNormEnrichmentSummary,
@@ -1644,12 +1644,9 @@ def average_confidence(confidence_map: dict[str, float]) -> Optional[float]:
 
 
 def resolve_service(db: Session, service_name: str) -> Service:
-    existing = db.scalar(select(Service).where(func.lower(Service.name) == service_name.lower()))
-    if existing is not None:
-        return existing
-    service = Service(name=service_name[:255], status=ServiceStatus.PRELIMINARY)
-    db.add(service)
-    db.flush()
+    service = resolve_catalog_service(db, service_name)
+    if service is None:
+        raise ValueError(f"Unknown service: {service_name}")
     return service
 
 
@@ -1833,8 +1830,9 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         if "grand_total" in extracted_fields:
             repair.grand_total = float(extracted_fields["grand_total"])
         if "service_name" in extracted_fields:
-            service = resolve_service(db, str(extracted_fields["service_name"]))
-            repair.service_id = service.id
+            service = resolve_catalog_service(db, str(extracted_fields["service_name"]))
+            if service is not None:
+                repair.service_id = service.id
 
         replace_repair_lines(
             db,

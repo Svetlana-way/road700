@@ -54,6 +54,70 @@ type DashboardDataQuality = {
   repairs_suspicious: number;
 };
 
+type DashboardDataQualityDetails = {
+  counts: {
+    documents: number;
+    services: number;
+    works: number;
+    parts: number;
+    conflicts: number;
+  };
+  documents: Array<{
+    document_id: number;
+    repair_id: number | null;
+    original_filename: string;
+    document_status: string;
+    repair_status: string | null;
+    repair_date: string | null;
+    ocr_confidence: number | null;
+    plate_number: string | null;
+    brand: string | null;
+    model: string | null;
+  }>;
+  services: Array<{
+    service_id: number;
+    name: string;
+    city: string | null;
+    repairs_total: number;
+    last_repair_date: string | null;
+  }>;
+  works: Array<{
+    work_id: number;
+    repair_id: number;
+    document_id: number | null;
+    work_name: string;
+    line_total: number;
+    repair_date: string;
+    plate_number: string | null;
+    brand: string | null;
+    model: string | null;
+  }>;
+  parts: Array<{
+    part_id: number;
+    repair_id: number;
+    document_id: number | null;
+    part_name: string;
+    line_total: number;
+    repair_date: string;
+    plate_number: string | null;
+    brand: string | null;
+    model: string | null;
+  }>;
+  conflicts: Array<{
+    conflict_id: number;
+    import_job_id: number;
+    entity_type: string;
+    conflict_key: string;
+    source_filename: string | null;
+    repair_id: number | null;
+    document_id: number | null;
+    plate_number: string | null;
+    brand: string | null;
+    model: string | null;
+    created_at: string;
+  }>;
+};
+
 type User = {
   id: number;
   full_name: string;
@@ -475,6 +539,7 @@ type WorkspaceTab = "documents" | "repair" | "admin" | "tech_admin" | "fleet";
 type AdminTab = "services" | "control" | "labor_norms" | "employees";
 type TechAdminTab = "learning" | "matchers" | "rules";
 type RepairTab = "overview" | "works" | "parts" | "documents" | "checks" | "history";
+type QualityDetailTab = "documents" | "services" | "works" | "parts" | "conflicts";
 type ReviewQueueCategory =
   | "all"
   | "suspicious"
@@ -1475,6 +1540,11 @@ function formatVehicle(vehicle: VehiclePreview) {
   return parts.join(" • ") || `#${vehicle.id}`;
 }
 
+function formatQualityVehicle(vehicle: { plate_number: string | null; brand: string | null; model: string | null }) {
+  const parts = [vehicle.plate_number, vehicle.brand, vehicle.model].filter(Boolean);
+  return parts.join(" • ") || "Техника не определена";
+}
+
 function normalizeIdentifier(value: string | null | undefined) {
   if (!value) {
     return "";
@@ -2019,6 +2089,13 @@ function formatConfidence(value: number | null) {
   return `${Math.round(value * 100)}%`;
 }
 
+function resolveRepairDocumentId(repair: RepairDetail, preferredDocumentId: number | null) {
+  if (preferredDocumentId !== null && repair.documents.some((document) => document.id === preferredDocumentId)) {
+    return preferredDocumentId;
+  }
+  return repair.documents.find((document) => document.is_primary)?.id ?? repair.documents[0]?.id ?? null;
+}
+
 function readCheckResolutionMeta(check: RepairDetail["checks"][number]): CheckResolutionMeta | null {
   const resolution = check.calculation_payload?.resolution;
   if (!resolution || typeof resolution !== "object") {
@@ -2081,6 +2158,7 @@ export default function App() {
   const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>("services");
   const [activeTechAdminTab, setActiveTechAdminTab] = useState<TechAdminTab>("learning");
   const [activeRepairTab, setActiveRepairTab] = useState<RepairTab>("overview");
+  const [activeQualityTab, setActiveQualityTab] = useState<QualityDetailTab>("documents");
   const [showTechAdminTab, setShowTechAdminTab] = useState(false);
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [showPasswordRecoveryRequest, setShowPasswordRecoveryRequest] = useState(false);
@@ -2091,6 +2169,7 @@ export default function App() {
   const [showLaborNormEntryEditor, setShowLaborNormEntryEditor] = useState(false);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [dataQuality, setDataQuality] = useState<DashboardDataQuality | null>(null);
+  const [dataQualityDetails, setDataQualityDetails] = useState<DashboardDataQualityDetails | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [fleetVehicles, setFleetVehicles] = useState<Vehicle[]>([]);
   const [fleetVehiclesTotal, setFleetVehiclesTotal] = useState(0);
@@ -2550,6 +2629,7 @@ export default function App() {
       const [
         dashboard,
         dataQualityPayload,
+        dataQualityDetailsPayload,
         vehicleList,
         recentDocuments,
         reviewQueueData,
@@ -2565,6 +2645,7 @@ export default function App() {
       ] = await Promise.all([
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
         apiRequest<DashboardDataQuality>("/dashboard/data-quality", { method: "GET" }, activeToken),
+        apiRequest<DashboardDataQualityDetails>("/dashboard/data-quality/details?limit=8", { method: "GET" }, activeToken),
         apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
         apiRequest<DocumentsResponse>("/documents?limit=8", { method: "GET" }, activeToken),
         apiRequest<ReviewQueueResponse>(
@@ -2608,6 +2689,7 @@ export default function App() {
       setUser(me);
       setSummary(dashboard);
       setDataQuality(dataQualityPayload);
+      setDataQualityDetails(dataQualityDetailsPayload);
       setVehicles(vehicleList.items);
       setFleetVehicles(vehicleList.items);
       setFleetVehiclesTotal(vehicleList.total);
@@ -2666,8 +2748,10 @@ export default function App() {
       setShowTechAdminTab(false);
       setShowPasswordChange(false);
       setActiveTechAdminTab("learning");
+      setActiveQualityTab("documents");
       setSummary(null);
       setDataQuality(null);
+      setDataQualityDetails(null);
       setVehicles([]);
       setFleetVehicles([]);
       setFleetVehiclesTotal(0);
@@ -2764,14 +2848,18 @@ export default function App() {
   }, [laborNormCatalogs, laborNormEntryForm.scope, laborNormImportScope]);
 
   useEffect(() => {
-    if (!token || selectedDocumentId === null) {
+    if (!token) {
       setSelectedRepair(null);
+      return;
+    }
+    if (selectedDocumentId === null) {
       return;
     }
 
     const selectedRepairId =
       documents.find((item) => item.id === selectedDocumentId)?.repair.id ??
-      reviewQueue.find((item) => item.document.id === selectedDocumentId)?.repair.id;
+      reviewQueue.find((item) => item.document.id === selectedDocumentId)?.repair.id ??
+      (selectedRepair?.documents.some((item) => item.id === selectedDocumentId) ? selectedRepair.id : null);
 
     if (!selectedRepairId) {
       setSelectedRepair(null);
@@ -2791,6 +2879,7 @@ export default function App() {
         setAttachedDocumentKind("repeat_scan");
         setAttachedDocumentNotes("");
         setAttachedDocumentFile(null);
+        setSelectedDocumentId((current) => resolveRepairDocumentId(payload, current));
         if (!isEditingRepair) {
           setRepairDraft(createRepairDraft(payload));
         }
@@ -2984,8 +3073,7 @@ export default function App() {
     }
   }
 
-  async function openRepairByIds(documentId: number, repairId: number) {
-    setSelectedDocumentId(documentId);
+  async function openRepairByIds(documentId: number | null, repairId: number) {
     setActiveWorkspaceTab("repair");
     setActiveRepairTab("overview");
     if (!token) {
@@ -2996,6 +3084,7 @@ export default function App() {
     try {
       const payload = await apiRequest<RepairDetail>(`/repairs/${repairId}`, { method: "GET" }, token);
       setSelectedRepair(payload);
+      setSelectedDocumentId(resolveRepairDocumentId(payload, documentId));
       setDocumentComparison(null);
       setDocumentComparisonComment("");
       setHistoryFilter("all");
@@ -3008,6 +3097,27 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить ремонт");
     } finally {
       setRepairLoading(false);
+    }
+  }
+
+  async function openQualityRepair(documentId: number | null, repairId: number | null) {
+    if (!repairId) {
+      return;
+    }
+    await openRepairByIds(documentId, repairId);
+  }
+
+  async function openQualityService(name: string) {
+    setActiveWorkspaceTab("admin");
+    setActiveAdminTab("services");
+    setServiceQuery(name);
+    if (!token) {
+      return;
+    }
+    try {
+      await loadServices(token, name, "");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось открыть список сервисов");
     }
   }
 
@@ -4707,6 +4817,219 @@ export default function App() {
             </Stack>
           </Paper>
 
+          <Paper className="workspace-panel" elevation={0}>
+            <Stack spacing={2}>
+              <Box>
+                <Typography variant="h5">Что требует внимания</Typography>
+                <Typography className="muted-copy">
+                  Детализация по проблемным документам, предварительным справочникам и конфликтам импорта.
+                </Typography>
+              </Box>
+              <Tabs
+                value={activeQualityTab}
+                onChange={(_event, value: QualityDetailTab) => setActiveQualityTab(value)}
+                variant="scrollable"
+                scrollButtons="auto"
+                allowScrollButtonsMobile
+              >
+                <Tab label={`Документы · ${dataQualityDetails?.counts.documents || 0}`} value="documents" />
+                <Tab label={`Сервисы · ${dataQualityDetails?.counts.services || 0}`} value="services" />
+                <Tab label={`Работы · ${dataQualityDetails?.counts.works || 0}`} value="works" />
+                <Tab label={`Материалы · ${dataQualityDetails?.counts.parts || 0}`} value="parts" />
+                <Tab label={`Конфликты · ${dataQualityDetails?.counts.conflicts || 0}`} value="conflicts" />
+              </Tabs>
+
+              {activeQualityTab === "documents" ? (
+                <Stack spacing={1.5}>
+                  {dataQualityDetails?.documents.length ? (
+                    dataQualityDetails.documents.map((item) => (
+                      <Paper className="repair-line" key={`quality-document-${item.document_id}`} elevation={0}>
+                        <Stack spacing={1}>
+                          <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                            <Typography variant="subtitle1">{item.original_filename}</Typography>
+                            <Stack direction="row" spacing={1}>
+                              <Chip
+                                size="small"
+                                color={statusColor(item.document_status as DocumentStatus)}
+                                label={formatDocumentStatusLabel(item.document_status)}
+                              />
+                              <Chip
+                                size="small"
+                                variant="outlined"
+                                label={`OCR ${formatConfidence(item.ocr_confidence)}`}
+                              />
+                            </Stack>
+                          </Stack>
+                          <Typography className="muted-copy">
+                            {formatQualityVehicle(item)}
+                            {item.repair_date ? ` · ${item.repair_date}` : ""}
+                            {item.repair_status ? ` · ${formatRepairStatus(item.repair_status)}` : ""}
+                          </Typography>
+                          <Stack direction="row" spacing={1}>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              disabled={!item.repair_id}
+                              onClick={() => {
+                                void openQualityRepair(item.document_id, item.repair_id);
+                              }}
+                            >
+                              Открыть ремонт
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                    ))
+                  ) : (
+                    <Typography className="muted-copy">Сейчас проблемных документов в выборке нет.</Typography>
+                  )}
+                </Stack>
+              ) : null}
+
+              {activeQualityTab === "services" ? (
+                <Stack spacing={1.5}>
+                  {dataQualityDetails?.services.length ? (
+                    dataQualityDetails.services.map((item) => (
+                      <Paper className="repair-line" key={`quality-service-${item.service_id}`} elevation={0}>
+                        <Stack spacing={1}>
+                          <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                            <Typography variant="subtitle1">{item.name}</Typography>
+                            <Chip size="small" color="warning" label="Предварительный" />
+                          </Stack>
+                          <Typography className="muted-copy">
+                            {[item.city, `ремонтов ${item.repairs_total}`, item.last_repair_date ? `последний ${item.last_repair_date}` : null]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </Typography>
+                          {user?.role === "admin" ? (
+                            <Stack direction="row" spacing={1}>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={() => {
+                                  void openQualityService(item.name);
+                                }}
+                              >
+                                Открыть в админке
+                              </Button>
+                            </Stack>
+                          ) : null}
+                        </Stack>
+                      </Paper>
+                    ))
+                  ) : (
+                    <Typography className="muted-copy">Неподтверждённых сервисов в выборке нет.</Typography>
+                  )}
+                </Stack>
+              ) : null}
+
+              {activeQualityTab === "works" ? (
+                <Stack spacing={1.5}>
+                  {dataQualityDetails?.works.length ? (
+                    dataQualityDetails.works.map((item) => (
+                      <Paper className="repair-line" key={`quality-work-${item.work_id}`} elevation={0}>
+                        <Stack spacing={1}>
+                          <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                            <Typography variant="subtitle1">{item.work_name}</Typography>
+                            <Chip size="small" color="warning" label={formatMoney(item.line_total)} />
+                          </Stack>
+                          <Typography className="muted-copy">
+                            {formatQualityVehicle(item)} · {item.repair_date} · ремонт #{item.repair_id}
+                          </Typography>
+                          <Stack direction="row" spacing={1}>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              disabled={!item.repair_id}
+                              onClick={() => {
+                                void openQualityRepair(item.document_id, item.repair_id);
+                              }}
+                            >
+                              Открыть ремонт
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                    ))
+                  ) : (
+                    <Typography className="muted-copy">Неподтверждённых работ в выборке нет.</Typography>
+                  )}
+                </Stack>
+              ) : null}
+
+              {activeQualityTab === "parts" ? (
+                <Stack spacing={1.5}>
+                  {dataQualityDetails?.parts.length ? (
+                    dataQualityDetails.parts.map((item) => (
+                      <Paper className="repair-line" key={`quality-part-${item.part_id}`} elevation={0}>
+                        <Stack spacing={1}>
+                          <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                            <Typography variant="subtitle1">{item.part_name}</Typography>
+                            <Chip size="small" color="warning" label={formatMoney(item.line_total)} />
+                          </Stack>
+                          <Typography className="muted-copy">
+                            {formatQualityVehicle(item)} · {item.repair_date} · ремонт #{item.repair_id}
+                          </Typography>
+                          <Stack direction="row" spacing={1}>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              disabled={!item.repair_id}
+                              onClick={() => {
+                                void openQualityRepair(item.document_id, item.repair_id);
+                              }}
+                            >
+                              Открыть ремонт
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                    ))
+                  ) : (
+                    <Typography className="muted-copy">Неподтверждённых материалов в выборке нет.</Typography>
+                  )}
+                </Stack>
+              ) : null}
+
+              {activeQualityTab === "conflicts" ? (
+                <Stack spacing={1.5}>
+                  {dataQualityDetails?.conflicts.length ? (
+                    dataQualityDetails.conflicts.map((item) => (
+                      <Paper className="repair-line" key={`quality-conflict-${item.conflict_id}`} elevation={0}>
+                        <Stack spacing={1}>
+                          <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                            <Typography variant="subtitle1">{item.entity_type}</Typography>
+                            <Chip size="small" color="warning" label="Ожидает решения" />
+                          </Stack>
+                          <Typography className="muted-copy">
+                            {[item.conflict_key, item.source_filename, formatQualityVehicle(item), item.created_at ? formatDateTime(item.created_at) : null]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </Typography>
+                          {item.document_id && item.repair_id ? (
+                            <Stack direction="row" spacing={1}>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={() => {
+                                  void openQualityRepair(item.document_id, item.repair_id);
+                                }}
+                              >
+                                Открыть ремонт
+                              </Button>
+                            </Stack>
+                          ) : null}
+                        </Stack>
+                      </Paper>
+                    ))
+                  ) : (
+                    <Typography className="muted-copy">Конфликтов импорта в выборке нет.</Typography>
+                  )}
+                </Stack>
+              ) : null}
+            </Stack>
+          </Paper>
+
           <Grid container spacing={3}>
             {activeWorkspaceTab === "documents" ? (
               <Grid item xs={12} lg={7}>
@@ -5710,14 +6033,17 @@ export default function App() {
                           variant={showServiceEditor ? "outlined" : "contained"}
                           onClick={() => setShowServiceEditor((current) => !current)}
                         >
-                          {showServiceEditor ? "Скрыть форму сервиса" : "Добавить сервис"}
+                          {showServiceEditor ? "Скрыть карточку сервиса" : "Открыть форму редактирования"}
                         </Button>
                       </Stack>
                       {showServiceEditor ? (
                         <Paper className="repair-line" elevation={0}>
                           <Stack spacing={1.25}>
                             <Typography className="metric-label">
-                              Создание и редактирование сервиса
+                              Редактирование карточки сервиса
+                            </Typography>
+                            <Typography className="muted-copy">
+                              Источник истины для сервисов: папка `Сервисы`. Новые записи вручную не создаются.
                             </Typography>
                             <Grid container spacing={1.5}>
                               <Grid item xs={12} sm={4}>
@@ -5784,12 +6110,12 @@ export default function App() {
                             <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                               <Button
                                 variant="contained"
-                                disabled={serviceSaving}
+                                disabled={serviceSaving || !serviceForm.id}
                                 onClick={() => {
                                   void handleSaveService();
                                 }}
                               >
-                                {serviceSaving ? "Сохранение..." : serviceForm.id ? "Сохранить сервис" : "Создать сервис"}
+                                {serviceSaving ? "Сохранение..." : "Сохранить сервис"}
                               </Button>
                               <Button
                                 variant="text"
@@ -7699,7 +8025,7 @@ export default function App() {
                                     value={repairDraft.service_name}
                                     onChange={(event) => updateRepairDraftField("service_name", event.target.value)}
                                     inputProps={{ list: "known-services-list" }}
-                                    helperText={services.length > 0 ? "Можно выбрать существующий сервис из подсказки или ввести новый" : undefined}
+                                    helperText={services.length > 0 ? "Выберите сервис из справочника, синхронизируемого из папки `Сервисы`." : undefined}
                                     fullWidth
                                   />
                                   <datalist id="known-services-list">

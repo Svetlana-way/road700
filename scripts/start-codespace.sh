@@ -9,6 +9,7 @@ mkdir -p "$LOG_DIR"
 
 BACKEND_PID_FILE="$RUNTIME_DIR/backend.pid"
 BACKEND_LOG="$LOG_DIR/backend.log"
+FRONTEND_BUILD_LOG="$LOG_DIR/frontend-build.log"
 REVISION_FILE="$RUNTIME_DIR/revision.txt"
 
 export DATABASE_URL="sqlite:///$ROOT_DIR/backend/local.db"
@@ -91,7 +92,7 @@ frontend_is_healthy() {
 
 build_frontend() {
   cd "$ROOT_DIR/frontend"
-  npm run build >/dev/null
+  npm run build >"$FRONTEND_BUILD_LOG" 2>&1
 }
 
 start_backend() {

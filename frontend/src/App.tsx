@@ -389,7 +389,11 @@ type DocumentItem = {
   original_filename: string;
   source_type: string;
   kind: DocumentKind;
+  mime_type?: string | null;
   status: DocumentStatus;
+  is_primary?: boolean;
+  ocr_confidence?: number | null;
+  review_queue_priority?: number;
   created_at: string;
   notes: string | null;
   parsed_payload?: {
@@ -434,6 +438,11 @@ type DocumentItem = {
 
 type DocumentsResponse = {
   items: DocumentItem[];
+};
+
+type DocumentUploadResponse = {
+  document: DocumentItem;
+  message: string;
 };
 
 type DocumentBatchProcessResponse = {
@@ -2460,6 +2469,7 @@ export default function App() {
   const [recoveryNewPasswordValue, setRecoveryNewPasswordValue] = useState("");
   const [uploadForm, setUploadForm] = useState<UploadFormState>(emptyUploadForm);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [lastUploadedDocument, setLastUploadedDocument] = useState<DocumentItem | null>(null);
   const [bootLoading, setBootLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
@@ -3429,12 +3439,17 @@ export default function App() {
       body.append("notes", uploadForm.notes);
       body.append("file", selectedFile);
 
-      const result = await apiRequest<{ message: string }>("/documents/upload", {
-        method: "POST",
-        body,
-      }, token);
+      const result = await apiRequest<DocumentUploadResponse>(
+        "/documents/upload",
+        {
+          method: "POST",
+          body,
+        },
+        token,
+      );
 
       setSuccessMessage(result.message);
+      setLastUploadedDocument(result.document);
       setUploadForm(emptyUploadForm());
       setSelectedFile(null);
       await loadWorkspace(token);
@@ -5082,6 +5097,7 @@ export default function App() {
     setShowLaborNormCatalogEditor(false);
     setShowLaborNormImport(false);
     setShowLaborNormEntryEditor(false);
+    setLastUploadedDocument(null);
     setCurrentPasswordValue("");
     setNewPasswordValue("");
     setRecoveryEmailValue("");
@@ -5880,6 +5896,7 @@ export default function App() {
                                 }}
                                 onChange={(event) => {
                                   const nextFile = event.target.files?.[0] ?? null;
+                                  setLastUploadedDocument(null);
                                   setSelectedFile(nextFile);
                                   if (!nextFile) {
                                     return;
@@ -5923,6 +5940,83 @@ export default function App() {
                           {uploadLoading ? "Загрузка..." : "Создать черновик ремонта"}
                         </Button>
                       </Grid>
+                      {lastUploadedDocument ? (
+                        <Grid item xs={12}>
+                          <Paper className="repair-summary upload-result-card" elevation={0}>
+                            <Stack spacing={1.5}>
+                              <Stack
+                                direction={{ xs: "column", sm: "row" }}
+                                spacing={1}
+                                justifyContent="space-between"
+                                alignItems={{ xs: "flex-start", sm: "center" }}
+                              >
+                                <Box>
+                                  <Typography variant="subtitle1">Документ загружен</Typography>
+                                  <Typography className="muted-copy">
+                                    Черновик ремонта создан и поставлен в обработку.
+                                  </Typography>
+                                </Box>
+                                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                  <Chip
+                                    size="small"
+                                    variant="outlined"
+                                    label={formatDocumentKind(lastUploadedDocument.kind)}
+                                  />
+                                  <Chip
+                                    size="small"
+                                    color={statusColor(lastUploadedDocument.status)}
+                                    label={formatDocumentStatusLabel(lastUploadedDocument.status)}
+                                  />
+                                </Stack>
+                              </Stack>
+                              <Typography className="selected-file">{lastUploadedDocument.original_filename}</Typography>
+                              <Typography className="muted-copy">{formatVehicle(lastUploadedDocument.vehicle)}</Typography>
+                              <Typography className="muted-copy">
+                                Ремонт #{lastUploadedDocument.repair.id}
+                                {lastUploadedDocument.repair.order_number
+                                  ? ` · ${lastUploadedDocument.repair.order_number}`
+                                  : ""}
+                                {" · "}
+                                {lastUploadedDocument.repair.repair_date}
+                                {" · "}
+                                пробег {lastUploadedDocument.repair.mileage}
+                              </Typography>
+                              <Typography className="muted-copy">
+                                Загружен {formatDateTime(lastUploadedDocument.created_at)}
+                                {typeof lastUploadedDocument.ocr_confidence === "number"
+                                  ? ` · OCR ${formatConfidence(lastUploadedDocument.ocr_confidence)}`
+                                  : " · OCR в очереди"}
+                              </Typography>
+                              {lastUploadedDocument.parsed_payload?.extracted_fields?.service_name ? (
+                                <Typography className="muted-copy">
+                                  OCR сервис: {lastUploadedDocument.parsed_payload.extracted_fields.service_name}
+                                </Typography>
+                              ) : null}
+                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                <Button
+                                  variant="contained"
+                                  onClick={() => {
+                                    void openRepairByIds(
+                                      lastUploadedDocument.id,
+                                      lastUploadedDocument.repair.id,
+                                    );
+                                  }}
+                                >
+                                  Открыть ремонт
+                                </Button>
+                                <Button
+                                  variant="outlined"
+                                  onClick={() => {
+                                    setLastUploadedDocument(null);
+                                  }}
+                                >
+                                  Скрыть
+                                </Button>
+                              </Stack>
+                            </Stack>
+                          </Paper>
+                        </Grid>
+                      ) : null}
                     </Grid>
                   </Box>
                 </Stack>

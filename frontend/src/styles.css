@@ -122,6 +122,11 @@ body {
   font-weight: 700;
 }
 
+.upload-result-card {
+  border-color: rgba(49, 125, 79, 0.22);
+  background: rgba(244, 251, 246, 0.9);
+}
+
 .document-row {
   padding: 16px;
   border-radius: 18px;

@@ -34,6 +34,7 @@ from app.models.ocr_profile_matcher import OcrProfileMatcher
 from app.models.ocr_rule import OcrRule
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
+from app.models.vehicle import Vehicle
 from app.services.service_catalog import find_service_name_in_text, normalize_service_key, resolve_service_by_name
 from app.services.labor_norms import (
     LaborNormApplicability,
@@ -70,6 +71,20 @@ OCR_CONFUSABLE_CHARSETS = {
     "х": "хx",
 }
 SOURCE_PATH_KEY = "source_path"
+RUSSIAN_MONTHS = {
+    "января": 1,
+    "февраля": 2,
+    "марта": 3,
+    "апреля": 4,
+    "мая": 5,
+    "июня": 6,
+    "июля": 7,
+    "августа": 8,
+    "сентября": 9,
+    "октября": 10,
+    "ноября": 11,
+    "декабря": 12,
+}
 FILENAME_SERVICE_PREFIXES = (
     "заказ наряды",
     "заказ-наряды",
@@ -96,6 +111,12 @@ def fuzzy_phrase_pattern(*words: str) -> str:
 
 ORDER_LABEL_PATTERN = fuzzy_phrase_pattern("заказ", "наряд")
 REVERSED_ORDER_LABEL_PATTERN = fuzzy_phrase_pattern("наряд", "заказ")
+ACT_LABEL_PATTERN = fuzzy_word_pattern("акт")
+ACT_WORKS_LABEL_PATTERN = fuzzy_phrase_pattern("акт", "выполненных", "работ")
+DOCUMENT_LABEL_PATTERN = fuzzy_word_pattern("документ")
+NUMBER_MARKER_PATTERN = r"(?:№|N[Ooº°]?|#)"
+DATE_CLOSED_LABEL_PATTERN = fuzzy_phrase_pattern("дата", "закрытия")
+DATE_COMPLETED_LABEL_PATTERN = fuzzy_phrase_pattern("дата", "окончания", "работ")
 DATE_LABEL_PATTERN = fuzzy_word_pattern("дата")
 FROM_LABEL_PATTERN = fuzzy_word_pattern("от")
 MILEAGE_LABEL_PATTERN = fuzzy_word_pattern("пробег")
@@ -136,24 +157,56 @@ GRAND_TOTAL_LABEL_PATTERN = "|".join(
 )
 
 ORDER_PATTERNS = [
-    rf"(?:{ORDER_LABEL_PATTERN}|{REVERSED_ORDER_LABEL_PATTERN})\s*(?:№|N|#)?\s*([A-Za-zА-Яа-я0-9/_-]{{3,}})",
-    r"\b(?:№|N|#)\s*([A-Za-zА-Яа-я0-9/_-]{4,})",
+    rf"(?:{ORDER_LABEL_PATTERN}|{REVERSED_ORDER_LABEL_PATTERN})\s*{NUMBER_MARKER_PATTERN}?\s*([A-Za-zА-Яа-я0-9/_-]{{3,}})",
+    rf"(?:{ACT_WORKS_LABEL_PATTERN}|{ACT_LABEL_PATTERN})\s*{NUMBER_MARKER_PATTERN}?\s*([A-Za-zА-Яа-я0-9/_-]{{3,}})",
+    rf"\b{NUMBER_MARKER_PATTERN}\s*([A-Za-zА-Яа-я0-9/_-]{{4,}})",
     r"\b([A-Z]{2,}[A-Z0-9/_-]*-\d{2,})\b",
 ]
 DATE_PATTERNS = [
+    rf"(?:{ORDER_LABEL_PATTERN}|{REVERSED_ORDER_LABEL_PATTERN}|{ACT_WORKS_LABEL_PATTERN}|{ACT_LABEL_PATTERN}|{DOCUMENT_LABEL_PATTERN})"
+    rf"[^\n\r]{{0,80}}?(?:{FROM_LABEL_PATTERN})\s*[:№]?\s*(\d{{2}}[./-]\d{{2}}[./-]\d{{2,4}})",
+    rf"(?:{ORDER_LABEL_PATTERN}|{REVERSED_ORDER_LABEL_PATTERN}|{ACT_WORKS_LABEL_PATTERN}|{ACT_LABEL_PATTERN}|{DOCUMENT_LABEL_PATTERN})"
+    rf"[^\n\r]{{0,80}}?(?:{FROM_LABEL_PATTERN})\s*[:№]?\s*(\d{{1,2}}\s+[А-Яа-я]+\s+\d{{4}})",
+    rf"(?:{DATE_CLOSED_LABEL_PATTERN}|{DATE_COMPLETED_LABEL_PATTERN})\s*[:№]?\s*(\d{{2}}[./-]\d{{2}}[./-]\d{{2,4}})",
+    rf"(?:{DATE_CLOSED_LABEL_PATTERN}|{DATE_COMPLETED_LABEL_PATTERN})\s*[:№]?\s*(\d{{1,2}}\s+[А-Яа-я]+\s+\d{{4}})",
     rf"(?:{DATE_LABEL_PATTERN}|{FROM_LABEL_PATTERN})\s*[:№]?\s*(\d{{2}}[./-]\d{{2}}[./-]\d{{2,4}})",
+    rf"(?:{DATE_LABEL_PATTERN}|{FROM_LABEL_PATTERN})\s*[:№]?\s*(\d{{1,2}}\s+[А-Яа-я]+\s+\d{{4}})",
     r"\b(\d{2}[./-]\d{2}[./-]\d{2,4})\b",
 ]
 MILEAGE_PATTERNS = [
-    rf"(?:{MILEAGE_LABEL_PATTERN}|{ODOMETER_LABEL_PATTERN})\D{{0,20}}(\d[\d\s]{{2,}})",
+    rf"(?:{MILEAGE_LABEL_PATTERN}|{ODOMETER_LABEL_PATTERN})(?:\s*\([^)]*\))?\D{{0,40}}(\d[\d\s]{{1,}})",
 ]
 PLATE_PATTERNS = [
-    r"\b([А-ЯA-Z]\d{3}[А-ЯA-Z]{2}\d{2,3})\b",
-    r"\b([А-ЯA-Z]{2}\d{4}\d{2,3})\b",
+    r"([А-ЯA-Z]\s*\d{3}\s*[А-ЯA-Z]{2}\s*\d{2,3})(?!\d)",
+    r"(\d{3}\s*[А-ЯA-Z]{3}\s*\d{2,3})(?!\d)",
+    r"([А-ЯA-Z]{2}\s*\d{4}\s*\d{2,3})(?!\d)",
+    r"(\d{4}\s*[А-ЯA-Z]{2}\s*\d{2,3})(?!\d)",
 ]
 VIN_PATTERNS = [
-    r"\b([A-HJ-NPR-Z0-9]{17})\b",
+    r"(?<![A-HJ-NPR-Z0-9])([A-HJ-NPR-Z0-9]{17})(?![A-HJ-NPR-Z0-9])",
 ]
+PLATE_LABEL_PATTERNS = [
+    rf"(?:гос\.?\s*(?:номер|ном\.?\s*знак)|госномер|г/н|г\.\s*н\.)\s*[:№]?\s*(?P<value>[^\n\r]{{0,48}})",
+]
+VIN_LABEL_PATTERNS = [
+    rf"(?:\bvin\b|vin)\s*[:№]?\s*(?P<value>[A-HJ-NPR-Z0-9]{{17}})",
+]
+MILEAGE_SECTION_PATTERNS = [
+    rf"(?:{MILEAGE_LABEL_PATTERN}|{ODOMETER_LABEL_PATTERN})(?:\s*\([^)]*\))?\s*[:№]?\s*(?P<value>\d[\d\s]{{0,}})",
+]
+VEHICLE_ROW_MILEAGE_PATTERNS = [
+    r"\b(\d{3}(?:\s\d{3}){0,3})\b(?=\s+(?:закрыт|открыт|rub|rur|руб|usd|eur)\b)",
+    r"\b(\d{3}(?:\s\d{3}){0,3})\b(?=\s+(?:vin|вид\s+ремонта|дата\s+приема)\b)",
+]
+VEHICLE_SECTION_START_PATTERN = re.compile(
+    r"(?:TC|ТС|Автомобиль|ТРАНСПОРТНОЕ\s+СРЕДСТВО|Модель автомобиля|Марка:)\b",
+    re.IGNORECASE,
+)
+VEHICLE_SECTION_STOP_PATTERN = re.compile(
+    r"(?:^|\n)\s*(?:ВЛАДЕЛЕЦ|Заказчик|ЗАКАЗЧИК|ПЛАТЕЛЬЩИК|Плательщик|Причина(?:\s+обращения)?|Вид ремонта|"
+    r"Выполненные работы|ДОГОВОР|Контактное\s+лицо)\b",
+    re.IGNORECASE,
+)
 SERVICE_PATTERNS = [
     rf"(?:{SERVICE_LABEL_PATTERN})\b\s*[:№]?\s*(.+?)(?=(?:\b(?:инн|кпп|адрес|тел(?:ефон)?|заказчик|плательщик|автомобиль|шасси|vin|договор|документ|заказ[- ]наряд|акт)\b)|$)",
 ]
@@ -475,11 +528,22 @@ def parse_amount(value: str) -> Optional[float]:
 
 
 def parse_date_value(value: str) -> Optional[date]:
+    normalized_value = normalize_text(value).strip().lower()
     for fmt in ("%d.%m.%Y", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%y", "%d-%m-%y", "%d/%m/%y"):
         try:
-            return datetime.strptime(value, fmt).date()
+            return datetime.strptime(normalized_value, fmt).date()
         except ValueError:
             continue
+    textual_match = re.search(r"(\d{1,2})\s+([а-я]+)\s+(\d{4})", normalized_value)
+    if textual_match is not None:
+        day = int(textual_match.group(1))
+        month = RUSSIAN_MONTHS.get(textual_match.group(2))
+        year = int(textual_match.group(3))
+        if month is not None:
+            try:
+                return date(year, month, day)
+            except ValueError:
+                return None
     return None
 
 
@@ -488,6 +552,15 @@ def normalize_identifier_token(value: str | None) -> Optional[str]:
         return None
     normalized = re.sub(r"[^A-Za-zА-Яа-я0-9]+", "", value).upper()
     return normalized or None
+
+
+def is_plausible_order_number(value: str | None) -> bool:
+    if not value:
+        return False
+    normalized = normalize_text(value)
+    if len(normalized) < 3:
+        return False
+    return any(char.isdigit() for char in normalized)
 
 
 def extract_document_source_path(document: Document) -> Optional[str]:
@@ -586,6 +659,134 @@ def apply_document_metadata_fallbacks(
             extracted_fields["service_name"] = service_name[:120]
             confidence_map["service_name"] = max(confidence_map.get("service_name", 0.0), 0.45)
             normalization_notes.append("Сервис дополнен по папке источника документа.")
+
+
+def enrich_vehicle_fields_from_repair(
+    repair: Repair,
+    *,
+    extracted_fields: dict[str, object],
+    confidence_map: dict[str, float],
+    normalization_notes: list[str],
+) -> None:
+    vehicle = repair.vehicle
+    if vehicle is None or vehicle.external_id == "__batch_import_placeholder__":
+        return
+
+    if "plate_number" not in extracted_fields and vehicle.plate_number:
+        normalized_plate = normalize_identifier_token(vehicle.plate_number)
+        if normalized_plate:
+            extracted_fields["plate_number"] = normalized_plate
+            confidence_map["plate_number"] = max(confidence_map.get("plate_number", 0.0), 0.35)
+            normalization_notes.append("Госномер дополнен по карточке техники.")
+
+    if "vin" not in extracted_fields and vehicle.vin:
+        normalized_vin = normalize_identifier_token(vehicle.vin)
+        if normalized_vin:
+            extracted_fields["vin"] = normalized_vin
+            confidence_map["vin"] = max(confidence_map.get("vin", 0.0), 0.35)
+            normalization_notes.append("VIN дополнен по карточке техники.")
+
+
+def find_vehicle_by_identifiers(
+    db: Session,
+    *,
+    plate_number: str | None,
+    vin: str | None,
+) -> Vehicle | None:
+    normalized_plate = normalize_compare_token(plate_number)
+    normalized_vin = normalize_compare_token(vin)
+    if not normalized_plate and not normalized_vin:
+        return None
+
+    vehicles = db.scalars(select(Vehicle)).all()
+    exact_matches: dict[int, Vehicle] = {}
+    partial_plate_matches: dict[int, Vehicle] = {}
+
+    for vehicle in vehicles:
+        if vehicle.external_id == "__batch_import_placeholder__":
+            continue
+        vehicle_plate = normalize_compare_token(vehicle.plate_number)
+        vehicle_vin = normalize_compare_token(vehicle.vin)
+        if normalized_vin and vehicle_vin == normalized_vin:
+            exact_matches[vehicle.id] = vehicle
+            continue
+        if normalized_plate and vehicle_plate == normalized_plate:
+            exact_matches[vehicle.id] = vehicle
+            continue
+        if (
+            normalized_plate
+            and vehicle_plate
+            and len(normalized_plate) >= 6
+            and (
+                vehicle_plate.startswith(normalized_plate)
+                or normalized_plate.startswith(vehicle_plate)
+            )
+        ):
+            partial_plate_matches[vehicle.id] = vehicle
+
+    if len(exact_matches) == 1:
+        return next(iter(exact_matches.values()))
+    if len(exact_matches) > 1:
+        return None
+    if len(partial_plate_matches) == 1:
+        return next(iter(partial_plate_matches.values()))
+    return None
+
+
+def enrich_vehicle_fields_from_registry(
+    db: Session,
+    *,
+    extracted_fields: dict[str, object],
+    confidence_map: dict[str, float],
+    normalization_notes: list[str],
+) -> None:
+    vehicle = find_vehicle_by_identifiers(
+        db,
+        plate_number=str(extracted_fields.get("plate_number")) if extracted_fields.get("plate_number") else None,
+        vin=str(extracted_fields.get("vin")) if extracted_fields.get("vin") else None,
+    )
+    if vehicle is None:
+        return
+
+    if "plate_number" not in extracted_fields and vehicle.plate_number:
+        normalized_plate = normalize_identifier_token(vehicle.plate_number)
+        if normalized_plate:
+            extracted_fields["plate_number"] = normalized_plate
+            confidence_map["plate_number"] = max(confidence_map.get("plate_number", 0.0), 0.4)
+            normalization_notes.append("Госномер дополнен по совпадению с реестром техники.")
+
+    if "vin" not in extracted_fields and vehicle.vin:
+        normalized_vin = normalize_identifier_token(vehicle.vin)
+        if normalized_vin:
+            extracted_fields["vin"] = normalized_vin
+            confidence_map["vin"] = max(confidence_map.get("vin", 0.0), 0.4)
+            normalization_notes.append("VIN дополнен по совпадению с реестром техники.")
+
+
+def auto_link_repair_vehicle_from_registry(
+    db: Session,
+    repair: Repair,
+    *,
+    extracted_fields: dict[str, object],
+    normalization_notes: list[str],
+) -> None:
+    vehicle = repair.vehicle
+    if vehicle is None or vehicle.external_id != "__batch_import_placeholder__":
+        return
+
+    matched_vehicle = find_vehicle_by_identifiers(
+        db,
+        plate_number=str(extracted_fields.get("plate_number")) if extracted_fields.get("plate_number") else None,
+        vin=str(extracted_fields.get("vin")) if extracted_fields.get("vin") else None,
+    )
+    if matched_vehicle is None or matched_vehicle.id == repair.vehicle_id:
+        return
+
+    repair.vehicle_id = matched_vehicle.id
+    repair.vehicle = matched_vehicle
+    normalization_notes.append(
+        f"Ремонт автоматически перепривязан к технике {matched_vehicle.plate_number or matched_vehicle.id} по совпадению с реестром."
+    )
 
 
 def parse_decimal_value(value: str) -> Optional[float]:
@@ -821,6 +1022,129 @@ def normalize_service_candidate(value: str | None) -> Optional[str]:
     normalized_value = normalize_text(str(value).replace("\n", " ").replace("\r", " "))
     normalized_value = re.sub(r"\s+", " ", normalized_value).strip(" -:;,")
     return normalized_value or None
+
+
+def extract_header_text(text: str, limit: int = 2500) -> str:
+    return text[:limit]
+
+
+def extract_vehicle_section_text(text: str, limit: int = 1800) -> str:
+    head = text[:3000]
+    match = VEHICLE_SECTION_START_PATTERN.search(head)
+    if match is None:
+        return extract_header_text(text, limit=limit)
+
+    fragment = head[match.start(): match.start() + limit]
+    stop_match = VEHICLE_SECTION_STOP_PATTERN.search(fragment[1:])
+    if stop_match is not None:
+        fragment = fragment[: stop_match.start() + 1]
+    return fragment
+
+
+def normalize_compare_token(value: str | None) -> Optional[str]:
+    if not value:
+        return None
+    normalized = normalize_identifier_token(normalize_ocr_code_token(value))
+    return normalized or None
+
+
+def find_pattern_value(patterns: list[str], text: str) -> Optional[str]:
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        if match is None:
+            continue
+        captured = match.group("value") if "value" in match.groupdict() else match.group(1)
+        normalized = normalize_text(captured)
+        if normalized:
+            return normalized
+    return None
+
+
+def find_plate_candidate(value: str | None) -> Optional[str]:
+    if not value:
+        return None
+
+    search_variants = [normalize_text(value)]
+    translated_variant = normalize_text(normalize_ocr_code_token(value))
+    if translated_variant and translated_variant not in search_variants:
+        search_variants.append(translated_variant)
+
+    for candidate_text in search_variants:
+        for pattern in PLATE_PATTERNS:
+            match = re.search(pattern, candidate_text, re.IGNORECASE | re.MULTILINE)
+            if match is None:
+                continue
+            normalized = normalize_identifier_token(match.group(1))
+            if normalized:
+                return normalized
+    return None
+
+
+def find_vin_candidate(value: str | None) -> Optional[str]:
+    if not value:
+        return None
+    normalized_value = normalize_ocr_code_token(normalize_text(value)).upper()
+    for pattern in VIN_PATTERNS:
+        match = re.search(pattern, normalized_value, re.IGNORECASE | re.MULTILINE)
+        if match is None:
+            continue
+        normalized = normalize_identifier_token(match.group(1))
+        if normalized:
+            return normalized
+    return None
+
+
+def parse_mileage_candidate(value: str | None) -> Optional[int]:
+    if not value:
+        return None
+    digits_only = re.sub(r"\D", "", value)
+    if not digits_only:
+        return None
+    try:
+        mileage = int(digits_only)
+    except ValueError:
+        return None
+    if mileage < 1:
+        return None
+    return mileage
+
+
+def extract_vehicle_identifiers_from_section(text: str) -> tuple[Optional[str], Optional[str], Optional[int]]:
+    section_text = extract_vehicle_section_text(text)
+    plate_number = find_plate_candidate(find_pattern_value(PLATE_LABEL_PATTERNS, section_text))
+    if plate_number is None:
+        plate_number = find_plate_candidate(section_text)
+
+    vin = find_vin_candidate(find_pattern_value(VIN_LABEL_PATTERNS, section_text))
+    if vin is None:
+        vin = find_vin_candidate(section_text)
+
+    mileage: Optional[int] = None
+    for pattern in MILEAGE_SECTION_PATTERNS:
+        match = re.search(pattern, section_text, re.IGNORECASE | re.MULTILINE)
+        if match is None:
+            continue
+        mileage = parse_mileage_candidate(match.group("value"))
+        if mileage is not None:
+            break
+
+    if mileage is None:
+        vehicle_lines = [normalize_line(line) for line in section_text.splitlines() if normalize_line(line)]
+        for index, line in enumerate(vehicle_lines):
+            window = line
+            if re.search(r"пробег|одометр", line, re.IGNORECASE) and index + 1 < len(vehicle_lines):
+                window = f"{line} {vehicle_lines[index + 1]}"
+            for pattern in VEHICLE_ROW_MILEAGE_PATTERNS:
+                match = re.search(pattern, window, re.IGNORECASE | re.MULTILINE)
+                if match is None:
+                    continue
+                mileage = parse_mileage_candidate(match.group(1))
+                if mileage is not None:
+                    break
+            if mileage is not None:
+                break
+
+    return plate_number, vin, mileage
 
 
 def extract_service_candidate_from_text(text: str) -> Optional[str]:
@@ -1542,29 +1866,37 @@ def extract_document_text(path: Path, source_type: str) -> tuple[str, str, Optio
 
 def parse_document_text(text: str, db: Session | None = None, *, profile_scope: str | None = None) -> dict[str, object]:
     text = select_best_text_variant(text)
+    header_text = extract_header_text(text)
+    vehicle_section_text = extract_vehicle_section_text(text)
+    field_search_texts: list[str] = []
+    for candidate in (vehicle_section_text, header_text):
+        normalized_candidate = normalize_text(candidate)
+        if normalized_candidate and normalized_candidate not in field_search_texts:
+            field_search_texts.append(normalized_candidate)
     extracted_fields = {}
     confidence_map = {}
     manual_review_reasons = []
     normalization_notes = []
     extracted_items = extract_line_items(text)
     rule_map = group_ocr_rules_by_field(load_active_ocr_rules(db, profile_scope=profile_scope)) if db is not None else {}
+    section_plate_number, section_vin, section_mileage = extract_vehicle_identifiers_from_section(text)
 
     order_number, order_number_confidence, _ = extract_header_field(
-        text,
+        header_text,
         target_field="order_number",
         fallback_patterns=ORDER_PATTERNS,
         fallback_parser="raw",
         fallback_confidence=0.74,
         rule_map=rule_map,
     )
-    if isinstance(order_number, str) and order_number:
+    if isinstance(order_number, str) and is_plausible_order_number(order_number):
         extracted_fields["order_number"] = order_number
         confidence_map["order_number"] = float(order_number_confidence or 0.74)
     else:
         manual_review_reasons.append("order_number_missing")
 
     repair_date, repair_date_confidence, repair_date_invalid = extract_header_field(
-        text,
+        header_text,
         target_field="repair_date",
         fallback_patterns=DATE_PATTERNS,
         fallback_parser="date",
@@ -1579,43 +1911,67 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
     else:
         manual_review_reasons.append("repair_date_missing")
 
-    mileage, mileage_confidence, _ = extract_header_field(
-        text,
-        target_field="mileage",
-        fallback_patterns=MILEAGE_PATTERNS,
-        fallback_parser="digits_int",
-        fallback_confidence=0.82,
-        rule_map=rule_map,
-    )
-    if isinstance(mileage, int):
-        extracted_fields["mileage"] = mileage
-        confidence_map["mileage"] = float(mileage_confidence or 0.82)
+    if section_mileage is not None:
+        extracted_fields["mileage"] = section_mileage
+        confidence_map["mileage"] = 0.9
     else:
-        manual_review_reasons.append("mileage_missing")
+        mileage_found = False
+        for field_text in field_search_texts:
+            mileage, mileage_confidence, _ = extract_header_field(
+                field_text,
+                target_field="mileage",
+                fallback_patterns=MILEAGE_PATTERNS,
+                fallback_parser="digits_int",
+                fallback_confidence=0.82,
+                rule_map=rule_map,
+            )
+            if isinstance(mileage, int):
+                extracted_fields["mileage"] = mileage
+                confidence_map["mileage"] = float(mileage_confidence or 0.82)
+                mileage_found = True
+                break
+        if not mileage_found:
+            manual_review_reasons.append("mileage_missing")
 
-    plate_number, plate_number_confidence, _ = extract_header_field(
-        text,
-        target_field="plate_number",
-        fallback_patterns=PLATE_PATTERNS,
-        fallback_parser="raw",
-        fallback_confidence=0.77,
-        rule_map=rule_map,
-    )
-    if isinstance(plate_number, str) and plate_number:
-        extracted_fields["plate_number"] = plate_number
-        confidence_map["plate_number"] = float(plate_number_confidence or 0.77)
+    if section_plate_number:
+        extracted_fields["plate_number"] = section_plate_number
+        confidence_map["plate_number"] = 0.9
+    else:
+        for field_text in field_search_texts:
+            plate_number, plate_number_confidence, _ = extract_header_field(
+                field_text,
+                target_field="plate_number",
+                fallback_patterns=PLATE_PATTERNS,
+                fallback_parser="raw",
+                fallback_confidence=0.77,
+                rule_map=rule_map,
+            )
+            if isinstance(plate_number, str) and plate_number:
+                normalized_plate = find_plate_candidate(plate_number) or normalize_identifier_token(plate_number)
+                if normalized_plate:
+                    extracted_fields["plate_number"] = normalized_plate
+                    confidence_map["plate_number"] = float(plate_number_confidence or 0.77)
+                    break
 
-    vin, vin_confidence, _ = extract_header_field(
-        text,
-        target_field="vin",
-        fallback_patterns=VIN_PATTERNS,
-        fallback_parser="raw",
-        fallback_confidence=0.88,
-        rule_map=rule_map,
-    )
-    if isinstance(vin, str) and vin:
-        extracted_fields["vin"] = vin
-        confidence_map["vin"] = float(vin_confidence or 0.88)
+    if section_vin:
+        extracted_fields["vin"] = section_vin
+        confidence_map["vin"] = 0.92
+    else:
+        for field_text in field_search_texts:
+            vin, vin_confidence, _ = extract_header_field(
+                field_text,
+                target_field="vin",
+                fallback_patterns=VIN_PATTERNS,
+                fallback_parser="raw",
+                fallback_confidence=0.88,
+                rule_map=rule_map,
+            )
+            if isinstance(vin, str) and vin:
+                normalized_vin = find_vin_candidate(vin) or normalize_identifier_token(vin)
+                if normalized_vin:
+                    extracted_fields["vin"] = normalized_vin
+                    confidence_map["vin"] = float(vin_confidence or 0.88)
+                    break
 
     resolved_service_match = find_service_name_in_text(text, db=db) if db is not None else find_service_name_in_text(text)
     service_name, service_name_confidence, _ = extract_header_field(
@@ -1852,6 +2208,24 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
             normalization_notes=normalization_notes,
         )
         repair = document.repair
+        auto_link_repair_vehicle_from_registry(
+            db,
+            repair,
+            extracted_fields=extracted_fields,
+            normalization_notes=normalization_notes,
+        )
+        enrich_vehicle_fields_from_repair(
+            repair,
+            extracted_fields=extracted_fields,
+            confidence_map=confidence_map,
+            normalization_notes=normalization_notes,
+        )
+        enrich_vehicle_fields_from_registry(
+            db,
+            extracted_fields=extracted_fields,
+            confidence_map=confidence_map,
+            normalization_notes=normalization_notes,
+        )
         labor_norm_applicability = assess_labor_norm_applicability(db, repair.vehicle)
         labor_norm_notes, labor_norm_summary = enrich_work_payloads_with_labor_norms(
             db,
@@ -1899,7 +2273,9 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         )
 
         if "plate_number" in extracted_fields and repair.vehicle.plate_number:
-            if str(extracted_fields["plate_number"]).upper() != repair.vehicle.plate_number.upper():
+            extracted_plate_compare = normalize_compare_token(str(extracted_fields["plate_number"]))
+            vehicle_plate_compare = normalize_compare_token(repair.vehicle.plate_number)
+            if extracted_plate_compare and vehicle_plate_compare and extracted_plate_compare != vehicle_plate_compare:
                 checks.append(
                     {
                         "check_type": "ocr_vehicle_plate_mismatch",

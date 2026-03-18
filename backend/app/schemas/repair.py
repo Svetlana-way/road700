@@ -172,6 +172,10 @@ class RepairUpdateRequest(BaseModel):
     parts: Optional[list[RepairPartUpdateInput]] = None
 
 
+class RepairServiceUpdateRequest(BaseModel):
+    service_name: Optional[str] = None
+
+
 class RepairCheckUpdateRequest(BaseModel):
     is_resolved: bool
     comment: Optional[str] = None

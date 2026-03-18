@@ -14,7 +14,12 @@ from app.models.enums import CheckSeverity, RepairStatus, UserRole
 from app.models.ocr_learning_signal import OcrLearningSignal
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.user import User
-from app.schemas.repair import RepairCheckUpdateRequest, RepairDetailResponse, RepairUpdateRequest
+from app.schemas.repair import (
+    RepairCheckUpdateRequest,
+    RepairDetailResponse,
+    RepairServiceUpdateRequest,
+    RepairUpdateRequest,
+)
 from app.services.document_processing import replace_ocr_checks, resolve_service
 
 
@@ -477,6 +482,48 @@ def update_repair(
             entity_type="repair",
             entity_id=str(refreshed.id),
             action_type="manual_update",
+            old_value=old_snapshot,
+            new_value=new_snapshot,
+        )
+    )
+    db.commit()
+    history_entries = fetch_repair_history(db, refreshed.id)
+    document_history_entries = fetch_document_history(db, refreshed)
+    return serialize_repair(refreshed, history_entries, document_history_entries)
+
+
+@router.patch("/{repair_id}/service", response_model=RepairDetailResponse)
+def update_repair_service(
+    repair_id: int,
+    payload: RepairServiceUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> RepairDetailResponse:
+    repair = load_repair_for_user(db, repair_id, current_user)
+    old_snapshot = build_repair_snapshot(repair)
+
+    service_name = payload.service_name.strip() if isinstance(payload.service_name, str) else None
+    if service_name:
+        try:
+            service = resolve_service(db, service_name)
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Указанный сервис не найден в справочнике. Выберите существующий или создайте его вручную.",
+            ) from error
+        repair.service_id = service.id
+    else:
+        repair.service_id = None
+
+    db.flush()
+    refreshed = load_repair_for_user(db, repair_id, current_user)
+    new_snapshot = build_repair_snapshot(refreshed)
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            entity_type="repair",
+            entity_id=str(refreshed.id),
+            action_type="service_assignment",
             old_value=old_snapshot,
             new_value=new_snapshot,
         )

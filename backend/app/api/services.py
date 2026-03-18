@@ -121,7 +121,7 @@ def list_services(
 def create_service(
     payload: ServiceCreate,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_active_user),
 ) -> ServiceRead:
     ensure_service_catalog_synced(db, commit=True)
     normalized_name = normalize_service_name(payload.name)
@@ -137,9 +137,9 @@ def create_service(
         city=normalize_optional_text(payload.city),
         contact=normalize_optional_text(payload.contact),
         comment=normalize_optional_text(payload.comment),
-        status=payload.status,
-        created_by_user_id=current_admin.id,
-        confirmed_by_user_id=current_admin.id if payload.status == ServiceStatus.CONFIRMED else None,
+        status=payload.status if current_user.role == "admin" else ServiceStatus.PRELIMINARY,
+        created_by_user_id=current_user.id,
+        confirmed_by_user_id=current_user.id if current_user.role == "admin" and payload.status == ServiceStatus.CONFIRMED else None,
     )
     db.add(service_item)
     db.commit()

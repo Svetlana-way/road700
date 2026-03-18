@@ -290,7 +290,7 @@ def resolve_service_by_name(db: Session, service_name: str | None) -> Service | 
         select(Service)
         .where(
             Service.created_by_user_id.is_not(None),
-            Service.status == ServiceStatus.CONFIRMED,
+            Service.status != ServiceStatus.ARCHIVED,
         )
         .order_by(Service.name.asc())
     ).all():

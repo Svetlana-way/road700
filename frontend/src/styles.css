@@ -134,6 +134,17 @@ body {
   min-width: 0;
 }
 
+.repair-review-split {
+  height: 100%;
+}
+
+.repair-review-preview {
+  border: 1px solid rgba(24, 40, 60, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  overflow: hidden;
+}
+
 .workspace-panel {
   min-width: 0;
 }

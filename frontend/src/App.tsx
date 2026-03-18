@@ -2145,6 +2145,19 @@ async function downloadDocumentFile(documentId: number, token: string): Promise<
   return URL.createObjectURL(blob);
 }
 
+function getDocumentPreviewKind(mimeType: string | null | undefined): "pdf" | "image" | null {
+  if (!mimeType) {
+    return null;
+  }
+  if (mimeType === "application/pdf") {
+    return "pdf";
+  }
+  if (mimeType.startsWith("image/")) {
+    return "image";
+  }
+  return null;
+}
+
 async function apiRequest<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers ?? {});
   if (token) {
@@ -2309,6 +2322,8 @@ export default function App() {
   const [batchReprocessStatusFilter, setBatchReprocessStatusFilter] = useState("");
   const [batchReprocessPrimaryOnly, setBatchReprocessPrimaryOnly] = useState<"false" | "true">("false");
   const [reviewActionLoading, setReviewActionLoading] = useState(false);
+  const [reviewServiceAssigning, setReviewServiceAssigning] = useState(false);
+  const [reviewServiceSaving, setReviewServiceSaving] = useState(false);
   const [documentVehicleSaving, setDocumentVehicleSaving] = useState(false);
   const [checkActionLoadingId, setCheckActionLoadingId] = useState<number | null>(null);
   const [documentOpenLoadingId, setDocumentOpenLoadingId] = useState<number | null>(null);
@@ -2326,15 +2341,32 @@ export default function App() {
   const [historySearch, setHistorySearch] = useState("");
   const [expandedHistoryEntries, setExpandedHistoryEntries] = useState<Record<string, boolean>>({});
   const [reviewActionComment, setReviewActionComment] = useState("");
+  const [reviewServiceName, setReviewServiceName] = useState("");
+  const [reviewServiceForm, setReviewServiceForm] = useState<ServiceFormState>(createEmptyServiceForm);
+  const [showReviewServiceEditor, setShowReviewServiceEditor] = useState(false);
+  const [reviewDocumentPreviewUrl, setReviewDocumentPreviewUrl] = useState("");
+  const [reviewDocumentPreviewLoading, setReviewDocumentPreviewLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
   const selectedReviewItem =
     reviewQueue.find((item) => item.document.id === selectedDocumentId) ?? null;
   const selectedManagedUser = usersList.find((item) => item.id === selectedManagedUserId) ?? null;
+  const selectedRepairDocument = selectedRepair?.documents.find((item) => item.id === selectedDocumentId) ?? null;
   const selectedRepairDocumentPayload = getLatestRepairDocumentPayload(selectedRepair, selectedDocumentId);
   const selectedRepairDocumentExtractedFields = getPayloadExtractedFields(selectedRepairDocumentPayload);
   const selectedRepairDocumentExtractedItems = getPayloadExtractedItems(selectedRepairDocumentPayload);
+  const selectedRepairDocumentOcrServiceName =
+    typeof selectedRepairDocumentExtractedFields?.service_name === "string"
+      ? selectedRepairDocumentExtractedFields.service_name.trim()
+      : "";
+  const selectedRepairDocumentWorks = Array.isArray(selectedRepairDocumentExtractedItems?.works)
+    ? selectedRepairDocumentExtractedItems.works
+    : [];
+  const selectedRepairDocumentParts = Array.isArray(selectedRepairDocumentExtractedItems?.parts)
+    ? selectedRepairDocumentExtractedItems.parts
+    : [];
+  const reviewDocumentPreviewKind = getDocumentPreviewKind(selectedRepairDocument?.mime_type);
   const canCreateVehicleFromSelectedDocument =
     user?.role === "admin" &&
     isPlaceholderVehicle(selectedRepair?.vehicle.external_id) &&
@@ -2686,9 +2718,7 @@ export default function App() {
         me.role === "admin"
           ? apiRequest<LaborNormCatalogConfigResponse>("/labor-norms/catalogs", { method: "GET" }, activeToken)
           : Promise.resolve(null),
-        me.role === "admin"
-          ? apiRequest<ServicesResponse>("/services?limit=100", { method: "GET" }, activeToken)
-          : Promise.resolve(null),
+        apiRequest<ServicesResponse>("/services?limit=100", { method: "GET" }, activeToken),
         me.role === "admin"
           ? apiRequest<ReviewRuleResponse>("/review/rules", { method: "GET" }, activeToken)
           : Promise.resolve(null),
@@ -2918,6 +2948,60 @@ export default function App() {
   useEffect(() => {
     setDocumentVehicleForm(createVehicleFormFromPayload(selectedRepairDocumentPayload));
   }, [selectedDocumentId, selectedRepairDocumentPayload]);
+
+  useEffect(() => {
+    const nextServiceName = selectedRepair?.service?.name || selectedRepairDocumentOcrServiceName || "";
+    setReviewServiceName(nextServiceName);
+    setReviewServiceForm({
+      id: null,
+      name: selectedRepairDocumentOcrServiceName,
+      city: "",
+      contact: "",
+      comment: "",
+      status: user?.role === "admin" ? "confirmed" : "preliminary",
+    });
+    setShowReviewServiceEditor(false);
+  }, [selectedRepair?.id, selectedRepair?.service?.name, selectedRepairDocumentOcrServiceName, user?.role]);
+
+  useEffect(() => {
+    if (!token || !selectedRepairDocument || !reviewDocumentPreviewKind) {
+      setReviewDocumentPreviewUrl("");
+      setReviewDocumentPreviewLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+    let objectUrl = "";
+
+    setReviewDocumentPreviewLoading(true);
+    setReviewDocumentPreviewUrl("");
+    void downloadDocumentFile(selectedRepairDocument.id, token)
+      .then((url) => {
+        if (!isMounted) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        objectUrl = url;
+        setReviewDocumentPreviewUrl(url);
+      })
+      .catch((error) => {
+        if (isMounted) {
+          setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить превью документа");
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setReviewDocumentPreviewLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [reviewDocumentPreviewKind, selectedRepairDocument, token]);
 
   useEffect(() => {
     setAdminResetPasswordValue("");
@@ -4030,6 +4114,88 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить сервис");
     } finally {
       setServiceSaving(false);
+    }
+  }
+
+  async function assignReviewService(serviceName: string) {
+    if (!token || !selectedRepair) {
+      return;
+    }
+
+    setReviewServiceAssigning(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const savedRepair = await apiRequest<RepairDetail>(
+        `/repairs/${selectedRepair.id}/service`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            service_name: serviceName.trim() || null,
+          }),
+        },
+        token,
+      );
+      setSelectedRepair(savedRepair);
+      if (!isEditingRepair) {
+        setRepairDraft(createRepairDraft(savedRepair));
+      }
+      setReviewServiceName(savedRepair.service?.name || "");
+      setSuccessMessage(savedRepair.service ? "Сервис назначен ремонту" : "Сервис у ремонта очищен");
+      await loadWorkspace(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось назначить сервис");
+    } finally {
+      setReviewServiceAssigning(false);
+    }
+  }
+
+  async function handleAssignReviewService() {
+    await assignReviewService(reviewServiceName);
+  }
+
+  async function handleCreateReviewService() {
+    if (!token || !selectedRepair) {
+      return;
+    }
+    if (!reviewServiceForm.name.trim()) {
+      setErrorMessage("Название сервиса обязательно");
+      return;
+    }
+
+    setReviewServiceSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const createdService = await apiRequest<ServiceItem>(
+        "/services",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: reviewServiceForm.name.trim(),
+            city: reviewServiceForm.city.trim() || null,
+            contact: reviewServiceForm.contact.trim() || null,
+            comment: reviewServiceForm.comment.trim() || null,
+            status: user?.role === "admin" ? reviewServiceForm.status : "preliminary",
+          }),
+        },
+        token,
+      );
+      await loadServices(token);
+      setReviewServiceForm({
+        id: null,
+        name: "",
+        city: "",
+        contact: "",
+        comment: "",
+        status: user?.role === "admin" ? "confirmed" : "preliminary",
+      });
+      setShowReviewServiceEditor(false);
+      await assignReviewService(createdService.name);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось создать сервис");
+    } finally {
+      setReviewServiceSaving(false);
     }
   }
 
@@ -8041,75 +8207,372 @@ export default function App() {
                                   ? ` и ещё ${selectedReviewItem.issue_titles.length - 4}`
                                   : ""}
                               </Typography>
-                              {selectedRepairDocumentPayload ? (
-                                <Paper className="repair-line" elevation={0}>
-                                  <Stack spacing={1.25}>
-                                    <Box>
-                                      <Typography variant="subtitle1">Распознанные данные текущего документа</Typography>
-                                      <Typography className="muted-copy">
-                                        Краткая OCR-сводка по выбранному файлу перед подтверждением.
-                                      </Typography>
-                                    </Box>
-                                    <Grid container spacing={1.5}>
-                                      <Grid item xs={12} sm={6}>
-                                        <Typography className="metric-label">Номер заказ-наряда</Typography>
-                                        <Typography>{String(selectedRepairDocumentExtractedFields?.order_number || "—")}</Typography>
-                                      </Grid>
-                                      <Grid item xs={12} sm={6}>
-                                        <Typography className="metric-label">Дата ремонта</Typography>
-                                        <Typography>{String(selectedRepairDocumentExtractedFields?.repair_date || "—")}</Typography>
-                                      </Grid>
-                                      <Grid item xs={12} sm={6}>
-                                        <Typography className="metric-label">Сервис</Typography>
-                                        <Typography>{String(selectedRepairDocumentExtractedFields?.service_name || "—")}</Typography>
-                                      </Grid>
-                                      <Grid item xs={12} sm={6}>
-                                        <Typography className="metric-label">Пробег</Typography>
-                                        <Typography>{String(selectedRepairDocumentExtractedFields?.mileage || "—")}</Typography>
-                                      </Grid>
-                                      <Grid item xs={12} sm={6}>
-                                        <Typography className="metric-label">Госномер</Typography>
-                                        <Typography>{String(selectedRepairDocumentExtractedFields?.plate_number || "—")}</Typography>
-                                      </Grid>
-                                      <Grid item xs={12} sm={6}>
-                                        <Typography className="metric-label">VIN</Typography>
-                                        <Typography>{String(selectedRepairDocumentExtractedFields?.vin || "—")}</Typography>
-                                      </Grid>
-                                      <Grid item xs={12} sm={6}>
-                                        <Typography className="metric-label">Итоговая сумма</Typography>
-                                        <Typography>
-                                          {typeof selectedRepairDocumentExtractedFields?.grand_total === "number"
-                                            ? formatMoney(selectedRepairDocumentExtractedFields.grand_total)
-                                            : "—"}
+                              {selectedRepairDocument ? (
+                                <Grid container spacing={2}>
+                                  <Grid item xs={12} lg={6}>
+                                    <Paper className="repair-line repair-review-split" elevation={0}>
+                                      <Stack spacing={1.25} sx={{ height: "100%" }}>
+                                        <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
+                                          <Box>
+                                            <Typography variant="subtitle1">Документ</Typography>
+                                            <Typography className="muted-copy">{selectedRepairDocument.original_filename}</Typography>
+                                          </Box>
+                                          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap justifyContent="flex-end">
+                                            <Chip size="small" variant="outlined" label={formatDocumentKind(selectedRepairDocument.kind)} />
+                                            <Chip
+                                              size="small"
+                                              color={statusColor(selectedRepairDocument.status as DocumentStatus)}
+                                              label={formatDocumentStatusLabel(selectedRepairDocument.status)}
+                                            />
+                                          </Stack>
+                                        </Stack>
+                                        <Typography className="muted-copy">
+                                          {formatDateTime(selectedRepairDocument.created_at)} · {formatSourceTypeLabel(selectedRepairDocument.source_type)}
+                                          {" · "}OCR {formatConfidence(selectedRepairDocument.ocr_confidence)}
                                         </Typography>
-                                      </Grid>
-                                      <Grid item xs={12} sm={6}>
-                                        <Typography className="metric-label">Строки документа</Typography>
-                                        <Typography>
-                                          Работ {Array.isArray(selectedRepairDocumentExtractedItems?.works) ? selectedRepairDocumentExtractedItems.works.length : 0}
-                                          {" · "}
-                                          Запчастей {Array.isArray(selectedRepairDocumentExtractedItems?.parts) ? selectedRepairDocumentExtractedItems.parts.length : 0}
-                                        </Typography>
-                                      </Grid>
-                                    </Grid>
-                                    {Array.isArray(selectedRepairDocumentPayload.manual_review_reasons) &&
-                                    selectedRepairDocumentPayload.manual_review_reasons.length > 0 ? (
-                                      <Typography className="muted-copy">
-                                        Требует ручной проверки: {selectedRepairDocumentPayload.manual_review_reasons.join(", ")}
-                                      </Typography>
-                                    ) : null}
-                                    {formatOcrProfileMeta(selectedRepairDocumentPayload) ? (
-                                      <Typography className="muted-copy">
-                                        {formatOcrProfileMeta(selectedRepairDocumentPayload)}
-                                      </Typography>
-                                    ) : null}
-                                    {formatLaborNormApplicability(selectedRepairDocumentPayload) ? (
-                                      <Typography className="muted-copy">
-                                        {formatLaborNormApplicability(selectedRepairDocumentPayload)}
-                                      </Typography>
-                                    ) : null}
-                                  </Stack>
-                                </Paper>
+                                        <Box className="repair-review-preview">
+                                          {reviewDocumentPreviewLoading ? (
+                                            <Stack spacing={1} alignItems="center" justifyContent="center" sx={{ minHeight: 320 }}>
+                                              <CircularProgress size={24} />
+                                              <Typography className="muted-copy">Загружаю превью документа...</Typography>
+                                            </Stack>
+                                          ) : reviewDocumentPreviewKind === "image" && reviewDocumentPreviewUrl ? (
+                                            <Box
+                                              component="img"
+                                              src={reviewDocumentPreviewUrl}
+                                              alt={selectedRepairDocument.original_filename}
+                                              sx={{
+                                                width: "100%",
+                                                maxHeight: 520,
+                                                objectFit: "contain",
+                                                display: "block",
+                                                borderRadius: 2,
+                                              }}
+                                            />
+                                          ) : reviewDocumentPreviewKind === "pdf" && reviewDocumentPreviewUrl ? (
+                                            <Box
+                                              component="iframe"
+                                              src={reviewDocumentPreviewUrl}
+                                              title={selectedRepairDocument.original_filename}
+                                              sx={{
+                                                width: "100%",
+                                                minHeight: { xs: 360, lg: 520 },
+                                                border: 0,
+                                                borderRadius: 2,
+                                                backgroundColor: "#fff",
+                                              }}
+                                            />
+                                          ) : (
+                                            <Stack spacing={1} alignItems="center" justifyContent="center" sx={{ minHeight: 320 }}>
+                                              <Typography className="muted-copy">
+                                                Для этого типа файла встроенное превью недоступно.
+                                              </Typography>
+                                            </Stack>
+                                          )}
+                                        </Box>
+                                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                          <Button
+                                            size="small"
+                                            variant="outlined"
+                                            disabled={documentOpenLoadingId === selectedRepairDocument.id}
+                                            onClick={() => {
+                                              void handleOpenDocumentFile(selectedRepairDocument.id);
+                                            }}
+                                          >
+                                            {documentOpenLoadingId === selectedRepairDocument.id ? "Открытие..." : "Открыть отдельно"}
+                                          </Button>
+                                          <Typography className="muted-copy">
+                                            Версий OCR: {selectedRepairDocument.versions.length}
+                                          </Typography>
+                                        </Stack>
+                                      </Stack>
+                                    </Paper>
+                                  </Grid>
+                                  <Grid item xs={12} lg={6}>
+                                    <Stack spacing={1.5}>
+                                      <Paper className="repair-line repair-review-split" elevation={0}>
+                                        <Stack spacing={1.25}>
+                                          <Box>
+                                            <Typography variant="subtitle1">Сервис ремонта</Typography>
+                                            <Typography className="muted-copy">
+                                              Назначьте сервис из справочника или создайте новый прямо из review.
+                                            </Typography>
+                                          </Box>
+                                          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                            <Chip
+                                              size="small"
+                                              variant="outlined"
+                                              label={`В ремонте: ${selectedRepair.service?.name || "не назначен"}`}
+                                            />
+                                            {selectedRepairDocumentOcrServiceName ? (
+                                              <Chip
+                                                size="small"
+                                                variant="outlined"
+                                                color="warning"
+                                                label={`OCR: ${selectedRepairDocumentOcrServiceName}`}
+                                              />
+                                            ) : null}
+                                          </Stack>
+                                          <TextField
+                                            fullWidth
+                                            label="Выбрать сервис"
+                                            value={reviewServiceName}
+                                            onChange={(event) => setReviewServiceName(event.target.value)}
+                                            inputProps={{ list: "review-services-list" }}
+                                            helperText={
+                                              services.length > 0
+                                                ? "Справочник включает сервисы из папки `Сервисы` и ручные добавления."
+                                                : "Список сервисов будет доступен после загрузки справочника."
+                                            }
+                                          />
+                                          <datalist id="review-services-list">
+                                            {services.map((item) => (
+                                              <option key={`review-service-option-${item.id}`} value={item.name} />
+                                            ))}
+                                          </datalist>
+                                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                            <Button
+                                              variant="contained"
+                                              disabled={reviewServiceAssigning || reviewServiceSaving}
+                                              onClick={() => {
+                                                void handleAssignReviewService();
+                                              }}
+                                            >
+                                              {reviewServiceAssigning ? "Назначение..." : "Назначить сервис"}
+                                            </Button>
+                                            <Button
+                                              variant="outlined"
+                                              disabled={reviewServiceAssigning || reviewServiceSaving}
+                                              onClick={() => {
+                                                setShowReviewServiceEditor((current) => !current);
+                                                setReviewServiceForm((current) => ({
+                                                  ...current,
+                                                  name: current.name || reviewServiceName || selectedRepairDocumentOcrServiceName,
+                                                }));
+                                              }}
+                                            >
+                                              {showReviewServiceEditor ? "Скрыть создание" : "Создать новый сервис"}
+                                            </Button>
+                                            {selectedRepair.service ? (
+                                              <Button
+                                                variant="text"
+                                                disabled={reviewServiceAssigning || reviewServiceSaving}
+                                                onClick={() => {
+                                                  setReviewServiceName("");
+                                                  void assignReviewService("");
+                                                }}
+                                              >
+                                                Очистить сервис
+                                              </Button>
+                                            ) : null}
+                                          </Stack>
+                                          {showReviewServiceEditor ? (
+                                            <Grid container spacing={1.5}>
+                                              <Grid item xs={12} sm={6}>
+                                                <TextField
+                                                  fullWidth
+                                                  label="Название сервиса"
+                                                  value={reviewServiceForm.name}
+                                                  onChange={(event) =>
+                                                    setReviewServiceForm((current) => ({
+                                                      ...current,
+                                                      name: event.target.value,
+                                                    }))
+                                                  }
+                                                />
+                                              </Grid>
+                                              <Grid item xs={12} sm={6}>
+                                                <TextField
+                                                  fullWidth
+                                                  label="Город"
+                                                  value={reviewServiceForm.city}
+                                                  onChange={(event) =>
+                                                    setReviewServiceForm((current) => ({
+                                                      ...current,
+                                                      city: event.target.value,
+                                                    }))
+                                                  }
+                                                />
+                                              </Grid>
+                                              <Grid item xs={12} sm={6}>
+                                                <TextField
+                                                  fullWidth
+                                                  label="Контакт"
+                                                  value={reviewServiceForm.contact}
+                                                  onChange={(event) =>
+                                                    setReviewServiceForm((current) => ({
+                                                      ...current,
+                                                      contact: event.target.value,
+                                                    }))
+                                                  }
+                                                />
+                                              </Grid>
+                                              {user?.role === "admin" ? (
+                                                <Grid item xs={12} sm={6}>
+                                                  <TextField
+                                                    select
+                                                    fullWidth
+                                                    label="Статус"
+                                                    value={reviewServiceForm.status}
+                                                    onChange={(event) =>
+                                                      setReviewServiceForm((current) => ({
+                                                        ...current,
+                                                        status: event.target.value as ServiceStatus,
+                                                      }))
+                                                    }
+                                                  >
+                                                    <MenuItem value="confirmed">Подтверждён</MenuItem>
+                                                    <MenuItem value="preliminary">Предварительный</MenuItem>
+                                                  </TextField>
+                                                </Grid>
+                                              ) : null}
+                                              <Grid item xs={12}>
+                                                <TextField
+                                                  fullWidth
+                                                  multiline
+                                                  minRows={2}
+                                                  label="Комментарий"
+                                                  value={reviewServiceForm.comment}
+                                                  onChange={(event) =>
+                                                    setReviewServiceForm((current) => ({
+                                                      ...current,
+                                                      comment: event.target.value,
+                                                    }))
+                                                  }
+                                                  helperText={
+                                                    user?.role === "admin"
+                                                      ? undefined
+                                                      : "Сервис будет создан как предварительный и сразу станет доступен для назначения."
+                                                  }
+                                                />
+                                              </Grid>
+                                              <Grid item xs={12}>
+                                                <Button
+                                                  variant="contained"
+                                                  disabled={reviewServiceSaving || reviewServiceAssigning}
+                                                  onClick={() => {
+                                                    void handleCreateReviewService();
+                                                  }}
+                                                >
+                                                  {reviewServiceSaving ? "Создание..." : "Создать и назначить"}
+                                                </Button>
+                                              </Grid>
+                                            </Grid>
+                                          ) : null}
+                                        </Stack>
+                                      </Paper>
+
+                                      <Paper className="repair-line repair-review-split" elevation={0}>
+                                        <Stack spacing={1.25}>
+                                          <Box>
+                                            <Typography variant="subtitle1">Распознанные данные</Typography>
+                                            <Typography className="muted-copy">
+                                              Полная сводка по шапке документа и строкам OCR перед подтверждением.
+                                            </Typography>
+                                          </Box>
+                                          <Grid container spacing={1.5}>
+                                            <Grid item xs={12} sm={6}>
+                                              <Typography className="metric-label">Номер заказ-наряда</Typography>
+                                              <Typography>{String(selectedRepairDocumentExtractedFields?.order_number || "—")}</Typography>
+                                            </Grid>
+                                            <Grid item xs={12} sm={6}>
+                                              <Typography className="metric-label">Дата ремонта</Typography>
+                                              <Typography>{String(selectedRepairDocumentExtractedFields?.repair_date || "—")}</Typography>
+                                            </Grid>
+                                            <Grid item xs={12} sm={6}>
+                                              <Typography className="metric-label">Сервис по OCR</Typography>
+                                              <Typography>{selectedRepairDocumentOcrServiceName || "—"}</Typography>
+                                            </Grid>
+                                            <Grid item xs={12} sm={6}>
+                                              <Typography className="metric-label">Пробег</Typography>
+                                              <Typography>{String(selectedRepairDocumentExtractedFields?.mileage || "—")}</Typography>
+                                            </Grid>
+                                            <Grid item xs={12} sm={6}>
+                                              <Typography className="metric-label">Госномер</Typography>
+                                              <Typography>{String(selectedRepairDocumentExtractedFields?.plate_number || "—")}</Typography>
+                                            </Grid>
+                                            <Grid item xs={12} sm={6}>
+                                              <Typography className="metric-label">VIN</Typography>
+                                              <Typography>{String(selectedRepairDocumentExtractedFields?.vin || "—")}</Typography>
+                                            </Grid>
+                                            <Grid item xs={12} sm={6}>
+                                              <Typography className="metric-label">Итоговая сумма</Typography>
+                                              <Typography>
+                                                {typeof selectedRepairDocumentExtractedFields?.grand_total === "number"
+                                                  ? formatMoney(selectedRepairDocumentExtractedFields.grand_total)
+                                                  : "—"}
+                                              </Typography>
+                                            </Grid>
+                                            <Grid item xs={12} sm={6}>
+                                              <Typography className="metric-label">Строки документа</Typography>
+                                              <Typography>
+                                                Работ {selectedRepairDocumentWorks.length} · Запчастей {selectedRepairDocumentParts.length}
+                                              </Typography>
+                                            </Grid>
+                                          </Grid>
+                                          {Array.isArray(selectedRepairDocumentPayload?.manual_review_reasons) &&
+                                          selectedRepairDocumentPayload.manual_review_reasons.length > 0 ? (
+                                            <Typography className="muted-copy">
+                                              Требует ручной проверки: {selectedRepairDocumentPayload.manual_review_reasons.join(", ")}
+                                            </Typography>
+                                          ) : null}
+                                          {formatOcrProfileMeta(selectedRepairDocumentPayload) ? (
+                                            <Typography className="muted-copy">
+                                              {formatOcrProfileMeta(selectedRepairDocumentPayload)}
+                                            </Typography>
+                                          ) : null}
+                                          {formatLaborNormApplicability(selectedRepairDocumentPayload) ? (
+                                            <Typography className="muted-copy">
+                                              {formatLaborNormApplicability(selectedRepairDocumentPayload)}
+                                            </Typography>
+                                          ) : null}
+                                          {selectedRepairDocumentWorks.length > 0 ? (
+                                            <Stack spacing={0.75}>
+                                              <Typography className="metric-label">Работы OCR</Typography>
+                                              {selectedRepairDocumentWorks.slice(0, 6).map((item, index) => (
+                                                <Box key={`review-work-${index}`}>
+                                                  <Typography>
+                                                    {String(item.work_name || item.name || `Работа ${index + 1}`)}
+                                                  </Typography>
+                                                  <Typography className="muted-copy">
+                                                    Кол-во {String(item.quantity || "—")} · Цена {typeof item.price === "number" ? formatMoney(item.price) : "—"}
+                                                    {" · "}Сумма {typeof item.line_total === "number" ? formatMoney(item.line_total) : "—"}
+                                                  </Typography>
+                                                </Box>
+                                              ))}
+                                              {selectedRepairDocumentWorks.length > 6 ? (
+                                                <Typography className="muted-copy">
+                                                  И ещё {selectedRepairDocumentWorks.length - 6} строк работ.
+                                                </Typography>
+                                              ) : null}
+                                            </Stack>
+                                          ) : null}
+                                          {selectedRepairDocumentParts.length > 0 ? (
+                                            <Stack spacing={0.75}>
+                                              <Typography className="metric-label">Запчасти OCR</Typography>
+                                              {selectedRepairDocumentParts.slice(0, 6).map((item, index) => (
+                                                <Box key={`review-part-${index}`}>
+                                                  <Typography>
+                                                    {String(item.part_name || item.name || `Запчасть ${index + 1}`)}
+                                                  </Typography>
+                                                  <Typography className="muted-copy">
+                                                    Кол-во {String(item.quantity || "—")} · Цена {typeof item.price === "number" ? formatMoney(item.price) : "—"}
+                                                    {" · "}Сумма {typeof item.line_total === "number" ? formatMoney(item.line_total) : "—"}
+                                                  </Typography>
+                                                </Box>
+                                              ))}
+                                              {selectedRepairDocumentParts.length > 6 ? (
+                                                <Typography className="muted-copy">
+                                                  И ещё {selectedRepairDocumentParts.length - 6} строк запчастей.
+                                                </Typography>
+                                              ) : null}
+                                            </Stack>
+                                          ) : null}
+                                        </Stack>
+                                      </Paper>
+                                    </Stack>
+                                  </Grid>
+                                </Grid>
                               ) : null}
                               <TextField
                                 label={user?.role === "admin" ? "Комментарий администратора" : "Комментарий сотрудника"}
@@ -8123,7 +8586,7 @@ export default function App() {
                                 {user?.role === "admin" ? (
                                   <Button
                                     variant="contained"
-                                    disabled={reviewActionLoading}
+                                    disabled={reviewActionLoading || reviewServiceAssigning || reviewServiceSaving}
                                     onClick={() => {
                                       void handleReviewAction("confirm");
                                     }}
@@ -8133,7 +8596,7 @@ export default function App() {
                                 ) : (
                                   <Button
                                     variant="contained"
-                                    disabled={reviewActionLoading}
+                                    disabled={reviewActionLoading || reviewServiceAssigning || reviewServiceSaving}
                                     onClick={() => {
                                       void handleReviewAction("employee_confirm");
                                     }}
@@ -8143,7 +8606,7 @@ export default function App() {
                                 )}
                                 <Button
                                   variant="outlined"
-                                  disabled={reviewActionLoading}
+                                  disabled={reviewActionLoading || reviewServiceAssigning || reviewServiceSaving}
                                   onClick={() => {
                                     void handleReviewAction("send_to_review");
                                   }}

@@ -202,6 +202,54 @@ body {
   overflow: hidden;
 }
 
+.dashboard-visual-card {
+  height: 100%;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(24, 40, 60, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(243, 247, 251, 0.92));
+}
+
+.dashboard-bar-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dashboard-bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(24, 40, 60, 0.08);
+  overflow: hidden;
+}
+
+.dashboard-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+}
+
+.dashboard-bar-fill.tone-blue {
+  background: linear-gradient(90deg, #3d7ccf, #6aa7ef);
+}
+
+.dashboard-bar-fill.tone-amber {
+  background: linear-gradient(90deg, #d79b2c, #f2c35d);
+}
+
+.dashboard-bar-fill.tone-red {
+  background: linear-gradient(90deg, #c04e4e, #e48989);
+}
+
+.dashboard-bar-fill.tone-green {
+  background: linear-gradient(90deg, #31865b, #63b587);
+}
+
+.dashboard-bar-value {
+  font-weight: 700;
+  color: #29425f;
+}
+
 .workspace-panel {
   min-width: 0;
 }

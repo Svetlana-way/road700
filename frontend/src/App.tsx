@@ -221,6 +221,15 @@ type UserAssignment = {
   };
 };
 
+type DashboardVisualTone = "blue" | "amber" | "red" | "green";
+
+type DashboardVisualBar = {
+  label: string;
+  value: number;
+  hint?: string;
+  tone: DashboardVisualTone;
+};
+
 type UserItem = User & {
   created_at: string;
   updated_at: string;
@@ -1185,6 +1194,133 @@ const qualityCards: Array<{ key: keyof DashboardDataQuality; label: string }> = 
   { key: "parts_preliminary", label: "Неподтверждённые материалы" },
   { key: "import_conflicts_pending", label: "Конфликты импорта" },
 ];
+
+function buildDashboardVisualBarWidth(value: number, maxValue: number) {
+  if (value <= 0 || maxValue <= 0) {
+    return "0%";
+  }
+  const ratio = (value / maxValue) * 100;
+  return `${Math.max(8, Math.min(100, ratio))}%`;
+}
+
+function buildRepairVisualBars(
+  summary: DashboardSummary | null,
+  dataQuality: DashboardDataQuality | null,
+): DashboardVisualBar[] {
+  if (!summary) {
+    return [];
+  }
+
+  const confirmedRepairs = Math.max(
+    0,
+    summary.repairs_total - summary.repairs_draft - (dataQuality?.repairs_suspicious || 0),
+  );
+
+  const items: DashboardVisualBar[] = [
+    {
+      label: "Подтверждено",
+      value: confirmedRepairs,
+      hint: "Ремонты без открытой подозрительности",
+      tone: "green",
+    },
+    {
+      label: "Черновики",
+      value: summary.repairs_draft,
+      hint: "Ещё не подтверждены",
+      tone: "amber",
+    },
+    {
+      label: "Подозрительные",
+      value: dataQuality?.repairs_suspicious || 0,
+      hint: "Требуют проверки",
+      tone: "red",
+    },
+    {
+      label: "Документы в очереди",
+      value: summary.documents_review_queue,
+      hint: "Ожидают OCR или ручной разбор",
+      tone: "blue",
+    },
+  ];
+
+  return items.filter((item) => item.value > 0);
+}
+
+function buildQualityVisualBars(dataQuality: DashboardDataQuality | null): DashboardVisualBar[] {
+  if (!dataQuality) {
+    return [];
+  }
+
+  const items: DashboardVisualBar[] = [
+    {
+      label: "Низкая уверенность OCR",
+      value: dataQuality.documents_low_confidence,
+      hint: "Ниже рабочего порога",
+      tone: "amber",
+    },
+    {
+      label: "Документы на проверке",
+      value: dataQuality.documents_needs_review,
+      hint: "Нужен ручной разбор",
+      tone: "blue",
+    },
+    {
+      label: "Ошибки OCR",
+      value: dataQuality.documents_ocr_error,
+      hint: "Распознавание не удалось",
+      tone: "red",
+    },
+    {
+      label: "Конфликты импорта",
+      value: dataQuality.import_conflicts_pending,
+      hint: "История ждёт сверки",
+      tone: "amber",
+    },
+  ];
+
+  return items.filter((item) => item.value > 0);
+}
+
+function buildAttentionVisualBars(details: DashboardDataQualityDetails | null): DashboardVisualBar[] {
+  if (!details) {
+    return [];
+  }
+
+  const items: DashboardVisualBar[] = [
+    {
+      label: "Документы",
+      value: details.counts.documents,
+      hint: "Проблемные файлы",
+      tone: "blue",
+    },
+    {
+      label: "Сервисы",
+      value: details.counts.services,
+      hint: "Неподтверждённые контрагенты",
+      tone: "amber",
+    },
+    {
+      label: "Работы",
+      value: details.counts.works,
+      hint: "Строки без нормализации",
+      tone: "amber",
+    },
+    {
+      label: "Материалы",
+      value: details.counts.parts,
+      hint: "Строки без подтверждения",
+      tone: "amber",
+    },
+    {
+      label: "Конфликты",
+      value: details.counts.conflicts,
+      hint: "Не разобран импорт",
+      tone: "red",
+    },
+  ];
+
+  return items.filter((item) => item.value > 0);
+}
 
 const workspaceTabDescriptions: Record<WorkspaceTab, string> = {
   documents: "Загрузка, очередь OCR и последние заказ-наряды.",
@@ -2904,6 +3040,13 @@ export default function App() {
   const selectedRepairDocumentParts = Array.isArray(selectedRepairDocumentExtractedItems?.parts)
     ? selectedRepairDocumentExtractedItems.parts
     : [];
+  const repairVisualBars = buildRepairVisualBars(summary, dataQuality);
+  const repairVisualMax = Math.max(...repairVisualBars.map((item) => item.value), 0);
+  const qualityVisualBars = buildQualityVisualBars(dataQuality);
+  const qualityVisualMax = Math.max(...qualityVisualBars.map((item) => item.value), 0);
+  const attentionVisualBars = buildAttentionVisualBars(dataQualityDetails);
+  const attentionVisualMax = Math.max(...attentionVisualBars.map((item) => item.value), 0);
+  const topAttentionServices = dataQualityDetails?.services.slice(0, 5) || [];
   const reviewDocumentPreviewKind = getDocumentPreviewKind(selectedRepairDocument?.mime_type);
   const reviewRequiredFieldComparisons: ReviewRequiredFieldComparisonItem[] = selectedRepair
     ? [
@@ -6304,6 +6447,136 @@ export default function App() {
                     </Paper>
                   </Grid>
                 ))}
+              </Grid>
+            </Stack>
+          </Paper>
+
+          <Paper className="workspace-panel" elevation={0}>
+            <Stack spacing={2}>
+              <Box>
+                <Typography variant="h5">Визуальные дашборды</Typography>
+                <Typography className="muted-copy">
+                  Наглядная картина по ремонтам, качеству OCR и точкам накопления ручной работы.
+                </Typography>
+              </Box>
+              <Grid container spacing={2}>
+                <Grid item xs={12} lg={4}>
+                  <Paper className="dashboard-visual-card" elevation={0}>
+                    <Stack spacing={1.25}>
+                      <Box>
+                        <Typography className="metric-label">Ремонтный контур</Typography>
+                        <Typography variant="h6">Статусы и поток документов</Typography>
+                      </Box>
+                      {repairVisualBars.length > 0 ? (
+                        <Stack spacing={1}>
+                          {repairVisualBars.map((item) => (
+                            <Box key={item.label} className="dashboard-bar-row">
+                              <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                <Typography>{item.label}</Typography>
+                                <Typography className="dashboard-bar-value">{item.value}</Typography>
+                              </Stack>
+                              <Box className="dashboard-bar-track">
+                                <Box
+                                  className={`dashboard-bar-fill tone-${item.tone}`}
+                                  sx={{ width: buildDashboardVisualBarWidth(item.value, repairVisualMax) }}
+                                />
+                              </Box>
+                              {item.hint ? <Typography className="muted-copy">{item.hint}</Typography> : null}
+                            </Box>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Typography className="muted-copy">Данных для визуализации пока нет.</Typography>
+                      )}
+                    </Stack>
+                  </Paper>
+                </Grid>
+                <Grid item xs={12} lg={4}>
+                  <Paper className="dashboard-visual-card" elevation={0}>
+                    <Stack spacing={1.25}>
+                      <Box>
+                        <Typography className="metric-label">OCR и контроль</Typography>
+                        <Typography variant="h6">Качество распознавания</Typography>
+                      </Box>
+                      {qualityVisualBars.length > 0 ? (
+                        <Stack spacing={1}>
+                          {qualityVisualBars.map((item) => (
+                            <Box key={item.label} className="dashboard-bar-row">
+                              <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                <Typography>{item.label}</Typography>
+                                <Typography className="dashboard-bar-value">{item.value}</Typography>
+                              </Stack>
+                              <Box className="dashboard-bar-track">
+                                <Box
+                                  className={`dashboard-bar-fill tone-${item.tone}`}
+                                  sx={{ width: buildDashboardVisualBarWidth(item.value, qualityVisualMax) }}
+                                />
+                              </Box>
+                              {item.hint ? <Typography className="muted-copy">{item.hint}</Typography> : null}
+                            </Box>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Typography className="muted-copy">Критичных сигналов OCR сейчас нет.</Typography>
+                      )}
+                    </Stack>
+                  </Paper>
+                </Grid>
+                <Grid item xs={12} lg={4}>
+                  <Paper className="dashboard-visual-card" elevation={0}>
+                    <Stack spacing={1.25}>
+                      <Box>
+                        <Typography className="metric-label">Точки внимания</Typography>
+                        <Typography variant="h6">Где копится разбор</Typography>
+                      </Box>
+                      {attentionVisualBars.length > 0 ? (
+                        <Stack spacing={1}>
+                          {attentionVisualBars.map((item) => (
+                            <Box key={item.label} className="dashboard-bar-row">
+                              <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                <Typography>{item.label}</Typography>
+                                <Typography className="dashboard-bar-value">{item.value}</Typography>
+                              </Stack>
+                              <Box className="dashboard-bar-track">
+                                <Box
+                                  className={`dashboard-bar-fill tone-${item.tone}`}
+                                  sx={{ width: buildDashboardVisualBarWidth(item.value, attentionVisualMax) }}
+                                />
+                              </Box>
+                              {item.hint ? <Typography className="muted-copy">{item.hint}</Typography> : null}
+                            </Box>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Typography className="muted-copy">Нечего выносить в приоритетный разбор.</Typography>
+                      )}
+                      {topAttentionServices.length > 0 ? (
+                        <Stack spacing={0.75}>
+                          <Divider />
+                          <Typography className="metric-label">Сервисы с накоплением ремонтов</Typography>
+                          {topAttentionServices.map((item) => (
+                            <Stack
+                              key={`dashboard-service-${item.service_id}`}
+                              direction="row"
+                              justifyContent="space-between"
+                              spacing={1}
+                              alignItems="center"
+                            >
+                              <Box sx={{ minWidth: 0 }}>
+                                <Typography>{item.name}</Typography>
+                                <Typography className="muted-copy">
+                                  {item.city || "Город не указан"}
+                                  {item.last_repair_date ? ` · последний ремонт ${item.last_repair_date}` : ""}
+                                </Typography>
+                              </Box>
+                              <Chip size="small" variant="outlined" label={`${item.repairs_total} ремонтов`} />
+                            </Stack>
+                          ))}
+                        </Stack>
+                      ) : null}
+                    </Stack>
+                  </Paper>
+                </Grid>
               </Grid>
             </Stack>
           </Paper>

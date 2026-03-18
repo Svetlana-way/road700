@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   Alert,
   Box,
@@ -121,6 +121,59 @@ type DashboardDataQualityDetails = {
     model: string | null;
     created_at: string;
   }>;
+};
+
+type GlobalSearchDocumentItem = {
+  document_id: number;
+  repair_id: number | null;
+  vehicle_id: number | null;
+  original_filename: string;
+  document_status: DocumentStatus;
+  ocr_confidence: number | null;
+  order_number: string | null;
+  repair_date: string | null;
+  service_name: string | null;
+  plate_number: string | null;
+  vin: string | null;
+  matched_by: string[];
+  created_at: string;
+};
+
+type GlobalSearchRepairItem = {
+  repair_id: number;
+  vehicle_id: number;
+  order_number: string | null;
+  repair_date: string;
+  repair_status: string;
+  service_name: string | null;
+  plate_number: string | null;
+  vin: string | null;
+  grand_total: number;
+  matched_by: string[];
+  created_at: string;
+};
+
+type GlobalSearchVehicleItem = {
+  vehicle_id: number;
+  vehicle_type: VehicleType;
+  plate_number: string | null;
+  vin: string | null;
+  brand: string | null;
+  model: string | null;
+  status: VehicleStatus;
+  archived_at: string | null;
+  matched_by: string[];
+  updated_at: string;
+};
+
+type GlobalSearchResponse = {
+  query: string;
+  documents_total: number;
+  repairs_total: number;
+  vehicles_total: number;
+  documents: GlobalSearchDocumentItem[];
+  repairs: GlobalSearchRepairItem[];
+  vehicles: GlobalSearchVehicleItem[];
 };
 
 type User = {
@@ -606,7 +659,7 @@ type LaborNormEntryFormState = {
 
 type ReviewPriorityBucket = "review" | "critical" | "suspicious";
 type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
-type WorkspaceTab = "documents" | "repair" | "admin" | "tech_admin" | "fleet";
+type WorkspaceTab = "documents" | "repair" | "admin" | "tech_admin" | "fleet" | "search";
 type AdminTab = "services" | "control" | "labor_norms" | "imports" | "employees";
 type TechAdminTab = "learning" | "matchers" | "rules";
 type RepairTab = "overview" | "works" | "parts" | "documents" | "checks" | "history";
@@ -1041,6 +1094,7 @@ const workspaceTabDescriptions: Record<WorkspaceTab, string> = {
   admin: "Справочники и правила системы, доступные администратору.",
   tech_admin: "Отдельный экран для OCR-обучения и тонкой технической настройки.",
   fleet: "Быстрый обзор техники, доступной текущему пользователю.",
+  search: "Глобальный поиск по заказ-нарядам, ремонтам и карточкам техники.",
 };
 
 const adminTabDescriptions: Record<AdminTab, string> = {
@@ -2443,6 +2497,9 @@ export default function App() {
   const [selectedFleetVehicleId, setSelectedFleetVehicleId] = useState<number | null>(null);
   const [selectedFleetVehicle, setSelectedFleetVehicle] = useState<VehicleDetail | null>(null);
   const [selectedFleetVehicleLoading, setSelectedFleetVehicleLoading] = useState(false);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
+  const [globalSearchResult, setGlobalSearchResult] = useState<GlobalSearchResponse | null>(null);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [usersList, setUsersList] = useState<UserItem[]>([]);
   const [usersTotal, setUsersTotal] = useState(0);
@@ -2553,6 +2610,8 @@ export default function App() {
   const [uploadForm, setUploadForm] = useState<UploadFormState>(emptyUploadForm);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [lastUploadedDocument, setLastUploadedDocument] = useState<DocumentItem | null>(null);
+  const uploadFileInputRef = useRef<HTMLInputElement | null>(null);
+  const attachedFileInputRef = useRef<HTMLInputElement | null>(null);
   const [bootLoading, setBootLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
@@ -3028,6 +3087,24 @@ export default function App() {
       setSelectedFleetVehicle(payload);
     } finally {
       setSelectedFleetVehicleLoading(false);
+    }
+  }
+
+  async function runGlobalSearch(activeToken: string, query: string = globalSearchQuery) {
+    const normalizedQuery = query.trim();
+    if (normalizedQuery.length < 2) {
+      setGlobalSearchResult(null);
+      return;
+    }
+    setGlobalSearchLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("q", normalizedQuery);
+      params.set("limit_per_section", "8");
+      const payload = await apiRequest<GlobalSearchResponse>(`/search/global?${params.toString()}`, { method: "GET" }, activeToken);
+      setGlobalSearchResult(payload);
+    } finally {
+      setGlobalSearchLoading(false);
     }
   }
 
@@ -3646,6 +3723,11 @@ export default function App() {
     }
   }
 
+  function openFleetVehicleById(vehicleId: number) {
+    setActiveWorkspaceTab("fleet");
+    setSelectedFleetVehicleId(vehicleId);
+  }
+
   async function openQualityRepair(documentId: number | null, repairId: number | null) {
     if (!repairId) {
       return;
@@ -3664,6 +3746,19 @@ export default function App() {
       await loadServices(token, name, "");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось открыть список сервисов");
+    }
+  }
+
+  async function handleGlobalSearchSubmit(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    if (!token) {
+      return;
+    }
+    setErrorMessage("");
+    try {
+      await runGlobalSearch(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось выполнить поиск");
     }
   }
 
@@ -5630,6 +5725,7 @@ export default function App() {
               >
                 <Tab label={`Документы · ${documents.length}`} value="documents" />
                 <Tab label={selectedRepair ? `Ремонт · #${selectedRepair.id}` : "Ремонт"} value="repair" />
+                <Tab label="Поиск" value="search" />
                 {user?.role === "admin" ? <Tab label="Админка" value="admin" /> : null}
                 {user?.role === "admin" && showTechAdminTab ? <Tab label="Тех. админка" value="tech_admin" /> : null}
                 <Tab label={`Техника · ${vehicles.length}`} value="fleet" />
@@ -6209,9 +6305,33 @@ export default function App() {
                                 Поддерживаются PDF и изображения. Для PDF с текстовым слоем OCR срабатывает автоматически, для фото и сканов используется локальное распознавание.
                               </Typography>
                             </Box>
+                            <input
+                              ref={uploadFileInputRef}
+                              hidden
+                              type="file"
+                              accept=".pdf,image/*"
+                              onClick={(event) => {
+                                event.currentTarget.value = "";
+                              }}
+                              onChange={(event) => {
+                                const nextFile = event.target.files?.[0] ?? null;
+                                setLastUploadedDocument(null);
+                                setSelectedFile(nextFile);
+                                if (!nextFile) {
+                                  return;
+                                }
+                                const parsedRepairDate = parseRepairDateFromFilename(nextFile.name);
+                                const parsedOrderNumber = parseOrderNumberFromFilename(nextFile.name);
+                                setUploadForm((current) => ({
+                                  ...current,
+                                  repairDate: parsedRepairDate || current.repairDate,
+                                  orderNumber: current.orderNumber.trim() || !parsedOrderNumber ? current.orderNumber : parsedOrderNumber,
+                                }));
+                              }}
+                            />
                             <Button
-                              component="label"
                               variant="outlined"
+                              onClick={() => uploadFileInputRef.current?.click()}
                               sx={{
                                 flexShrink: 0,
                                 width: { xs: "100%", sm: "auto" },
@@ -6223,29 +6343,6 @@ export default function App() {
                               }}
                             >
                               Выбрать файл
-                              <input
-                                hidden
-                                type="file"
-                                accept=".pdf,image/*"
-                                onClick={(event) => {
-                                  event.currentTarget.value = "";
-                                }}
-                                onChange={(event) => {
-                                  const nextFile = event.target.files?.[0] ?? null;
-                                  setLastUploadedDocument(null);
-                                  setSelectedFile(nextFile);
-                                  if (!nextFile) {
-                                    return;
-                                  }
-                                  const parsedRepairDate = parseRepairDateFromFilename(nextFile.name);
-                                  const parsedOrderNumber = parseOrderNumberFromFilename(nextFile.name);
-                                  setUploadForm((current) => ({
-                                    ...current,
-                                    repairDate: parsedRepairDate || current.repairDate,
-                                    orderNumber: current.orderNumber.trim() || !parsedOrderNumber ? current.orderNumber : parsedOrderNumber,
-                                  }));
-                                }}
-                              />
                             </Button>
                           </Stack>
                           {selectedFile ? (
@@ -10469,19 +10566,20 @@ export default function App() {
                                     justifyContent="space-between"
                                     alignItems={{ xs: "flex-start", sm: "center" }}
                                   >
-                                    <Button component="label" variant="outlined">
+                                    <input
+                                      ref={attachedFileInputRef}
+                                      hidden
+                                      type="file"
+                                      accept=".pdf,image/*"
+                                      onClick={(event) => {
+                                        event.currentTarget.value = "";
+                                      }}
+                                      onChange={(event) =>
+                                        setAttachedDocumentFile(event.target.files?.[0] ?? null)
+                                      }
+                                    />
+                                    <Button variant="outlined" onClick={() => attachedFileInputRef.current?.click()}>
                                       Выбрать файл
-                                      <input
-                                        hidden
-                                        type="file"
-                                        accept=".pdf,image/*"
-                                        onClick={(event) => {
-                                          event.currentTarget.value = "";
-                                        }}
-                                        onChange={(event) =>
-                                          setAttachedDocumentFile(event.target.files?.[0] ?? null)
-                                        }
-                                      />
                                     </Button>
                                     <Typography className="muted-copy">
                                       {attachedDocumentFile ? attachedDocumentFile.name : "Файл не выбран"}
@@ -10922,6 +11020,253 @@ export default function App() {
                       </Stack>
                     )}
                   </Stack>
+                  </Paper>
+                ) : null}
+
+                {activeWorkspaceTab === "search" ? (
+                  <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={2}>
+                      <Box>
+                        <Typography variant="h5">Глобальный поиск</Typography>
+                        <Typography className="muted-copy">
+                          Ищет по VIN, госномеру, номеру заказ-наряда, сервису, артикулу и названию работы.
+                        </Typography>
+                      </Box>
+                      <Box component="form" onSubmit={handleGlobalSearchSubmit}>
+                        <Grid container spacing={1.5}>
+                          <Grid item xs={12} md={8}>
+                            <TextField
+                              label="Запрос"
+                              value={globalSearchQuery}
+                              onChange={(event) => setGlobalSearchQuery(event.target.value)}
+                              fullWidth
+                              helperText="Минимум 2 символа"
+                            />
+                          </Grid>
+                          <Grid item xs={12} md={4}>
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                              <Button type="submit" variant="contained" disabled={globalSearchLoading}>
+                                {globalSearchLoading ? "Поиск..." : "Найти"}
+                              </Button>
+                              <Button
+                                variant="text"
+                                disabled={globalSearchLoading}
+                                onClick={() => {
+                                  setGlobalSearchQuery("");
+                                  setGlobalSearchResult(null);
+                                }}
+                              >
+                                Сбросить
+                              </Button>
+                            </Stack>
+                          </Grid>
+                        </Grid>
+                      </Box>
+
+                      {globalSearchLoading ? (
+                        <Stack spacing={1} alignItems="center" className="repair-placeholder">
+                          <CircularProgress size={24} />
+                          <Typography className="muted-copy">Ищем по заказ-нарядам, ремонтам и технике...</Typography>
+                        </Stack>
+                      ) : null}
+
+                      {globalSearchResult ? (
+                        <Stack spacing={2}>
+                          <Grid container spacing={2}>
+                            <Grid item xs={12} md={4}>
+                              <Paper className="metric-card" elevation={0}>
+                                <Typography className="metric-label">Документы</Typography>
+                                <Typography variant="h3">{globalSearchResult.documents_total}</Typography>
+                              </Paper>
+                            </Grid>
+                            <Grid item xs={12} md={4}>
+                              <Paper className="metric-card" elevation={0}>
+                                <Typography className="metric-label">Ремонты</Typography>
+                                <Typography variant="h3">{globalSearchResult.repairs_total}</Typography>
+                              </Paper>
+                            </Grid>
+                            <Grid item xs={12} md={4}>
+                              <Paper className="metric-card" elevation={0}>
+                                <Typography className="metric-label">Техника</Typography>
+                                <Typography variant="h3">{globalSearchResult.vehicles_total}</Typography>
+                              </Paper>
+                            </Grid>
+                          </Grid>
+
+                          <Paper className="repair-summary" elevation={0}>
+                            <Stack spacing={1.5}>
+                              <Typography variant="h6">Заказ-наряды и документы</Typography>
+                              {globalSearchResult.documents.length > 0 ? (
+                                globalSearchResult.documents.map((item) => (
+                                  <Paper className="repair-line" key={`search-document-${item.document_id}`} elevation={0}>
+                                    <Stack spacing={1}>
+                                      <Stack
+                                        direction={{ xs: "column", sm: "row" }}
+                                        justifyContent="space-between"
+                                        spacing={1}
+                                        alignItems={{ xs: "flex-start", sm: "center" }}
+                                      >
+                                        <Typography variant="subtitle1">{item.original_filename}</Typography>
+                                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                          <Chip
+                                            size="small"
+                                            color={statusColor(item.document_status)}
+                                            label={formatDocumentStatusLabel(item.document_status)}
+                                          />
+                                          {item.matched_by.map((reason) => (
+                                            <Chip key={`doc-match-${item.document_id}-${reason}`} size="small" variant="outlined" label={reason} />
+                                          ))}
+                                        </Stack>
+                                      </Stack>
+                                      <Typography className="muted-copy">
+                                        {[item.plate_number, item.vin, item.service_name].filter(Boolean).join(" · ") || "Связанные данные ещё не заполнены"}
+                                      </Typography>
+                                      <Typography className="muted-copy">
+                                        {[
+                                          item.order_number ? `заказ-наряд ${item.order_number}` : null,
+                                          item.repair_date,
+                                          typeof item.ocr_confidence === "number" ? `OCR ${formatConfidence(item.ocr_confidence)}` : null,
+                                          formatDateTime(item.created_at),
+                                        ]
+                                          .filter(Boolean)
+                                          .join(" · ")}
+                                      </Typography>
+                                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                        <Button
+                                          variant="outlined"
+                                          disabled={!item.repair_id}
+                                          onClick={() => {
+                                            if (item.repair_id) {
+                                              void openRepairByIds(item.document_id, item.repair_id);
+                                            }
+                                          }}
+                                        >
+                                          Открыть ремонт
+                                        </Button>
+                                      </Stack>
+                                    </Stack>
+                                  </Paper>
+                                ))
+                              ) : (
+                                <Typography className="muted-copy">Совпадений по документам нет.</Typography>
+                              )}
+                            </Stack>
+                          </Paper>
+
+                          <Paper className="repair-summary" elevation={0}>
+                            <Stack spacing={1.5}>
+                              <Typography variant="h6">Ремонты</Typography>
+                              {globalSearchResult.repairs.length > 0 ? (
+                                globalSearchResult.repairs.map((item) => (
+                                  <Paper className="repair-line" key={`search-repair-${item.repair_id}`} elevation={0}>
+                                    <Stack spacing={1}>
+                                      <Stack
+                                        direction={{ xs: "column", sm: "row" }}
+                                        justifyContent="space-between"
+                                        spacing={1}
+                                        alignItems={{ xs: "flex-start", sm: "center" }}
+                                      >
+                                        <Typography variant="subtitle1">
+                                          Ремонт #{item.repair_id}
+                                          {item.order_number ? ` · ${item.order_number}` : ""}
+                                        </Typography>
+                                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                          <Chip size="small" variant="outlined" label={formatRepairStatus(item.repair_status)} />
+                                          {item.matched_by.map((reason) => (
+                                            <Chip key={`repair-match-${item.repair_id}-${reason}`} size="small" variant="outlined" label={reason} />
+                                          ))}
+                                        </Stack>
+                                      </Stack>
+                                      <Typography className="muted-copy">
+                                        {[item.plate_number, item.vin, item.service_name].filter(Boolean).join(" · ") || "Техника или сервис пока не определены"}
+                                      </Typography>
+                                      <Typography className="muted-copy">
+                                        {[item.repair_date, formatMoney(item.grand_total), formatDateTime(item.created_at)].filter(Boolean).join(" · ")}
+                                      </Typography>
+                                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                        <Button
+                                          variant="outlined"
+                                          onClick={() => {
+                                            void openRepairByIds(null, item.repair_id);
+                                          }}
+                                        >
+                                          Открыть ремонт
+                                        </Button>
+                                        <Button
+                                          variant="text"
+                                          onClick={() => {
+                                            openFleetVehicleById(item.vehicle_id);
+                                          }}
+                                        >
+                                          Открыть технику
+                                        </Button>
+                                      </Stack>
+                                    </Stack>
+                                  </Paper>
+                                ))
+                              ) : (
+                                <Typography className="muted-copy">Совпадений по ремонтам нет.</Typography>
+                              )}
+                            </Stack>
+                          </Paper>
+
+                          <Paper className="repair-summary" elevation={0}>
+                            <Stack spacing={1.5}>
+                              <Typography variant="h6">Техника</Typography>
+                              {globalSearchResult.vehicles.length > 0 ? (
+                                globalSearchResult.vehicles.map((item) => (
+                                  <Paper className="repair-line" key={`search-vehicle-${item.vehicle_id}`} elevation={0}>
+                                    <Stack spacing={1}>
+                                      <Stack
+                                        direction={{ xs: "column", sm: "row" }}
+                                        justifyContent="space-between"
+                                        spacing={1}
+                                        alignItems={{ xs: "flex-start", sm: "center" }}
+                                      >
+                                        <Typography variant="subtitle1">
+                                          {[item.plate_number, item.brand, item.model].filter(Boolean).join(" • ") || `Техника #${item.vehicle_id}`}
+                                        </Typography>
+                                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                          <Chip size="small" variant="outlined" label={formatVehicleTypeLabel(item.vehicle_type)} />
+                                          <Chip size="small" color={vehicleStatusColor(item.status)} label={formatVehicleStatusLabel(item.status)} />
+                                          {item.matched_by.map((reason) => (
+                                            <Chip key={`vehicle-match-${item.vehicle_id}-${reason}`} size="small" variant="outlined" label={reason} />
+                                          ))}
+                                        </Stack>
+                                      </Stack>
+                                      <Typography className="muted-copy">
+                                        {[item.vin, item.archived_at ? `архив ${formatDateTime(item.archived_at)}` : null].filter(Boolean).join(" · ") || "VIN не указан"}
+                                      </Typography>
+                                      <Typography className="muted-copy">Обновлено {formatDateTime(item.updated_at)}</Typography>
+                                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                        <Button
+                                          variant="outlined"
+                                          onClick={() => {
+                                            openFleetVehicleById(item.vehicle_id);
+                                          }}
+                                        >
+                                          Открыть карточку
+                                        </Button>
+                                      </Stack>
+                                    </Stack>
+                                  </Paper>
+                                ))
+                              ) : (
+                                <Typography className="muted-copy">Совпадений по технике нет.</Typography>
+                              )}
+                            </Stack>
+                          </Paper>
+                        </Stack>
+                      ) : globalSearchQuery.trim().length >= 2 ? (
+                        <Typography className="muted-copy">
+                          Введите запрос и запустите поиск.
+                        </Typography>
+                      ) : (
+                        <Typography className="muted-copy">
+                          Поиск объединяет документы, ремонты и архивные карточки техники в одном экране.
+                        </Typography>
+                      )}
+                    </Stack>
                   </Paper>
                 ) : null}
 

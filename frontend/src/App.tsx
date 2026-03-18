@@ -981,6 +981,7 @@ const HISTORY_DETAIL_PREVIEW_LIMIT = 220;
 const historyActionLabels: Record<string, string> = {
   manual_update: "Ручное редактирование ремонта",
   check_resolution_update: "Изменение статуса проверки",
+  review_employee_confirm: "Подтверждение сотрудником",
   review_confirm: "Подтверждение администратором",
   review_send_to_review: "Возврат в ручную проверку",
   primary_document_changed: "Смена основного документа",
@@ -1603,6 +1604,17 @@ function getPayloadExtractedFields(payload: Record<string, unknown> | null | und
     return null;
   }
   return rawValue as Record<string, unknown>;
+}
+
+function getPayloadExtractedItems(payload: Record<string, unknown> | null | undefined) {
+  const rawValue = payload?.extracted_items;
+  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
+    return null;
+  }
+  return rawValue as {
+    works?: Array<Record<string, unknown>>;
+    parts?: Array<Record<string, unknown>>;
+  };
 }
 
 function createVehicleFormFromPayload(payload: Record<string, unknown> | null | undefined): DocumentVehicleFormState {
@@ -2322,6 +2334,7 @@ export default function App() {
   const selectedManagedUser = usersList.find((item) => item.id === selectedManagedUserId) ?? null;
   const selectedRepairDocumentPayload = getLatestRepairDocumentPayload(selectedRepair, selectedDocumentId);
   const selectedRepairDocumentExtractedFields = getPayloadExtractedFields(selectedRepairDocumentPayload);
+  const selectedRepairDocumentExtractedItems = getPayloadExtractedItems(selectedRepairDocumentPayload);
   const canCreateVehicleFromSelectedDocument =
     user?.role === "admin" &&
     isPlaceholderVehicle(selectedRepair?.vehicle.external_id) &&
@@ -3387,7 +3400,7 @@ export default function App() {
     }
   }
 
-  async function handleReviewAction(action: "confirm" | "send_to_review") {
+  async function handleReviewAction(action: "employee_confirm" | "confirm" | "send_to_review") {
     if (!token || !selectedReviewItem) {
       return;
     }
@@ -8015,7 +8028,11 @@ export default function App() {
                               <Box>
                                 <Typography variant="h6">Решение по проверке</Typography>
                                 <Typography className="muted-copy">
-                                  Финальное подтверждение снимает карточку с очереди и закрывает активные проверки.
+                                  {user?.role === "admin"
+                                    ? selectedRepair.status === "employee_confirmed"
+                                      ? "Сотрудник уже подготовил ремонт. Здесь выполняется финальное подтверждение администратора."
+                                      : "Администратор может сразу финально подтвердить ремонт или вернуть его в ручную проверку."
+                                    : "Сотрудник подтверждает ремонт по своей технике. После этого запись остаётся предварительной и ждёт финального подтверждения администратора."}
                                 </Typography>
                               </Box>
                               <Typography className="muted-copy">
@@ -8024,8 +8041,78 @@ export default function App() {
                                   ? ` и ещё ${selectedReviewItem.issue_titles.length - 4}`
                                   : ""}
                               </Typography>
+                              {selectedRepairDocumentPayload ? (
+                                <Paper className="repair-line" elevation={0}>
+                                  <Stack spacing={1.25}>
+                                    <Box>
+                                      <Typography variant="subtitle1">Распознанные данные текущего документа</Typography>
+                                      <Typography className="muted-copy">
+                                        Краткая OCR-сводка по выбранному файлу перед подтверждением.
+                                      </Typography>
+                                    </Box>
+                                    <Grid container spacing={1.5}>
+                                      <Grid item xs={12} sm={6}>
+                                        <Typography className="metric-label">Номер заказ-наряда</Typography>
+                                        <Typography>{String(selectedRepairDocumentExtractedFields?.order_number || "—")}</Typography>
+                                      </Grid>
+                                      <Grid item xs={12} sm={6}>
+                                        <Typography className="metric-label">Дата ремонта</Typography>
+                                        <Typography>{String(selectedRepairDocumentExtractedFields?.repair_date || "—")}</Typography>
+                                      </Grid>
+                                      <Grid item xs={12} sm={6}>
+                                        <Typography className="metric-label">Сервис</Typography>
+                                        <Typography>{String(selectedRepairDocumentExtractedFields?.service_name || "—")}</Typography>
+                                      </Grid>
+                                      <Grid item xs={12} sm={6}>
+                                        <Typography className="metric-label">Пробег</Typography>
+                                        <Typography>{String(selectedRepairDocumentExtractedFields?.mileage || "—")}</Typography>
+                                      </Grid>
+                                      <Grid item xs={12} sm={6}>
+                                        <Typography className="metric-label">Госномер</Typography>
+                                        <Typography>{String(selectedRepairDocumentExtractedFields?.plate_number || "—")}</Typography>
+                                      </Grid>
+                                      <Grid item xs={12} sm={6}>
+                                        <Typography className="metric-label">VIN</Typography>
+                                        <Typography>{String(selectedRepairDocumentExtractedFields?.vin || "—")}</Typography>
+                                      </Grid>
+                                      <Grid item xs={12} sm={6}>
+                                        <Typography className="metric-label">Итоговая сумма</Typography>
+                                        <Typography>
+                                          {typeof selectedRepairDocumentExtractedFields?.grand_total === "number"
+                                            ? formatMoney(selectedRepairDocumentExtractedFields.grand_total)
+                                            : "—"}
+                                        </Typography>
+                                      </Grid>
+                                      <Grid item xs={12} sm={6}>
+                                        <Typography className="metric-label">Строки документа</Typography>
+                                        <Typography>
+                                          Работ {Array.isArray(selectedRepairDocumentExtractedItems?.works) ? selectedRepairDocumentExtractedItems.works.length : 0}
+                                          {" · "}
+                                          Запчастей {Array.isArray(selectedRepairDocumentExtractedItems?.parts) ? selectedRepairDocumentExtractedItems.parts.length : 0}
+                                        </Typography>
+                                      </Grid>
+                                    </Grid>
+                                    {Array.isArray(selectedRepairDocumentPayload.manual_review_reasons) &&
+                                    selectedRepairDocumentPayload.manual_review_reasons.length > 0 ? (
+                                      <Typography className="muted-copy">
+                                        Требует ручной проверки: {selectedRepairDocumentPayload.manual_review_reasons.join(", ")}
+                                      </Typography>
+                                    ) : null}
+                                    {formatOcrProfileMeta(selectedRepairDocumentPayload) ? (
+                                      <Typography className="muted-copy">
+                                        {formatOcrProfileMeta(selectedRepairDocumentPayload)}
+                                      </Typography>
+                                    ) : null}
+                                    {formatLaborNormApplicability(selectedRepairDocumentPayload) ? (
+                                      <Typography className="muted-copy">
+                                        {formatLaborNormApplicability(selectedRepairDocumentPayload)}
+                                      </Typography>
+                                    ) : null}
+                                  </Stack>
+                                </Paper>
+                              ) : null}
                               <TextField
-                                label="Комментарий администратора"
+                                label={user?.role === "admin" ? "Комментарий администратора" : "Комментарий сотрудника"}
                                 value={reviewActionComment}
                                 onChange={(event) => setReviewActionComment(event.target.value)}
                                 fullWidth
@@ -8033,15 +8120,27 @@ export default function App() {
                                 minRows={2}
                               />
                               <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                <Button
-                                  variant="contained"
-                                  disabled={reviewActionLoading}
-                                  onClick={() => {
-                                    void handleReviewAction("confirm");
-                                  }}
-                                >
-                                  {reviewActionLoading ? "Сохранение..." : "Подтвердить админом"}
-                                </Button>
+                                {user?.role === "admin" ? (
+                                  <Button
+                                    variant="contained"
+                                    disabled={reviewActionLoading}
+                                    onClick={() => {
+                                      void handleReviewAction("confirm");
+                                    }}
+                                  >
+                                    {reviewActionLoading ? "Сохранение..." : "Подтвердить админом"}
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    variant="contained"
+                                    disabled={reviewActionLoading}
+                                    onClick={() => {
+                                      void handleReviewAction("employee_confirm");
+                                    }}
+                                  >
+                                    {reviewActionLoading ? "Сохранение..." : "Подтвердить сотрудником"}
+                                  </Button>
+                                )}
                                 <Button
                                   variant="outlined"
                                   disabled={reviewActionLoading}

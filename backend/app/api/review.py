@@ -43,7 +43,7 @@ REVIEWABLE_REPAIR_STATUSES = (
     RepairStatus.SUSPICIOUS,
     RepairStatus.OCR_ERROR,
 )
-REVIEW_ACTIONS = {"confirm", "send_to_review"}
+REVIEW_ACTIONS = {"employee_confirm", "confirm", "send_to_review"}
 REVIEW_QUEUE_CATEGORIES = {
     "all",
     "suspicious",
@@ -341,7 +341,12 @@ def append_review_comment(existing: Optional[str], action: str, comment: Optiona
     normalized_comment = (comment or "").strip()
     if not normalized_comment:
         return existing
-    action_label = "Подтверждено администратором" if action == "confirm" else "Возвращено в ручную проверку"
+    if action == "employee_confirm":
+        action_label = "Подтверждено сотрудником"
+    elif action == "confirm":
+        action_label = "Подтверждено администратором"
+    else:
+        action_label = "Возвращено в ручную проверку"
     note_line = f"[{action_label}] {current_user.full_name}: {normalized_comment}"
     if existing:
         return f"{existing}\n{note_line}"
@@ -349,7 +354,17 @@ def append_review_comment(existing: Optional[str], action: str, comment: Optiona
 
 
 def apply_review_action(document: Document, action: str, comment: Optional[str], current_user: User) -> str:
-    if action == "confirm":
+    if action == "employee_confirm":
+        document.status = DocumentStatus.CONFIRMED
+        document.review_queue_priority = 60
+        document.repair.status = RepairStatus.EMPLOYEE_CONFIRMED
+        document.repair.is_preliminary = True
+        document.repair.is_partially_recognized = False
+        for check in document.repair.checks:
+            if not check.is_resolved:
+                check.is_resolved = True
+        message = "Заказ-наряд подтверждён сотрудником и отправлен администратору"
+    elif action == "confirm":
         document.status = DocumentStatus.CONFIRMED
         document.review_queue_priority = 20
         document.repair.status = RepairStatus.CONFIRMED
@@ -635,6 +650,9 @@ def execute_review_action(
     action = payload.action.strip().lower()
     if action not in REVIEW_ACTIONS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported review action")
+
+    if action == "employee_confirm" and current_user.role == UserRole.ADMIN:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Employee confirmation is only available for employees")
 
     if action == "confirm" and current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")

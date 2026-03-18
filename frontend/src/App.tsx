@@ -263,6 +263,7 @@ type Vehicle = {
   last_coordinates_at: string | null;
   comment: string | null;
   status: VehicleStatus;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -272,6 +273,11 @@ type VehiclesResponse = {
   total: number;
   limit: number;
   offset: number;
+};
+
+type VehicleUpdatePayload = {
+  status?: VehicleStatus;
+  comment?: string | null;
 };
 
 type VehicleLink = {
@@ -2602,9 +2608,11 @@ export default function App() {
   const [fleetLoading, setFleetLoading] = useState(false);
   const [fleetQuery, setFleetQuery] = useState("");
   const [fleetVehicleTypeFilter, setFleetVehicleTypeFilter] = useState<"" | VehicleType>("");
+  const [fleetStatusFilter, setFleetStatusFilter] = useState<"" | VehicleStatus>("");
   const [selectedFleetVehicleId, setSelectedFleetVehicleId] = useState<number | null>(null);
   const [selectedFleetVehicle, setSelectedFleetVehicle] = useState<VehicleDetail | null>(null);
   const [selectedFleetVehicleLoading, setSelectedFleetVehicleLoading] = useState(false);
+  const [vehicleSaving, setVehicleSaving] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
   const [globalSearchResult, setGlobalSearchResult] = useState<GlobalSearchResponse | null>(null);
@@ -3175,6 +3183,7 @@ export default function App() {
     activeToken: string,
     query: string = fleetQuery,
     vehicleType: "" | VehicleType = fleetVehicleTypeFilter,
+    statusFilter: "" | VehicleStatus = fleetStatusFilter,
   ) {
     setFleetLoading(true);
     try {
@@ -3185,6 +3194,9 @@ export default function App() {
       }
       if (vehicleType) {
         params.set("vehicle_type", vehicleType);
+      }
+      if (statusFilter) {
+        params.set("status", statusFilter);
       }
       const payload = await apiRequest<VehiclesResponse>(`/vehicles?${params.toString()}`, { method: "GET" }, activeToken);
       setFleetVehicles(payload.items);
@@ -3207,6 +3219,27 @@ export default function App() {
       setSelectedFleetVehicle(payload);
     } finally {
       setSelectedFleetVehicleLoading(false);
+    }
+  }
+
+  async function handleUpdateVehicle(payload: VehicleUpdatePayload) {
+    if (!token || !selectedFleetVehicle) {
+      return;
+    }
+    setVehicleSaving(true);
+    setErrorMessage("");
+    try {
+      const result = await apiRequest<VehicleDetail>(`/vehicles/${selectedFleetVehicle.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }, token);
+      setSelectedFleetVehicle(result);
+      setSuccessMessage(payload.status === "archived" ? "Техника отправлена в архив" : "Карточка техники обновлена");
+      await loadFleetVehicles(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось обновить карточку техники");
+    } finally {
+      setVehicleSaving(false);
     }
   }
 
@@ -11638,7 +11671,7 @@ export default function App() {
                       <Grid item xs={12} md={5}>
                         <Stack spacing={1.5}>
                           <Grid container spacing={1.5}>
-                            <Grid item xs={12} sm={7}>
+                            <Grid item xs={12} md={4}>
                               <TextField
                                 label="Поиск по VIN, госномеру, бренду или модели"
                                 value={fleetQuery}
@@ -11646,7 +11679,7 @@ export default function App() {
                                 fullWidth
                               />
                             </Grid>
-                            <Grid item xs={12} sm={5}>
+                            <Grid item xs={12} md={4}>
                               <TextField
                                 select
                                 label="Тип техники"
@@ -11657,6 +11690,23 @@ export default function App() {
                                 <MenuItem value="">Все</MenuItem>
                                 <MenuItem value="truck">Грузовики</MenuItem>
                                 <MenuItem value="trailer">Прицепы</MenuItem>
+                              </TextField>
+                            </Grid>
+                            <Grid item xs={12} md={4}>
+                              <TextField
+                                select
+                                label="Статус"
+                                value={fleetStatusFilter}
+                                onChange={(event) => setFleetStatusFilter(event.target.value as "" | VehicleStatus)}
+                                fullWidth
+                              >
+                                <MenuItem value="">Все</MenuItem>
+                                <MenuItem value="active">В работе</MenuItem>
+                                <MenuItem value="in_repair">В ремонте</MenuItem>
+                                <MenuItem value="waiting_repair">Ожидает ремонта</MenuItem>
+                                <MenuItem value="inactive">Не используется</MenuItem>
+                                <MenuItem value="decommissioned">Списан</MenuItem>
+                                <MenuItem value="archived">Архив</MenuItem>
                               </TextField>
                             </Grid>
                           </Grid>
@@ -11678,8 +11728,9 @@ export default function App() {
                               onClick={() => {
                                 setFleetQuery("");
                                 setFleetVehicleTypeFilter("");
+                                setFleetStatusFilter("");
                                 if (token) {
-                                  void loadFleetVehicles(token, "", "");
+                                  void loadFleetVehicles(token, "", "", "");
                                 }
                               }}
                             >
@@ -11757,6 +11808,30 @@ export default function App() {
                                     </Typography>
                                   </Box>
                                   <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap justifyContent="flex-end">
+                                    {user?.role === "admin" ? (
+                                      selectedFleetVehicle.status === "archived" ? (
+                                        <Button
+                                          variant="outlined"
+                                          disabled={vehicleSaving}
+                                          onClick={() => {
+                                            void handleUpdateVehicle({ status: "active" });
+                                          }}
+                                        >
+                                          {vehicleSaving ? "Сохранение..." : "Вернуть из архива"}
+                                        </Button>
+                                      ) : (
+                                        <Button
+                                          variant="outlined"
+                                          color="warning"
+                                          disabled={vehicleSaving}
+                                          onClick={() => {
+                                            void handleUpdateVehicle({ status: "archived" });
+                                          }}
+                                        >
+                                          {vehicleSaving ? "Сохранение..." : "В архив"}
+                                        </Button>
+                                      )
+                                    ) : null}
                                     <Button variant="outlined" onClick={() => void handleExportVehicle()} disabled={vehicleExportLoading}>
                                       {vehicleExportLoading ? "Экспорт..." : "Экспорт Excel"}
                                     </Button>

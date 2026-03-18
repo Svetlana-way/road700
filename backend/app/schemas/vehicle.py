@@ -23,6 +23,7 @@ class VehicleRead(BaseModel):
     last_coordinates_at: Optional[datetime]
     comment: Optional[str]
     status: VehicleStatus
+    archived_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
 
@@ -93,6 +94,11 @@ class VehicleDetailResponse(VehicleRead):
 class VehicleImportRequest(BaseModel):
     trucks_path: Optional[str] = None
     trailers_path: Optional[str] = None
+
+
+class VehicleUpdateRequest(BaseModel):
+    status: Optional[VehicleStatus] = None
+    comment: Optional[str] = None
 
 
 class VehicleImportResponse(BaseModel):

@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.access import apply_vehicle_scope
 from app.api.deps import get_current_active_user, get_current_admin, get_db
-from app.models.enums import RepairStatus
+from app.models.audit import AuditLog
+from app.models.enums import RepairStatus, VehicleStatus
 from app.models.repair import Repair
 from app.models.enums import VehicleType
 from app.models.user import User
@@ -22,6 +23,7 @@ from app.schemas.vehicle import (
     VehicleImportResponse,
     VehicleListResponse,
     VehicleRead,
+    VehicleUpdateRequest,
 )
 from app.services.exporting import append_rows, safe_filename
 from app.scripts.import_vehicles import (
@@ -130,6 +132,7 @@ def list_vehicles(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     vehicle_type: Optional[VehicleType] = Query(default=None),
+    status_filter: Optional[VehicleStatus] = Query(default=None, alias="status"),
     search: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -140,6 +143,10 @@ def list_vehicles(
     if vehicle_type is not None:
         base_stmt = base_stmt.where(Vehicle.vehicle_type == vehicle_type)
         count_stmt = count_stmt.where(Vehicle.vehicle_type == vehicle_type)
+
+    if status_filter is not None:
+        base_stmt = base_stmt.where(Vehicle.status == status_filter)
+        count_stmt = count_stmt.where(Vehicle.status == status_filter)
 
     if search:
         pattern = f"%{search.strip()}%"
@@ -178,6 +185,56 @@ def get_vehicle(
     if vehicle is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
 
+    return VehicleDetailResponse.model_validate(build_vehicle_detail_payload(db, vehicle))
+
+
+@router.patch("/{vehicle_id}", response_model=VehicleDetailResponse)
+def update_vehicle(
+    vehicle_id: int,
+    payload: VehicleUpdateRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> VehicleDetailResponse:
+    vehicle = db.scalar(select(Vehicle).where(Vehicle.id == vehicle_id))
+    if vehicle is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
+
+    old_snapshot = {
+        "status": vehicle.status.value,
+        "comment": vehicle.comment,
+        "archived_at": vehicle.archived_at.isoformat() if vehicle.archived_at is not None else None,
+    }
+
+    update_data = payload.model_dump(exclude_unset=True)
+    if "status" in update_data and update_data["status"] is not None:
+        vehicle.status = update_data["status"]
+        if vehicle.status == VehicleStatus.ARCHIVED:
+            vehicle.archived_at = datetime.now(timezone.utc)
+        else:
+            vehicle.archived_at = None
+
+    if "comment" in update_data:
+        normalized_comment = update_data["comment"].strip() if isinstance(update_data["comment"], str) else None
+        vehicle.comment = normalized_comment or None
+
+    db.add(vehicle)
+    db.flush()
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="vehicle",
+            entity_id=str(vehicle.id),
+            action_type="vehicle_updated",
+            old_value=old_snapshot,
+            new_value={
+                "status": vehicle.status.value,
+                "comment": vehicle.comment,
+                "archived_at": vehicle.archived_at.isoformat() if vehicle.archived_at is not None else None,
+            },
+        )
+    )
+    db.commit()
+    db.refresh(vehicle)
     return VehicleDetailResponse.model_validate(build_vehicle_detail_payload(db, vehicle))
 
 

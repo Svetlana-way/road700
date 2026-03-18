@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import {
   Alert,
   Box,
@@ -2308,7 +2308,6 @@ async function apiRequest<T>(path: string, init: RequestInit = {}, token?: strin
 }
 
 export default function App() {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_STORAGE_KEY) || "");
   const [user, setUser] = useState<User | null>(null);
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("documents");
@@ -5752,18 +5751,9 @@ export default function App() {
                                 Поддерживаются PDF и изображения. Для PDF с текстовым слоем OCR срабатывает автоматически, для фото и сканов используется локальное распознавание.
                               </Typography>
                             </Box>
-                            <input
-                              ref={fileInputRef}
-                              hidden
-                              type="file"
-                              accept=".pdf,image/*"
-                              onChange={(event) =>
-                                setSelectedFile(event.target.files?.[0] ?? null)
-                              }
-                            />
                             <Button
+                              component="label"
                               variant="outlined"
-                              onClick={() => fileInputRef.current?.click()}
                               sx={{
                                 flexShrink: 0,
                                 width: { xs: "100%", sm: "auto" },
@@ -5775,6 +5765,17 @@ export default function App() {
                               }}
                             >
                               Выбрать файл
+                              <input
+                                hidden
+                                type="file"
+                                accept=".pdf,image/*"
+                                onClick={(event) => {
+                                  event.currentTarget.value = "";
+                                }}
+                                onChange={(event) =>
+                                  setSelectedFile(event.target.files?.[0] ?? null)
+                                }
+                              />
                             </Button>
                           </Stack>
                           <Typography className="selected-file">
@@ -9613,6 +9614,9 @@ export default function App() {
                                         hidden
                                         type="file"
                                         accept=".pdf,image/*"
+                                        onClick={(event) => {
+                                          event.currentTarget.value = "";
+                                        }}
                                         onChange={(event) =>
                                           setAttachedDocumentFile(event.target.files?.[0] ?? null)
                                         }

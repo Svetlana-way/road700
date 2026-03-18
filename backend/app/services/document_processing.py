@@ -529,7 +529,17 @@ def parse_amount(value: str) -> Optional[float]:
 
 def parse_date_value(value: str) -> Optional[date]:
     normalized_value = normalize_text(value).strip().lower()
-    for fmt in ("%d.%m.%Y", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%y", "%d-%m-%y", "%d/%m/%y"):
+    for fmt in (
+        "%d.%m.%Y",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+        "%d.%m.%y",
+        "%d-%m-%y",
+        "%d/%m/%y",
+        "%Y.%m.%d",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+    ):
         try:
             return datetime.strptime(normalized_value, fmt).date()
         except ValueError:

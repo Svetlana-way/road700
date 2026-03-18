@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.access import get_allowed_vehicle_ids_query
+from app.api.access import get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.models.audit import AuditLog
 from app.models.document import Document
@@ -109,7 +109,7 @@ def build_repair_query():
 def load_repair_for_user(db: Session, repair_id: int, current_user: User) -> Repair:
     stmt = build_repair_query().where(Repair.id == repair_id)
     if current_user.role != UserRole.ADMIN:
-        stmt = stmt.where(Repair.vehicle_id.in_(get_allowed_vehicle_ids_query(current_user)))
+        stmt = stmt.where(get_repair_visibility_clause(current_user))
 
     repair = db.execute(stmt).unique().scalar_one_or_none()
     if repair is None:

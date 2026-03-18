@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.access import get_allowed_vehicle_ids_query
+from app.api.access import get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
@@ -627,9 +627,9 @@ def get_review_queue(
     )
 
     if current_user.role != UserRole.ADMIN:
-        visible_vehicle_ids = get_allowed_vehicle_ids_query(current_user)
-        stmt = stmt.where(Repair.vehicle_id.in_(visible_vehicle_ids))
-        count_stmt = count_stmt.where(Repair.vehicle_id.in_(visible_vehicle_ids))
+        visibility_clause = get_repair_visibility_clause(current_user)
+        stmt = stmt.where(visibility_clause)
+        count_stmt = count_stmt.where(visibility_clause)
 
     total = db.scalar(count_stmt) or 0
     documents = db.execute(stmt).unique().scalars().all()

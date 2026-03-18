@@ -28,6 +28,7 @@ type VehicleType = "truck" | "trailer";
 type VehicleStatus = "active" | "in_repair" | "waiting_repair" | "inactive" | "decommissioned" | "archived";
 type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
 type ServiceStatus = "preliminary" | "confirmed" | "archived";
+type ImportStatus = "draft" | "processing" | "completed" | "completed_with_conflicts" | "failed";
 type DocumentStatus =
   | "uploaded"
   | "recognized"
@@ -223,6 +224,40 @@ type ServiceItem = {
   confirmed_by_user_id: number | null;
   created_at: string;
   updated_at: string;
+};
+
+type HistoricalRepairImportResponse = {
+  message: string;
+  job_id: number;
+  status: ImportStatus;
+  source_filename: string;
+  rows_total: number;
+  grouped_repairs: number;
+  created_repairs: number;
+  duplicate_repairs: number;
+  conflicts_created: number;
+  created_services: number;
+  created_works: number;
+  created_parts: number;
+  repair_limit_applied: number | null;
+  first_repair_id: number | null;
+  recent_repair_ids: number[];
+  sample_conflicts: string[];
+};
+
+type ImportJobItem = {
+  id: number;
+  import_type: string;
+  source_filename: string;
+  status: ImportStatus;
+  summary: Record<string, unknown> | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ImportJobsResponse = {
+  items: ImportJobItem[];
 };
 
 type ServicesResponse = {
@@ -549,7 +584,7 @@ type LaborNormEntryFormState = {
 type ReviewPriorityBucket = "review" | "critical" | "suspicious";
 type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
 type WorkspaceTab = "documents" | "repair" | "admin" | "tech_admin" | "fleet";
-type AdminTab = "services" | "control" | "labor_norms" | "employees";
+type AdminTab = "services" | "control" | "labor_norms" | "imports" | "employees";
 type TechAdminTab = "learning" | "matchers" | "rules";
 type RepairTab = "overview" | "works" | "parts" | "documents" | "checks" | "history";
 type QualityDetailTab = "documents" | "services" | "works" | "parts" | "conflicts";
@@ -926,7 +961,7 @@ const API_BASE_URL =
 const emptyUploadForm = (): UploadFormState => ({
   vehicleId: "",
   documentKind: "order",
-  repairDate: new Date().toISOString().slice(0, 10),
+  repairDate: "",
   mileage: "",
   orderNumber: "",
   reason: "",
@@ -989,6 +1024,7 @@ const adminTabDescriptions: Record<AdminTab, string> = {
   services: "Справочник сервисов для нормализации названий и ручной правки ремонтов.",
   control: "Причины ручной проверки и приоритеты очереди для заказ-нарядов.",
   labor_norms: "Каталоги нормо-часов, импорт справочников и ручная правка записей.",
+  imports: "Пакетный импорт исторических ремонтов из Excel с фиксацией конфликтов и созданием архивной базы.",
   employees: "Пользователи системы, доступ сотрудников и закрепление техники по зонам ответственности.",
 };
 
@@ -2412,6 +2448,12 @@ export default function App() {
   const [laborNormImportCatalogName, setLaborNormImportCatalogName] = useState("");
   const [laborNormCatalogSaving, setLaborNormCatalogSaving] = useState(false);
   const [laborNormEntrySaving, setLaborNormEntrySaving] = useState(false);
+  const [historicalImportLoading, setHistoricalImportLoading] = useState(false);
+  const [historicalImportFile, setHistoricalImportFile] = useState<File | null>(null);
+  const [historicalImportLimit, setHistoricalImportLimit] = useState("1000");
+  const [historicalImportResult, setHistoricalImportResult] = useState<HistoricalRepairImportResponse | null>(null);
+  const [historicalImportJobs, setHistoricalImportJobs] = useState<ImportJobItem[]>([]);
+  const [historicalImportJobsLoading, setHistoricalImportJobsLoading] = useState(false);
   const [editingLaborNormCatalogId, setEditingLaborNormCatalogId] = useState<number | null>(null);
   const [laborNormCatalogForm, setLaborNormCatalogForm] = useState<LaborNormCatalogFormState>(createEmptyCatalogForm);
   const [laborNormEntryForm, setLaborNormEntryForm] = useState<LaborNormEntryFormState>(createEmptyLaborNormEntryForm);
@@ -2625,8 +2667,6 @@ export default function App() {
   const canConfirmSelectedReview = reviewMissingRequiredFields.length === 0;
   const uploadMissingRequirements = [
     !selectedFile ? "файл" : null,
-    !uploadForm.vehicleId ? "технику" : null,
-    !uploadForm.mileage.trim() ? "пробег" : null,
   ].filter(Boolean) as string[];
   const canLinkVehicleFromSelectedDocument =
     selectedDocumentId !== null &&
@@ -2772,6 +2812,20 @@ export default function App() {
       setServiceCities(payload.cities);
     } finally {
       setServiceLoading(false);
+    }
+  }
+
+  async function loadHistoricalImportJobs(activeToken: string) {
+    setHistoricalImportJobsLoading(true);
+    try {
+      const payload = await apiRequest<ImportJobsResponse>(
+        "/imports/jobs?import_type=historical_repairs&limit=12",
+        { method: "GET" },
+        activeToken,
+      );
+      setHistoricalImportJobs(payload.items);
+    } finally {
+      setHistoricalImportJobsLoading(false);
     }
   }
 
@@ -3109,6 +3163,10 @@ export default function App() {
       setLaborNormScopes([]);
       setLaborNormCategories([]);
       setLaborNormSourceFiles([]);
+      setHistoricalImportFile(null);
+      setHistoricalImportLimit("1000");
+      setHistoricalImportResult(null);
+      setHistoricalImportJobs([]);
       setLaborNormCatalogForm(createEmptyCatalogForm());
       setLaborNormEntryForm(createEmptyLaborNormEntryForm());
       setServiceForm(createEmptyServiceForm());
@@ -3152,6 +3210,15 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить карточку техники");
     });
   }, [activeWorkspaceTab, selectedFleetVehicleId, token]);
+
+  useEffect(() => {
+    if (!token || user?.role !== "admin" || activeWorkspaceTab !== "admin" || activeAdminTab !== "imports") {
+      return;
+    }
+    void loadHistoricalImportJobs(token).catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить историю импортов");
+    });
+  }, [activeAdminTab, activeWorkspaceTab, token, user?.role]);
 
   useEffect(() => {
     if (laborNormCatalogs.length === 0) {
@@ -3429,14 +3496,28 @@ export default function App() {
 
     try {
       const body = new FormData();
-      body.append("vehicle_id", uploadForm.vehicleId);
       body.append("kind", uploadForm.documentKind);
-      body.append("repair_date", uploadForm.repairDate);
-      body.append("mileage", uploadForm.mileage);
-      body.append("order_number", uploadForm.orderNumber);
-      body.append("reason", uploadForm.reason);
-      body.append("employee_comment", uploadForm.employeeComment);
-      body.append("notes", uploadForm.notes);
+      if (uploadForm.vehicleId) {
+        body.append("vehicle_id", uploadForm.vehicleId);
+      }
+      if (uploadForm.repairDate) {
+        body.append("repair_date", uploadForm.repairDate);
+      }
+      if (uploadForm.mileage.trim()) {
+        body.append("mileage", uploadForm.mileage);
+      }
+      if (uploadForm.orderNumber.trim()) {
+        body.append("order_number", uploadForm.orderNumber);
+      }
+      if (uploadForm.reason.trim()) {
+        body.append("reason", uploadForm.reason);
+      }
+      if (uploadForm.employeeComment.trim()) {
+        body.append("employee_comment", uploadForm.employeeComment);
+      }
+      if (uploadForm.notes.trim()) {
+        body.append("notes", uploadForm.notes);
+      }
       body.append("file", selectedFile);
 
       const result = await apiRequest<DocumentUploadResponse>(
@@ -4679,6 +4760,46 @@ export default function App() {
     }
   }
 
+  async function handleHistoricalRepairImport() {
+    if (!token || user?.role !== "admin" || !historicalImportFile) {
+      setErrorMessage("Выберите .xlsx файл истории ремонтов");
+      return;
+    }
+
+    setHistoricalImportLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const body = new FormData();
+      body.append("file", historicalImportFile);
+      const normalizedLimit = historicalImportLimit.trim();
+      if (normalizedLimit) {
+        body.append("repair_limit", normalizedLimit);
+      }
+
+      const result = await apiRequest<HistoricalRepairImportResponse>(
+        "/imports/historical-repairs",
+        {
+          method: "POST",
+          body,
+        },
+        token,
+      );
+
+      setHistoricalImportResult(result);
+      setSuccessMessage(
+        `${result.message}. Создано ремонтов ${result.created_repairs}, конфликтов ${result.conflicts_created}, дублей ${result.duplicate_repairs}.`,
+      );
+      setHistoricalImportFile(null);
+      await loadHistoricalImportJobs(token);
+      await loadWorkspace(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось импортировать историю ремонтов");
+    } finally {
+      setHistoricalImportLoading(false);
+    }
+  }
+
   function handleEditLaborNormCatalog(item: LaborNormCatalogConfigItem) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("labor_norms");
@@ -5757,8 +5878,9 @@ export default function App() {
                             setUploadForm((current) => ({ ...current, vehicleId: event.target.value }))
                           }
                           fullWidth
-                          required
+                          helperText="Можно оставить пустым: OCR попробует определить технику по документу"
                         >
+                          <MenuItem value="">Определить автоматически после OCR</MenuItem>
                           {vehicles.map((vehicle) => (
                             <MenuItem key={vehicle.id} value={String(vehicle.id)}>
                               {formatVehicle(vehicle)}
@@ -5797,7 +5919,7 @@ export default function App() {
                           }
                           InputLabelProps={{ shrink: true }}
                           fullWidth
-                          required
+                          helperText="Необязательно. Если оставить пустым, система попытается распознать дату из файла"
                         />
                       </Grid>
                       <Grid item xs={12} md={3}>
@@ -5809,7 +5931,7 @@ export default function App() {
                             setUploadForm((current) => ({ ...current, mileage: event.target.value }))
                           }
                           fullWidth
-                          required
+                          helperText="Необязательно. OCR попытается найти пробег автоматически"
                         />
                       </Grid>
                       <Grid item xs={12} md={6}>
@@ -5917,7 +6039,7 @@ export default function App() {
                               <Typography className="selected-file-title">Файл выбран</Typography>
                               <Typography className="selected-file">{selectedFile.name}</Typography>
                               <Typography className="muted-copy">
-                                Файл пока только выбран локально. Он появится справа в списках после нажатия `Создать черновик ремонта`.
+                                Файл пока только выбран локально. Можно загружать сразу: техника, дата и пробег теперь необязательны, OCR попытается заполнить их автоматически.
                               </Typography>
                             </Alert>
                           ) : (
@@ -5926,6 +6048,10 @@ export default function App() {
                           {selectedFile && uploadMissingRequirements.length > 0 ? (
                             <Alert severity="info">
                               Для загрузки ещё нужно указать: {uploadMissingRequirements.join(", ")}.
+                            </Alert>
+                          ) : selectedFile ? (
+                            <Alert severity="info">
+                              Если машина или пробег не введены вручную, будет создан черновик для OCR и последующей проверки.
                             </Alert>
                           ) : null}
                         </Paper>
@@ -5992,6 +6118,31 @@ export default function App() {
                                   OCR сервис: {lastUploadedDocument.parsed_payload.extracted_fields.service_name}
                                 </Typography>
                               ) : null}
+                              {lastUploadedDocument.parsed_payload?.extracted_fields ? (
+                                <Typography className="muted-copy">
+                                  OCR:
+                                  {[
+                                    lastUploadedDocument.parsed_payload.extracted_fields.order_number
+                                      ? ` заказ-наряд ${String(lastUploadedDocument.parsed_payload.extracted_fields.order_number)}`
+                                      : null,
+                                    lastUploadedDocument.parsed_payload.extracted_fields.repair_date
+                                      ? ` дата ${String(lastUploadedDocument.parsed_payload.extracted_fields.repair_date)}`
+                                      : null,
+                                    lastUploadedDocument.parsed_payload.extracted_fields.mileage !== undefined &&
+                                    lastUploadedDocument.parsed_payload.extracted_fields.mileage !== null
+                                      ? ` пробег ${String(lastUploadedDocument.parsed_payload.extracted_fields.mileage)}`
+                                      : null,
+                                    lastUploadedDocument.parsed_payload.extracted_fields.plate_number
+                                      ? ` госномер ${String(lastUploadedDocument.parsed_payload.extracted_fields.plate_number)}`
+                                      : null,
+                                    lastUploadedDocument.parsed_payload.extracted_fields.vin
+                                      ? ` VIN ${String(lastUploadedDocument.parsed_payload.extracted_fields.vin)}`
+                                      : null,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                                </Typography>
+                              ) : null}
                               <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                                 <Button
                                   variant="contained"
@@ -6056,6 +6207,7 @@ export default function App() {
                         <Tab label="Сервисы" value="services" />
                         <Tab label="Контроль" value="control" />
                         <Tab label="Нормо-часы" value="labor_norms" />
+                        <Tab label="Импорт истории" value="imports" />
                       </Tabs>
                       <Typography className="muted-copy">{adminTabDescriptions[activeAdminTab]}</Typography>
                     </Stack>
@@ -8001,6 +8153,157 @@ export default function App() {
                       ) : (
                         <Typography className="muted-copy">OCR-правила по текущему фильтру не найдены.</Typography>
                       )}
+                    </Stack>
+                  </Paper>
+                ) : null}
+
+                {activeWorkspaceTab === "admin" && activeAdminTab === "imports" && user?.role === "admin" ? (
+                  <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={2}>
+                      <Box>
+                        <Typography variant="h5">Импорт исторических ремонтов</Typography>
+                        <Typography className="muted-copy">
+                          Загрузите Excel-выгрузку вида `2025 для ИИ.xlsx`. Импорт собирает строки в ремонты, связывает их с техникой,
+                          создаёт предварительные сервисы при необходимости и выносит проблемы в конфликты.
+                        </Typography>
+                      </Box>
+                      <Paper className="repair-line" elevation={0}>
+                        <Stack spacing={1.25}>
+                          <Grid container spacing={1.5}>
+                            <Grid item xs={12} sm={5}>
+                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
+                                <Button component="label" variant="outlined">
+                                  Выбрать .xlsx
+                                  <input
+                                    hidden
+                                    type="file"
+                                    accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                    onChange={(event) => setHistoricalImportFile(event.target.files?.[0] ?? null)}
+                                  />
+                                </Button>
+                                <Typography className="muted-copy">
+                                  {historicalImportFile ? historicalImportFile.name : "Файл не выбран"}
+                                </Typography>
+                              </Stack>
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                label="Сколько новых ремонтов за запуск"
+                                type="number"
+                                value={historicalImportLimit}
+                                onChange={(event) => setHistoricalImportLimit(event.target.value)}
+                                helperText="Оставьте пустым для полного импорта"
+                                fullWidth
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={4}>
+                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                <Button
+                                  variant="contained"
+                                  disabled={historicalImportLoading || !historicalImportFile}
+                                  onClick={() => {
+                                    void handleHistoricalRepairImport();
+                                  }}
+                                >
+                                  {historicalImportLoading ? "Импорт..." : "Импортировать историю"}
+                                </Button>
+                                <Button
+                                  variant="text"
+                                  disabled={historicalImportJobsLoading || !token}
+                                  onClick={() => {
+                                    if (token) {
+                                      void loadHistoricalImportJobs(token);
+                                    }
+                                  }}
+                                >
+                                  Обновить журнал
+                                </Button>
+                              </Stack>
+                            </Grid>
+                          </Grid>
+                          <Alert severity="info">
+                            Для первого запуска безопаснее идти батчами по `500-1000` новых ремонтов: дубликаты будут пропущены, конфликты
+                            попадут в дашборд качества данных.
+                          </Alert>
+                        </Stack>
+                      </Paper>
+
+                      {historicalImportResult ? (
+                        <Paper className="repair-line" elevation={0}>
+                          <Stack spacing={1}>
+                            <Typography className="metric-label">Последний результат импорта</Typography>
+                            <Typography>
+                              {historicalImportResult.source_filename} · статус {formatStatus(historicalImportResult.status)}
+                            </Typography>
+                            <Typography className="muted-copy">
+                              Строк {historicalImportResult.rows_total} · групп ремонтов {historicalImportResult.grouped_repairs} · создано{" "}
+                              {historicalImportResult.created_repairs} · дублей {historicalImportResult.duplicate_repairs} · конфликтов{" "}
+                              {historicalImportResult.conflicts_created}
+                            </Typography>
+                            <Typography className="muted-copy">
+                              Сервисов создано {historicalImportResult.created_services} · строк работ {historicalImportResult.created_works} ·
+                              строк материалов {historicalImportResult.created_parts}
+                            </Typography>
+                            {historicalImportResult.sample_conflicts.length > 0 ? (
+                              <Stack spacing={0.5}>
+                                {historicalImportResult.sample_conflicts.map((item, index) => (
+                                  <Typography className="muted-copy" key={`historical-import-conflict-${index}`}>
+                                    {item}
+                                  </Typography>
+                                ))}
+                              </Stack>
+                            ) : null}
+                            {historicalImportResult.first_repair_id ? (
+                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                <Button
+                                  variant="outlined"
+                                  onClick={() => {
+                                    void openRepairByIds(null, historicalImportResult.first_repair_id as number);
+                                  }}
+                                >
+                                  Открыть первый импортированный ремонт
+                                </Button>
+                              </Stack>
+                            ) : null}
+                          </Stack>
+                        </Paper>
+                      ) : null}
+
+                      <Paper className="repair-line" elevation={0}>
+                        <Stack spacing={1}>
+                          <Typography className="metric-label">Журнал импортов</Typography>
+                          {historicalImportJobsLoading ? (
+                            <Typography className="muted-copy">Загрузка журнала импортов...</Typography>
+                          ) : historicalImportJobs.length > 0 ? (
+                            historicalImportJobs.map((job) => (
+                              <Paper className="repair-line" key={`historical-job-${job.id}`} elevation={0}>
+                                <Stack spacing={0.5}>
+                                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1} justifyContent="space-between">
+                                    <Typography>{job.source_filename}</Typography>
+                                    <Chip
+                                      size="small"
+                                      color={job.status === "failed" ? "error" : job.status === "completed_with_conflicts" ? "warning" : "default"}
+                                      label={formatStatus(job.status)}
+                                    />
+                                  </Stack>
+                                  <Typography className="muted-copy">
+                                    Job #{job.id} · {formatDateTime(job.created_at)}
+                                  </Typography>
+                                  {job.summary ? (
+                                    <Typography className="muted-copy">
+                                      Создано {String(job.summary.created_repairs ?? "0")} · конфликтов{" "}
+                                      {String(job.summary.conflicts_created ?? "0")} · дублей {String(job.summary.duplicate_repairs ?? "0")}
+                                    </Typography>
+                                  ) : null}
+                                  {job.error_message ? <Typography className="muted-copy">{job.error_message}</Typography> : null}
+                                </Stack>
+                              </Paper>
+                            ))
+                          ) : (
+                            <Typography className="muted-copy">Исторические импорты пока не запускались.</Typography>
+                          )}
+                        </Stack>
+                      </Paper>
                     </Stack>
                   </Paper>
                 ) : null}

@@ -9,12 +9,12 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.access import get_allowed_vehicle_ids_query
+from app.api.access import get_allowed_vehicle_ids_query, get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.core.paths import STORAGE_ROOT
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
-from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, UserRole, VehicleStatus
+from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, UserRole, VehicleStatus, VehicleType
 from app.models.repair import Repair
 from app.models.user import User
 from app.models.vehicle import Vehicle
@@ -96,7 +96,7 @@ def get_visible_repair(
 ) -> Optional[Repair]:
     stmt = select(Repair).where(Repair.id == repair_id)
     if current_user.role != UserRole.ADMIN:
-        stmt = stmt.where(Repair.vehicle_id.in_(get_allowed_vehicle_ids_query(current_user)))
+        stmt = stmt.where(get_repair_visibility_clause(current_user))
     return db.scalar(stmt)
 
 
@@ -166,11 +166,30 @@ def get_visible_document(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     if current_user.role != UserRole.ADMIN:
-        visible_vehicle = get_visible_vehicle(db, current_user, document.repair.vehicle_id)
-        if visible_vehicle is None:
+        visible_repair = get_visible_repair(db, current_user, document.repair.id)
+        if visible_repair is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     return document
+
+
+def get_or_create_placeholder_vehicle(db: Session) -> Vehicle:
+    placeholder_vehicle = db.scalar(select(Vehicle).where(Vehicle.external_id == PLACEHOLDER_EXTERNAL_ID))
+    if placeholder_vehicle is not None:
+        return placeholder_vehicle
+
+    placeholder_vehicle = Vehicle(
+        external_id=PLACEHOLDER_EXTERNAL_ID,
+        vehicle_type=VehicleType.TRUCK,
+        brand="Черновик OCR",
+        model="Требует определения техники",
+        comment="Техническая placeholder-карточка для загрузок до распознавания техники",
+        status=VehicleStatus.ACTIVE,
+        source_payload={"kind": "placeholder_upload_vehicle"},
+    )
+    db.add(placeholder_vehicle)
+    db.flush()
+    return placeholder_vehicle
 
 
 def normalize_identifier(value: str | None) -> str | None:
@@ -535,9 +554,9 @@ def list_documents(
     count_stmt = select(func.count(Document.id)).join(Document.repair)
 
     if current_user.role != UserRole.ADMIN:
-        visible_ids = get_allowed_vehicle_ids_query(current_user)
-        stmt = stmt.where(Repair.vehicle_id.in_(visible_ids))
-        count_stmt = count_stmt.where(Repair.vehicle_id.in_(visible_ids))
+        visibility_clause = get_repair_visibility_clause(current_user)
+        stmt = stmt.where(visibility_clause)
+        count_stmt = count_stmt.where(visibility_clause)
 
     if status_filter is not None:
         stmt = stmt.where(Document.status == status_filter)
@@ -558,9 +577,9 @@ def list_documents(
 
 @router.post("/upload", response_model=DocumentUploadResponse)
 def upload_document(
-    vehicle_id: int = Form(...),
-    repair_date: date = Form(...),
-    mileage: int = Form(...),
+    vehicle_id: Optional[int] = Form(default=None),
+    repair_date: Optional[date] = Form(default=None),
+    mileage: Optional[int] = Form(default=None),
     kind: DocumentKind = Form(default=DocumentKind.ORDER),
     order_number: Optional[str] = Form(default=None),
     reason: Optional[str] = Form(default=None),
@@ -576,9 +595,12 @@ def upload_document(
             detail="Only order documents and repeat scans can create a new repair",
         )
 
-    vehicle = get_visible_vehicle(db, current_user, vehicle_id)
-    if vehicle is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
+    if vehicle_id is not None:
+        vehicle = get_visible_vehicle(db, current_user, vehicle_id)
+        if vehicle is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
+    else:
+        vehicle = get_or_create_placeholder_vehicle(db)
 
     source_type = detect_source_type(file)
     storage_key = build_storage_key(file.filename or "document")
@@ -592,10 +614,10 @@ def upload_document(
 
         repair = Repair(
             order_number=order_number,
-            repair_date=repair_date,
+            repair_date=repair_date or date.today(),
             vehicle_id=vehicle.id,
             created_by_user_id=current_user.id,
-            mileage=mileage,
+            mileage=max(0, mileage or 0),
             reason=reason,
             employee_comment=employee_comment,
             status=RepairStatus.DRAFT,
@@ -631,6 +653,10 @@ def upload_document(
                     "document_kind": kind.value,
                     "ocr_status": "queued",
                     "uploaded_by_user_id": current_user.id,
+                    "uploaded_with_placeholder_vehicle": vehicle.external_id == PLACEHOLDER_EXTERNAL_ID,
+                    "uploaded_repair_date": repair_date.isoformat() if repair_date else None,
+                    "uploaded_mileage": mileage,
+                    "uploaded_vehicle_id": vehicle_id,
                 },
                 field_confidence_map={},
                 change_summary="Initial upload",

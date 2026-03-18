@@ -2811,6 +2811,13 @@ function buildCheckPayloadDetails(check: RepairDetail["checks"][number]) {
   return lines;
 }
 
+function getCheckLinkedRepairId(check: RepairDetail["checks"][number]) {
+  if (check.check_type !== "ocr_repeat_repair_detected") {
+    return null;
+  }
+  return readNumberValue(check.calculation_payload || {}, "previous_repair_id");
+}
+
 function readComparisonReviewMeta(value: Record<string, unknown> | null): Record<string, unknown> | null {
   const review = value?.comparison_review;
   if (!review || typeof review !== "object") {
@@ -12055,85 +12062,103 @@ export default function App() {
                               <Stack spacing={1}>
                               <Typography variant="h6">Проверки</Typography>
                               {selectedRepair.checks.length > 0 ? (
-                                selectedRepair.checks.map((check) => (
-                                  <Paper className="repair-line" key={check.id} elevation={0}>
-                                    <Stack spacing={1}>
-                                      <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                                        <Typography>{check.title}</Typography>
-                                        <Stack direction="row" spacing={1}>
-                                          <Chip
+                                selectedRepair.checks.map((check) => {
+                                  const payloadDetails = buildCheckPayloadDetails(check);
+                                  const linkedRepairId = getCheckLinkedRepairId(check);
+
+                                  return (
+                                    <Paper className="repair-line" key={check.id} elevation={0}>
+                                      <Stack spacing={1}>
+                                        <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                                          <Typography>{check.title}</Typography>
+                                          <Stack direction="row" spacing={1}>
+                                            <Chip
+                                              size="small"
+                                              color={checkSeverityColor(check.severity)}
+                                              label={formatStatus(check.severity)}
+                                            />
+                                            <Chip
+                                              size="small"
+                                              color={check.is_resolved ? "success" : "default"}
+                                              label={check.is_resolved ? "решено" : "открыто"}
+                                            />
+                                          </Stack>
+                                        </Stack>
+                                        {check.details ? (
+                                          <Typography className="muted-copy">{check.details}</Typography>
+                                        ) : null}
+                                        {payloadDetails.length > 0 ? (
+                                          <Stack spacing={0.5}>
+                                            {payloadDetails.map((line, index) => (
+                                              <Typography className="muted-copy" key={`check-payload-${check.id}-${index}`}>
+                                                {line}
+                                              </Typography>
+                                            ))}
+                                          </Stack>
+                                        ) : null}
+                                        {linkedRepairId !== null ? (
+                                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                            <Button
+                                              size="small"
+                                              variant="text"
+                                              onClick={() => {
+                                                void openRepairByIds(null, linkedRepairId);
+                                              }}
+                                            >
+                                              Открыть предыдущий ремонт
+                                            </Button>
+                                          </Stack>
+                                        ) : null}
+                                        {readCheckResolutionMeta(check)?.user_name ? (
+                                          <Typography className="muted-copy">
+                                            Последнее действие: {readCheckResolutionMeta(check)?.user_name}
+                                            {readCheckResolutionMeta(check)?.resolved_at
+                                              ? ` · ${formatDateTime(String(readCheckResolutionMeta(check)?.resolved_at))}`
+                                              : ""}
+                                            {readCheckResolutionMeta(check)?.comment
+                                              ? ` · ${String(readCheckResolutionMeta(check)?.comment)}`
+                                              : ""}
+                                          </Typography>
+                                        ) : null}
+                                        <TextField
+                                          label="Комментарий по проверке"
+                                          value={checkComments[check.id] || ""}
+                                          onChange={(event) =>
+                                            setCheckComments((current) => ({
+                                              ...current,
+                                              [check.id]: event.target.value,
+                                            }))
+                                          }
+                                          fullWidth
+                                          multiline
+                                          minRows={2}
+                                        />
+                                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                          <Button
                                             size="small"
-                                            color={checkSeverityColor(check.severity)}
-                                            label={formatStatus(check.severity)}
-                                          />
-                                          <Chip
+                                            variant="contained"
+                                            disabled={checkActionLoadingId === check.id || check.is_resolved}
+                                            onClick={() => {
+                                              void handleCheckResolution(check.id, true);
+                                            }}
+                                          >
+                                            {checkActionLoadingId === check.id ? "Сохранение..." : "Закрыть проверку"}
+                                          </Button>
+                                          <Button
                                             size="small"
-                                            color={check.is_resolved ? "success" : "default"}
-                                            label={check.is_resolved ? "решено" : "открыто"}
-                                          />
+                                            variant="outlined"
+                                            disabled={checkActionLoadingId === check.id || !check.is_resolved}
+                                            onClick={() => {
+                                              void handleCheckResolution(check.id, false);
+                                            }}
+                                          >
+                                            Вернуть в работу
+                                          </Button>
                                         </Stack>
                                       </Stack>
-                                      {check.details ? (
-                                        <Typography className="muted-copy">{check.details}</Typography>
-                                      ) : null}
-                                      {buildCheckPayloadDetails(check).length > 0 ? (
-                                        <Stack spacing={0.5}>
-                                          {buildCheckPayloadDetails(check).map((line, index) => (
-                                            <Typography className="muted-copy" key={`check-payload-${check.id}-${index}`}>
-                                              {line}
-                                            </Typography>
-                                          ))}
-                                        </Stack>
-                                      ) : null}
-                                      {readCheckResolutionMeta(check)?.user_name ? (
-                                        <Typography className="muted-copy">
-                                          Последнее действие: {readCheckResolutionMeta(check)?.user_name}
-                                          {readCheckResolutionMeta(check)?.resolved_at
-                                            ? ` · ${formatDateTime(String(readCheckResolutionMeta(check)?.resolved_at))}`
-                                            : ""}
-                                          {readCheckResolutionMeta(check)?.comment
-                                            ? ` · ${String(readCheckResolutionMeta(check)?.comment)}`
-                                            : ""}
-                                        </Typography>
-                                      ) : null}
-                                      <TextField
-                                        label="Комментарий по проверке"
-                                        value={checkComments[check.id] || ""}
-                                        onChange={(event) =>
-                                          setCheckComments((current) => ({
-                                            ...current,
-                                            [check.id]: event.target.value,
-                                          }))
-                                        }
-                                        fullWidth
-                                        multiline
-                                        minRows={2}
-                                      />
-                                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                        <Button
-                                          size="small"
-                                          variant="contained"
-                                          disabled={checkActionLoadingId === check.id || check.is_resolved}
-                                          onClick={() => {
-                                            void handleCheckResolution(check.id, true);
-                                          }}
-                                        >
-                                          {checkActionLoadingId === check.id ? "Сохранение..." : "Закрыть проверку"}
-                                        </Button>
-                                        <Button
-                                          size="small"
-                                          variant="outlined"
-                                          disabled={checkActionLoadingId === check.id || !check.is_resolved}
-                                          onClick={() => {
-                                            void handleCheckResolution(check.id, false);
-                                          }}
-                                        >
-                                          Вернуть в работу
-                                        </Button>
-                                      </Stack>
-                                    </Stack>
-                                  </Paper>
-                                ))
+                                    </Paper>
+                                  );
+                                })
                               ) : (
                                 <Typography className="muted-copy">Подозрительные проверки не найдены.</Typography>
                               )}

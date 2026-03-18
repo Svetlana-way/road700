@@ -1546,6 +1546,11 @@ def enrich_work_payloads_with_labor_norms(
             reference_payload["labor_norm_catalog_name"] = applicability.catalog_name
         if applicability.brand_family:
             reference_payload["labor_norm_brand_family"] = applicability.brand_family
+        if item.get("standard_hours") is not None:
+            try:
+                reference_payload["document_standard_hours"] = float(item["standard_hours"])
+            except (TypeError, ValueError):
+                reference_payload.pop("document_standard_hours", None)
 
         if not applicability.eligible:
             item["reference_payload"] = reference_payload
@@ -1562,7 +1567,6 @@ def enrich_work_payloads_with_labor_norms(
             unmatched_count += 1
             continue
 
-        item["standard_hours"] = float(match.norm.standard_hours)
         if not item.get("work_code"):
             item["work_code"] = match.norm.code
         reference_payload.update(
@@ -1599,37 +1603,90 @@ def build_standard_hours_checks(
 ) -> list[dict[str, object]]:
     checks: list[dict[str, object]] = []
     for item in works_payload:
+        reference_payload = item.get("reference_payload")
+        if not isinstance(reference_payload, dict):
+            reference_payload = {}
         normalized_unit_name = normalize_unit_name(str(item.get("unit_name")) if item.get("unit_name") else None)
         actual_hours = item.get("actual_hours")
         if actual_hours is None and normalized_unit_name in {"нч", "ч"} and item.get("quantity") is not None:
             actual_hours = float(item["quantity"])
-        standard_hours = item.get("standard_hours")
-        if actual_hours is None or standard_hours is None:
-            continue
+        document_standard_hours = reference_payload.get("document_standard_hours")
+        if document_standard_hours is None:
+            document_standard_hours = item.get("standard_hours")
+        catalog_standard_hours = reference_payload.get("labor_norm_standard_hours")
 
-        actual_value = float(actual_hours)
-        standard_value = float(standard_hours)
-        if standard_value <= 0 or actual_value <= round(standard_value * 1.1, 2):
-            continue
+        actual_value: Optional[float] = None
+        if actual_hours is not None:
+            try:
+                actual_value = float(actual_hours)
+            except (TypeError, ValueError):
+                actual_value = None
 
-        checks.append(
-            {
-                "check_type": "ocr_standard_hours_exceeded",
-                "severity": CheckSeverity.SUSPICIOUS,
-                "title": "Фактические часы превышают норматив",
-                "details": (
-                    f"{item.get('work_name', 'Работа')} · факт {actual_value:.2f} ч, "
-                    f"норма {standard_value:.2f} ч"
-                ),
-                "payload": {
-                    "work_code": item.get("work_code"),
-                    "work_name": item.get("work_name"),
-                    "actual_hours": actual_value,
-                    "standard_hours": standard_value,
-                    "reference_payload": item.get("reference_payload"),
-                },
-            }
-        )
+        document_standard_value: Optional[float] = None
+        if document_standard_hours is not None:
+            try:
+                document_standard_value = float(document_standard_hours)
+            except (TypeError, ValueError):
+                document_standard_value = None
+
+        catalog_standard_value: Optional[float] = None
+        if catalog_standard_hours is not None:
+            try:
+                catalog_standard_value = float(catalog_standard_hours)
+            except (TypeError, ValueError):
+                catalog_standard_value = None
+
+        comparison_standard_value = document_standard_value if document_standard_value is not None else catalog_standard_value
+        if (
+            actual_value is not None
+            and comparison_standard_value is not None
+            and comparison_standard_value > 0
+            and actual_value > round(comparison_standard_value * 1.1, 2)
+        ):
+            checks.append(
+                {
+                    "check_type": "ocr_standard_hours_exceeded",
+                    "severity": CheckSeverity.SUSPICIOUS,
+                    "title": "Фактические часы превышают норматив",
+                    "details": (
+                        f"{item.get('work_name', 'Работа')} · факт {actual_value:.2f} ч, "
+                        f"норма {comparison_standard_value:.2f} ч"
+                    ),
+                    "payload": {
+                        "work_code": item.get("work_code"),
+                        "work_name": item.get("work_name"),
+                        "actual_hours": actual_value,
+                        "standard_hours": comparison_standard_value,
+                        "document_standard_hours": document_standard_value,
+                        "catalog_standard_hours": catalog_standard_value,
+                        "reference_payload": reference_payload,
+                    },
+                }
+            )
+
+        if (
+            document_standard_value is not None
+            and catalog_standard_value is not None
+            and document_standard_value - catalog_standard_value > 0.01
+        ):
+            checks.append(
+                {
+                    "check_type": "ocr_document_standard_hours_exceeded",
+                    "severity": CheckSeverity.SUSPICIOUS,
+                    "title": "Норма в заказ-наряде выше нормы справочника",
+                    "details": (
+                        f"{item.get('work_name', 'Работа')} · в документе {document_standard_value:.2f} ч, "
+                        f"в справочнике {catalog_standard_value:.2f} ч"
+                    ),
+                    "payload": {
+                        "work_code": item.get("work_code"),
+                        "work_name": item.get("work_name"),
+                        "document_standard_hours": document_standard_value,
+                        "catalog_standard_hours": catalog_standard_value,
+                        "reference_payload": reference_payload,
+                    },
+                }
+            )
     return checks
 
 

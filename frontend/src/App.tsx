@@ -1840,7 +1840,7 @@ function formatWorkLaborNormMeta(item: RepairDetail["works"][number]) {
     const scoreSuffix =
       typeof meta.matchScore === "number" ? ` · уверенность ${Math.round(meta.matchScore * 100)}%` : "";
     const methodSuffix = formatMatchMethod(meta.matchedBy) ? ` · ${formatMatchMethod(meta.matchedBy)}` : "";
-    const hoursSuffix = formatHours(meta.standardHours) ? ` · норма ${formatHours(meta.standardHours)}` : "";
+    const hoursSuffix = formatHours(meta.standardHours) ? ` · справочник ${formatHours(meta.standardHours)}` : "";
     const categorySuffix = meta.category ? ` · ${meta.category}` : "";
     const catalogSuffix = meta.catalogName ? ` · ${meta.catalogName}` : meta.scope ? ` · ${meta.scope}` : "";
     return `Матчинг: ${meta.code} · ${meta.name}${categorySuffix}${catalogSuffix}${hoursSuffix}${methodSuffix}${scoreSuffix}`;

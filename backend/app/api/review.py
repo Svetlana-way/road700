@@ -618,12 +618,22 @@ def get_review_queue(
             joinedload(Document.repair).joinedload(Repair.checks),
             joinedload(Document.versions),
         )
-        .where(Document.kind.in_(REVIEWABLE_DOCUMENT_KINDS), review_filter)
+        .where(
+            Document.kind.in_(REVIEWABLE_DOCUMENT_KINDS),
+            review_filter,
+            Document.status != DocumentStatus.ARCHIVED,
+            Repair.status != RepairStatus.ARCHIVED,
+        )
     )
     count_stmt = (
         select(func.count(Document.id))
         .join(Document.repair)
-        .where(Document.kind.in_(REVIEWABLE_DOCUMENT_KINDS), review_filter)
+        .where(
+            Document.kind.in_(REVIEWABLE_DOCUMENT_KINDS),
+            review_filter,
+            Document.status != DocumentStatus.ARCHIVED,
+            Repair.status != RepairStatus.ARCHIVED,
+        )
     )
 
     if current_user.role != UserRole.ADMIN:

@@ -44,6 +44,10 @@ class DocumentRead(BaseModel):
     vehicle: DocumentVehicleRead
 
 
+class DocumentUpdateRequest(BaseModel):
+    status: Optional[DocumentStatus] = None
+
+
 class DocumentListResponse(BaseModel):
     items: list[DocumentRead]
     total: int

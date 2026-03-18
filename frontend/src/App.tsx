@@ -1218,6 +1218,7 @@ const rootDocumentKindOptions = documentKindOptions.filter(
 const HISTORY_DETAIL_PREVIEW_LIMIT = 220;
 const historyActionLabels: Record<string, string> = {
   manual_update: "Ручное редактирование ремонта",
+  repair_archived: "Ремонт отправлен в архив",
   check_resolution_update: "Изменение статуса проверки",
   review_employee_confirm: "Подтверждение сотрудником",
   review_confirm: "Подтверждение администратором",
@@ -1226,6 +1227,8 @@ const historyActionLabels: Record<string, string> = {
   set_primary: "Документ назначен основным",
   document_uploaded: "Загрузка нового документа",
   document_attached: "Прикрепление документа к ремонту",
+  document_archived: "Документ отправлен в архив",
+  document_status_updated: "Изменение статуса документа",
   document_comparison_reviewed: "Результат сверки документов",
   repair_vehicle_relinked: "Перепривязка ремонта к технике",
   document_vehicle_linked: "Привязка документа к технике",
@@ -2767,6 +2770,8 @@ export default function App() {
   const [documentComparisonLoadingId, setDocumentComparisonLoadingId] = useState<number | null>(null);
   const [documentComparisonReviewLoading, setDocumentComparisonReviewLoading] = useState(false);
   const [saveRepairLoading, setSaveRepairLoading] = useState(false);
+  const [repairArchiveLoading, setRepairArchiveLoading] = useState(false);
+  const [documentArchiveLoadingId, setDocumentArchiveLoadingId] = useState<number | null>(null);
   const [checkComments, setCheckComments] = useState<Record<number, string>>({});
   const [attachedDocumentKind, setAttachedDocumentKind] = useState<DocumentKind>("repeat_scan");
   const [attachedDocumentNotes, setAttachedDocumentNotes] = useState("");
@@ -5650,6 +5655,67 @@ export default function App() {
     }
   }
 
+  async function handleArchiveRepair() {
+    if (!token || !selectedRepair || user?.role !== "admin") {
+      return;
+    }
+
+    setRepairArchiveLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const savedRepair = await apiRequest<RepairDetail>(
+        `/repairs/${selectedRepair.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status: "archived" }),
+        },
+        token,
+      );
+      setSelectedRepair(savedRepair);
+      setRepairDraft(createRepairDraft(savedRepair));
+      setIsEditingRepair(false);
+      setSelectedDocumentId((current) => resolveRepairDocumentId(savedRepair, current));
+      setSuccessMessage(`Ремонт #${savedRepair.id} отправлен в архив`);
+      await loadWorkspace(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось отправить ремонт в архив");
+    } finally {
+      setRepairArchiveLoading(false);
+    }
+  }
+
+  async function handleArchiveDocument(documentId: number, repairId: number) {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+
+    setDocumentArchiveLoadingId(documentId);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const updatedDocument = await apiRequest<DocumentItem>(
+        `/documents/${documentId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status: "archived" }),
+        },
+        token,
+      );
+      setSuccessMessage(`Документ ${updatedDocument.original_filename} отправлен в архив`);
+      await loadWorkspace(token);
+      if (selectedRepair?.id === repairId) {
+        await openRepairByIds(updatedDocument.id, repairId);
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось отправить документ в архив");
+    } finally {
+      setDocumentArchiveLoadingId(null);
+    }
+  }
+
   function handleLogout() {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     setToken("");
@@ -7084,12 +7150,24 @@ export default function App() {
                                 <Button
                                   size="small"
                                   variant="text"
-                                  disabled={reprocessLoading}
+                                  disabled={reprocessLoading || document.status === "archived"}
                                   onClick={() => {
                                     void handleReprocessDocument(document);
                                   }}
                                 >
                                   {reprocessLoading && selectedDocumentId === document.id ? "Повтор..." : "Повторить OCR"}
+                                </Button>
+                              ) : null}
+                              {user?.role === "admin" && document.status !== "archived" ? (
+                                <Button
+                                  size="small"
+                                  variant="text"
+                                  disabled={documentArchiveLoadingId === document.id}
+                                  onClick={() => {
+                                    void handleArchiveDocument(document.id, document.repair.id);
+                                  }}
+                                >
+                                  {documentArchiveLoadingId === document.id ? "Архивация..." : "В архив"}
                                 </Button>
                               ) : null}
                             </Stack>
@@ -9620,9 +9698,22 @@ export default function App() {
                                   <Button variant="outlined" onClick={() => void handleExportRepair()} disabled={repairExportLoading}>
                                     {repairExportLoading ? "Экспорт..." : "Экспорт Excel"}
                                   </Button>
-                                  <Button variant="outlined" onClick={handleStartRepairEdit}>
-                                    Редактировать
-                                  </Button>
+                                  {selectedRepair.status !== "archived" ? (
+                                    <>
+                                      <Button variant="outlined" onClick={handleStartRepairEdit}>
+                                        Редактировать
+                                      </Button>
+                                      <Button
+                                        variant="text"
+                                        disabled={repairArchiveLoading}
+                                        onClick={() => {
+                                          void handleArchiveRepair();
+                                        }}
+                                      >
+                                        {repairArchiveLoading ? "Архивация..." : "В архив"}
+                                      </Button>
+                                    </>
+                                  ) : null}
                                 </>
                               )}
                             </Stack>
@@ -10783,72 +10874,78 @@ export default function App() {
                             {activeRepairTab === "documents" ? (
                               <Stack spacing={1}>
                               <Typography variant="h6">Документы ремонта</Typography>
-                              <Paper className="repair-line" elevation={0}>
-                                <Stack spacing={1.5}>
-                                  <Typography className="muted-copy">
-                                    Добавьте повторный скан, корректирующий файл или дополнительный документ в текущий ремонт.
-                                  </Typography>
-                                  <TextField
-                                    select
-                                    label="Вид документа"
-                                    value={attachedDocumentKind}
-                                    onChange={(event) =>
-                                      setAttachedDocumentKind(event.target.value as DocumentKind)
-                                    }
-                                    fullWidth
-                                  >
-                                    {documentKindOptions.map((option) => (
-                                      <MenuItem key={option.value} value={option.value}>
-                                        {option.label}
-                                      </MenuItem>
-                                    ))}
-                                  </TextField>
-                                  <TextField
-                                    label="Примечание к новому документу"
-                                    value={attachedDocumentNotes}
-                                    onChange={(event) => setAttachedDocumentNotes(event.target.value)}
-                                    fullWidth
-                                    multiline
-                                    minRows={2}
-                                  />
-                                  <Stack
-                                    direction={{ xs: "column", sm: "row" }}
-                                    spacing={1}
-                                    justifyContent="space-between"
-                                    alignItems={{ xs: "flex-start", sm: "center" }}
-                                  >
-                                    <input
-                                      ref={attachedFileInputRef}
-                                      hidden
-                                      type="file"
-                                      accept=".pdf,image/*"
-                                      onClick={(event) => {
-                                        event.currentTarget.value = "";
-                                      }}
-                                      onChange={(event) =>
-                                        setAttachedDocumentFile(event.target.files?.[0] ?? null)
-                                      }
-                                    />
-                                    <Button variant="outlined" onClick={() => attachedFileInputRef.current?.click()}>
-                                      Выбрать файл
-                                    </Button>
+                              {selectedRepair.status !== "archived" ? (
+                                <Paper className="repair-line" elevation={0}>
+                                  <Stack spacing={1.5}>
                                     <Typography className="muted-copy">
-                                      {attachedDocumentFile ? attachedDocumentFile.name : "Файл не выбран"}
+                                      Добавьте повторный скан, корректирующий файл или дополнительный документ в текущий ремонт.
                                     </Typography>
-                                  </Stack>
-                                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                    <Button
-                                      variant="contained"
-                                      disabled={attachDocumentLoading || !attachedDocumentFile}
-                                      onClick={() => {
-                                        void handleAttachDocumentToRepair();
-                                      }}
+                                    <TextField
+                                      select
+                                      label="Вид документа"
+                                      value={attachedDocumentKind}
+                                      onChange={(event) =>
+                                        setAttachedDocumentKind(event.target.value as DocumentKind)
+                                      }
+                                      fullWidth
                                     >
-                                      {attachDocumentLoading ? "Загрузка..." : "Добавить документ"}
-                                    </Button>
+                                      {documentKindOptions.map((option) => (
+                                        <MenuItem key={option.value} value={option.value}>
+                                          {option.label}
+                                        </MenuItem>
+                                      ))}
+                                    </TextField>
+                                    <TextField
+                                      label="Примечание к новому документу"
+                                      value={attachedDocumentNotes}
+                                      onChange={(event) => setAttachedDocumentNotes(event.target.value)}
+                                      fullWidth
+                                      multiline
+                                      minRows={2}
+                                    />
+                                    <Stack
+                                      direction={{ xs: "column", sm: "row" }}
+                                      spacing={1}
+                                      justifyContent="space-between"
+                                      alignItems={{ xs: "flex-start", sm: "center" }}
+                                    >
+                                      <input
+                                        ref={attachedFileInputRef}
+                                        hidden
+                                        type="file"
+                                        accept=".pdf,image/*"
+                                        onClick={(event) => {
+                                          event.currentTarget.value = "";
+                                        }}
+                                        onChange={(event) =>
+                                          setAttachedDocumentFile(event.target.files?.[0] ?? null)
+                                        }
+                                      />
+                                      <Button variant="outlined" onClick={() => attachedFileInputRef.current?.click()}>
+                                        Выбрать файл
+                                      </Button>
+                                      <Typography className="muted-copy">
+                                        {attachedDocumentFile ? attachedDocumentFile.name : "Файл не выбран"}
+                                      </Typography>
+                                    </Stack>
+                                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                      <Button
+                                        variant="contained"
+                                        disabled={attachDocumentLoading || !attachedDocumentFile}
+                                        onClick={() => {
+                                          void handleAttachDocumentToRepair();
+                                        }}
+                                      >
+                                        {attachDocumentLoading ? "Загрузка..." : "Добавить документ"}
+                                      </Button>
+                                    </Stack>
                                   </Stack>
-                                </Stack>
-                              </Paper>
+                                </Paper>
+                              ) : (
+                                <Alert severity="info">
+                                  Архивный ремонт доступен только для просмотра и экспорта.
+                                </Alert>
+                              )}
                               {selectedRepair.documents.length > 0 ? (
                                 selectedRepair.documents.map((document) => (
                                   <Paper className="repair-line" key={document.id} elevation={0}>
@@ -10886,7 +10983,7 @@ export default function App() {
                                           <Button
                                             size="small"
                                             variant="text"
-                                            disabled={reprocessLoading}
+                                            disabled={reprocessLoading || document.status === "archived" || selectedRepair.status === "archived"}
                                             onClick={() => {
                                               void handleReprocessDocumentById(document.id, selectedRepair.id);
                                             }}
@@ -10896,7 +10993,9 @@ export default function App() {
                                         ) : null}
                                         {user?.role === "admin" &&
                                         (document.kind === "order" || document.kind === "repeat_scan") &&
-                                        !document.is_primary ? (
+                                        !document.is_primary &&
+                                        document.status !== "archived" &&
+                                        selectedRepair.status !== "archived" ? (
                                           <>
                                             <Button
                                               size="small"
@@ -10919,6 +11018,20 @@ export default function App() {
                                               {primaryDocumentLoadingId === document.id ? "Смена..." : "Сделать основным"}
                                             </Button>
                                           </>
+                                        ) : null}
+                                        {user?.role === "admin" &&
+                                        document.status !== "archived" &&
+                                        selectedRepair.status !== "archived" ? (
+                                          <Button
+                                            size="small"
+                                            variant="text"
+                                            disabled={documentArchiveLoadingId === document.id}
+                                            onClick={() => {
+                                              void handleArchiveDocument(document.id, selectedRepair.id);
+                                            }}
+                                          >
+                                            {documentArchiveLoadingId === document.id ? "Архивация..." : "В архив"}
+                                          </Button>
                                         ) : null}
                                       </Stack>
                                       <Stack spacing={1}>

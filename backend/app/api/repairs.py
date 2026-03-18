@@ -605,12 +605,13 @@ def update_repair(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repair could not be reloaded")
     create_ocr_learning_signals_for_repair(db, refreshed, current_admin=current_admin)
     new_snapshot = build_repair_snapshot(refreshed)
+    action_type = "repair_archived" if new_snapshot["status"] == RepairStatus.ARCHIVED.value else "manual_update"
     db.add(
         AuditLog(
             user_id=current_admin.id,
             entity_type="repair",
             entity_id=str(refreshed.id),
-            action_type="manual_update",
+            action_type=action_type,
             old_value=old_snapshot,
             new_value=new_snapshot,
         )

@@ -31,6 +31,7 @@ from app.schemas.document import (
     DocumentProcessResponse,
     DocumentRead,
     DocumentRepairRead,
+    DocumentUpdateRequest,
     DocumentUploadResponse,
     DocumentVehicleRead,
 )
@@ -308,10 +309,39 @@ def build_primary_document_snapshot(repair: Repair, documents: list[Document]) -
     }
 
 
+def build_document_snapshot(document: Document) -> dict:
+    latest_payload = get_latest_parsed_payload(document)
+    extracted_fields = get_payload_mapping(latest_payload, "extracted_fields")
+    return {
+        "document_id": document.id,
+        "repair_id": document.repair_id,
+        "original_filename": document.original_filename,
+        "kind": document.kind.value,
+        "status": document.status.value,
+        "is_primary": document.is_primary,
+        "review_queue_priority": document.review_queue_priority,
+        "ocr_confidence": document.ocr_confidence,
+        "order_number": extracted_fields.get("order_number"),
+    }
+
+
 def set_primary_document_for_repair(target_document: Document, documents: list[Document]) -> None:
     for item in documents:
         item.is_primary = item.id == target_document.id
     target_document.repair.source_document_id = target_document.id
+
+
+def pick_replacement_primary_document(repair: Repair, archived_document_id: int) -> Document | None:
+    candidates = [
+        item
+        for item in repair.documents
+        if item.id != archived_document_id
+        and item.kind in {DocumentKind.ORDER, DocumentKind.REPEAT_SCAN}
+        and item.status != DocumentStatus.ARCHIVED
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item.created_at, item.id))
 
 
 def append_comparison_review_note(
@@ -573,6 +603,86 @@ def list_documents(
         limit=limit,
         offset=offset,
     )
+
+
+@router.patch("/{document_id}", response_model=DocumentRead)
+def update_document(
+    document_id: int,
+    payload: DocumentUpdateRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> DocumentRead:
+    document = db.execute(
+        select(Document)
+        .options(
+            joinedload(Document.repair).joinedload(Repair.vehicle),
+            joinedload(Document.repair).joinedload(Repair.documents),
+            joinedload(Document.versions),
+        )
+        .where(Document.id == document_id)
+    ).unique().scalar_one_or_none()
+    if document is None or document.repair is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        return serialize_document(document)
+
+    old_snapshot = build_document_snapshot(document)
+    old_primary_snapshot = build_primary_document_snapshot(document.repair, list(document.repair.documents))
+    primary_changed = False
+
+    if "status" in update_data:
+        old_status = document.status
+        new_status = update_data["status"]
+        if old_status != new_status:
+            document.status = new_status
+            if new_status == DocumentStatus.ARCHIVED:
+                document.review_queue_priority = 0
+                if document.is_primary or document.repair.source_document_id == document.id:
+                    replacement = pick_replacement_primary_document(document.repair, document.id)
+                    if replacement is not None:
+                        set_primary_document_for_repair(replacement, list(document.repair.documents))
+                        primary_changed = True
+                    else:
+                        document.is_primary = True
+                        document.repair.source_document_id = document.id
+            elif old_status == DocumentStatus.ARCHIVED and document.review_queue_priority == 0:
+                document.review_queue_priority = 20
+
+    db.flush()
+    new_snapshot = build_document_snapshot(document)
+
+    if old_snapshot != new_snapshot:
+        action_type = "document_archived" if new_snapshot["status"] == DocumentStatus.ARCHIVED.value else "document_status_updated"
+        db.add(
+            AuditLog(
+                user_id=current_admin.id,
+                entity_type="document",
+                entity_id=str(document.id),
+                action_type=action_type,
+                old_value=old_snapshot,
+                new_value=new_snapshot,
+            )
+        )
+
+    if primary_changed:
+        new_primary_snapshot = build_primary_document_snapshot(document.repair, list(document.repair.documents))
+        db.add(
+            AuditLog(
+                user_id=current_admin.id,
+                entity_type="repair",
+                entity_id=str(document.repair.id),
+                action_type="primary_document_changed",
+                old_value=old_primary_snapshot,
+                new_value=new_primary_snapshot,
+            )
+        )
+
+    db.commit()
+
+    refreshed_document = get_visible_document(db, current_admin, document_id)
+    return serialize_document(refreshed_document)
 
 
 @router.post("/upload", response_model=DocumentUploadResponse)

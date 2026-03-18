@@ -260,6 +260,29 @@ type ImportJobsResponse = {
   items: ImportJobItem[];
 };
 
+type ImportConflictItem = {
+  id: number;
+  import_job_id: number;
+  entity_type: string;
+  conflict_key: string;
+  incoming_payload: Record<string, unknown> | null;
+  existing_payload: Record<string, unknown> | null;
+  resolution_payload: Record<string, unknown> | null;
+  status: string;
+  source_filename: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ImportConflictsResponse = {
+  items: ImportConflictItem[];
+};
+
+type ImportConflictResolveResponse = {
+  message: string;
+  conflict: ImportConflictItem;
+};
+
 type ServicesResponse = {
   items: ServiceItem[];
   total: number;
@@ -1131,6 +1154,17 @@ const genericStatusLabels: Record<string, string> = {
 
 function formatStatus(status: string) {
   return genericStatusLabels[status] || status.split("_").join(" ");
+}
+
+function formatJsonPretty(value: unknown) {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function formatMoney(value?: number) {
@@ -2454,6 +2488,13 @@ export default function App() {
   const [historicalImportResult, setHistoricalImportResult] = useState<HistoricalRepairImportResponse | null>(null);
   const [historicalImportJobs, setHistoricalImportJobs] = useState<ImportJobItem[]>([]);
   const [historicalImportJobsLoading, setHistoricalImportJobsLoading] = useState(false);
+  const [importConflicts, setImportConflicts] = useState<ImportConflictItem[]>([]);
+  const [importConflictsLoading, setImportConflictsLoading] = useState(false);
+  const [selectedImportConflict, setSelectedImportConflict] = useState<ImportConflictItem | null>(null);
+  const [showImportConflictDialog, setShowImportConflictDialog] = useState(false);
+  const [importConflictLoading, setImportConflictLoading] = useState(false);
+  const [importConflictSaving, setImportConflictSaving] = useState(false);
+  const [importConflictComment, setImportConflictComment] = useState("");
   const [editingLaborNormCatalogId, setEditingLaborNormCatalogId] = useState<number | null>(null);
   const [laborNormCatalogForm, setLaborNormCatalogForm] = useState<LaborNormCatalogFormState>(createEmptyCatalogForm);
   const [laborNormEntryForm, setLaborNormEntryForm] = useState<LaborNormEntryFormState>(createEmptyLaborNormEntryForm);
@@ -2829,6 +2870,39 @@ export default function App() {
     }
   }
 
+  async function loadImportConflicts(activeToken: string, status: string = "pending") {
+    setImportConflictsLoading(true);
+    try {
+      const payload = await apiRequest<ImportConflictsResponse>(
+        `/imports/conflicts?status=${encodeURIComponent(status)}&limit=20`,
+        { method: "GET" },
+        activeToken,
+      );
+      setImportConflicts(payload.items);
+    } finally {
+      setImportConflictsLoading(false);
+    }
+  }
+
+  async function openImportConflict(conflictId: number) {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    setImportConflictLoading(true);
+    setImportConflictComment("");
+    setSelectedImportConflict(null);
+    setShowImportConflictDialog(true);
+    try {
+      const payload = await apiRequest<ImportConflictItem>(`/imports/conflicts/${conflictId}`, { method: "GET" }, token);
+      setSelectedImportConflict(payload);
+    } catch (error) {
+      setShowImportConflictDialog(false);
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить конфликт импорта");
+    } finally {
+      setImportConflictLoading(false);
+    }
+  }
+
   async function loadReviewRules(activeToken: string) {
     const payload = await apiRequest<ReviewRuleResponse>("/review/rules", { method: "GET" }, activeToken);
     setReviewRules(payload.items);
@@ -3167,6 +3241,10 @@ export default function App() {
       setHistoricalImportLimit("1000");
       setHistoricalImportResult(null);
       setHistoricalImportJobs([]);
+      setImportConflicts([]);
+      setSelectedImportConflict(null);
+      setShowImportConflictDialog(false);
+      setImportConflictComment("");
       setLaborNormCatalogForm(createEmptyCatalogForm());
       setLaborNormEntryForm(createEmptyLaborNormEntryForm());
       setServiceForm(createEmptyServiceForm());
@@ -3215,7 +3293,7 @@ export default function App() {
     if (!token || user?.role !== "admin" || activeWorkspaceTab !== "admin" || activeAdminTab !== "imports") {
       return;
     }
-    void loadHistoricalImportJobs(token).catch((error) => {
+    void Promise.all([loadHistoricalImportJobs(token), loadImportConflicts(token)]).catch((error) => {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить историю импортов");
     });
   }, [activeAdminTab, activeWorkspaceTab, token, user?.role]);
@@ -4791,12 +4869,47 @@ export default function App() {
         `${result.message}. Создано ремонтов ${result.created_repairs}, конфликтов ${result.conflicts_created}, дублей ${result.duplicate_repairs}.`,
       );
       setHistoricalImportFile(null);
-      await loadHistoricalImportJobs(token);
+      await Promise.all([loadHistoricalImportJobs(token), loadImportConflicts(token)]);
       await loadWorkspace(token);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось импортировать историю ремонтов");
     } finally {
       setHistoricalImportLoading(false);
+    }
+  }
+
+  async function handleResolveImportConflict(nextStatus: "resolved" | "ignored") {
+    if (!token || user?.role !== "admin" || !selectedImportConflict) {
+      return;
+    }
+
+    setImportConflictSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const payload = await apiRequest<ImportConflictResolveResponse>(
+        `/imports/conflicts/${selectedImportConflict.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            status: nextStatus,
+            comment: importConflictComment.trim() || null,
+          }),
+        },
+        token,
+      );
+      setSelectedImportConflict(payload.conflict);
+      setSuccessMessage(payload.message);
+      setShowImportConflictDialog(false);
+      setImportConflictComment("");
+      await Promise.all([
+        loadImportConflicts(token),
+        loadWorkspace(token),
+      ]);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось обновить конфликт импорта");
+    } finally {
+      setImportConflictSaving(false);
     }
   }
 
@@ -5826,8 +5939,19 @@ export default function App() {
                                 .filter(Boolean)
                                 .join(" · ")}
                             </Typography>
-                            {item.document_id && item.repair_id ? (
-                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                              {user?.role === "admin" ? (
+                                <Button
+                                  size="small"
+                                  variant="contained"
+                                  onClick={() => {
+                                    void openImportConflict(item.conflict_id);
+                                  }}
+                                >
+                                  Разобрать конфликт
+                                </Button>
+                              ) : null}
+                              {item.document_id && item.repair_id ? (
                                 <Button
                                   size="small"
                                   variant="outlined"
@@ -5838,8 +5962,8 @@ export default function App() {
                                 >
                                   Открыть ремонт
                                 </Button>
-                              </Stack>
-                            ) : null}
+                              ) : null}
+                            </Stack>
                           </Stack>
                         </Paper>
                       ))
@@ -5852,6 +5976,96 @@ export default function App() {
             </DialogContent>
             <DialogActions>
               <Button onClick={() => setShowQualityDialog(false)}>Закрыть</Button>
+            </DialogActions>
+          </Dialog>
+          <Dialog
+            open={showImportConflictDialog}
+            onClose={() => {
+              if (!importConflictSaving) {
+                setShowImportConflictDialog(false);
+              }
+            }}
+            fullWidth
+            maxWidth="md"
+          >
+            <DialogTitle>Разбор конфликта импорта</DialogTitle>
+            <DialogContent dividers>
+              {importConflictLoading ? (
+                <Stack spacing={2} alignItems="center">
+                  <CircularProgress size={24} />
+                  <Typography className="muted-copy">Загрузка конфликта...</Typography>
+                </Stack>
+              ) : selectedImportConflict ? (
+                <Stack spacing={2}>
+                  <Typography>
+                    {selectedImportConflict.entity_type} · {formatStatus(selectedImportConflict.status)}
+                  </Typography>
+                  <Typography className="muted-copy">
+                    {[selectedImportConflict.conflict_key, selectedImportConflict.source_filename, formatDateTime(selectedImportConflict.created_at)]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </Typography>
+                  <TextField
+                    label="Входящие данные"
+                    value={formatJsonPretty(selectedImportConflict.incoming_payload)}
+                    multiline
+                    minRows={6}
+                    fullWidth
+                    InputProps={{ readOnly: true }}
+                  />
+                  <TextField
+                    label="Существующие данные"
+                    value={formatJsonPretty(selectedImportConflict.existing_payload)}
+                    multiline
+                    minRows={6}
+                    fullWidth
+                    InputProps={{ readOnly: true }}
+                  />
+                  {selectedImportConflict.resolution_payload ? (
+                    <TextField
+                      label="Текущее решение"
+                      value={formatJsonPretty(selectedImportConflict.resolution_payload)}
+                      multiline
+                      minRows={4}
+                      fullWidth
+                      InputProps={{ readOnly: true }}
+                    />
+                  ) : null}
+                  <TextField
+                    label="Комментарий администратора"
+                    value={importConflictComment}
+                    onChange={(event) => setImportConflictComment(event.target.value)}
+                    fullWidth
+                    multiline
+                    minRows={3}
+                  />
+                </Stack>
+              ) : (
+                <Typography className="muted-copy">Конфликт не выбран.</Typography>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setShowImportConflictDialog(false)} disabled={importConflictSaving}>
+                Закрыть
+              </Button>
+              <Button
+                variant="outlined"
+                disabled={importConflictSaving || !selectedImportConflict}
+                onClick={() => {
+                  void handleResolveImportConflict("ignored");
+                }}
+              >
+                {importConflictSaving ? "Сохранение..." : "Игнорировать"}
+              </Button>
+              <Button
+                variant="contained"
+                disabled={importConflictSaving || !selectedImportConflict}
+                onClick={() => {
+                  void handleResolveImportConflict("resolved");
+                }}
+              >
+                {importConflictSaving ? "Сохранение..." : "Отметить решённым"}
+              </Button>
             </DialogActions>
           </Dialog>
 
@@ -8209,10 +8423,10 @@ export default function App() {
                                 </Button>
                                 <Button
                                   variant="text"
-                                  disabled={historicalImportJobsLoading || !token}
+                                  disabled={(historicalImportJobsLoading || importConflictsLoading) || !token}
                                   onClick={() => {
                                     if (token) {
-                                      void loadHistoricalImportJobs(token);
+                                      void Promise.all([loadHistoricalImportJobs(token), loadImportConflicts(token)]);
                                     }
                                   }}
                                 >
@@ -8301,6 +8515,42 @@ export default function App() {
                             ))
                           ) : (
                             <Typography className="muted-copy">Исторические импорты пока не запускались.</Typography>
+                          )}
+                        </Stack>
+                      </Paper>
+
+                      <Paper className="repair-line" elevation={0}>
+                        <Stack spacing={1}>
+                          <Typography className="metric-label">Конфликты импорта в работе</Typography>
+                          {importConflictsLoading ? (
+                            <Typography className="muted-copy">Загрузка конфликтов...</Typography>
+                          ) : importConflicts.length > 0 ? (
+                            importConflicts.map((item) => (
+                              <Paper className="repair-line" key={`import-conflict-${item.id}`} elevation={0}>
+                                <Stack spacing={0.75}>
+                                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1} justifyContent="space-between">
+                                    <Typography>{item.entity_type}</Typography>
+                                    <Chip size="small" color="warning" label={formatStatus(item.status)} />
+                                  </Stack>
+                                  <Typography className="muted-copy">
+                                    {[item.conflict_key, item.source_filename, formatDateTime(item.created_at)].filter(Boolean).join(" · ")}
+                                  </Typography>
+                                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                    <Button
+                                      size="small"
+                                      variant="contained"
+                                      onClick={() => {
+                                        void openImportConflict(item.id);
+                                      }}
+                                    >
+                                      Разобрать
+                                    </Button>
+                                  </Stack>
+                                </Stack>
+                              </Paper>
+                            ))
+                          ) : (
+                            <Typography className="muted-copy">Открытых конфликтов импорта сейчас нет.</Typography>
                           )}
                         </Stack>
                       </Paper>

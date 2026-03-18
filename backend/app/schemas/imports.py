@@ -42,3 +42,33 @@ class ImportJobRead(BaseModel):
 
 class ImportJobListResponse(BaseModel):
     items: list[ImportJobRead]
+
+
+class ImportConflictRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    import_job_id: int
+    entity_type: str
+    conflict_key: str
+    incoming_payload: Optional[dict]
+    existing_payload: Optional[dict]
+    resolution_payload: Optional[dict]
+    status: str
+    source_filename: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ImportConflictListResponse(BaseModel):
+    items: list[ImportConflictRead]
+
+
+class ImportConflictResolveRequest(BaseModel):
+    status: str
+    comment: Optional[str] = None
+
+
+class ImportConflictResolveResponse(BaseModel):
+    message: str
+    conflict: ImportConflictRead

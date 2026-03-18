@@ -521,6 +521,33 @@ type SystemStatus = {
   password_recovery_email_configured: boolean;
 };
 
+type BackupItem = {
+  backup_id: string;
+  filename: string;
+  created_at: string;
+  backup_type: string;
+  source: string;
+  status: string;
+  size_bytes: number;
+  storage_files_total: number;
+  tables_total: number;
+};
+
+type BackupListResponse = {
+  items: BackupItem[];
+  total: number;
+};
+
+type BackupCreateResponse = {
+  message: string;
+  backup: BackupItem;
+};
+
+type BackupRestoreResponse = {
+  message: string;
+  backup: BackupItem;
+};
+
 type OcrLearningResponse = {
   items: OcrLearningSignalItem[];
   summaries: OcrLearningSummaryItem[];
@@ -726,7 +753,7 @@ type LaborNormEntryFormState = {
 type ReviewPriorityBucket = "review" | "critical" | "suspicious";
 type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
 type WorkspaceTab = "documents" | "repair" | "admin" | "tech_admin" | "fleet" | "search" | "audit";
-type AdminTab = "services" | "control" | "labor_norms" | "imports" | "employees";
+type AdminTab = "services" | "control" | "labor_norms" | "imports" | "employees" | "backups";
 type TechAdminTab = "learning" | "matchers" | "rules";
 type RepairTab = "overview" | "works" | "parts" | "documents" | "checks" | "history";
 type QualityDetailTab = "documents" | "services" | "works" | "parts" | "conflicts";
@@ -1170,6 +1197,7 @@ const adminTabDescriptions: Record<AdminTab, string> = {
   labor_norms: "Каталоги нормо-часов, импорт справочников и ручная правка записей.",
   imports: "Пакетный импорт исторических ремонтов из Excel с фиксацией конфликтов и созданием архивной базы.",
   employees: "Пользователи системы, доступ сотрудников и закрепление техники по зонам ответственности.",
+  backups: "Полные резервные копии базы и файлов, ручной запуск backup и защищённое восстановление.",
 };
 
 const techAdminTabDescriptions: Record<TechAdminTab, string> = {
@@ -1274,6 +1302,10 @@ const genericStatusLabels: Record<string, string> = {
   normal: "Норма",
   warning: "Предупреждение",
   error: "Ошибка",
+  ready: "Готова",
+  missing: "Файл отсутствует",
+  manual: "Вручную",
+  full: "Полная",
 };
 
 function formatStatus(status: string) {
@@ -1314,6 +1346,20 @@ function formatMoney(value?: number) {
     currency: "RUB",
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function formatFileSize(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 Б";
+  }
+  const units = ["Б", "КБ", "МБ", "ГБ"];
+  let size = value;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size >= 10 || unitIndex === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`;
 }
 
 function getLaborNormApplicability(
@@ -2708,6 +2754,7 @@ export default function App() {
   const [ocrLearningTargetFields, setOcrLearningTargetFields] = useState<string[]>([]);
   const [ocrLearningProfileScopes, setOcrLearningProfileScopes] = useState<string[]>([]);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [backups, setBackups] = useState<BackupItem[]>([]);
   const [ocrLearningStatusFilter, setOcrLearningStatusFilter] = useState("");
   const [ocrLearningTargetFieldFilter, setOcrLearningTargetFieldFilter] = useState("");
   const [ocrLearningProfileScopeFilter, setOcrLearningProfileScopeFilter] = useState("");
@@ -2789,6 +2836,11 @@ export default function App() {
   const [showReviewServiceEditor, setShowReviewServiceEditor] = useState(false);
   const [reviewDocumentPreviewUrl, setReviewDocumentPreviewUrl] = useState("");
   const [reviewDocumentPreviewLoading, setReviewDocumentPreviewLoading] = useState(false);
+  const [backupsLoading, setBackupsLoading] = useState(false);
+  const [backupActionLoading, setBackupActionLoading] = useState(false);
+  const [backupRestoreDialogOpen, setBackupRestoreDialogOpen] = useState(false);
+  const [backupRestoreTarget, setBackupRestoreTarget] = useState<BackupItem | null>(null);
+  const [backupRestoreConfirmValue, setBackupRestoreConfirmValue] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -3318,6 +3370,87 @@ export default function App() {
     }
   }
 
+  async function loadBackups(activeToken: string) {
+    setBackupsLoading(true);
+    try {
+      const payload = await apiRequest<BackupListResponse>("/backups", { method: "GET" }, activeToken);
+      setBackups(payload.items);
+    } finally {
+      setBackupsLoading(false);
+    }
+  }
+
+  function openBackupRestoreDialog(item: BackupItem) {
+    setBackupRestoreTarget(item);
+    setBackupRestoreConfirmValue("");
+    setBackupRestoreDialogOpen(true);
+  }
+
+  function closeBackupRestoreDialog() {
+    setBackupRestoreDialogOpen(false);
+    setBackupRestoreTarget(null);
+    setBackupRestoreConfirmValue("");
+  }
+
+  async function handleCreateBackup() {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    setBackupActionLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const payload = await apiRequest<BackupCreateResponse>("/backups", { method: "POST" }, token);
+      setSuccessMessage(payload.message);
+      await loadBackups(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось создать резервную копию");
+    } finally {
+      setBackupActionLoading(false);
+    }
+  }
+
+  async function handleDownloadBackup(item: BackupItem) {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    setBackupActionLoading(true);
+    setErrorMessage("");
+    try {
+      await downloadApiFile(`/backups/${item.backup_id}/download`, token, item.filename);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось скачать резервную копию");
+    } finally {
+      setBackupActionLoading(false);
+    }
+  }
+
+  async function handleRestoreBackup() {
+    if (!token || user?.role !== "admin" || !backupRestoreTarget) {
+      return;
+    }
+    setBackupActionLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const payload = await apiRequest<BackupRestoreResponse>(
+        `/backups/${backupRestoreTarget.backup_id}/restore`,
+        {
+          method: "POST",
+          body: JSON.stringify({ confirm_backup_id: backupRestoreConfirmValue }),
+        },
+        token,
+      );
+      setSuccessMessage(payload.message);
+      closeBackupRestoreDialog();
+      await loadBackups(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось восстановить резервную копию");
+    } finally {
+      setBackupActionLoading(false);
+    }
+  }
+
   async function searchVehiclesForUserAssignment(activeToken: string, search: string) {
     if (!search.trim()) {
       setUserVehicleSearchResults([]);
@@ -3586,6 +3719,15 @@ export default function App() {
     }
     void Promise.all([loadHistoricalImportJobs(token), loadImportConflicts(token)]).catch((error) => {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить историю импортов");
+    });
+  }, [activeAdminTab, activeWorkspaceTab, token, user?.role]);
+
+  useEffect(() => {
+    if (!token || user?.role !== "admin" || activeWorkspaceTab !== "admin" || activeAdminTab !== "backups") {
+      return;
+    }
+    void loadBackups(token).catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить резервные копии");
     });
   }, [activeAdminTab, activeWorkspaceTab, token, user?.role]);
 
@@ -6822,6 +6964,7 @@ export default function App() {
                       >
                         <Tab label="Сотрудники" value="employees" />
                         <Tab label="Сервисы" value="services" />
+                        <Tab label="Резервные копии" value="backups" />
                         <Tab label="Контроль" value="control" />
                         <Tab label="Нормо-часы" value="labor_norms" />
                         <Tab label="Импорт истории" value="imports" />
@@ -7812,6 +7955,149 @@ export default function App() {
                             <Typography className="muted-copy">По текущему фильтру сервисы не найдены.</Typography>
                           )}
                         </DialogContent>
+                      </Dialog>
+                    </Stack>
+                  </Paper>
+                ) : null}
+
+                {activeWorkspaceTab === "admin" && activeAdminTab === "backups" && user?.role === "admin" ? (
+                  <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={2}>
+                      <Box>
+                        <Typography variant="h5">Резервные копии</Typography>
+                        <Typography className="muted-copy">
+                          Полный backup включает базу данных и все файлы из `storage`. Для восстановления введите точный код копии.
+                        </Typography>
+                      </Box>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                        <Button
+                          variant="contained"
+                          disabled={backupActionLoading}
+                          onClick={() => {
+                            void handleCreateBackup();
+                          }}
+                        >
+                          {backupActionLoading ? "Выполнение..." : "Создать резервную копию"}
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          disabled={backupsLoading || backupActionLoading}
+                          onClick={() => {
+                            if (token) {
+                              void loadBackups(token);
+                            }
+                          }}
+                        >
+                          {backupsLoading ? "Обновление..." : "Обновить список"}
+                        </Button>
+                      </Stack>
+                      {backupsLoading ? (
+                        <Stack spacing={1} alignItems="center">
+                          <CircularProgress size={24} />
+                          <Typography className="muted-copy">Загрузка резервных копий...</Typography>
+                        </Stack>
+                      ) : backups.length > 0 ? (
+                        <Stack spacing={1}>
+                          {backups.map((item) => (
+                            <Paper className="repair-line" key={item.backup_id} elevation={0}>
+                              <Stack spacing={1}>
+                                <Stack
+                                  direction={{ xs: "column", sm: "row" }}
+                                  spacing={1}
+                                  justifyContent="space-between"
+                                  alignItems={{ xs: "flex-start", sm: "center" }}
+                                >
+                                  <Box>
+                                    <Typography>{item.filename}</Typography>
+                                    <Typography className="muted-copy">
+                                      Код: {item.backup_id}
+                                    </Typography>
+                                  </Box>
+                                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                    <Chip size="small" variant="outlined" label={formatStatus(item.backup_type)} />
+                                    <Chip size="small" variant="outlined" label={formatStatus(item.source)} />
+                                    <Chip
+                                      size="small"
+                                      color={item.status === "ready" ? "success" : "warning"}
+                                      label={formatStatus(item.status)}
+                                    />
+                                  </Stack>
+                                </Stack>
+                                <Typography className="muted-copy">
+                                  {formatDateTime(item.created_at)} · {formatFileSize(item.size_bytes)} · таблиц {item.tables_total} · файлов {item.storage_files_total}
+                                </Typography>
+                                <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    disabled={backupActionLoading || item.status !== "ready"}
+                                    onClick={() => {
+                                      void handleDownloadBackup(item);
+                                    }}
+                                  >
+                                    Скачать
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    variant="text"
+                                    color="warning"
+                                    disabled={backupActionLoading || item.status !== "ready"}
+                                    onClick={() => {
+                                      openBackupRestoreDialog(item);
+                                    }}
+                                  >
+                                    Восстановить
+                                  </Button>
+                                </Stack>
+                              </Stack>
+                            </Paper>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Alert severity="info">
+                          Резервные копии пока не создавались.
+                        </Alert>
+                      )}
+                      <Dialog
+                        open={backupRestoreDialogOpen}
+                        onClose={closeBackupRestoreDialog}
+                        fullWidth
+                        maxWidth="sm"
+                      >
+                        <DialogTitle>Подтверждение восстановления</DialogTitle>
+                        <DialogContent dividers>
+                          <Stack spacing={1.5}>
+                            <Alert severity="warning">
+                              Восстановление перезапишет текущую базу и файлы `storage`.
+                            </Alert>
+                            <Typography>
+                              Для подтверждения введите код копии:
+                              {" "}
+                              <strong>{backupRestoreTarget?.backup_id || "—"}</strong>
+                            </Typography>
+                            <TextField
+                              fullWidth
+                              label="Код резервной копии"
+                              value={backupRestoreConfirmValue}
+                              onChange={(event) => setBackupRestoreConfirmValue(event.target.value)}
+                            />
+                          </Stack>
+                        </DialogContent>
+                        <DialogActions>
+                          <Button onClick={closeBackupRestoreDialog} disabled={backupActionLoading}>
+                            Отмена
+                          </Button>
+                          <Button
+                            color="warning"
+                            variant="contained"
+                            disabled={backupActionLoading || backupRestoreConfirmValue.trim() !== (backupRestoreTarget?.backup_id || "")}
+                            onClick={() => {
+                              void handleRestoreBackup();
+                            }}
+                          >
+                            {backupActionLoading ? "Восстановление..." : "Восстановить"}
+                          </Button>
+                        </DialogActions>
                       </Dialog>
                     </Stack>
                   </Paper>

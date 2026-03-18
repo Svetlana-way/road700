@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from io import BytesIO
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, joinedload
 
@@ -22,6 +25,7 @@ from app.schemas.repair import (
     RepairUpdateRequest,
 )
 from app.services.document_processing import replace_ocr_checks, resolve_service
+from app.services.exporting import append_rows, safe_filename
 
 
 router = APIRouter(prefix="/repairs", tags=["repairs"])
@@ -418,6 +422,130 @@ def get_repair(
     history_entries = fetch_repair_history(db, repair.id)
     document_history_entries = fetch_document_history(db, repair)
     return serialize_repair(repair, history_entries, document_history_entries)
+
+
+@router.get("/{repair_id}/export")
+def export_repair(
+    repair_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> StreamingResponse:
+    repair = load_repair_for_user(db, repair_id, current_user)
+    workbook = Workbook()
+    summary_sheet = workbook.active
+    summary_sheet.title = "Ремонт"
+    append_rows(
+        summary_sheet,
+        [
+            ("Поле", "Значение"),
+            ("ID ремонта", repair.id),
+            ("Номер заказ-наряда", repair.order_number or ""),
+            ("Дата ремонта", repair.repair_date.isoformat()),
+            ("Статус", repair.status.value),
+            ("Предварительный", "Да" if repair.is_preliminary else "Нет"),
+            ("Частично распознан", "Да" if repair.is_partially_recognized else "Нет"),
+            ("Госномер", repair.vehicle.plate_number or ""),
+            ("VIN", repair.vehicle.vin or ""),
+            ("Марка", repair.vehicle.brand or ""),
+            ("Модель", repair.vehicle.model or ""),
+            ("Сервис", repair.service.name if repair.service is not None else ""),
+            ("Пробег", repair.mileage),
+            ("Причина ремонта", repair.reason or ""),
+            ("Комментарий сотрудника", repair.employee_comment or ""),
+            ("Работы, руб", float(repair.work_total)),
+            ("Запчасти, руб", float(repair.parts_total)),
+            ("НДС, руб", float(repair.vat_total)),
+            ("Итого, руб", float(repair.grand_total)),
+            ("Создан", repair.created_at.isoformat()),
+            ("Обновлен", repair.updated_at.isoformat()),
+        ],
+    )
+
+    works_sheet = workbook.create_sheet("Работы")
+    append_rows(
+        works_sheet,
+        [("Код", "Наименование", "Кол-во", "Нормо-часы", "Факт. часы", "Цена", "Сумма", "Статус")]
+        + [
+            (
+                item.work_code or "",
+                item.work_name,
+                item.quantity,
+                item.standard_hours if item.standard_hours is not None else "",
+                item.actual_hours if item.actual_hours is not None else "",
+                float(item.price),
+                float(item.line_total),
+                item.status.value,
+            )
+            for item in sorted(repair.works, key=lambda item: item.id)
+        ],
+    )
+
+    parts_sheet = workbook.create_sheet("Материалы")
+    append_rows(
+        parts_sheet,
+        [("Артикул", "Наименование", "Кол-во", "Ед.", "Цена", "Сумма", "Статус")]
+        + [
+            (
+                item.article or "",
+                item.part_name,
+                item.quantity,
+                item.unit_name or "",
+                float(item.price),
+                float(item.line_total),
+                item.status.value,
+            )
+            for item in sorted(repair.parts, key=lambda item: item.id)
+        ],
+    )
+
+    checks_sheet = workbook.create_sheet("Проверки")
+    append_rows(
+        checks_sheet,
+        [("Тип", "Важность", "Заголовок", "Детали", "Решено", "Создано")]
+        + [
+            (
+                item.check_type,
+                item.severity.value,
+                item.title,
+                item.details or "",
+                "Да" if item.is_resolved else "Нет",
+                item.created_at.isoformat(),
+            )
+            for item in sorted(repair.checks, key=lambda item: item.id)
+        ],
+    )
+
+    documents_sheet = workbook.create_sheet("Документы")
+    append_rows(
+        documents_sheet,
+        [("ID", "Файл", "Вид", "Статус", "Основной", "OCR", "Создан", "Обновлен")]
+        + [
+            (
+                item.id,
+                item.original_filename,
+                item.kind.value,
+                item.status.value,
+                "Да" if item.is_primary else "Нет",
+                item.ocr_confidence if item.ocr_confidence is not None else "",
+                item.created_at.isoformat(),
+                item.updated_at.isoformat(),
+            )
+            for item in sorted(repair.documents, key=lambda item: item.id)
+        ],
+    )
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    filename = safe_filename(
+        f"repair_{repair.id}_{repair.order_number or repair.vehicle.plate_number or 'card'}",
+        f"repair_{repair.id}",
+    )
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.xlsx"'},
+    )
 
 
 @router.patch("/{repair_id}", response_model=RepairDetailResponse)

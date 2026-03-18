@@ -2469,6 +2469,39 @@ async function downloadDocumentFile(documentId: number, token: string): Promise<
   return URL.createObjectURL(blob);
 }
 
+async function downloadApiFile(path: string, token: string, fallbackFilename: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(payload?.detail || `Ошибка запроса: ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const disposition = response.headers.get("Content-Disposition") || response.headers.get("content-disposition") || "";
+  const utfMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plainMatch = disposition.match(/filename="?([^"]+)"?/i);
+  const filename = utfMatch?.[1]
+    ? decodeURIComponent(utfMatch[1])
+    : plainMatch?.[1]
+      ? plainMatch[1]
+      : fallbackFilename;
+
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
 function getDocumentPreviewKind(mimeType: string | null | undefined): "pdf" | "image" | null {
   if (!mimeType) {
     return null;
@@ -2658,6 +2691,8 @@ export default function App() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [attachDocumentLoading, setAttachDocumentLoading] = useState(false);
   const [repairLoading, setRepairLoading] = useState(false);
+  const [repairExportLoading, setRepairExportLoading] = useState(false);
+  const [vehicleExportLoading, setVehicleExportLoading] = useState(false);
   const [reprocessLoading, setReprocessLoading] = useState(false);
   const [batchReprocessLoading, setBatchReprocessLoading] = useState(false);
   const [batchReprocessLimit, setBatchReprocessLimit] = useState("50");
@@ -3798,6 +3833,36 @@ export default function App() {
       await runGlobalSearch(token);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось выполнить поиск");
+    }
+  }
+
+  async function handleExportRepair() {
+    if (!token || !selectedRepair) {
+      return;
+    }
+    setRepairExportLoading(true);
+    setErrorMessage("");
+    try {
+      await downloadApiFile(`/repairs/${selectedRepair.id}/export`, token, `repair_${selectedRepair.id}.xlsx`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось выгрузить карточку ремонта");
+    } finally {
+      setRepairExportLoading(false);
+    }
+  }
+
+  async function handleExportVehicle() {
+    if (!token || !selectedFleetVehicle) {
+      return;
+    }
+    setVehicleExportLoading(true);
+    setErrorMessage("");
+    try {
+      await downloadApiFile(`/vehicles/${selectedFleetVehicle.id}/export`, token, `vehicle_${selectedFleetVehicle.id}.xlsx`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось выгрузить карточку техники");
+    } finally {
+      setVehicleExportLoading(false);
     }
   }
 
@@ -9415,12 +9480,23 @@ export default function App() {
                                   </Button>
                                 </>
                               ) : (
-                                <Button variant="outlined" onClick={handleStartRepairEdit}>
-                                  Редактировать
-                                </Button>
+                                <>
+                                  <Button variant="outlined" onClick={() => void handleExportRepair()} disabled={repairExportLoading}>
+                                    {repairExportLoading ? "Экспорт..." : "Экспорт Excel"}
+                                  </Button>
+                                  <Button variant="outlined" onClick={handleStartRepairEdit}>
+                                    Редактировать
+                                  </Button>
+                                </>
                               )}
                             </Stack>
-                          ) : null}
+                          ) : (
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                              <Button variant="outlined" onClick={() => void handleExportRepair()} disabled={repairExportLoading}>
+                                {repairExportLoading ? "Экспорт..." : "Экспорт Excel"}
+                              </Button>
+                            </Stack>
+                          )}
                         </Stack>
 
                         {selectedReviewItem && !isEditingRepair ? (
@@ -11440,7 +11516,10 @@ export default function App() {
                                       {selectedFleetVehicle.external_id ? `Внешний код: ${selectedFleetVehicle.external_id}` : "Внешний код не указан"}
                                     </Typography>
                                   </Box>
-                                  <Stack direction="row" spacing={1}>
+                                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap justifyContent="flex-end">
+                                    <Button variant="outlined" onClick={() => void handleExportVehicle()} disabled={vehicleExportLoading}>
+                                      {vehicleExportLoading ? "Экспорт..." : "Экспорт Excel"}
+                                    </Button>
                                     <Chip size="small" variant="outlined" label={formatVehicleTypeLabel(selectedFleetVehicle.vehicle_type)} />
                                     <Chip size="small" color={vehicleStatusColor(selectedFleetVehicle.status)} label={formatVehicleStatusLabel(selectedFleetVehicle.status)} />
                                   </Stack>

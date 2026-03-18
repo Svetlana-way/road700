@@ -53,6 +53,7 @@ body {
 .muted-copy {
   color: #54657c;
   line-height: 1.65;
+  overflow-wrap: anywhere;
 }
 
 .hero-copy {
@@ -110,11 +111,13 @@ body {
   margin-top: 12px;
   color: #29425f;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .document-row {
   padding: 16px;
   border-radius: 18px;
+  min-width: 0;
 }
 
 .document-row-active {
@@ -128,6 +131,11 @@ body {
   border-radius: 18px;
   border: 1px solid rgba(24, 40, 60, 0.08);
   background: rgba(248, 250, 252, 0.82);
+  min-width: 0;
+}
+
+.workspace-panel {
+  min-width: 0;
 }
 
 .repair-placeholder {

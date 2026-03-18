@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   Alert,
   Box,
@@ -2156,6 +2156,7 @@ async function apiRequest<T>(path: string, init: RequestInit = {}, token?: strin
 }
 
 export default function App() {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_STORAGE_KEY) || "");
   const [user, setUser] = useState<User | null>(null);
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("documents");
@@ -4679,7 +4680,7 @@ export default function App() {
                   {user ? `${user.full_name} · ${user.role}` : "Загрузка профиля"}
                 </Typography>
               </Box>
-              <Stack direction="row" spacing={1} alignItems="center">
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }}>
                 <Chip label={user?.email || "user"} />
                 <Button
                   variant={showPasswordChange ? "contained" : "outlined"}
@@ -4840,6 +4841,12 @@ export default function App() {
                   color="warning"
                   size="large"
                   onClick={() => setShowQualityDialog(true)}
+                  sx={{
+                    minWidth: { xs: "100%", sm: 180 },
+                    whiteSpace: "nowrap",
+                    fontWeight: 800,
+                    textTransform: "none",
+                  }}
                 >
                   Внимание !!!
                 </Button>
@@ -4887,9 +4894,14 @@ export default function App() {
                       dataQualityDetails.documents.map((item) => (
                         <Paper className="repair-line" key={`quality-document-${item.document_id}`} elevation={0}>
                           <Stack spacing={1}>
-                            <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                            <Stack
+                              direction={{ xs: "column", sm: "row" }}
+                              justifyContent="space-between"
+                              spacing={1}
+                              alignItems={{ xs: "flex-start", sm: "center" }}
+                            >
                               <Typography variant="subtitle1">{item.original_filename}</Typography>
-                              <Stack direction="row" spacing={1}>
+                              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                                 <Chip
                                   size="small"
                                   color={statusColor(item.document_status as DocumentStatus)}
@@ -4907,7 +4919,7 @@ export default function App() {
                               {item.repair_date ? ` · ${item.repair_date}` : ""}
                               {item.repair_status ? ` · ${formatRepairStatus(item.repair_status)}` : ""}
                             </Typography>
-                            <Stack direction="row" spacing={1}>
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                               <Button
                                 size="small"
                                 variant="outlined"
@@ -4935,7 +4947,12 @@ export default function App() {
                       dataQualityDetails.services.map((item) => (
                         <Paper className="repair-line" key={`quality-service-${item.service_id}`} elevation={0}>
                           <Stack spacing={1}>
-                            <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                            <Stack
+                              direction={{ xs: "column", sm: "row" }}
+                              justifyContent="space-between"
+                              spacing={1}
+                              alignItems={{ xs: "flex-start", sm: "center" }}
+                            >
                               <Typography variant="subtitle1">{item.name}</Typography>
                               <Chip size="small" color="warning" label="Предварительный" />
                             </Stack>
@@ -4945,7 +4962,7 @@ export default function App() {
                                 .join(" · ")}
                             </Typography>
                             {user?.role === "admin" ? (
-                              <Stack direction="row" spacing={1}>
+                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                                 <Button
                                   size="small"
                                   variant="outlined"
@@ -4973,14 +4990,19 @@ export default function App() {
                       dataQualityDetails.works.map((item) => (
                         <Paper className="repair-line" key={`quality-work-${item.work_id}`} elevation={0}>
                           <Stack spacing={1}>
-                            <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                            <Stack
+                              direction={{ xs: "column", sm: "row" }}
+                              justifyContent="space-between"
+                              spacing={1}
+                              alignItems={{ xs: "flex-start", sm: "center" }}
+                            >
                               <Typography variant="subtitle1">{item.work_name}</Typography>
                               <Chip size="small" color="warning" label={formatMoney(item.line_total)} />
                             </Stack>
                             <Typography className="muted-copy">
                               {formatQualityVehicle(item)} · {item.repair_date} · ремонт #{item.repair_id}
                             </Typography>
-                            <Stack direction="row" spacing={1}>
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                               <Button
                                 size="small"
                                 variant="outlined"
@@ -5008,14 +5030,19 @@ export default function App() {
                       dataQualityDetails.parts.map((item) => (
                         <Paper className="repair-line" key={`quality-part-${item.part_id}`} elevation={0}>
                           <Stack spacing={1}>
-                            <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                            <Stack
+                              direction={{ xs: "column", sm: "row" }}
+                              justifyContent="space-between"
+                              spacing={1}
+                              alignItems={{ xs: "flex-start", sm: "center" }}
+                            >
                               <Typography variant="subtitle1">{item.part_name}</Typography>
                               <Chip size="small" color="warning" label={formatMoney(item.line_total)} />
                             </Stack>
                             <Typography className="muted-copy">
                               {formatQualityVehicle(item)} · {item.repair_date} · ремонт #{item.repair_id}
                             </Typography>
-                            <Stack direction="row" spacing={1}>
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                               <Button
                                 size="small"
                                 variant="outlined"
@@ -5043,7 +5070,12 @@ export default function App() {
                       dataQualityDetails.conflicts.map((item) => (
                         <Paper className="repair-line" key={`quality-conflict-${item.conflict_id}`} elevation={0}>
                           <Stack spacing={1}>
-                            <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                            <Stack
+                              direction={{ xs: "column", sm: "row" }}
+                              justifyContent="space-between"
+                              spacing={1}
+                              alignItems={{ xs: "flex-start", sm: "center" }}
+                            >
                               <Typography variant="subtitle1">{item.entity_type}</Typography>
                               <Chip size="small" color="warning" label="Ожидает решения" />
                             </Stack>
@@ -5053,7 +5085,7 @@ export default function App() {
                                 .join(" · ")}
                             </Typography>
                             {item.document_id && item.repair_id ? (
-                              <Stack direction="row" spacing={1}>
+                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                                 <Button
                                   size="small"
                                   variant="outlined"
@@ -5083,7 +5115,7 @@ export default function App() {
 
           <Grid container spacing={3}>
             {activeWorkspaceTab === "documents" ? (
-              <Grid item xs={12} lg={7}>
+              <Grid item xs={12} md={7}>
               <Paper className="workspace-panel" elevation={0}>
                 <Stack spacing={2}>
                   <Box>
@@ -5209,10 +5241,10 @@ export default function App() {
                       <Grid item xs={12}>
                         <Paper className="file-drop" elevation={0}>
                           <Stack
-                            direction={{ xs: "column", md: "row" }}
+                            direction={{ xs: "column", sm: "row" }}
                             spacing={2}
                             justifyContent="space-between"
-                            alignItems={{ xs: "flex-start", md: "center" }}
+                            alignItems={{ xs: "stretch", sm: "center" }}
                           >
                             <Box>
                               <Typography variant="subtitle1">Файл документа</Typography>
@@ -5220,16 +5252,29 @@ export default function App() {
                                 Поддерживаются PDF и изображения. Для PDF с текстовым слоем OCR срабатывает автоматически, для фото и сканов используется локальное распознавание.
                               </Typography>
                             </Box>
-                            <Button component="label" variant="outlined">
+                            <input
+                              ref={fileInputRef}
+                              hidden
+                              type="file"
+                              accept=".pdf,image/*"
+                              onChange={(event) =>
+                                setSelectedFile(event.target.files?.[0] ?? null)
+                              }
+                            />
+                            <Button
+                              variant="outlined"
+                              onClick={() => fileInputRef.current?.click()}
+                              sx={{
+                                flexShrink: 0,
+                                width: { xs: "100%", sm: "auto" },
+                                minWidth: { xs: 0, sm: 152 },
+                                whiteSpace: "normal",
+                                textAlign: "center",
+                                fontWeight: 700,
+                                textTransform: "none",
+                              }}
+                            >
                               Выбрать файл
-                              <input
-                                hidden
-                                type="file"
-                                accept=".pdf,image/*"
-                                onChange={(event) =>
-                                  setSelectedFile(event.target.files?.[0] ?? null)
-                                }
-                              />
                             </Button>
                           </Stack>
                           <Typography className="selected-file">
@@ -5254,7 +5299,7 @@ export default function App() {
               </Grid>
             ) : null}
 
-            <Grid item xs={12} lg={activeWorkspaceTab === "documents" ? 5 : 12}>
+            <Grid item xs={12} md={activeWorkspaceTab === "documents" ? 5 : 12}>
               <Stack spacing={3}>
                 {activeWorkspaceTab === "admin" && user?.role === "admin" ? (
                   <Paper className="workspace-panel" elevation={0}>
@@ -5359,9 +5404,14 @@ export default function App() {
                       {reviewQueue.map((item) => (
                         <Paper className="document-row" key={`review-${item.document.id}`} elevation={0}>
                           <Stack spacing={1.25}>
-                            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                            <Stack
+                              direction={{ xs: "column", sm: "row" }}
+                              spacing={1}
+                              alignItems={{ xs: "flex-start", sm: "center" }}
+                              justifyContent="space-between"
+                            >
                               <Typography variant="subtitle1">{item.document.original_filename}</Typography>
-                              <Stack direction="row" spacing={1}>
+                              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                                 <Chip
                                   size="small"
                                   variant="outlined"
@@ -5405,7 +5455,7 @@ export default function App() {
                                 {item.issue_titles.length > 3 ? ` и ещё ${item.issue_titles.length - 3}` : ""}
                               </Typography>
                             ) : null}
-                            <Stack direction="row" spacing={1} flexWrap="wrap">
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} flexWrap="wrap" useFlexGap>
                               <Button
                                 size="small"
                                 variant="outlined"
@@ -5521,9 +5571,14 @@ export default function App() {
                           elevation={0}
                         >
                           <Stack spacing={1.25}>
-                            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                            <Stack
+                              direction={{ xs: "column", sm: "row" }}
+                              spacing={1}
+                              alignItems={{ xs: "flex-start", sm: "center" }}
+                              justifyContent="space-between"
+                            >
                               <Typography variant="subtitle1">{document.original_filename}</Typography>
-                              <Stack direction="row" spacing={1}>
+                              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                                 <Chip size="small" variant="outlined" label={formatDocumentKind(document.kind)} />
                                 <Chip
                                   size="small"
@@ -5587,7 +5642,7 @@ export default function App() {
                             {document.notes ? (
                               <Typography className="muted-copy">{document.notes}</Typography>
                             ) : null}
-                            <Stack direction="row" spacing={1} flexWrap="wrap">
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} flexWrap="wrap" useFlexGap>
                               <Button
                                 size="small"
                                 variant="outlined"
@@ -7918,8 +7973,13 @@ export default function App() {
                       </Stack>
                     ) : selectedRepair ? (
                       <Stack spacing={2}>
-                        <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="center">
-                          <Stack direction="row" spacing={1} alignItems="center">
+                        <Stack
+                          direction={{ xs: "column", sm: "row" }}
+                          spacing={1}
+                          justifyContent="space-between"
+                          alignItems={{ xs: "flex-start", sm: "center" }}
+                        >
+                          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
                             <Chip size="small" label={formatRepairStatus(selectedRepair.status)} />
                             {selectedReviewItem ? (
                               <Chip
@@ -7930,7 +7990,7 @@ export default function App() {
                             ) : null}
                           </Stack>
                           {user?.role === "admin" ? (
-                            <Stack direction="row" spacing={1}>
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                               {isEditingRepair ? (
                                 <>
                                   <Button variant="outlined" onClick={handleCancelRepairEdit} disabled={saveRepairLoading}>

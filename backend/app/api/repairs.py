@@ -248,6 +248,7 @@ def serialize_repair(
                         "created_at": version.created_at,
                         "change_summary": version.change_summary,
                         "parsed_payload": version.parsed_payload,
+                        "field_confidence_map": version.field_confidence_map,
                     }
                     for version in sorted(document.versions, key=lambda item: item.version_number, reverse=True)
                 ],

@@ -88,6 +88,7 @@ class RepairDocumentVersionRead(BaseModel):
     created_at: datetime
     change_summary: Optional[str]
     parsed_payload: Optional[dict]
+    field_confidence_map: Optional[dict]
 
 
 class RepairDocumentRead(BaseModel):

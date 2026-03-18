@@ -1008,6 +1008,7 @@ type RepairDetail = {
       created_at: string;
       change_summary: string | null;
       parsed_payload: Record<string, unknown> | null;
+      field_confidence_map: Record<string, unknown> | null;
     }>;
   }>;
   document_history: Array<{
@@ -1120,6 +1121,7 @@ type ReviewRequiredFieldComparisonItem = {
   ocrValue: unknown;
   currentDisplay: string;
   ocrDisplay: string;
+  confidenceValue: number | null;
   status: ReviewComparisonStatus;
 };
 
@@ -2088,6 +2090,21 @@ function getLatestRepairDocumentPayload(
   return latestVersion.parsed_payload;
 }
 
+function getLatestRepairDocumentConfidenceMap(
+  repair: RepairDetail | null,
+  documentId: number | null,
+): Record<string, unknown> | null {
+  if (!repair || documentId === null) {
+    return null;
+  }
+  const selectedDocument = repair.documents.find((item) => item.id === documentId);
+  const latestVersion = selectedDocument?.versions?.[0];
+  if (!latestVersion?.field_confidence_map || typeof latestVersion.field_confidence_map !== "object") {
+    return null;
+  }
+  return latestVersion.field_confidence_map;
+}
+
 function getPayloadExtractedFields(payload: Record<string, unknown> | null | undefined) {
   const rawValue = payload?.extracted_fields;
   if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
@@ -2698,6 +2715,36 @@ function formatConfidence(value: number | null) {
   return `${Math.round(value * 100)}%`;
 }
 
+function readConfidenceValue(
+  confidenceMap: Record<string, unknown> | null | undefined,
+  ...keys: string[]
+) {
+  for (const key of keys) {
+    const rawValue = confidenceMap?.[key];
+    if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+      return rawValue;
+    }
+  }
+  return null;
+}
+
+function getConfidenceColor(value: number | null): "default" | "success" | "warning" | "error" {
+  if (value === null) {
+    return "default";
+  }
+  if (value >= 0.9) {
+    return "success";
+  }
+  if (value >= 0.7) {
+    return "warning";
+  }
+  return "error";
+}
+
+function formatConfidenceLabel(value: number | null) {
+  return value === null ? "OCR без оценки" : `OCR ${formatConfidence(value)}`;
+}
+
 function resolveRepairDocumentId(repair: RepairDetail, preferredDocumentId: number | null) {
   if (preferredDocumentId !== null && repair.documents.some((document) => document.id === preferredDocumentId)) {
     return preferredDocumentId;
@@ -3134,6 +3181,7 @@ export default function App() {
   const selectedManagedUser = usersList.find((item) => item.id === selectedManagedUserId) ?? null;
   const selectedRepairDocument = selectedRepair?.documents.find((item) => item.id === selectedDocumentId) ?? null;
   const selectedRepairDocumentPayload = getLatestRepairDocumentPayload(selectedRepair, selectedDocumentId);
+  const selectedRepairDocumentConfidenceMap = getLatestRepairDocumentConfidenceMap(selectedRepair, selectedDocumentId);
   const selectedRepairDocumentExtractedFields = getPayloadExtractedFields(selectedRepairDocumentPayload);
   const selectedRepairDocumentExtractedItems = getPayloadExtractedItems(selectedRepairDocumentPayload);
   const selectedRepairDocumentOcrServiceName =
@@ -3186,6 +3234,7 @@ export default function App() {
             (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
               ? "match"
               : "missing",
+          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "plate_number", "vin"),
         },
         {
           key: "order_number",
@@ -3194,6 +3243,7 @@ export default function App() {
           ocrValue: selectedRepairDocumentExtractedFields?.order_number,
           currentDisplay: selectedRepair.order_number || "—",
           ocrDisplay: String(selectedRepairDocumentExtractedFields?.order_number || "—"),
+          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "order_number"),
           status: getReviewComparisonStatus(selectedRepair.order_number, selectedRepairDocumentExtractedFields?.order_number),
         },
         {
@@ -3203,6 +3253,7 @@ export default function App() {
           ocrValue: selectedRepairDocumentExtractedFields?.repair_date,
           currentDisplay: selectedRepair.repair_date || "—",
           ocrDisplay: String(selectedRepairDocumentExtractedFields?.repair_date || "—"),
+          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "repair_date"),
           status: getReviewComparisonStatus(selectedRepair.repair_date, selectedRepairDocumentExtractedFields?.repair_date),
         },
         {
@@ -3212,6 +3263,7 @@ export default function App() {
           ocrValue: selectedRepairDocumentExtractedFields?.service_name,
           currentDisplay: selectedRepair.service?.name || "—",
           ocrDisplay: String(selectedRepairDocumentExtractedFields?.service_name || "—"),
+          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "service_name"),
           status: getReviewComparisonStatus(selectedRepair.service?.name, selectedRepairDocumentExtractedFields?.service_name),
         },
         {
@@ -3221,6 +3273,7 @@ export default function App() {
           ocrValue: selectedRepairDocumentExtractedFields?.mileage,
           currentDisplay: selectedRepair.mileage > 0 ? String(selectedRepair.mileage) : "—",
           ocrDisplay: String(selectedRepairDocumentExtractedFields?.mileage || "—"),
+          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "mileage"),
           status: getReviewComparisonStatus(selectedRepair.mileage, selectedRepairDocumentExtractedFields?.mileage, "int"),
         },
         {
@@ -3233,10 +3286,85 @@ export default function App() {
             typeof selectedRepairDocumentExtractedFields?.grand_total === "number"
               ? formatMoney(selectedRepairDocumentExtractedFields.grand_total) || "—"
               : "—",
+          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "grand_total"),
           status: getReviewComparisonStatus(selectedRepair.grand_total, selectedRepairDocumentExtractedFields?.grand_total, "money"),
         },
       ]
     : [];
+  const selectedRepairDocumentFieldSnapshots = [
+    {
+      key: "order_number",
+      label: "Номер заказ-наряда",
+      value: String(selectedRepairDocumentExtractedFields?.order_number || "—"),
+      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "order_number"),
+    },
+    {
+      key: "repair_date",
+      label: "Дата ремонта",
+      value: String(selectedRepairDocumentExtractedFields?.repair_date || "—"),
+      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "repair_date"),
+    },
+    {
+      key: "service_name",
+      label: "Сервис по OCR",
+      value: selectedRepairDocumentOcrServiceName || "—",
+      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "service_name"),
+    },
+    {
+      key: "mileage",
+      label: "Пробег",
+      value: String(selectedRepairDocumentExtractedFields?.mileage || "—"),
+      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "mileage"),
+    },
+    {
+      key: "plate_number",
+      label: "Госномер",
+      value: String(selectedRepairDocumentExtractedFields?.plate_number || "—"),
+      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "plate_number"),
+    },
+    {
+      key: "vin",
+      label: "VIN",
+      value: String(selectedRepairDocumentExtractedFields?.vin || "—"),
+      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "vin"),
+    },
+    {
+      key: "grand_total",
+      label: "Итоговая сумма",
+      value:
+        typeof selectedRepairDocumentExtractedFields?.grand_total === "number"
+          ? formatMoney(selectedRepairDocumentExtractedFields.grand_total) || "—"
+          : "—",
+      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "grand_total"),
+    },
+    {
+      key: "work_total",
+      label: "Работы",
+      value:
+        typeof selectedRepairDocumentExtractedFields?.work_total === "number"
+          ? formatMoney(selectedRepairDocumentExtractedFields.work_total) || "—"
+          : "—",
+      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "work_total"),
+    },
+    {
+      key: "parts_total",
+      label: "Запчасти",
+      value:
+        typeof selectedRepairDocumentExtractedFields?.parts_total === "number"
+          ? formatMoney(selectedRepairDocumentExtractedFields.parts_total) || "—"
+          : "—",
+      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "parts_total"),
+    },
+    {
+      key: "vat_total",
+      label: "НДС",
+      value:
+        typeof selectedRepairDocumentExtractedFields?.vat_total === "number"
+          ? formatMoney(selectedRepairDocumentExtractedFields.vat_total) || "—"
+          : "—",
+      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "vat_total"),
+    },
+  ].filter((item) => item.value !== "—" || item.confidenceValue !== null);
   const reviewMissingRequiredFields = reviewRequiredFieldComparisons
     .filter((item) => item.status === "missing")
     .map((item) => item.label);
@@ -10897,11 +11025,19 @@ export default function App() {
                                                   <Stack spacing={0.75}>
                                                     <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
                                                       <Typography className="metric-label">{item.label}</Typography>
-                                                      <Chip
-                                                        size="small"
-                                                        color={getReviewComparisonColor(item.status)}
-                                                        label={getReviewComparisonLabel(item.status)}
-                                                      />
+                                                      <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap justifyContent="flex-end">
+                                                        <Chip
+                                                          size="small"
+                                                          color={getReviewComparisonColor(item.status)}
+                                                          label={getReviewComparisonLabel(item.status)}
+                                                        />
+                                                        <Chip
+                                                          size="small"
+                                                          variant="outlined"
+                                                          color={getConfidenceColor(item.confidenceValue)}
+                                                          label={formatConfidenceLabel(item.confidenceValue)}
+                                                        />
+                                                      </Stack>
                                                     </Stack>
                                                     <Typography>В ремонте: {item.currentDisplay}</Typography>
                                                     <Typography className="muted-copy">OCR: {item.ocrDisplay}</Typography>
@@ -11014,6 +11150,26 @@ export default function App() {
                                               Полная сводка по шапке документа и строкам OCR перед подтверждением.
                                             </Typography>
                                           </Box>
+                                          {selectedRepairDocumentFieldSnapshots.length > 0 ? (
+                                            <Box className="ocr-lines-grid">
+                                              {selectedRepairDocumentFieldSnapshots.map((item) => (
+                                                <Paper className="ocr-line-card" key={`review-field-${item.key}`} elevation={0}>
+                                                  <Stack spacing={1}>
+                                                    <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
+                                                      <Typography className="metric-label">{item.label}</Typography>
+                                                      <Chip
+                                                        size="small"
+                                                        variant="outlined"
+                                                        color={getConfidenceColor(item.confidenceValue)}
+                                                        label={formatConfidenceLabel(item.confidenceValue)}
+                                                      />
+                                                    </Stack>
+                                                    <Typography className="ocr-line-title">{item.value}</Typography>
+                                                  </Stack>
+                                                </Paper>
+                                              ))}
+                                            </Box>
+                                          ) : null}
                                           <Grid container spacing={1.5}>
                                             <Grid item xs={12} sm={6}>
                                               <Typography className="metric-label">Номер заказ-наряда</Typography>

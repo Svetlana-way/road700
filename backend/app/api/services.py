@@ -12,10 +12,19 @@ from app.schemas.service import ServiceCreate, ServiceListResponse, ServiceRead,
 from app.services.service_catalog import (
     ensure_service_catalog_synced,
     find_service_catalog_entry,
+    get_service_catalog_names,
 )
 
 
 router = APIRouter(prefix="/services", tags=["services"])
+
+
+def get_visible_services_stmt():
+    catalog_names = get_service_catalog_names()
+    return or_(
+        Service.name.in_(catalog_names),
+        Service.created_by_user_id.is_not(None),
+    )
 
 
 def normalize_optional_text(value: str | None) -> str | None:
@@ -59,8 +68,9 @@ def list_services(
 ) -> ServiceListResponse:
     _ = current_user
     ensure_service_catalog_synced(db, commit=True)
-    stmt = select(Service)
-    count_stmt = select(func.count(Service.id))
+    visible_services = get_visible_services_stmt()
+    stmt = select(Service).where(visible_services)
+    count_stmt = select(func.count(Service.id)).where(visible_services)
 
     if q:
         normalized_query = f"%{q.strip().lower()}%"
@@ -90,6 +100,7 @@ def list_services(
     cities = db.scalars(
         select(distinct(Service.city))
         .where(
+            visible_services,
             Service.city.is_not(None),
             Service.status == status_filter if status_filter is not None else Service.status != ServiceStatus.ARCHIVED,
             Service.city == city if city else true(),

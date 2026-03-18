@@ -199,7 +199,14 @@ def get_service_lookup_entries(db: Session | None = None) -> tuple[ServiceLookup
         entry.name: entry.aliases for entry in get_service_catalog_entries()
     }
     if db is not None:
-        for service_item in db.scalars(select(Service).order_by(Service.name.asc())).all():
+        for service_item in db.scalars(
+            select(Service)
+            .where(
+                Service.created_by_user_id.is_not(None),
+                Service.status == ServiceStatus.CONFIRMED,
+            )
+            .order_by(Service.name.asc())
+        ).all():
             aliases = build_service_aliases(service_item.name)
             existing_aliases = lookup_map.get(service_item.name, ())
             lookup_map[service_item.name] = tuple(dict.fromkeys([*existing_aliases, *aliases]))
@@ -279,7 +286,14 @@ def resolve_service_by_name(db: Session, service_name: str | None) -> Service | 
     if not lookup_key:
         return None
 
-    for service_item in db.scalars(select(Service).order_by(Service.name.asc())).all():
+    for service_item in db.scalars(
+        select(Service)
+        .where(
+            Service.created_by_user_id.is_not(None),
+            Service.status == ServiceStatus.CONFIRMED,
+        )
+        .order_by(Service.name.asc())
+    ).all():
         for alias in build_service_aliases(service_item.name):
             if normalize_service_key(alias) == lookup_key:
                 return service_item

@@ -1771,6 +1771,106 @@ def build_repeat_repair_checks(
     return checks
 
 
+def build_duplicate_line_checks(
+    works_payload: list[dict[str, object]],
+    parts_payload: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    checks: list[dict[str, object]] = []
+
+    def build_group_key(
+        item: dict[str, object],
+        *,
+        code_keys: tuple[str, ...],
+        name_keys: tuple[str, ...],
+    ) -> tuple[str | None, str, float | None, float | None, float | None]:
+        code_value: str | None = None
+        for key in code_keys:
+            raw_code = item.get(key)
+            if raw_code:
+                code_value = str(raw_code).strip() or None
+                if code_value:
+                    break
+        name_value = ""
+        for key in name_keys:
+            raw_name = item.get(key)
+            if raw_name:
+                name_value = build_normalized_name(str(raw_name))
+                if name_value:
+                    break
+        quantity = float(item["quantity"]) if item.get("quantity") is not None else None
+        price = float(item["price"]) if item.get("price") is not None else None
+        line_total = float(item["line_total"]) if item.get("line_total") is not None else None
+        return code_value, name_value, quantity, price, line_total
+
+    work_groups: dict[tuple[str | None, str, float | None, float | None, float | None], list[dict[str, object]]] = {}
+    for item in works_payload:
+        group_key = build_group_key(item, code_keys=("work_code",), name_keys=("work_name",))
+        if not group_key[1]:
+            continue
+        work_groups.setdefault(group_key, []).append(item)
+
+    for (_code, _name, quantity, price, line_total), items in work_groups.items():
+        if len(items) < 2:
+            continue
+        sample = items[0]
+        checks.append(
+            {
+                "check_type": "ocr_duplicate_work_lines",
+                "severity": CheckSeverity.SUSPICIOUS,
+                "title": "Дубли строк работ в заказ-наряде",
+                "details": (
+                    f"{sample.get('work_name', 'Работа')} · совпадающих строк {len(items)}"
+                    f"{f' · кол-во {quantity:.2f}' if quantity is not None else ''}"
+                    f"{f' · цена {price:.2f}' if price is not None else ''}"
+                    f"{f' · сумма {line_total:.2f}' if line_total is not None else ''}"
+                ),
+                "payload": {
+                    "work_code": sample.get("work_code"),
+                    "work_name": sample.get("work_name"),
+                    "duplicate_count": len(items),
+                    "quantity": quantity,
+                    "price": price,
+                    "line_total": line_total,
+                },
+            }
+        )
+
+    part_groups: dict[tuple[str | None, str, float | None, float | None, float | None], list[dict[str, object]]] = {}
+    for item in parts_payload:
+        group_key = build_group_key(item, code_keys=("article",), name_keys=("part_name", "name"))
+        if not group_key[1]:
+            continue
+        part_groups.setdefault(group_key, []).append(item)
+
+    for (_code, _name, quantity, price, line_total), items in part_groups.items():
+        if len(items) < 2:
+            continue
+        sample = items[0]
+        checks.append(
+            {
+                "check_type": "ocr_duplicate_part_lines",
+                "severity": CheckSeverity.SUSPICIOUS,
+                "title": "Дубли строк запчастей в заказ-наряде",
+                "details": (
+                    f"{sample.get('part_name', sample.get('name', 'Запчасть'))} · совпадающих строк {len(items)}"
+                    f"{f' · кол-во {quantity:.2f}' if quantity is not None else ''}"
+                    f"{f' · цена {price:.2f}' if price is not None else ''}"
+                    f"{f' · сумма {line_total:.2f}' if line_total is not None else ''}"
+                ),
+                "payload": {
+                    "article": sample.get("article"),
+                    "part_name": sample.get("part_name") or sample.get("name"),
+                    "duplicate_count": len(items),
+                    "quantity": quantity,
+                    "price": price,
+                    "line_total": line_total,
+                },
+            }
+        )
+
+    return checks
+
+
 def decode_pdf_literal(raw_text: bytes) -> bytes:
     return (
         raw_text.replace(b"\\(", b"(")
@@ -2444,6 +2544,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         parts_sum = round(sum(float(item["line_total"]) for item in extracted_items["parts"]), 2)
         checks.extend(build_standard_hours_checks(extracted_items["works"]))
         checks.extend(build_repeat_repair_checks(db, repair, extracted_items["works"]))
+        checks.extend(build_duplicate_line_checks(extracted_items["works"], extracted_items["parts"]))
         if extracted_items["works"] and "work_total" in extracted_fields:
             if abs(works_sum - float(extracted_fields["work_total"])) > 0.01:
                 checks.append(

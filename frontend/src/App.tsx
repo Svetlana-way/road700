@@ -176,6 +176,27 @@ type GlobalSearchResponse = {
   vehicles: GlobalSearchVehicleItem[];
 };
 
+type AuditLogItem = {
+  id: number;
+  created_at: string;
+  user_id: number | null;
+  user_name: string | null;
+  entity_type: string;
+  entity_id: string;
+  action_type: string;
+  old_value: Record<string, unknown> | null;
+  new_value: Record<string, unknown> | null;
+};
+
+type AuditLogResponse = {
+  items: AuditLogItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  action_types: string[];
+  entity_types: string[];
+};
+
 type User = {
   id: number;
   full_name: string;
@@ -698,7 +719,7 @@ type LaborNormEntryFormState = {
 
 type ReviewPriorityBucket = "review" | "critical" | "suspicious";
 type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
-type WorkspaceTab = "documents" | "repair" | "admin" | "tech_admin" | "fleet" | "search";
+type WorkspaceTab = "documents" | "repair" | "admin" | "tech_admin" | "fleet" | "search" | "audit";
 type AdminTab = "services" | "control" | "labor_norms" | "imports" | "employees";
 type TechAdminTab = "learning" | "matchers" | "rules";
 type RepairTab = "overview" | "works" | "parts" | "documents" | "checks" | "history";
@@ -1134,6 +1155,7 @@ const workspaceTabDescriptions: Record<WorkspaceTab, string> = {
   tech_admin: "Отдельный экран для OCR-обучения и тонкой технической настройки.",
   fleet: "Быстрый обзор техники, доступной текущему пользователю.",
   search: "Глобальный поиск по заказ-нарядам, ремонтам и карточкам техники.",
+  audit: "Журнал действий по ремонтам, документам, технике и пользовательским операциям.",
 };
 
 const adminTabDescriptions: Record<AdminTab, string> = {
@@ -1258,6 +1280,20 @@ function formatJsonPretty(value: unknown) {
   } catch {
     return String(value);
   }
+}
+
+function buildAuditEntryDetails(entry: AuditLogItem) {
+  const lines: string[] = [];
+  if (entry.old_value && Object.keys(entry.old_value).length > 0) {
+    lines.push(`Было:\n${formatJsonPretty(entry.old_value)}`);
+  }
+  if (entry.new_value && Object.keys(entry.new_value).length > 0) {
+    lines.push(`Стало:\n${formatJsonPretty(entry.new_value)}`);
+  }
+  if (lines.length === 0) {
+    lines.push("Подробные изменения не записаны.");
+  }
+  return lines;
 }
 
 function formatMoney(value?: number) {
@@ -2572,6 +2608,16 @@ export default function App() {
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
   const [globalSearchResult, setGlobalSearchResult] = useState<GlobalSearchResponse | null>(null);
+  const [auditLogItems, setAuditLogItems] = useState<AuditLogItem[]>([]);
+  const [auditLogLoading, setAuditLogLoading] = useState(false);
+  const [auditLogTotal, setAuditLogTotal] = useState(0);
+  const [auditEntityTypes, setAuditEntityTypes] = useState<string[]>([]);
+  const [auditActionTypes, setAuditActionTypes] = useState<string[]>([]);
+  const [auditSearchQuery, setAuditSearchQuery] = useState("");
+  const [auditEntityTypeFilter, setAuditEntityTypeFilter] = useState("");
+  const [auditActionTypeFilter, setAuditActionTypeFilter] = useState("");
+  const [auditDateFrom, setAuditDateFrom] = useState("");
+  const [auditDateTo, setAuditDateTo] = useState("");
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [usersList, setUsersList] = useState<UserItem[]>([]);
   const [usersTotal, setUsersTotal] = useState(0);
@@ -3182,6 +3228,36 @@ export default function App() {
     }
   }
 
+  async function loadAuditLog(activeToken: string) {
+    setAuditLogLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", "80");
+      if (auditSearchQuery.trim()) {
+        params.set("search", auditSearchQuery.trim());
+      }
+      if (auditEntityTypeFilter) {
+        params.set("entity_type", auditEntityTypeFilter);
+      }
+      if (auditActionTypeFilter) {
+        params.set("action_type", auditActionTypeFilter);
+      }
+      if (auditDateFrom) {
+        params.set("date_from", `${auditDateFrom}T00:00:00`);
+      }
+      if (auditDateTo) {
+        params.set("date_to", `${auditDateTo}T00:00:00`);
+      }
+      const payload = await apiRequest<AuditLogResponse>(`/audit?${params.toString()}`, { method: "GET" }, activeToken);
+      setAuditLogItems(payload.items);
+      setAuditLogTotal(payload.total);
+      setAuditEntityTypes(payload.entity_types);
+      setAuditActionTypes(payload.action_types);
+    } finally {
+      setAuditLogLoading(false);
+    }
+  }
+
   async function loadUsers(activeToken: string, search: string = userSearch) {
     setUserLoading(true);
     try {
@@ -3356,6 +3432,15 @@ export default function App() {
       setFleetVehicleTypeFilter("");
       setSelectedFleetVehicleId(null);
       setSelectedFleetVehicle(null);
+      setAuditLogItems([]);
+      setAuditLogTotal(0);
+      setAuditEntityTypes([]);
+      setAuditActionTypes([]);
+      setAuditSearchQuery("");
+      setAuditEntityTypeFilter("");
+      setAuditActionTypeFilter("");
+      setAuditDateFrom("");
+      setAuditDateTo("");
       setDocuments([]);
       setUsersList([]);
       setUsersTotal(0);
@@ -3439,6 +3524,23 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить карточку техники");
     });
   }, [activeWorkspaceTab, selectedFleetVehicleId, token]);
+
+  useEffect(() => {
+    if (!token || activeWorkspaceTab !== "audit") {
+      return;
+    }
+    void loadAuditLog(token).catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить журнал действий");
+    });
+  }, [
+    activeWorkspaceTab,
+    auditActionTypeFilter,
+    auditDateFrom,
+    auditDateTo,
+    auditEntityTypeFilter,
+    auditSearchQuery,
+    token,
+  ]);
 
   useEffect(() => {
     if (!token || user?.role !== "admin" || activeWorkspaceTab !== "admin" || activeAdminTab !== "imports") {
@@ -5830,6 +5932,7 @@ export default function App() {
                 <Tab label={`Документы · ${documents.length}`} value="documents" />
                 <Tab label={selectedRepair ? `Ремонт · #${selectedRepair.id}` : "Ремонт"} value="repair" />
                 <Tab label="Поиск" value="search" />
+                <Tab label="Журнал" value="audit" />
                 {user?.role === "admin" ? <Tab label="Админка" value="admin" /> : null}
                 {user?.role === "admin" && showTechAdminTab ? <Tab label="Тех. админка" value="tech_admin" /> : null}
                 <Tab label={`Техника · ${vehicles.length}`} value="fleet" />
@@ -11380,6 +11483,143 @@ export default function App() {
                         <Typography className="muted-copy">
                           Поиск объединяет документы, ремонты и архивные карточки техники в одном экране.
                         </Typography>
+                      )}
+                    </Stack>
+                  </Paper>
+                ) : null}
+
+                {activeWorkspaceTab === "audit" ? (
+                  <Paper className="workspace-panel" elevation={0}>
+                    <Stack spacing={2}>
+                      <Box>
+                        <Typography variant="h5">Журнал действий</Typography>
+                        <Typography className="muted-copy">
+                          История изменений по ремонтам, документам, технике, импорту и пользовательским операциям.
+                        </Typography>
+                      </Box>
+                      <Grid container spacing={1.5}>
+                        <Grid item xs={12} md={4}>
+                          <TextField
+                            label="Поиск по сущности, ID или действию"
+                            value={auditSearchQuery}
+                            onChange={(event) => setAuditSearchQuery(event.target.value)}
+                            fullWidth
+                          />
+                        </Grid>
+                        <Grid item xs={12} sm={6} md={2}>
+                          <TextField
+                            select
+                            label="Сущность"
+                            value={auditEntityTypeFilter}
+                            onChange={(event) => setAuditEntityTypeFilter(event.target.value)}
+                            fullWidth
+                          >
+                            <MenuItem value="">Все</MenuItem>
+                            {auditEntityTypes.map((value) => (
+                              <MenuItem key={`audit-entity-${value}`} value={value}>
+                                {value}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+                        <Grid item xs={12} sm={6} md={3}>
+                          <TextField
+                            select
+                            label="Действие"
+                            value={auditActionTypeFilter}
+                            onChange={(event) => setAuditActionTypeFilter(event.target.value)}
+                            fullWidth
+                          >
+                            <MenuItem value="">Все</MenuItem>
+                            {auditActionTypes.map((value) => (
+                              <MenuItem key={`audit-action-${value}`} value={value}>
+                                {formatHistoryActionLabel(value)}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        </Grid>
+                        <Grid item xs={12} sm={6} md={2}>
+                          <TextField
+                            label="От"
+                            type="date"
+                            value={auditDateFrom}
+                            onChange={(event) => setAuditDateFrom(event.target.value)}
+                            InputLabelProps={{ shrink: true }}
+                            fullWidth
+                          />
+                        </Grid>
+                        <Grid item xs={12} sm={6} md={2}>
+                          <TextField
+                            label="До"
+                            type="date"
+                            value={auditDateTo}
+                            onChange={(event) => setAuditDateTo(event.target.value)}
+                            InputLabelProps={{ shrink: true }}
+                            fullWidth
+                          />
+                        </Grid>
+                      </Grid>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                        <Button
+                          variant="outlined"
+                          disabled={auditLogLoading}
+                          onClick={() => {
+                            if (token) {
+                              void loadAuditLog(token);
+                            }
+                          }}
+                        >
+                          {auditLogLoading ? "Загрузка..." : "Обновить журнал"}
+                        </Button>
+                        <Button
+                          variant="text"
+                          disabled={auditLogLoading}
+                          onClick={() => {
+                            setAuditSearchQuery("");
+                            setAuditEntityTypeFilter("");
+                            setAuditActionTypeFilter("");
+                            setAuditDateFrom("");
+                            setAuditDateTo("");
+                          }}
+                        >
+                          Сбросить фильтр
+                        </Button>
+                      </Stack>
+                      <Typography className="muted-copy">Показано {auditLogItems.length} из {auditLogTotal}</Typography>
+
+                      {auditLogLoading ? (
+                        <Stack spacing={1} alignItems="center" className="repair-placeholder">
+                          <CircularProgress size={24} />
+                          <Typography className="muted-copy">Загрузка журнала действий...</Typography>
+                        </Stack>
+                      ) : auditLogItems.length > 0 ? (
+                        <Stack spacing={1}>
+                          {auditLogItems.map((entry) => (
+                            <Paper className="repair-line" key={`audit-log-${entry.id}`} elevation={0}>
+                              <Stack spacing={1}>
+                                <Stack
+                                  direction={{ xs: "column", sm: "row" }}
+                                  justifyContent="space-between"
+                                  spacing={1}
+                                  alignItems={{ xs: "flex-start", sm: "center" }}
+                                >
+                                  <Box>
+                                    <Typography>
+                                      {entry.user_name || "Система"} · {formatHistoryActionLabel(entry.action_type)}
+                                    </Typography>
+                                    <Typography className="muted-copy">
+                                      {entry.entity_type} #{entry.entity_id}
+                                    </Typography>
+                                  </Box>
+                                  <Typography className="muted-copy">{formatDateTime(entry.created_at)}</Typography>
+                                </Stack>
+                                {renderHistoryDetails(`audit-${entry.id}`, buildAuditEntryDetails(entry))}
+                              </Stack>
+                            </Paper>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <Typography className="muted-copy">По текущему фильтру событий нет.</Typography>
                       )}
                     </Stack>
                   </Paper>

@@ -1388,6 +1388,7 @@ const rootDocumentKindOptions = documentKindOptions.filter(
   (option) => option.value === "order" || option.value === "repeat_scan",
 );
 const HISTORY_DETAIL_PREVIEW_LIMIT = 220;
+const HISTORY_DETAIL_PREVIEW_LINES = 3;
 const historyActionLabels: Record<string, string> = {
   manual_update: "Ручное редактирование ремонта",
   repair_archived: "Ремонт отправлен в архив",
@@ -6178,12 +6179,16 @@ export default function App() {
 
   function renderHistoryDetails(entryKey: string, lines: string[]) {
     const text = lines.join("\n");
-    const isExpandable = text.length > HISTORY_DETAIL_PREVIEW_LIMIT || lines.length > 3;
+    const previewLines = lines.slice(-HISTORY_DETAIL_PREVIEW_LINES);
+    const previewText = previewLines.join("\n");
+    const isExpandable = text.length > HISTORY_DETAIL_PREVIEW_LIMIT || lines.length > HISTORY_DETAIL_PREVIEW_LINES;
     const isExpanded = Boolean(expandedHistoryEntries[entryKey]);
     const visibleText =
       !isExpandable || isExpanded
         ? text
-        : `${text.slice(0, HISTORY_DETAIL_PREVIEW_LIMIT).trimEnd()}...`;
+        : previewText.length > HISTORY_DETAIL_PREVIEW_LIMIT
+          ? `${previewText.slice(0, HISTORY_DETAIL_PREVIEW_LIMIT).trimEnd()}...`
+          : previewText;
 
     return (
       <Stack spacing={0.5}>

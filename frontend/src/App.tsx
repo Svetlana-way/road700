@@ -902,6 +902,11 @@ type ChangePasswordResponse = {
   message: string;
 };
 
+type RepairDeleteResponse = {
+  message: string;
+  deleted_repair_id: number;
+};
+
 type PasswordResetRequestResponse = {
   message: string;
   delivery_method: string;
@@ -1247,6 +1252,7 @@ const HISTORY_DETAIL_PREVIEW_LIMIT = 220;
 const historyActionLabels: Record<string, string> = {
   manual_update: "Ручное редактирование ремонта",
   repair_archived: "Ремонт отправлен в архив",
+  repair_deleted: "Заказ-наряд удалён",
   check_resolution_update: "Изменение статуса проверки",
   review_employee_confirm: "Подтверждение сотрудником",
   review_confirm: "Подтверждение администратором",
@@ -2819,6 +2825,7 @@ export default function App() {
   const [documentComparisonReviewLoading, setDocumentComparisonReviewLoading] = useState(false);
   const [saveRepairLoading, setSaveRepairLoading] = useState(false);
   const [repairArchiveLoading, setRepairArchiveLoading] = useState(false);
+  const [repairDeleteLoading, setRepairDeleteLoading] = useState(false);
   const [documentArchiveLoadingId, setDocumentArchiveLoadingId] = useState<number | null>(null);
   const [checkComments, setCheckComments] = useState<Record<number, string>>({});
   const [attachedDocumentKind, setAttachedDocumentKind] = useState<DocumentKind>("repeat_scan");
@@ -5833,6 +5840,41 @@ export default function App() {
     }
   }
 
+  async function handleDeleteRepair(repairId: number) {
+    if (!token || user?.role !== "admin") {
+      return;
+    }
+    const confirmed = window.confirm(
+      "Удалить ошибочно введенный заказ-наряд вместе со связанными документами и OCR-данными?",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setRepairDeleteLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const payload = await apiRequest<RepairDeleteResponse>(
+        `/repairs/${repairId}`,
+        { method: "DELETE" },
+        token,
+      );
+      if (selectedRepair?.id === repairId) {
+        setSelectedRepair(null);
+        setSelectedDocumentId(null);
+        setActiveWorkspaceTab("documents");
+      }
+      setSuccessMessage(payload.message);
+      await loadWorkspace(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось удалить заказ-наряд");
+    } finally {
+      setRepairDeleteLoading(false);
+    }
+  }
+
   async function handleArchiveDocument(documentId: number, repairId: number) {
     if (!token || user?.role !== "admin") {
       return;
@@ -7304,6 +7346,19 @@ export default function App() {
                                   }}
                                 >
                                   {reprocessLoading && selectedDocumentId === document.id ? "Повтор..." : "Повторить OCR"}
+                                </Button>
+                              ) : null}
+                              {user?.role === "admin" && document.is_primary ? (
+                                <Button
+                                  size="small"
+                                  variant="text"
+                                  color="error"
+                                  disabled={repairDeleteLoading}
+                                  onClick={() => {
+                                    void handleDeleteRepair(document.repair.id);
+                                  }}
+                                >
+                                  {repairDeleteLoading ? "Удаление..." : "Удалить"}
                                 </Button>
                               ) : null}
                               {user?.role === "admin" && document.status !== "archived" ? (
@@ -10005,6 +10060,16 @@ export default function App() {
                                       </Button>
                                     </>
                                   ) : null}
+                                  <Button
+                                    variant="text"
+                                    color="error"
+                                    disabled={repairDeleteLoading}
+                                    onClick={() => {
+                                      void handleDeleteRepair(selectedRepair.id);
+                                    }}
+                                  >
+                                    {repairDeleteLoading ? "Удаление..." : "Удалить"}
+                                  </Button>
                                 </>
                               )}
                             </Stack>

@@ -6,18 +6,21 @@ from io import BytesIO
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.access import get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.core.paths import STORAGE_ROOT
 from app.models.audit import AuditLog
 from app.models.document import Document
 from app.models.enums import CheckSeverity, RepairStatus, UserRole
+from app.models.imports import ImportJob
 from app.models.ocr_learning_signal import OcrLearningSignal
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.user import User
 from app.schemas.repair import (
+    RepairDeleteResponse,
     RepairCheckUpdateRequest,
     RepairDetailResponse,
     RepairReviewFieldsUpdateRequest,
@@ -268,6 +271,15 @@ def serialize_repair(
     )
 
 
+def cleanup_storage_files(storage_keys: set[str]) -> None:
+    for storage_key in storage_keys:
+        if not storage_key:
+            continue
+        path = STORAGE_ROOT / storage_key
+        if path.exists():
+            path.unlink()
+
+
 def replace_manual_lines(
     db: Session,
     repair: Repair,
@@ -422,6 +434,83 @@ def get_repair(
     history_entries = fetch_repair_history(db, repair.id)
     document_history_entries = fetch_document_history(db, repair)
     return serialize_repair(repair, history_entries, document_history_entries)
+
+
+@router.delete("/{repair_id}", response_model=RepairDeleteResponse)
+def delete_repair(
+    repair_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> RepairDeleteResponse:
+    stmt = build_repair_query().where(Repair.id == repair_id)
+    repair = db.execute(stmt).unique().scalar_one_or_none()
+    if repair is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
+
+    old_snapshot = build_repair_snapshot(repair)
+    old_snapshot["documents"] = [
+        {
+            "id": document.id,
+            "original_filename": document.original_filename,
+            "storage_key": document.storage_key,
+            "kind": document.kind.value,
+            "status": document.status.value,
+        }
+        for document in sorted(repair.documents, key=lambda item: item.id)
+    ]
+    storage_keys = {
+        document.storage_key
+        for document in repair.documents
+    } | {
+        version.storage_key
+        for document in repair.documents
+        for version in document.versions
+    }
+    document_ids = [document.id for document in repair.documents]
+    document_version_ids = [version.id for document in repair.documents for version in document.versions]
+
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="repair",
+            entity_id=str(repair.id),
+            action_type="repair_deleted",
+            old_value=old_snapshot,
+            new_value={"deleted": True},
+        )
+    )
+    db.flush()
+
+    if document_version_ids:
+        db.execute(
+            delete(OcrLearningSignal).where(
+                or_(
+                    OcrLearningSignal.repair_id == repair.id,
+                    OcrLearningSignal.document_id.in_(document_ids),
+                    OcrLearningSignal.document_version_id.in_(document_version_ids),
+                )
+            )
+        )
+    else:
+        db.execute(delete(OcrLearningSignal).where(OcrLearningSignal.repair_id == repair.id))
+
+    if document_ids:
+        db.execute(delete(ImportJob).where(ImportJob.document_id.in_(document_ids)))
+
+    repair.source_document_id = None
+    db.flush()
+
+    for document in list(repair.documents):
+        db.delete(document)
+
+    db.delete(repair)
+    db.commit()
+    cleanup_storage_files(storage_keys)
+
+    return RepairDeleteResponse(
+        message="Заказ-наряд и связанные документы удалены",
+        deleted_repair_id=repair_id,
+    )
 
 
 @router.get("/{repair_id}/export")

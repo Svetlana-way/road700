@@ -191,3 +191,8 @@ class RepairReviewFieldsUpdateRequest(BaseModel):
 class RepairCheckUpdateRequest(BaseModel):
     is_resolved: bool
     comment: Optional[str] = None
+
+
+class RepairDeleteResponse(BaseModel):
+    message: str
+    deleted_repair_id: int

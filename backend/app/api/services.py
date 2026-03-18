@@ -12,7 +12,6 @@ from app.schemas.service import ServiceCreate, ServiceListResponse, ServiceRead,
 from app.services.service_catalog import (
     ensure_service_catalog_synced,
     find_service_catalog_entry,
-    get_service_catalog_names,
 )
 
 
@@ -33,15 +32,12 @@ def normalize_required_name(value: str | None) -> str:
     return normalized_value[:255]
 
 
-def normalize_catalog_name(value: str | None) -> str:
+def normalize_service_name(value: str | None) -> str:
     normalized_name = normalize_required_name(value)
     entry = find_service_catalog_entry(normalized_name)
-    if entry is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Разрешены только сервисы из папки `Сервисы`",
-        )
-    return entry.name
+    if entry is not None:
+        return entry.name
+    return normalized_name
 
 
 def get_service_or_404(db: Session, service_id: int) -> Service:
@@ -63,10 +59,8 @@ def list_services(
 ) -> ServiceListResponse:
     _ = current_user
     ensure_service_catalog_synced(db, commit=True)
-    catalog_names = get_service_catalog_names()
-
-    stmt = select(Service).where(Service.name.in_(catalog_names))
-    count_stmt = select(func.count(Service.id)).where(Service.name.in_(catalog_names))
+    stmt = select(Service)
+    count_stmt = select(func.count(Service.id))
 
     if q:
         normalized_query = f"%{q.strip().lower()}%"
@@ -96,7 +90,6 @@ def list_services(
     cities = db.scalars(
         select(distinct(Service.city))
         .where(
-            Service.name.in_(catalog_names),
             Service.city.is_not(None),
             Service.status == status_filter if status_filter is not None else Service.status != ServiceStatus.ARCHIVED,
             Service.city == city if city else true(),
@@ -120,7 +113,7 @@ def create_service(
     current_admin: User = Depends(get_current_admin),
 ) -> ServiceRead:
     ensure_service_catalog_synced(db, commit=True)
-    normalized_name = normalize_catalog_name(payload.name)
+    normalized_name = normalize_service_name(payload.name)
     existing = db.scalar(select(Service).where(func.lower(Service.name) == normalized_name.lower()))
     if existing is not None:
         raise HTTPException(
@@ -157,7 +150,7 @@ def update_service(
         return ServiceRead.model_validate(service_item)
 
     if "name" in update_data:
-        normalized_name = normalize_catalog_name(update_data["name"])
+        normalized_name = normalize_service_name(update_data["name"])
         duplicate = db.scalar(
             select(Service).where(
                 func.lower(Service.name) == normalized_name.lower(),

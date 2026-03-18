@@ -2166,7 +2166,9 @@ export default function App() {
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [showPasswordRecoveryRequest, setShowPasswordRecoveryRequest] = useState(false);
   const [showServiceEditor, setShowServiceEditor] = useState(false);
+  const [showServiceListDialog, setShowServiceListDialog] = useState(false);
   const [showReviewRuleEditor, setShowReviewRuleEditor] = useState(false);
+  const [showReviewRuleListDialog, setShowReviewRuleListDialog] = useState(false);
   const [showLaborNormCatalogEditor, setShowLaborNormCatalogEditor] = useState(false);
   const [showLaborNormImport, setShowLaborNormImport] = useState(false);
   const [showLaborNormEntryEditor, setShowLaborNormEntryEditor] = useState(false);
@@ -2252,6 +2254,7 @@ export default function App() {
   const [ocrLearningStatusFilter, setOcrLearningStatusFilter] = useState("");
   const [ocrLearningTargetFieldFilter, setOcrLearningTargetFieldFilter] = useState("");
   const [ocrLearningProfileScopeFilter, setOcrLearningProfileScopeFilter] = useState("");
+  const [showOcrLearningListDialog, setShowOcrLearningListDialog] = useState(false);
   const [ocrLearningLoading, setOcrLearningLoading] = useState(false);
   const [ocrLearningUpdateId, setOcrLearningUpdateId] = useState<number | null>(null);
   const [ocrLearningDraftId, setOcrLearningDraftId] = useState<number | null>(null);
@@ -6047,7 +6050,7 @@ export default function App() {
                               Редактирование карточки сервиса
                             </Typography>
                             <Typography className="muted-copy">
-                              Источник истины для сервисов: папка `Сервисы`. Новые записи вручную не создаются.
+                              Сервисы из папки `Сервисы` синхронизируются автоматически. При необходимости можно добавить сервис вручную.
                             </Typography>
                             <Grid container spacing={1.5}>
                               <Grid item xs={12} sm={4}>
@@ -6114,12 +6117,12 @@ export default function App() {
                             <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                               <Button
                                 variant="contained"
-                                disabled={serviceSaving || !serviceForm.id}
+                                disabled={serviceSaving}
                                 onClick={() => {
                                   void handleSaveService();
                                 }}
                               >
-                                {serviceSaving ? "Сохранение..." : "Сохранить сервис"}
+                                {serviceSaving ? "Сохранение..." : serviceForm.id ? "Сохранить сервис" : "Создать сервис"}
                               </Button>
                               <Button
                                 variant="text"
@@ -6144,39 +6147,67 @@ export default function App() {
                           <Typography className="muted-copy">Загрузка сервисов...</Typography>
                         </Stack>
                       ) : services.length > 0 ? (
-                        <Stack spacing={1}>
-                          {services.map((item) => (
-                            <Paper className="repair-line" key={`service-${item.id}`} elevation={0}>
-                              <Stack spacing={0.5}>
-                                <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                  <Typography>{item.name}</Typography>
-                                  <Chip
-                                    size="small"
-                                    color={item.status === "confirmed" ? "success" : item.status === "preliminary" ? "warning" : "default"}
-                                    label={formatStatus(item.status)}
-                                  />
-                                </Stack>
-                                <Typography className="muted-copy">
-                                  {item.city || "Без города"}
-                                  {item.contact ? ` · ${item.contact}` : ""}
-                                </Typography>
-                                {item.comment ? <Typography className="muted-copy">{item.comment}</Typography> : null}
-                                <Stack direction="row" spacing={1}>
-                                  <Button
-                                    size="small"
-                                    variant="outlined"
-                                    onClick={() => handleEditService(item)}
-                                  >
-                                    Редактировать
-                                  </Button>
-                                </Stack>
-                              </Stack>
-                            </Paper>
-                          ))}
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
+                          <Button
+                            variant="outlined"
+                            onClick={() => setShowServiceListDialog(true)}
+                          >
+                            Открыть список сервисов
+                          </Button>
+                          <Typography className="muted-copy">
+                            Полный список сервисов скрыт с основной страницы.
+                          </Typography>
                         </Stack>
                       ) : (
                         <Typography className="muted-copy">По текущему фильтру сервисы не найдены.</Typography>
                       )}
+                      <Dialog
+                        open={showServiceListDialog}
+                        onClose={() => setShowServiceListDialog(false)}
+                        fullWidth
+                        maxWidth="lg"
+                      >
+                        <DialogTitle>Справочник сервисов</DialogTitle>
+                        <DialogContent dividers>
+                          {services.length > 0 ? (
+                            <Stack spacing={1}>
+                              {services.map((item) => (
+                                <Paper className="repair-line" key={`service-${item.id}`} elevation={0}>
+                                  <Stack spacing={0.5}>
+                                    <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                      <Typography>{item.name}</Typography>
+                                      <Chip
+                                        size="small"
+                                        color={item.status === "confirmed" ? "success" : item.status === "preliminary" ? "warning" : "default"}
+                                        label={formatStatus(item.status)}
+                                      />
+                                    </Stack>
+                                    <Typography className="muted-copy">
+                                      {item.city || "Без города"}
+                                      {item.contact ? ` · ${item.contact}` : ""}
+                                    </Typography>
+                                    {item.comment ? <Typography className="muted-copy">{item.comment}</Typography> : null}
+                                    <Stack direction="row" spacing={1}>
+                                      <Button
+                                        size="small"
+                                        variant="outlined"
+                                        onClick={() => {
+                                          setShowServiceListDialog(false);
+                                          handleEditService(item);
+                                        }}
+                                      >
+                                        Редактировать
+                                      </Button>
+                                    </Stack>
+                                  </Stack>
+                                </Paper>
+                              ))}
+                            </Stack>
+                          ) : (
+                            <Typography className="muted-copy">По текущему фильтру сервисы не найдены.</Typography>
+                          )}
+                        </DialogContent>
+                      </Dialog>
                     </Stack>
                   </Paper>
                 ) : null}
@@ -6347,43 +6378,71 @@ export default function App() {
                         В справочнике правил {reviewRules.length} записей.
                       </Typography>
                       {reviewRules.length > 0 ? (
-                        <Stack spacing={1}>
-                          {reviewRules.map((item) => (
-                            <Paper className="repair-line" key={`review-rule-${item.id}`} elevation={0}>
-                              <Stack spacing={0.5}>
-                                <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                  <Typography>{item.title}</Typography>
-                                  <Stack direction="row" spacing={1}>
-                                    <Chip
-                                      size="small"
-                                      color={item.is_active ? "success" : "default"}
-                                      label={item.is_active ? "Активно" : "Отключено"}
-                                    />
-                                      <Chip size="small" variant="outlined" label={`${formatReviewRuleTypeLabel(item.rule_type)}: ${item.code}`} />
-                                  </Stack>
-                                </Stack>
-                                <Typography className="muted-copy">
-                                  Вес {item.weight}
-                                  {item.bucket_override ? ` · группа ${formatReviewBucketLabel(item.bucket_override)}` : ""}
-                                  {` · порядок ${item.sort_order}`}
-                                </Typography>
-                                {item.notes ? <Typography className="muted-copy">{item.notes}</Typography> : null}
-                                <Stack direction="row" spacing={1}>
-                                  <Button
-                                    size="small"
-                                    variant="outlined"
-                                    onClick={() => handleEditReviewRule(item)}
-                                  >
-                                    Редактировать
-                                  </Button>
-                                </Stack>
-                              </Stack>
-                            </Paper>
-                          ))}
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
+                          <Button
+                            variant="outlined"
+                            onClick={() => setShowReviewRuleListDialog(true)}
+                          >
+                            Открыть список правил
+                          </Button>
+                          <Typography className="muted-copy">
+                            Полный список правил скрыт с основной страницы.
+                          </Typography>
                         </Stack>
                       ) : (
                         <Typography className="muted-copy">Правила пока не загружены.</Typography>
                       )}
+                      <Dialog
+                        open={showReviewRuleListDialog}
+                        onClose={() => setShowReviewRuleListDialog(false)}
+                        fullWidth
+                        maxWidth="lg"
+                      >
+                        <DialogTitle>Правила OCR и очереди проверки</DialogTitle>
+                        <DialogContent dividers>
+                          {reviewRules.length > 0 ? (
+                            <Stack spacing={1}>
+                              {reviewRules.map((item) => (
+                                <Paper className="repair-line" key={`review-rule-${item.id}`} elevation={0}>
+                                  <Stack spacing={0.5}>
+                                    <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                      <Typography>{item.title}</Typography>
+                                      <Stack direction="row" spacing={1}>
+                                        <Chip
+                                          size="small"
+                                          color={item.is_active ? "success" : "default"}
+                                          label={item.is_active ? "Активно" : "Отключено"}
+                                        />
+                                        <Chip size="small" variant="outlined" label={`${formatReviewRuleTypeLabel(item.rule_type)}: ${item.code}`} />
+                                      </Stack>
+                                    </Stack>
+                                    <Typography className="muted-copy">
+                                      Вес {item.weight}
+                                      {item.bucket_override ? ` · группа ${formatReviewBucketLabel(item.bucket_override)}` : ""}
+                                      {` · порядок ${item.sort_order}`}
+                                    </Typography>
+                                    {item.notes ? <Typography className="muted-copy">{item.notes}</Typography> : null}
+                                    <Stack direction="row" spacing={1}>
+                                      <Button
+                                        size="small"
+                                        variant="outlined"
+                                        onClick={() => {
+                                          setShowReviewRuleListDialog(false);
+                                          handleEditReviewRule(item);
+                                        }}
+                                      >
+                                        Редактировать
+                                      </Button>
+                                    </Stack>
+                                  </Stack>
+                                </Paper>
+                              ))}
+                            </Stack>
+                          ) : (
+                            <Typography className="muted-copy">Правила пока не загружены.</Typography>
+                          )}
+                        </DialogContent>
+                      </Dialog>
                     </Stack>
                   </Paper>
                 ) : null}
@@ -6502,107 +6561,135 @@ export default function App() {
                         </Stack>
                       ) : null}
                       {ocrLearningSignals.length > 0 ? (
-                        <Stack spacing={1}>
-                          {ocrLearningSignals.map((item) => (
-                            <Paper className="repair-line" key={`ocr-learning-${item.id}`} elevation={0}>
-                              <Stack spacing={0.5}>
-                                <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                  <Typography>
-                                    {formatOcrFieldLabel(item.target_field)} · {formatOcrSignalTypeLabel(item.signal_type)}
-                                  </Typography>
-                                  <Stack direction="row" spacing={1}>
-                                    <Chip size="small" variant="outlined" label={formatOcrLearningStatusLabel(item.status)} />
-                                    {item.ocr_profile_scope ? (
-                                      <Chip size="small" variant="outlined" label={formatOcrProfileName(item.ocr_profile_scope)} />
-                                    ) : null}
-                                  </Stack>
-                                </Stack>
-                                <Typography className="muted-copy">
-                                  Ремонт #{item.repair_id}
-                                  {item.document_id ? ` · документ #${item.document_id}` : ""}
-                                  {item.service_name ? ` · ${item.service_name}` : ""}
-                                  {item.document_filename ? ` · ${item.document_filename}` : ""}
-                                </Typography>
-                                <Typography className="muted-copy">
-                                  OCR: {item.extracted_value || "не извлечено"}
-                                  {` · Исправлено: ${item.corrected_value}`}
-                                </Typography>
-                                {item.suggestion_summary ? (
-                                  <Typography className="muted-copy">{item.suggestion_summary}</Typography>
-                                ) : null}
-                                {item.text_excerpt ? (
-                                  <Typography className="muted-copy">
-                                    Фрагмент: {item.text_excerpt.slice(0, 180)}
-                                    {item.text_excerpt.length > 180 ? "..." : ""}
-                                  </Typography>
-                                ) : null}
-                                <Stack direction="row" spacing={1} flexWrap="wrap">
-                                  <Button
-                                    size="small"
-                                    variant="outlined"
-                                    disabled={ocrLearningDraftId === item.id}
-                                    onClick={() => {
-                                      void handleLoadOcrLearningDraft(item.id, "ocr_rule");
-                                    }}
-                                  >
-                                    В OCR-правило
-                                  </Button>
-                                  <Button
-                                    size="small"
-                                    variant="outlined"
-                                    disabled={ocrLearningDraftId === item.id}
-                                    onClick={() => {
-                                      void handleLoadOcrLearningDraft(item.id, "matcher");
-                                    }}
-                                  >
-                                    В правило выбора
-                                  </Button>
-                                  {item.status !== "reviewed" ? (
-                                    <Button
-                                      size="small"
-                                      variant="outlined"
-                                      disabled={ocrLearningUpdateId === item.id}
-                                      onClick={() => {
-                                        void handleUpdateOcrLearningSignal(item.id, "reviewed");
-                                      }}
-                                    >
-                                      Пометить просмотренным
-                                    </Button>
-                                  ) : null}
-                                  {item.status !== "applied" ? (
-                                    <Button
-                                      size="small"
-                                      variant="text"
-                                      disabled={ocrLearningUpdateId === item.id}
-                                      onClick={() => {
-                                        void handleUpdateOcrLearningSignal(item.id, "applied");
-                                      }}
-                                    >
-                                      Применить
-                                    </Button>
-                                  ) : null}
-                                  {item.status !== "rejected" ? (
-                                    <Button
-                                      size="small"
-                                      variant="text"
-                                      disabled={ocrLearningUpdateId === item.id}
-                                      onClick={() => {
-                                        void handleUpdateOcrLearningSignal(item.id, "rejected");
-                                      }}
-                                    >
-                                      Отклонить
-                                    </Button>
-                                  ) : null}
-                                </Stack>
-                              </Stack>
-                            </Paper>
-                          ))}
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
+                          <Button
+                            variant="outlined"
+                            disabled={ocrLearningLoading}
+                            onClick={() => setShowOcrLearningListDialog(true)}
+                          >
+                            Открыть список сигналов
+                          </Button>
+                          <Typography className="muted-copy">
+                            На основной странице показана только сводка, полный список сигналов скрыт.
+                          </Typography>
                         </Stack>
                       ) : (
                         <Typography className="muted-copy">
                           Сигналы обучения пока не накоплены.
                         </Typography>
                       )}
+                      <Dialog
+                        open={showOcrLearningListDialog}
+                        onClose={() => setShowOcrLearningListDialog(false)}
+                        fullWidth
+                        maxWidth="lg"
+                      >
+                        <DialogTitle>Сигналы обучения OCR</DialogTitle>
+                        <DialogContent dividers>
+                          {ocrLearningSignals.length > 0 ? (
+                            <Stack spacing={1}>
+                              {ocrLearningSignals.map((item) => (
+                                <Paper className="repair-line" key={`ocr-learning-${item.id}`} elevation={0}>
+                                  <Stack spacing={0.5}>
+                                    <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                      <Typography>
+                                        {formatOcrFieldLabel(item.target_field)} · {formatOcrSignalTypeLabel(item.signal_type)}
+                                      </Typography>
+                                      <Stack direction="row" spacing={1}>
+                                        <Chip size="small" variant="outlined" label={formatOcrLearningStatusLabel(item.status)} />
+                                        {item.ocr_profile_scope ? (
+                                          <Chip size="small" variant="outlined" label={formatOcrProfileName(item.ocr_profile_scope)} />
+                                        ) : null}
+                                      </Stack>
+                                    </Stack>
+                                    <Typography className="muted-copy">
+                                      Ремонт #{item.repair_id}
+                                      {item.document_id ? ` · документ #${item.document_id}` : ""}
+                                      {item.service_name ? ` · ${item.service_name}` : ""}
+                                      {item.document_filename ? ` · ${item.document_filename}` : ""}
+                                    </Typography>
+                                    <Typography className="muted-copy">
+                                      OCR: {item.extracted_value || "не извлечено"}
+                                      {` · Исправлено: ${item.corrected_value}`}
+                                    </Typography>
+                                    {item.suggestion_summary ? (
+                                      <Typography className="muted-copy">{item.suggestion_summary}</Typography>
+                                    ) : null}
+                                    {item.text_excerpt ? (
+                                      <Typography className="muted-copy">
+                                        Фрагмент: {item.text_excerpt.slice(0, 180)}
+                                        {item.text_excerpt.length > 180 ? "..." : ""}
+                                      </Typography>
+                                    ) : null}
+                                    <Stack direction="row" spacing={1} flexWrap="wrap">
+                                      <Button
+                                        size="small"
+                                        variant="outlined"
+                                        disabled={ocrLearningDraftId === item.id}
+                                        onClick={() => {
+                                          void handleLoadOcrLearningDraft(item.id, "ocr_rule");
+                                        }}
+                                      >
+                                        В OCR-правило
+                                      </Button>
+                                      <Button
+                                        size="small"
+                                        variant="outlined"
+                                        disabled={ocrLearningDraftId === item.id}
+                                        onClick={() => {
+                                          void handleLoadOcrLearningDraft(item.id, "matcher");
+                                        }}
+                                      >
+                                        В правило выбора
+                                      </Button>
+                                      {item.status !== "reviewed" ? (
+                                        <Button
+                                          size="small"
+                                          variant="outlined"
+                                          disabled={ocrLearningUpdateId === item.id}
+                                          onClick={() => {
+                                            void handleUpdateOcrLearningSignal(item.id, "reviewed");
+                                          }}
+                                        >
+                                          Пометить просмотренным
+                                        </Button>
+                                      ) : null}
+                                      {item.status !== "applied" ? (
+                                        <Button
+                                          size="small"
+                                          variant="text"
+                                          disabled={ocrLearningUpdateId === item.id}
+                                          onClick={() => {
+                                            void handleUpdateOcrLearningSignal(item.id, "applied");
+                                          }}
+                                        >
+                                          Применить
+                                        </Button>
+                                      ) : null}
+                                      {item.status !== "rejected" ? (
+                                        <Button
+                                          size="small"
+                                          variant="text"
+                                          disabled={ocrLearningUpdateId === item.id}
+                                          onClick={() => {
+                                            void handleUpdateOcrLearningSignal(item.id, "rejected");
+                                          }}
+                                        >
+                                          Отклонить
+                                        </Button>
+                                      ) : null}
+                                    </Stack>
+                                  </Stack>
+                                </Paper>
+                              ))}
+                            </Stack>
+                          ) : (
+                            <Typography className="muted-copy">
+                              Сигналы обучения пока не накоплены.
+                            </Typography>
+                          )}
+                        </DialogContent>
+                      </Dialog>
                     </Stack>
                   </Paper>
                 ) : null}

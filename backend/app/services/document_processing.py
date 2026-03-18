@@ -34,7 +34,7 @@ from app.models.ocr_profile_matcher import OcrProfileMatcher
 from app.models.ocr_rule import OcrRule
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
-from app.services.service_catalog import resolve_catalog_service
+from app.services.service_catalog import find_service_name_in_text, normalize_service_key, resolve_service_by_name
 from app.services.labor_norms import (
     LaborNormApplicability,
     LaborNormEnrichmentSummary,
@@ -102,10 +102,10 @@ MILEAGE_LABEL_PATTERN = fuzzy_word_pattern("пробег")
 ODOMETER_LABEL_PATTERN = fuzzy_word_pattern("одометр")
 SERVICE_LABEL_PATTERN = "|".join(
     [
-        fuzzy_word_pattern("сервис"),
-        fuzzy_word_pattern("сто"),
+        fuzzy_word_pattern("поставщик"),
         fuzzy_word_pattern("исполнитель"),
         fuzzy_word_pattern("подрядчик"),
+        fuzzy_word_pattern("контрагент"),
     ]
 )
 WORK_TOTAL_LABEL_PATTERN = "|".join(
@@ -155,7 +155,17 @@ VIN_PATTERNS = [
     r"\b([A-HJ-NPR-Z0-9]{17})\b",
 ]
 SERVICE_PATTERNS = [
-    rf"(?:{SERVICE_LABEL_PATTERN})\b\s*[:№]?\s*([^\n\r]{{3,120}})",
+    rf"(?:{SERVICE_LABEL_PATTERN})\b\s*[:№]?\s*(.+?)(?=(?:\b(?:инн|кпп|адрес|тел(?:ефон)?|заказчик|плательщик|автомобиль|шасси|vin|договор|документ|заказ[- ]наряд|акт)\b)|$)",
+]
+SERVICE_CANDIDATE_PATTERNS = [
+    re.compile(
+        rf"(?:^|\n)\s*(?:{SERVICE_LABEL_PATTERN})\b\s*[:№]?\s*(?P<value>.+?)(?=(?:\b(?:инн|кпп|адрес|тел(?:ефон)?|заказчик|плательщик|автомобиль|шасси|vin|договор|документ|заказ[- ]наряд|акт)\b)|\Z)",
+        re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    ),
+    re.compile(
+        r"^(?:официальный\s+дилер[^\n\r]{0,80})?(?P<value>.+?)(?=(?:\b(?:инн|кпп|адрес|тел(?:ефон)?|цех|заказ[- ]наряд|акт\s+выполненных\s+работ|документ)\b)|\Z)",
+        re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    ),
 ]
 TOTAL_PATTERNS = {
     "work_total": [
@@ -803,6 +813,34 @@ def first_match(patterns: list[str], text: str) -> Optional[str]:
 
 def normalize_line(line: str) -> str:
     return normalize_text(line.replace("\xa0", " "))
+
+
+def normalize_service_candidate(value: str | None) -> Optional[str]:
+    if not value:
+        return None
+    normalized_value = normalize_text(str(value).replace("\n", " ").replace("\r", " "))
+    normalized_value = re.sub(r"\s+", " ", normalized_value).strip(" -:;,")
+    return normalized_value or None
+
+
+def extract_service_candidate_from_text(text: str) -> Optional[str]:
+    text_head = text[:2000]
+    for pattern in SERVICE_CANDIDATE_PATTERNS:
+        match = pattern.search(text_head)
+        if match is None:
+            continue
+        candidate = normalize_service_candidate(match.group("value"))
+        if not candidate:
+            continue
+        candidate = re.split(
+            r"\b(?:инн|кпп|адрес|тел(?:ефон)?|заказчик|плательщик|автомобиль|шасси|vin|договор|документ|заказ[- ]наряд|акт)\b",
+            candidate,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip(" ,.;:-")
+        if candidate:
+            return candidate[:200]
+    return None
 
 
 def build_section_body_pattern(markers: tuple[str, ...], stop_markers: tuple[str, ...]) -> re.Pattern[str]:
@@ -1579,6 +1617,7 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
         extracted_fields["vin"] = vin
         confidence_map["vin"] = float(vin_confidence or 0.88)
 
+    resolved_service_match = find_service_name_in_text(text, db=db) if db is not None else find_service_name_in_text(text)
     service_name, service_name_confidence, _ = extract_header_field(
         text,
         target_field="service_name",
@@ -1587,11 +1626,20 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
         fallback_confidence=0.58,
         rule_map=rule_map,
     )
-    if isinstance(service_name, str) and service_name:
-        if is_service_name_suspicious(service_name):
+    service_candidate = normalize_service_candidate(service_name) if isinstance(service_name, str) else None
+    labeled_service_candidate = extract_service_candidate_from_text(text)
+    if labeled_service_candidate and (service_candidate is None or not normalize_service_key(service_candidate)):
+        service_candidate = labeled_service_candidate
+
+    if resolved_service_match is not None:
+        extracted_fields["service_name"] = resolved_service_match[0]
+        confidence_map["service_name"] = 0.92
+        normalization_notes.append(f"Сервис распознан по тексту документа: {resolved_service_match[1]}")
+    elif service_candidate:
+        if is_service_name_suspicious(service_candidate):
             manual_review_reasons.append("service_name_suspicious")
         else:
-            extracted_fields["service_name"] = service_name[:120]
+            extracted_fields["service_name"] = service_candidate[:120]
             confidence_map["service_name"] = float(service_name_confidence or 0.58)
 
     for field_name, patterns in TOTAL_PATTERNS.items():
@@ -1644,7 +1692,7 @@ def average_confidence(confidence_map: dict[str, float]) -> Optional[float]:
 
 
 def resolve_service(db: Session, service_name: str) -> Service:
-    service = resolve_catalog_service(db, service_name)
+    service = resolve_service_by_name(db, service_name)
     if service is None:
         raise ValueError(f"Unknown service: {service_name}")
     return service
@@ -1830,9 +1878,18 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         if "grand_total" in extracted_fields:
             repair.grand_total = float(extracted_fields["grand_total"])
         if "service_name" in extracted_fields:
-            service = resolve_catalog_service(db, str(extracted_fields["service_name"]))
+            service = resolve_service_by_name(db, str(extracted_fields["service_name"]))
             if service is not None:
+                extracted_fields["service_name"] = service.name
                 repair.service_id = service.id
+            else:
+                if "service_not_found" not in manual_review_reasons:
+                    manual_review_reasons.append("service_not_found")
+                normalization_notes.append(
+                    f"Сервис из документа не найден в справочнике: {extracted_fields['service_name']}"
+                )
+        elif "service_name_missing" not in manual_review_reasons:
+            manual_review_reasons.append("service_name_missing")
 
         replace_repair_lines(
             db,

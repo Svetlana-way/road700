@@ -17,10 +17,14 @@ from app.models.service import Service
 
 DOCX_TEXT_NAMESPACE = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 LEGAL_FORM_PATTERN = re.compile(r"\b(?:ооо|ао|пао|зао|ип)\b", re.IGNORECASE)
+LONG_LEGAL_FORM_PATTERN = re.compile(
+    r"\bобщество\s*с\s*ограниченной\s*ответственностью\b",
+    re.IGNORECASE,
+)
 NON_ALNUM_PATTERN = re.compile(r"[^0-9a-zа-я]+", re.IGNORECASE)
 SERVICE_ALIASES = {
-    "ООО «Енисей Трак Сервис»": ("ЕТС",),
-    "ООО «ЛидерТрак»": ("Лидер Трак",),
+    "ООО «Енисей Трак Сервис»": ("ЕТС", "Енисей", "Енисей Трак Сервис"),
+    "ООО «ЛидерТрак»": ("Лидер Трак", "Лидертрак"),
 }
 
 
@@ -33,6 +37,12 @@ class ServiceCatalogEntry:
     aliases: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ServiceLookupEntry:
+    name: str
+    aliases: tuple[str, ...]
+
+
 def get_service_catalog_dir() -> Path:
     return PROJECT_ROOT / "Сервисы"
 
@@ -41,6 +51,7 @@ def normalize_service_key(value: str | None) -> str:
     if not value:
         return ""
     normalized = value.lower().replace("ё", "е")
+    normalized = LONG_LEGAL_FORM_PATTERN.sub(" ", normalized)
     normalized = LEGAL_FORM_PATTERN.sub(" ", normalized)
     normalized = NON_ALNUM_PATTERN.sub("", normalized)
     return normalized.strip()
@@ -81,10 +92,37 @@ def extract_city(address: str | None) -> str | None:
 
 
 def strip_legal_form(name: str) -> str:
-    normalized = LEGAL_FORM_PATTERN.sub(" ", name)
+    normalized = LONG_LEGAL_FORM_PATTERN.sub(" ", name)
+    normalized = LEGAL_FORM_PATTERN.sub(" ", normalized)
     normalized = normalized.replace("«", " ").replace("»", " ").replace('"', " ")
     normalized = re.sub(r"\s+", " ", normalized).strip()
     return normalized or name.strip()
+
+
+def build_service_aliases(
+    name: str,
+    *,
+    file_name: str | None = None,
+    extra_aliases: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    short_name = strip_legal_form(name)
+    aliases: list[str] = [name, short_name]
+
+    if file_name:
+        aliases.append(file_name)
+    if short_name:
+        aliases.append(short_name.replace(" ", ""))
+        parts = [item for item in re.split(r"\s+", short_name) if item]
+        if len(parts) >= 2:
+            aliases.append(" ".join(parts))
+        initials = "".join(part[0] for part in parts if part)
+        if len(initials) >= 3:
+            aliases.append(initials.upper())
+
+    aliases.extend(extra_aliases)
+    return tuple(
+        dict.fromkeys(alias.strip() for alias in aliases if isinstance(alias, str) and alias.strip())
+    )
 
 
 def build_comment(fields: dict[str, str | None]) -> str:
@@ -132,13 +170,8 @@ def build_entry(path: Path) -> ServiceCatalogEntry:
         "email": extract_value(text, r"Email:\s*(.+)"),
         "director": extract_value(text, r"Директор:\s*(.+)"),
     }
-    short_name = strip_legal_form(name)
     file_name = path.stem.replace("_", " ")
-    aliases = tuple(
-        dict.fromkeys(
-            [name, short_name, file_name, *SERVICE_ALIASES.get(name, ())]
-        )
-    )
+    aliases = build_service_aliases(name, file_name=file_name, extra_aliases=SERVICE_ALIASES.get(name, ()))
     return ServiceCatalogEntry(
         name=name,
         city=extract_city(address),
@@ -159,6 +192,21 @@ def get_service_catalog_entries() -> tuple[ServiceCatalogEntry, ...]:
 
 def get_service_catalog_names() -> tuple[str, ...]:
     return tuple(entry.name for entry in get_service_catalog_entries())
+
+
+def get_service_lookup_entries(db: Session | None = None) -> tuple[ServiceLookupEntry, ...]:
+    lookup_map: dict[str, tuple[str, ...]] = {
+        entry.name: entry.aliases for entry in get_service_catalog_entries()
+    }
+    if db is not None:
+        for service_item in db.scalars(select(Service).order_by(Service.name.asc())).all():
+            aliases = build_service_aliases(service_item.name)
+            existing_aliases = lookup_map.get(service_item.name, ())
+            lookup_map[service_item.name] = tuple(dict.fromkeys([*existing_aliases, *aliases]))
+    return tuple(
+        ServiceLookupEntry(name=name, aliases=aliases)
+        for name, aliases in sorted(lookup_map.items(), key=lambda item: item[0].lower())
+    )
 
 
 def find_service_catalog_entry(service_name: str | None) -> ServiceCatalogEntry | None:
@@ -197,6 +245,45 @@ def ensure_service_catalog_synced(db: Session, *, commit: bool = False) -> tuple
     if commit and changed:
         db.commit()
     return tuple(services)
+
+
+def find_service_name_in_text(text: str | None, db: Session | None = None) -> tuple[str, str] | None:
+    normalized_text = normalize_service_key(text)
+    if not normalized_text:
+        return None
+
+    best_match: tuple[int, int, str, str] | None = None
+    for entry in get_service_lookup_entries(db):
+        for alias in entry.aliases:
+            alias_key = normalize_service_key(alias)
+            if len(alias_key) < 4:
+                continue
+            if alias_key not in normalized_text:
+                continue
+            score = (len(alias_key), 1 if alias == entry.name else 0, entry.name, alias)
+            if best_match is None or score > best_match:
+                best_match = score
+
+    if best_match is None:
+        return None
+    return best_match[2], best_match[3]
+
+
+def resolve_service_by_name(db: Session, service_name: str | None) -> Service | None:
+    entry = find_service_catalog_entry(service_name)
+    if entry is not None:
+        ensure_service_catalog_synced(db)
+        return db.scalar(select(Service).where(Service.name == entry.name))
+
+    lookup_key = normalize_service_key(service_name)
+    if not lookup_key:
+        return None
+
+    for service_item in db.scalars(select(Service).order_by(Service.name.asc())).all():
+        for alias in build_service_aliases(service_item.name):
+            if normalize_service_key(alias) == lookup_key:
+                return service_item
+    return None
 
 
 def resolve_catalog_service(db: Session, service_name: str | None) -> Service | None:

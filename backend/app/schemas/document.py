@@ -66,6 +66,10 @@ class DocumentCreateVehicleRequest(BaseModel):
     comment: Optional[str] = None
 
 
+class DocumentLinkVehicleRequest(BaseModel):
+    vehicle_id: int
+
+
 class DocumentCreateVehicleResponse(BaseModel):
     message: str
     document: DocumentRead

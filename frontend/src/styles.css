@@ -114,6 +114,14 @@ body {
   overflow-wrap: anywhere;
 }
 
+.selected-file-alert {
+  margin-top: 14px;
+}
+
+.selected-file-title {
+  font-weight: 700;
+}
+
 .document-row {
   padding: 16px;
   border-radius: 18px;

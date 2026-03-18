@@ -26,6 +26,7 @@ from app.schemas.document import (
     DocumentCreateVehicleRequest,
     DocumentCreateVehicleResponse,
     DocumentComparisonResponse,
+    DocumentLinkVehicleRequest,
     DocumentListResponse,
     DocumentProcessResponse,
     DocumentRead,
@@ -428,6 +429,67 @@ def create_or_link_vehicle_from_document(
     return refreshed_document, created_new_vehicle
 
 
+def link_existing_vehicle_to_document(
+    db: Session,
+    *,
+    document: Document,
+    vehicle: Vehicle,
+    current_user: User,
+) -> Document:
+    if document.repair is None or document.repair.vehicle is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Документ не связан с ремонтом")
+
+    if document.repair.vehicle.external_id != PLACEHOLDER_EXTERNAL_ID:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ремонт уже привязан к карточке техники. Ручная перепривязка здесь не требуется.",
+        )
+
+    if vehicle.external_id == PLACEHOLDER_EXTERNAL_ID:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нельзя привязать placeholder-технику")
+
+    old_vehicle = document.repair.vehicle
+    document.repair.vehicle_id = vehicle.id
+    db.add(document.repair)
+    db.flush()
+
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            entity_type="repair",
+            entity_id=str(document.repair.id),
+            action_type="repair_vehicle_relinked",
+            old_value={"vehicle": build_vehicle_snapshot(old_vehicle)},
+            new_value={
+                "vehicle": build_vehicle_snapshot(vehicle),
+                "document_id": document.id,
+                "created_new_vehicle": False,
+            },
+        )
+    )
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            entity_type="document",
+            entity_id=str(document.id),
+            action_type="document_vehicle_linked",
+            old_value={"vehicle": build_vehicle_snapshot(old_vehicle)},
+            new_value={
+                "vehicle": build_vehicle_snapshot(vehicle),
+                "repair_id": document.repair.id,
+                "created_new_vehicle": False,
+            },
+        )
+    )
+    db.commit()
+
+    process_document(db, document.id)
+    refreshed_document = load_document_with_relations(db, document.id)
+    if refreshed_document is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Не удалось обновить документ")
+    return refreshed_document
+
+
 def log_document_upload_event(
     db: Session,
     current_user: User,
@@ -635,6 +697,32 @@ def create_vehicle_from_document(
         document=serialize_document(updated_document),
         repair_id=updated_document.repair.id,
         created_new_vehicle=created_new_vehicle,
+    )
+
+
+@router.post("/{document_id}/link-vehicle", response_model=DocumentCreateVehicleResponse)
+def link_vehicle_to_document(
+    document_id: int,
+    payload: DocumentLinkVehicleRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> DocumentCreateVehicleResponse:
+    document = get_visible_document(db, current_user, document_id)
+    vehicle = get_visible_vehicle(db, current_user, payload.vehicle_id)
+    if vehicle is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Техника не найдена")
+
+    updated_document = link_existing_vehicle_to_document(
+        db,
+        document=document,
+        vehicle=vehicle,
+        current_user=current_user,
+    )
+    return DocumentCreateVehicleResponse(
+        message="Ремонт перепривязан к выбранной карточке техники",
+        document=serialize_document(updated_document),
+        repair_id=updated_document.repair.id,
+        created_new_vehicle=False,
     )
 
 

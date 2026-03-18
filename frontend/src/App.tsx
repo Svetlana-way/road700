@@ -925,6 +925,31 @@ const emptyUploadForm = (): UploadFormState => ({
   notes: "",
 });
 
+function parseRepairDateFromFilename(filename: string): string | null {
+  const normalized = filename.trim();
+  const dayFirstMatch = normalized.match(/(\d{2})[.\-_](\d{2})[.\-_](\d{4})/);
+  if (dayFirstMatch) {
+    return `${dayFirstMatch[3]}-${dayFirstMatch[2]}-${dayFirstMatch[1]}`;
+  }
+  const isoMatch = normalized.match(/(\d{4})[.\-_](\d{2})[.\-_](\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+  return null;
+}
+
+function parseOrderNumberFromFilename(filename: string): string | null {
+  const directNumberMatch = filename.match(/№\s*([A-Za-zА-Яа-я0-9\-\/]+)/u);
+  if (directNumberMatch?.[1]) {
+    return directNumberMatch[1].trim();
+  }
+  const orderMatch = filename.match(/(?:заказ[\s_-]*наряд|зн)[^\w]{0,3}([A-Za-zА-Яа-я0-9\-\/]+)/iu);
+  if (orderMatch?.[1]) {
+    return orderMatch[1].trim();
+  }
+  return null;
+}
+
 const summaryCards: Array<{ key: keyof DashboardSummary; label: string }> = [
   { key: "vehicles_total", label: "Техника в доступе" },
   { key: "repairs_total", label: "Ремонтов в базе" },
@@ -2449,6 +2474,10 @@ export default function App() {
   const [batchReprocessPrimaryOnly, setBatchReprocessPrimaryOnly] = useState<"false" | "true">("false");
   const [reviewActionLoading, setReviewActionLoading] = useState(false);
   const [reviewFieldSaving, setReviewFieldSaving] = useState(false);
+  const [reviewVehicleSearch, setReviewVehicleSearch] = useState("");
+  const [reviewVehicleSearchLoading, setReviewVehicleSearchLoading] = useState(false);
+  const [reviewVehicleSearchResults, setReviewVehicleSearchResults] = useState<Vehicle[]>([]);
+  const [reviewVehicleLinkingId, setReviewVehicleLinkingId] = useState<number | null>(null);
   const [reviewServiceAssigning, setReviewServiceAssigning] = useState(false);
   const [reviewServiceSaving, setReviewServiceSaving] = useState(false);
   const [documentVehicleSaving, setDocumentVehicleSaving] = useState(false);
@@ -2584,6 +2613,15 @@ export default function App() {
     .map((item) => item.label);
   const reviewReadyFieldsCount = reviewRequiredFieldComparisons.filter((item) => item.status !== "missing").length;
   const canConfirmSelectedReview = reviewMissingRequiredFields.length === 0;
+  const uploadMissingRequirements = [
+    !selectedFile ? "файл" : null,
+    !uploadForm.vehicleId ? "технику" : null,
+    !uploadForm.mileage.trim() ? "пробег" : null,
+  ].filter(Boolean) as string[];
+  const canLinkVehicleFromSelectedDocument =
+    selectedDocumentId !== null &&
+    Boolean(selectedRepair) &&
+    isPlaceholderVehicle(selectedRepair?.vehicle.external_id);
   const canCreateVehicleFromSelectedDocument =
     user?.role === "admin" &&
     isPlaceholderVehicle(selectedRepair?.vehicle.external_id) &&
@@ -3168,6 +3206,14 @@ export default function App() {
 
   useEffect(() => {
     const nextServiceName = selectedRepair?.service?.name || selectedRepairDocumentOcrServiceName || "";
+    setReviewVehicleSearch(
+      typeof selectedRepairDocumentExtractedFields?.plate_number === "string"
+        ? selectedRepairDocumentExtractedFields.plate_number
+        : typeof selectedRepairDocumentExtractedFields?.vin === "string"
+          ? selectedRepairDocumentExtractedFields.vin
+          : "",
+    );
+    setReviewVehicleSearchResults([]);
     setReviewServiceName(nextServiceName);
     setReviewFieldDraft(selectedRepair ? createReviewRepairFieldsDraft(selectedRepair) : null);
     setReviewServiceForm({
@@ -3180,7 +3226,7 @@ export default function App() {
     });
     setShowReviewFieldEditor(false);
     setShowReviewServiceEditor(false);
-  }, [selectedRepair?.id, selectedRepair?.service?.name, selectedRepairDocumentOcrServiceName, user?.role]);
+  }, [selectedRepair?.id, selectedRepair?.service?.name, selectedRepairDocumentExtractedFields?.plate_number, selectedRepairDocumentExtractedFields?.vin, selectedRepairDocumentOcrServiceName, user?.role]);
 
   useEffect(() => {
     if (!token || !selectedRepairDocument || !reviewDocumentPreviewKind) {
@@ -4415,6 +4461,66 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось создать сервис");
     } finally {
       setReviewServiceSaving(false);
+    }
+  }
+
+  async function searchReviewVehicles(activeToken: string, search: string) {
+    if (!search.trim()) {
+      setReviewVehicleSearchResults([]);
+      return;
+    }
+
+    setReviewVehicleSearchLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", "20");
+      params.set("search", search.trim());
+      const payload = await apiRequest<VehiclesResponse>(`/vehicles?${params.toString()}`, { method: "GET" }, activeToken);
+      setReviewVehicleSearchResults(
+        payload.items.filter((item) => !isPlaceholderVehicle(item.external_id)),
+      );
+    } finally {
+      setReviewVehicleSearchLoading(false);
+    }
+  }
+
+  async function handleSearchReviewVehicles() {
+    if (!token) {
+      return;
+    }
+    setErrorMessage("");
+    try {
+      await searchReviewVehicles(token, reviewVehicleSearch);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось найти технику");
+    }
+  }
+
+  async function handleLinkReviewVehicle(vehicleId: number) {
+    if (!token || !selectedDocumentId || !selectedRepair) {
+      return;
+    }
+
+    setReviewVehicleLinkingId(vehicleId);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const result = await apiRequest<DocumentCreateVehicleResponse>(
+        `/documents/${selectedDocumentId}/link-vehicle`,
+        {
+          method: "POST",
+          body: JSON.stringify({ vehicle_id: vehicleId }),
+        },
+        token,
+      );
+      setSuccessMessage(result.message);
+      setReviewVehicleSearchResults([]);
+      await loadWorkspace(token);
+      await openRepairByIds(result.document.id, result.repair_id);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось привязать технику");
+    } finally {
+      setReviewVehicleLinkingId(null);
     }
   }
 
@@ -5772,15 +5878,39 @@ export default function App() {
                                 onClick={(event) => {
                                   event.currentTarget.value = "";
                                 }}
-                                onChange={(event) =>
-                                  setSelectedFile(event.target.files?.[0] ?? null)
-                                }
+                                onChange={(event) => {
+                                  const nextFile = event.target.files?.[0] ?? null;
+                                  setSelectedFile(nextFile);
+                                  if (!nextFile) {
+                                    return;
+                                  }
+                                  const parsedRepairDate = parseRepairDateFromFilename(nextFile.name);
+                                  const parsedOrderNumber = parseOrderNumberFromFilename(nextFile.name);
+                                  setUploadForm((current) => ({
+                                    ...current,
+                                    repairDate: parsedRepairDate || current.repairDate,
+                                    orderNumber: current.orderNumber.trim() || !parsedOrderNumber ? current.orderNumber : parsedOrderNumber,
+                                  }));
+                                }}
                               />
                             </Button>
                           </Stack>
-                          <Typography className="selected-file">
-                            {selectedFile ? selectedFile.name : "Файл ещё не выбран"}
-                          </Typography>
+                          {selectedFile ? (
+                            <Alert severity="success" className="selected-file-alert">
+                              <Typography className="selected-file-title">Файл выбран</Typography>
+                              <Typography className="selected-file">{selectedFile.name}</Typography>
+                              <Typography className="muted-copy">
+                                Файл пока только выбран локально. Он появится справа в списках после нажатия `Создать черновик ремонта`.
+                              </Typography>
+                            </Alert>
+                          ) : (
+                            <Typography className="selected-file">Файл ещё не выбран</Typography>
+                          )}
+                          {selectedFile && uploadMissingRequirements.length > 0 ? (
+                            <Alert severity="info">
+                              Для загрузки ещё нужно указать: {uploadMissingRequirements.join(", ")}.
+                            </Alert>
+                          ) : null}
                         </Paper>
                       </Grid>
                       <Grid item xs={12}>
@@ -5788,7 +5918,7 @@ export default function App() {
                           type="submit"
                           variant="contained"
                           size="large"
-                          disabled={uploadLoading || !selectedFile || !uploadForm.vehicleId}
+                          disabled={uploadLoading || uploadMissingRequirements.length > 0}
                         >
                           {uploadLoading ? "Загрузка..." : "Создать черновик ремонта"}
                         </Button>
@@ -8612,6 +8742,88 @@ export default function App() {
                                   </Grid>
                                   <Grid item xs={12} lg={6}>
                                     <Stack spacing={1.5}>
+                                      {canLinkVehicleFromSelectedDocument ? (
+                                        <Paper className="repair-line repair-review-split" elevation={0}>
+                                          <Stack spacing={1.25}>
+                                            <Box>
+                                              <Typography variant="subtitle1">Привязка техники</Typography>
+                                              <Typography className="muted-copy">
+                                                Заказ-наряд пока висит на placeholder-технике. Найдите существующую карточку и перепривяжите ремонт прямо из review.
+                                              </Typography>
+                                            </Box>
+                                            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                              {selectedRepairDocumentExtractedFields?.plate_number ? (
+                                                <Chip
+                                                  size="small"
+                                                  variant="outlined"
+                                                  label={`OCR госномер: ${String(selectedRepairDocumentExtractedFields.plate_number)}`}
+                                                />
+                                              ) : null}
+                                              {selectedRepairDocumentExtractedFields?.vin ? (
+                                                <Chip
+                                                  size="small"
+                                                  variant="outlined"
+                                                  label={`OCR VIN: ${String(selectedRepairDocumentExtractedFields.vin)}`}
+                                                />
+                                              ) : null}
+                                            </Stack>
+                                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                              <TextField
+                                                fullWidth
+                                                label="Найти технику"
+                                                value={reviewVehicleSearch}
+                                                onChange={(event) => setReviewVehicleSearch(event.target.value)}
+                                                helperText="Поиск по госномеру, VIN, марке или модели."
+                                              />
+                                              <Button
+                                                variant="outlined"
+                                                disabled={reviewVehicleSearchLoading || reviewVehicleLinkingId !== null}
+                                                onClick={() => {
+                                                  void handleSearchReviewVehicles();
+                                                }}
+                                              >
+                                                {reviewVehicleSearchLoading ? "Поиск..." : "Найти"}
+                                              </Button>
+                                            </Stack>
+                                            {reviewVehicleSearchResults.length > 0 ? (
+                                              <Stack spacing={1}>
+                                                {reviewVehicleSearchResults.map((vehicle) => (
+                                                  <Paper className="repair-line" key={`review-vehicle-${vehicle.id}`} elevation={0}>
+                                                    <Stack
+                                                      direction={{ xs: "column", sm: "row" }}
+                                                      spacing={1}
+                                                      justifyContent="space-between"
+                                                      alignItems={{ xs: "flex-start", sm: "center" }}
+                                                    >
+                                                      <Box>
+                                                        <Typography>{formatVehicle(vehicle)}</Typography>
+                                                        <Typography className="muted-copy">
+                                                          {formatVehicleTypeLabel(vehicle.vehicle_type)} · {vehicle.vin || "VIN не указан"}
+                                                        </Typography>
+                                                      </Box>
+                                                      <Button
+                                                        size="small"
+                                                        variant="contained"
+                                                        disabled={reviewVehicleLinkingId !== null}
+                                                        onClick={() => {
+                                                          void handleLinkReviewVehicle(vehicle.id);
+                                                        }}
+                                                      >
+                                                        {reviewVehicleLinkingId === vehicle.id ? "Привязка..." : "Выбрать технику"}
+                                                      </Button>
+                                                    </Stack>
+                                                  </Paper>
+                                                ))}
+                                              </Stack>
+                                            ) : reviewVehicleSearch.trim() && !reviewVehicleSearchLoading ? (
+                                              <Typography className="muted-copy">
+                                                По этому запросу техника не найдена. {user?.role === "admin" ? "Ниже можно создать новую карточку техники." : ""}
+                                              </Typography>
+                                            ) : null}
+                                          </Stack>
+                                        </Paper>
+                                      ) : null}
+
                                       <Paper className="repair-line repair-review-split" elevation={0}>
                                         <Stack spacing={1.25}>
                                           <Box>
@@ -8655,7 +8867,7 @@ export default function App() {
                                           <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                                             <Button
                                               variant="contained"
-                                              disabled={reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving}
+                                              disabled={reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving || reviewVehicleLinkingId !== null}
                                               onClick={() => {
                                                 void handleAssignReviewService();
                                               }}
@@ -8664,7 +8876,7 @@ export default function App() {
                                             </Button>
                                             <Button
                                               variant="outlined"
-                                              disabled={reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving}
+                                              disabled={reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving || reviewVehicleLinkingId !== null}
                                               onClick={() => {
                                                 setShowReviewServiceEditor((current) => !current);
                                                 setReviewServiceForm((current) => ({
@@ -8678,7 +8890,7 @@ export default function App() {
                                             {selectedRepair.service ? (
                                               <Button
                                                 variant="text"
-                                                disabled={reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving}
+                                                disabled={reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving || reviewVehicleLinkingId !== null}
                                                 onClick={() => {
                                                   setReviewServiceName("");
                                                   void assignReviewService("");
@@ -9067,6 +9279,7 @@ export default function App() {
                                       reviewServiceAssigning ||
                                       reviewServiceSaving ||
                                       reviewFieldSaving ||
+                                      reviewVehicleLinkingId !== null ||
                                       !canConfirmSelectedReview
                                     }
                                     onClick={() => {
@@ -9083,6 +9296,7 @@ export default function App() {
                                       reviewServiceAssigning ||
                                       reviewServiceSaving ||
                                       reviewFieldSaving ||
+                                      reviewVehicleLinkingId !== null ||
                                       !canConfirmSelectedReview
                                     }
                                     onClick={() => {
@@ -9094,7 +9308,7 @@ export default function App() {
                                 )}
                                 <Button
                                   variant="outlined"
-                                  disabled={reviewActionLoading || reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving}
+                                  disabled={reviewActionLoading || reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving || reviewVehicleLinkingId !== null}
                                   onClick={() => {
                                     void handleReviewAction("send_to_review");
                                   }}

@@ -1392,6 +1392,8 @@ const historyActionLabels: Record<string, string> = {
   manual_update: "Ручное редактирование ремонта",
   repair_archived: "Ремонт отправлен в архив",
   repair_deleted: "Заказ-наряд удалён",
+  service_assignment: "Назначение сервиса",
+  review_field_update: "Обновление полей проверки",
   check_resolution_update: "Изменение статуса проверки",
   review_employee_confirm: "Подтверждение сотрудником",
   review_confirm: "Подтверждение администратором",
@@ -1409,6 +1411,27 @@ const historyActionLabels: Record<string, string> = {
   comparison_keep_current_primary: "Сверка: оставлен текущий основной документ",
   comparison_make_document_primary: "Сверка: выбран новый основной документ",
   comparison_mark_reviewed: "Сверка отмечена как проверенная",
+  historical_import_created: "Исторический ремонт загружен",
+  user_created: "Пользователь создан",
+  user_updated: "Пользователь обновлён",
+  user_password_reset: "Пароль пользователя сброшен администратором",
+  user_password_changed: "Пользователь сменил пароль",
+  user_password_recovery_requested: "Запрошено восстановление пароля",
+  user_password_recovered: "Пароль восстановлен",
+  user_assignment_created: "Назначение техники пользователю",
+  user_assignment_updated: "Изменение назначения техники пользователю",
+  vehicle_updated: "Карточка техники обновлена",
+  backup_created: "Резервная копия создана",
+  backup_restored: "Резервная копия восстановлена",
+  import_conflict_resolved: "Конфликт импорта обработан",
+};
+const auditEntityLabels: Record<string, string> = {
+  repair: "Ремонт",
+  document: "Документ",
+  vehicle: "Техника",
+  user: "Пользователь",
+  system: "Система",
+  import_conflict: "Конфликт импорта",
 };
 const repairStatusLabels: Record<string, string> = {
   draft: "Черновик",
@@ -1457,6 +1480,13 @@ function formatStatus(status: string) {
   return genericStatusLabels[status] || status.split("_").join(" ");
 }
 
+function formatAuditEntityLabel(entityType: string | null | undefined) {
+  if (!entityType) {
+    return "Сущность";
+  }
+  return auditEntityLabels[entityType] || formatStatus(entityType);
+}
+
 function formatJsonPretty(value: unknown) {
   if (value === null || value === undefined) {
     return "—";
@@ -1469,17 +1499,93 @@ function formatJsonPretty(value: unknown) {
 }
 
 function buildAuditEntryDetails(entry: AuditLogItem) {
-  const lines: string[] = [];
-  if (entry.old_value && Object.keys(entry.old_value).length > 0) {
-    lines.push(`Было:\n${formatJsonPretty(entry.old_value)}`);
+  const documentFields = [
+    "document_id",
+    "repair_id",
+    "original_filename",
+    "kind",
+    "status",
+    "is_primary",
+    "notes",
+    "review_queue_priority",
+    "document_status",
+    "repair_status",
+    "source_document_id",
+  ];
+  const repairFields = [
+    "order_number",
+    "repair_date",
+    "mileage",
+    "reason",
+    "employee_comment",
+    "service_name",
+    "work_total",
+    "parts_total",
+    "vat_total",
+    "grand_total",
+    "status",
+    "repair_status",
+    "document_status",
+    "review_queue_priority",
+    "is_preliminary",
+    "is_partially_recognized",
+    "source_document_id",
+  ];
+  const vehicleFields = ["plate_number", "vin", "brand", "model", "status", "comment"];
+  const userFields = ["full_name", "login", "email", "role", "is_active", "vehicle_id", "starts_at", "ends_at", "comment"];
+  const genericFields = [
+    "document_id",
+    "repair_id",
+    "original_filename",
+    "source_filename",
+    "status",
+    "comment",
+    "notes",
+  ];
+
+  let context: "repair" | "document" | "generic" = "generic";
+  let fields = genericFields;
+  if (entry.entity_type === "repair") {
+    context = "repair";
+    fields = repairFields;
+  } else if (entry.entity_type === "document") {
+    context = "document";
+    fields = documentFields;
+  } else if (entry.entity_type === "vehicle") {
+    fields = vehicleFields;
+  } else if (entry.entity_type === "user") {
+    fields = userFields;
   }
-  if (entry.new_value && Object.keys(entry.new_value).length > 0) {
-    lines.push(`Стало:\n${formatJsonPretty(entry.new_value)}`);
+
+  const lines = collectChangedFieldLines(entry.old_value, entry.new_value, fields, context);
+  if (lines.length > 0) {
+    return lines;
   }
-  if (lines.length === 0) {
-    lines.push("Подробные изменения не записаны.");
+
+  const snapshotLines: string[] = [];
+  const appendSnapshot = (title: string, value: Record<string, unknown> | null) => {
+    if (!value || Object.keys(value).length === 0) {
+      return;
+    }
+    const pieces = fields
+      .filter((fieldName) => value[fieldName] !== undefined && value[fieldName] !== null && value[fieldName] !== "")
+      .map((fieldName) => {
+        const scalar = formatHistoryScalar(fieldName, value[fieldName], context);
+        return `${formatHistoryFieldLabel(fieldName, context)}: ${scalar}`;
+      });
+    if (pieces.length > 0) {
+      snapshotLines.push(`${title}: ${pieces.join(" · ")}`);
+      return;
+    }
+    snapshotLines.push(`${title}: ${formatJsonPretty(value)}`);
+  };
+
+  appendSnapshot("Было", entry.old_value);
+  appendSnapshot("Стало", entry.new_value);
+  if (snapshotLines.length > 0) {
+    return snapshotLines;
   }
-  return lines;
+  return ["Подробные изменения не записаны."];
 }
 
 function formatMoney(value?: number | null) {
@@ -2308,10 +2414,19 @@ function areHistoryValuesEqual(left: unknown, right: unknown) {
 
 function formatHistoryFieldLabel(fieldName: string, context: "repair" | "document" | "generic" = "generic") {
   if (fieldName === "status") {
-    return context === "document" ? "Статус документа" : "Статус ремонта";
+    if (context === "document") {
+      return "Статус документа";
+    }
+    if (context === "repair") {
+      return "Статус ремонта";
+    }
+    return "Статус";
   }
 
   const labels: Record<string, string> = {
+    document_id: "Документ",
+    repair_id: "Ремонт",
+    vehicle_id: "Техника",
     order_number: "Номер заказ-наряда",
     repair_date: "Дата ремонта",
     mileage: "Пробег",
@@ -2331,6 +2446,19 @@ function formatHistoryFieldLabel(fieldName: string, context: "repair" | "documen
     is_primary: "Основной документ",
     kind: "Тип документа",
     document_kind: "Тип документа",
+    original_filename: "Файл",
+    source_filename: "Файл-источник",
+    full_name: "ФИО",
+    login: "Логин",
+    email: "E-mail",
+    role: "Роль",
+    is_active: "Активен",
+    starts_at: "Дата начала",
+    ends_at: "Дата окончания",
+    comment: "Комментарий",
+    plate_number: "Госномер",
+    brand: "Марка",
+    model: "Модель",
     notes: "Комментарий",
   };
 
@@ -2362,6 +2490,12 @@ function formatHistoryScalar(
   if (typeof value === "string") {
     if (fieldName === "repair_date") {
       return formatDateValue(value);
+    }
+    if (fieldName === "role") {
+      return value === "admin" ? "Администратор" : value === "employee" ? "Сотрудник" : value;
+    }
+    if (fieldName === "status" && context === "generic") {
+      return formatStatus(value);
     }
     if (fieldName === "status" || fieldName === "repair_status") {
       return formatRepairStatus(value);
@@ -12694,7 +12828,7 @@ export default function App() {
                             <MenuItem value="">Все</MenuItem>
                             {auditEntityTypes.map((value) => (
                               <MenuItem key={`audit-entity-${value}`} value={value}>
-                                {value}
+                                {formatAuditEntityLabel(value)}
                               </MenuItem>
                             ))}
                           </TextField>
@@ -12804,7 +12938,7 @@ export default function App() {
                                       {entry.user_name || "Система"} · {formatHistoryActionLabel(entry.action_type)}
                                     </Typography>
                                     <Typography className="muted-copy">
-                                      {entry.entity_type} #{entry.entity_id}
+                                      {formatAuditEntityLabel(entry.entity_type)} #{entry.entity_id}
                                     </Typography>
                                   </Box>
                                   <Typography className="muted-copy">{formatDateTime(entry.created_at)}</Typography>

@@ -871,6 +871,30 @@ type EditableRepairDraft = {
   parts: EditablePartDraft[];
 };
 
+type ReviewRepairFieldsDraft = {
+  order_number: string;
+  repair_date: string;
+  mileage: string;
+  work_total: string;
+  parts_total: string;
+  vat_total: string;
+  grand_total: string;
+  reason: string;
+  employee_comment: string;
+};
+
+type ReviewComparisonStatus = "match" | "missing" | "mismatch" | "ocr_missing" | "empty";
+
+type ReviewRequiredFieldComparisonItem = {
+  key: string;
+  label: string;
+  currentValue: unknown;
+  ocrValue: unknown;
+  currentDisplay: string;
+  ocrDisplay: string;
+  status: ReviewComparisonStatus;
+};
+
 type UploadFormState = {
   vehicleId: string;
   documentKind: DocumentKind;
@@ -2091,6 +2115,109 @@ function createRepairDraft(repair: RepairDetail): EditableRepairDraft {
   };
 }
 
+function createReviewRepairFieldsDraft(repair: RepairDetail): ReviewRepairFieldsDraft {
+  return {
+    order_number: repair.order_number || "",
+    repair_date: repair.repair_date || "",
+    mileage: repair.mileage > 0 ? String(repair.mileage) : "",
+    work_total: String(repair.work_total ?? ""),
+    parts_total: String(repair.parts_total ?? ""),
+    vat_total: String(repair.vat_total ?? ""),
+    grand_total: String(repair.grand_total ?? ""),
+    reason: repair.reason || "",
+    employee_comment: repair.employee_comment || "",
+  };
+}
+
+function normalizeComparableText(value: unknown) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value).trim().toLowerCase();
+}
+
+function normalizeComparableNumber(value: unknown, digits = 2): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Number(value.toFixed(digits));
+  }
+  if (typeof value === "string") {
+    const normalized = value.replace(/\s+/g, "").replace(",", ".").trim();
+    if (!normalized) {
+      return null;
+    }
+    const parsed = Number(normalized);
+    if (Number.isFinite(parsed)) {
+      return Number(parsed.toFixed(digits));
+    }
+  }
+  return null;
+}
+
+function getReviewComparisonStatus(
+  currentValue: unknown,
+  ocrValue: unknown,
+  mode: "text" | "int" | "money" = "text",
+): ReviewComparisonStatus {
+  if (mode === "text") {
+    const current = normalizeComparableText(currentValue);
+    const ocr = normalizeComparableText(ocrValue);
+    if (!current && !ocr) {
+      return "empty";
+    }
+    if (!current && ocr) {
+      return "missing";
+    }
+    if (current && !ocr) {
+      return "ocr_missing";
+    }
+    return current === ocr ? "match" : "mismatch";
+  }
+
+  const digits = mode === "int" ? 0 : 2;
+  const current = normalizeComparableNumber(currentValue, digits);
+  const ocr = normalizeComparableNumber(ocrValue, digits);
+  if (current === null && ocr === null) {
+    return "empty";
+  }
+  if (current === null && ocr !== null) {
+    return "missing";
+  }
+  if (current !== null && ocr === null) {
+    return "ocr_missing";
+  }
+  return current === ocr ? "match" : "mismatch";
+}
+
+function getReviewComparisonLabel(status: ReviewComparisonStatus) {
+  switch (status) {
+    case "match":
+      return "Совпадает";
+    case "missing":
+      return "Нужно заполнить";
+    case "mismatch":
+      return "Расхождение";
+    case "ocr_missing":
+      return "Нет в OCR";
+    default:
+      return "Нет данных";
+  }
+}
+
+function getReviewComparisonColor(
+  status: ReviewComparisonStatus,
+): "default" | "success" | "warning" | "error" {
+  switch (status) {
+    case "match":
+      return "success";
+    case "missing":
+      return "warning";
+    case "mismatch":
+      return "error";
+    default:
+      return "default";
+  }
+}
+
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("ru-RU", {
     dateStyle: "short",
@@ -2322,6 +2449,7 @@ export default function App() {
   const [batchReprocessStatusFilter, setBatchReprocessStatusFilter] = useState("");
   const [batchReprocessPrimaryOnly, setBatchReprocessPrimaryOnly] = useState<"false" | "true">("false");
   const [reviewActionLoading, setReviewActionLoading] = useState(false);
+  const [reviewFieldSaving, setReviewFieldSaving] = useState(false);
   const [reviewServiceAssigning, setReviewServiceAssigning] = useState(false);
   const [reviewServiceSaving, setReviewServiceSaving] = useState(false);
   const [documentVehicleSaving, setDocumentVehicleSaving] = useState(false);
@@ -2341,6 +2469,8 @@ export default function App() {
   const [historySearch, setHistorySearch] = useState("");
   const [expandedHistoryEntries, setExpandedHistoryEntries] = useState<Record<string, boolean>>({});
   const [reviewActionComment, setReviewActionComment] = useState("");
+  const [reviewFieldDraft, setReviewFieldDraft] = useState<ReviewRepairFieldsDraft | null>(null);
+  const [showReviewFieldEditor, setShowReviewFieldEditor] = useState(false);
   const [reviewServiceName, setReviewServiceName] = useState("");
   const [reviewServiceForm, setReviewServiceForm] = useState<ServiceFormState>(createEmptyServiceForm);
   const [showReviewServiceEditor, setShowReviewServiceEditor] = useState(false);
@@ -2367,6 +2497,94 @@ export default function App() {
     ? selectedRepairDocumentExtractedItems.parts
     : [];
   const reviewDocumentPreviewKind = getDocumentPreviewKind(selectedRepairDocument?.mime_type);
+  const reviewRequiredFieldComparisons: ReviewRequiredFieldComparisonItem[] = selectedRepair
+    ? [
+        {
+          key: "vehicle",
+          label: "Машина",
+          currentValue:
+            !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
+            (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
+              ? selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || `ID ${selectedRepair.vehicle.id}`
+              : "",
+          ocrValue:
+            typeof selectedRepairDocumentExtractedFields?.plate_number === "string"
+              ? selectedRepairDocumentExtractedFields.plate_number
+              : typeof selectedRepairDocumentExtractedFields?.vin === "string"
+                ? selectedRepairDocumentExtractedFields.vin
+                : "",
+          currentDisplay:
+            !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
+            (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
+              ? selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || `ID ${selectedRepair.vehicle.id}`
+              : "Не привязана",
+          ocrDisplay:
+            typeof selectedRepairDocumentExtractedFields?.plate_number === "string"
+              ? selectedRepairDocumentExtractedFields.plate_number
+              : typeof selectedRepairDocumentExtractedFields?.vin === "string"
+                ? selectedRepairDocumentExtractedFields.vin
+                : "—",
+          status:
+            !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
+            (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
+              ? "match"
+              : "missing",
+        },
+        {
+          key: "order_number",
+          label: "Номер заказ-наряда",
+          currentValue: selectedRepair.order_number || "",
+          ocrValue: selectedRepairDocumentExtractedFields?.order_number,
+          currentDisplay: selectedRepair.order_number || "—",
+          ocrDisplay: String(selectedRepairDocumentExtractedFields?.order_number || "—"),
+          status: getReviewComparisonStatus(selectedRepair.order_number, selectedRepairDocumentExtractedFields?.order_number),
+        },
+        {
+          key: "repair_date",
+          label: "Дата ремонта",
+          currentValue: selectedRepair.repair_date || "",
+          ocrValue: selectedRepairDocumentExtractedFields?.repair_date,
+          currentDisplay: selectedRepair.repair_date || "—",
+          ocrDisplay: String(selectedRepairDocumentExtractedFields?.repair_date || "—"),
+          status: getReviewComparisonStatus(selectedRepair.repair_date, selectedRepairDocumentExtractedFields?.repair_date),
+        },
+        {
+          key: "service",
+          label: "Сервис",
+          currentValue: selectedRepair.service?.name || "",
+          ocrValue: selectedRepairDocumentExtractedFields?.service_name,
+          currentDisplay: selectedRepair.service?.name || "—",
+          ocrDisplay: String(selectedRepairDocumentExtractedFields?.service_name || "—"),
+          status: getReviewComparisonStatus(selectedRepair.service?.name, selectedRepairDocumentExtractedFields?.service_name),
+        },
+        {
+          key: "mileage",
+          label: "Пробег",
+          currentValue: selectedRepair.mileage,
+          ocrValue: selectedRepairDocumentExtractedFields?.mileage,
+          currentDisplay: selectedRepair.mileage > 0 ? String(selectedRepair.mileage) : "—",
+          ocrDisplay: String(selectedRepairDocumentExtractedFields?.mileage || "—"),
+          status: getReviewComparisonStatus(selectedRepair.mileage, selectedRepairDocumentExtractedFields?.mileage, "int"),
+        },
+        {
+          key: "grand_total",
+          label: "Итоговая сумма",
+          currentValue: selectedRepair.grand_total,
+          ocrValue: selectedRepairDocumentExtractedFields?.grand_total,
+          currentDisplay: formatMoney(selectedRepair.grand_total) || "—",
+          ocrDisplay:
+            typeof selectedRepairDocumentExtractedFields?.grand_total === "number"
+              ? formatMoney(selectedRepairDocumentExtractedFields.grand_total) || "—"
+              : "—",
+          status: getReviewComparisonStatus(selectedRepair.grand_total, selectedRepairDocumentExtractedFields?.grand_total, "money"),
+        },
+      ]
+    : [];
+  const reviewMissingRequiredFields = reviewRequiredFieldComparisons
+    .filter((item) => item.status === "missing")
+    .map((item) => item.label);
+  const reviewReadyFieldsCount = reviewRequiredFieldComparisons.filter((item) => item.status !== "missing").length;
+  const canConfirmSelectedReview = reviewMissingRequiredFields.length === 0;
   const canCreateVehicleFromSelectedDocument =
     user?.role === "admin" &&
     isPlaceholderVehicle(selectedRepair?.vehicle.external_id) &&
@@ -2952,6 +3170,7 @@ export default function App() {
   useEffect(() => {
     const nextServiceName = selectedRepair?.service?.name || selectedRepairDocumentOcrServiceName || "";
     setReviewServiceName(nextServiceName);
+    setReviewFieldDraft(selectedRepair ? createReviewRepairFieldsDraft(selectedRepair) : null);
     setReviewServiceForm({
       id: null,
       name: selectedRepairDocumentOcrServiceName,
@@ -2960,6 +3179,7 @@ export default function App() {
       comment: "",
       status: user?.role === "admin" ? "confirmed" : "preliminary",
     });
+    setShowReviewFieldEditor(false);
     setShowReviewServiceEditor(false);
   }, [selectedRepair?.id, selectedRepair?.service?.name, selectedRepairDocumentOcrServiceName, user?.role]);
 
@@ -4196,6 +4416,107 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось создать сервис");
     } finally {
       setReviewServiceSaving(false);
+    }
+  }
+
+  function updateReviewFieldDraft<K extends keyof ReviewRepairFieldsDraft>(field: K, value: ReviewRepairFieldsDraft[K]) {
+    setReviewFieldDraft((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  function fillReviewFieldDraftFromOcr() {
+    setReviewFieldDraft((current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        order_number:
+          typeof selectedRepairDocumentExtractedFields?.order_number === "string"
+            ? selectedRepairDocumentExtractedFields.order_number
+            : current.order_number,
+        repair_date:
+          typeof selectedRepairDocumentExtractedFields?.repair_date === "string"
+            ? selectedRepairDocumentExtractedFields.repair_date
+            : current.repair_date,
+        mileage:
+          selectedRepairDocumentExtractedFields?.mileage !== null &&
+          selectedRepairDocumentExtractedFields?.mileage !== undefined
+            ? String(selectedRepairDocumentExtractedFields.mileage)
+            : current.mileage,
+        work_total:
+          selectedRepairDocumentExtractedFields?.work_total !== null &&
+          selectedRepairDocumentExtractedFields?.work_total !== undefined
+            ? String(selectedRepairDocumentExtractedFields.work_total)
+            : current.work_total,
+        parts_total:
+          selectedRepairDocumentExtractedFields?.parts_total !== null &&
+          selectedRepairDocumentExtractedFields?.parts_total !== undefined
+            ? String(selectedRepairDocumentExtractedFields.parts_total)
+            : current.parts_total,
+        vat_total:
+          selectedRepairDocumentExtractedFields?.vat_total !== null &&
+          selectedRepairDocumentExtractedFields?.vat_total !== undefined
+            ? String(selectedRepairDocumentExtractedFields.vat_total)
+            : current.vat_total,
+        grand_total:
+          selectedRepairDocumentExtractedFields?.grand_total !== null &&
+          selectedRepairDocumentExtractedFields?.grand_total !== undefined
+            ? String(selectedRepairDocumentExtractedFields.grand_total)
+            : current.grand_total,
+      };
+    });
+  }
+
+  async function handleSaveReviewFields() {
+    if (!token || !selectedRepair || !reviewFieldDraft) {
+      return;
+    }
+
+    const parseOptionalNumber = (value: string, label: string) => {
+      const normalized = value.trim().replace(/\s+/g, "").replace(",", ".");
+      if (!normalized) {
+        return null;
+      }
+      const parsed = Number(normalized);
+      if (!Number.isFinite(parsed)) {
+        throw new Error(`Поле \`${label}\` заполнено некорректно`);
+      }
+      return parsed;
+    };
+
+    setReviewFieldSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const payload = {
+        order_number: reviewFieldDraft.order_number.trim() || null,
+        repair_date: reviewFieldDraft.repair_date || null,
+        mileage: parseOptionalNumber(reviewFieldDraft.mileage, "Пробег"),
+        work_total: parseOptionalNumber(reviewFieldDraft.work_total, "Работы"),
+        parts_total: parseOptionalNumber(reviewFieldDraft.parts_total, "Запчасти"),
+        vat_total: parseOptionalNumber(reviewFieldDraft.vat_total, "НДС"),
+        grand_total: parseOptionalNumber(reviewFieldDraft.grand_total, "Итоговая сумма"),
+        reason: reviewFieldDraft.reason.trim() || null,
+        employee_comment: reviewFieldDraft.employee_comment.trim() || null,
+      };
+
+      const savedRepair = await apiRequest<RepairDetail>(
+        `/repairs/${selectedRepair.id}/review-fields`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        },
+        token,
+      );
+      setSelectedRepair(savedRepair);
+      setRepairDraft(createRepairDraft(savedRepair));
+      setReviewFieldDraft(createReviewRepairFieldsDraft(savedRepair));
+      setSuccessMessage("Поля проверки сохранены");
+      await loadWorkspace(token);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить поля проверки");
+    } finally {
+      setReviewFieldSaving(false);
     }
   }
 
@@ -8333,7 +8654,7 @@ export default function App() {
                                           <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                                             <Button
                                               variant="contained"
-                                              disabled={reviewServiceAssigning || reviewServiceSaving}
+                                              disabled={reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving}
                                               onClick={() => {
                                                 void handleAssignReviewService();
                                               }}
@@ -8342,7 +8663,7 @@ export default function App() {
                                             </Button>
                                             <Button
                                               variant="outlined"
-                                              disabled={reviewServiceAssigning || reviewServiceSaving}
+                                              disabled={reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving}
                                               onClick={() => {
                                                 setShowReviewServiceEditor((current) => !current);
                                                 setReviewServiceForm((current) => ({
@@ -8356,7 +8677,7 @@ export default function App() {
                                             {selectedRepair.service ? (
                                               <Button
                                                 variant="text"
-                                                disabled={reviewServiceAssigning || reviewServiceSaving}
+                                                disabled={reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving}
                                                 onClick={() => {
                                                   setReviewServiceName("");
                                                   void assignReviewService("");
@@ -8455,6 +8776,160 @@ export default function App() {
                                                   }}
                                                 >
                                                   {reviewServiceSaving ? "Создание..." : "Создать и назначить"}
+                                                </Button>
+                                              </Grid>
+                                            </Grid>
+                                          ) : null}
+                                        </Stack>
+                                      </Paper>
+
+                                      <Paper className="repair-line repair-review-split" elevation={0}>
+                                        <Stack spacing={1.25}>
+                                          <Box>
+                                            <Typography variant="subtitle1">Сверка обязательных полей</Typography>
+                                            <Typography className="muted-copy">
+                                              Перед подтверждением проверьте обязательные поля и при необходимости поправьте их прямо здесь.
+                                            </Typography>
+                                          </Box>
+                                          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                            <Chip
+                                              size="small"
+                                              color={canConfirmSelectedReview ? "success" : "warning"}
+                                              label={`Готово ${reviewReadyFieldsCount}/${reviewRequiredFieldComparisons.length}`}
+                                            />
+                                            <Button
+                                              size="small"
+                                              variant="outlined"
+                                              disabled={reviewFieldSaving}
+                                              onClick={() => {
+                                                setShowReviewFieldEditor((current) => !current);
+                                              }}
+                                            >
+                                              {showReviewFieldEditor ? "Скрыть правки" : "Править поля"}
+                                            </Button>
+                                            <Button
+                                              size="small"
+                                              variant="text"
+                                              disabled={reviewFieldSaving}
+                                              onClick={fillReviewFieldDraftFromOcr}
+                                            >
+                                              Заполнить из OCR
+                                            </Button>
+                                          </Stack>
+                                          {!canConfirmSelectedReview ? (
+                                            <Alert severity="warning">
+                                              Для подтверждения нужно заполнить: {reviewMissingRequiredFields.join(", ")}.
+                                            </Alert>
+                                          ) : null}
+                                          <Grid container spacing={1.25}>
+                                            {reviewRequiredFieldComparisons.map((item) => (
+                                              <Grid item xs={12} sm={6} key={item.key}>
+                                                <Paper className="repair-line" elevation={0}>
+                                                  <Stack spacing={0.75}>
+                                                    <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
+                                                      <Typography className="metric-label">{item.label}</Typography>
+                                                      <Chip
+                                                        size="small"
+                                                        color={getReviewComparisonColor(item.status)}
+                                                        label={getReviewComparisonLabel(item.status)}
+                                                      />
+                                                    </Stack>
+                                                    <Typography>В ремонте: {item.currentDisplay}</Typography>
+                                                    <Typography className="muted-copy">OCR: {item.ocrDisplay}</Typography>
+                                                  </Stack>
+                                                </Paper>
+                                              </Grid>
+                                            ))}
+                                          </Grid>
+                                          {showReviewFieldEditor && reviewFieldDraft ? (
+                                            <Grid container spacing={1.5}>
+                                              <Grid item xs={12} sm={6}>
+                                                <TextField
+                                                  fullWidth
+                                                  label="Номер заказ-наряда"
+                                                  value={reviewFieldDraft.order_number}
+                                                  onChange={(event) => updateReviewFieldDraft("order_number", event.target.value)}
+                                                />
+                                              </Grid>
+                                              <Grid item xs={12} sm={6}>
+                                                <TextField
+                                                  type="date"
+                                                  fullWidth
+                                                  label="Дата ремонта"
+                                                  value={reviewFieldDraft.repair_date}
+                                                  onChange={(event) => updateReviewFieldDraft("repair_date", event.target.value)}
+                                                  InputLabelProps={{ shrink: true }}
+                                                />
+                                              </Grid>
+                                              <Grid item xs={12} sm={6}>
+                                                <TextField
+                                                  fullWidth
+                                                  label="Пробег"
+                                                  value={reviewFieldDraft.mileage}
+                                                  onChange={(event) => updateReviewFieldDraft("mileage", event.target.value)}
+                                                />
+                                              </Grid>
+                                              <Grid item xs={12} sm={6}>
+                                                <TextField
+                                                  fullWidth
+                                                  label="Итоговая сумма"
+                                                  value={reviewFieldDraft.grand_total}
+                                                  onChange={(event) => updateReviewFieldDraft("grand_total", event.target.value)}
+                                                />
+                                              </Grid>
+                                              <Grid item xs={12} sm={4}>
+                                                <TextField
+                                                  fullWidth
+                                                  label="Работы"
+                                                  value={reviewFieldDraft.work_total}
+                                                  onChange={(event) => updateReviewFieldDraft("work_total", event.target.value)}
+                                                />
+                                              </Grid>
+                                              <Grid item xs={12} sm={4}>
+                                                <TextField
+                                                  fullWidth
+                                                  label="Запчасти"
+                                                  value={reviewFieldDraft.parts_total}
+                                                  onChange={(event) => updateReviewFieldDraft("parts_total", event.target.value)}
+                                                />
+                                              </Grid>
+                                              <Grid item xs={12} sm={4}>
+                                                <TextField
+                                                  fullWidth
+                                                  label="НДС"
+                                                  value={reviewFieldDraft.vat_total}
+                                                  onChange={(event) => updateReviewFieldDraft("vat_total", event.target.value)}
+                                                />
+                                              </Grid>
+                                              <Grid item xs={12}>
+                                                <TextField
+                                                  fullWidth
+                                                  multiline
+                                                  minRows={2}
+                                                  label="Причина ремонта"
+                                                  value={reviewFieldDraft.reason}
+                                                  onChange={(event) => updateReviewFieldDraft("reason", event.target.value)}
+                                                />
+                                              </Grid>
+                                              <Grid item xs={12}>
+                                                <TextField
+                                                  fullWidth
+                                                  multiline
+                                                  minRows={2}
+                                                  label="Комментарий сотрудника"
+                                                  value={reviewFieldDraft.employee_comment}
+                                                  onChange={(event) => updateReviewFieldDraft("employee_comment", event.target.value)}
+                                                />
+                                              </Grid>
+                                              <Grid item xs={12}>
+                                                <Button
+                                                  variant="contained"
+                                                  disabled={reviewFieldSaving}
+                                                  onClick={() => {
+                                                    void handleSaveReviewFields();
+                                                  }}
+                                                >
+                                                  {reviewFieldSaving ? "Сохранение..." : "Сохранить поля проверки"}
                                                 </Button>
                                               </Grid>
                                             </Grid>
@@ -8586,7 +9061,13 @@ export default function App() {
                                 {user?.role === "admin" ? (
                                   <Button
                                     variant="contained"
-                                    disabled={reviewActionLoading || reviewServiceAssigning || reviewServiceSaving}
+                                    disabled={
+                                      reviewActionLoading ||
+                                      reviewServiceAssigning ||
+                                      reviewServiceSaving ||
+                                      reviewFieldSaving ||
+                                      !canConfirmSelectedReview
+                                    }
                                     onClick={() => {
                                       void handleReviewAction("confirm");
                                     }}
@@ -8596,7 +9077,13 @@ export default function App() {
                                 ) : (
                                   <Button
                                     variant="contained"
-                                    disabled={reviewActionLoading || reviewServiceAssigning || reviewServiceSaving}
+                                    disabled={
+                                      reviewActionLoading ||
+                                      reviewServiceAssigning ||
+                                      reviewServiceSaving ||
+                                      reviewFieldSaving ||
+                                      !canConfirmSelectedReview
+                                    }
                                     onClick={() => {
                                       void handleReviewAction("employee_confirm");
                                     }}
@@ -8606,7 +9093,7 @@ export default function App() {
                                 )}
                                 <Button
                                   variant="outlined"
-                                  disabled={reviewActionLoading || reviewServiceAssigning || reviewServiceSaving}
+                                  disabled={reviewActionLoading || reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving}
                                   onClick={() => {
                                     void handleReviewAction("send_to_review");
                                   }}

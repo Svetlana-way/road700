@@ -17,6 +17,7 @@ from app.models.user import User
 from app.schemas.repair import (
     RepairCheckUpdateRequest,
     RepairDetailResponse,
+    RepairReviewFieldsUpdateRequest,
     RepairServiceUpdateRequest,
     RepairUpdateRequest,
 )
@@ -524,6 +525,66 @@ def update_repair_service(
             entity_type="repair",
             entity_id=str(refreshed.id),
             action_type="service_assignment",
+            old_value=old_snapshot,
+            new_value=new_snapshot,
+        )
+    )
+    db.commit()
+    history_entries = fetch_repair_history(db, refreshed.id)
+    document_history_entries = fetch_document_history(db, refreshed)
+    return serialize_repair(refreshed, history_entries, document_history_entries)
+
+
+@router.patch("/{repair_id}/review-fields", response_model=RepairDetailResponse)
+def update_repair_review_fields(
+    repair_id: int,
+    payload: RepairReviewFieldsUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> RepairDetailResponse:
+    repair = load_repair_for_user(db, repair_id, current_user)
+    old_snapshot = build_repair_snapshot(repair)
+    update_data = payload.model_dump(exclude_unset=True)
+
+    if "repair_date" in update_data and update_data["repair_date"] is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Дата ремонта обязательна")
+    if "mileage" in update_data and update_data["mileage"] is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Пробег обязателен")
+    if "work_total" in update_data and update_data["work_total"] is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Сумма работ обязательна")
+    if "parts_total" in update_data and update_data["parts_total"] is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Сумма запчастей обязательна")
+    if "vat_total" in update_data and update_data["vat_total"] is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Сумма НДС обязательна")
+    if "grand_total" in update_data and update_data["grand_total"] is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Итоговая сумма обязательна")
+
+    for field_name in (
+        "order_number",
+        "repair_date",
+        "mileage",
+        "reason",
+        "employee_comment",
+        "work_total",
+        "parts_total",
+        "vat_total",
+        "grand_total",
+    ):
+        if field_name in update_data:
+            setattr(repair, field_name, update_data[field_name])
+
+    repair.is_manually_completed = True
+    db.flush()
+    refreshed = load_repair_for_user(db, repair_id, current_user)
+    if current_user.role == UserRole.ADMIN:
+        create_ocr_learning_signals_for_repair(db, refreshed, current_admin=current_user)
+    new_snapshot = build_repair_snapshot(refreshed)
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            entity_type="repair",
+            entity_id=str(refreshed.id),
+            action_type="review_field_update",
             old_value=old_snapshot,
             new_value=new_snapshot,
         )

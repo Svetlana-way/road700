@@ -176,6 +176,18 @@ class RepairServiceUpdateRequest(BaseModel):
     service_name: Optional[str] = None
 
 
+class RepairReviewFieldsUpdateRequest(BaseModel):
+    order_number: Optional[str] = None
+    repair_date: Optional[date] = None
+    mileage: Optional[int] = None
+    reason: Optional[str] = None
+    employee_comment: Optional[str] = None
+    work_total: Optional[float] = None
+    parts_total: Optional[float] = None
+    vat_total: Optional[float] = None
+    grand_total: Optional[float] = None
+
+
 class RepairCheckUpdateRequest(BaseModel):
     is_resolved: bool
     comment: Optional[str] = None

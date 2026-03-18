@@ -43,6 +43,7 @@ REVIEWABLE_REPAIR_STATUSES = (
     RepairStatus.SUSPICIOUS,
     RepairStatus.OCR_ERROR,
 )
+PLACEHOLDER_EXTERNAL_ID = "__batch_import_placeholder__"
 REVIEW_ACTIONS = {"employee_confirm", "confirm", "send_to_review"}
 REVIEW_QUEUE_CATEGORIES = {
     "all",
@@ -353,6 +354,26 @@ def append_review_comment(existing: Optional[str], action: str, comment: Optiona
     return note_line
 
 
+def collect_missing_confirmation_fields(document: Document) -> list[str]:
+    repair = document.repair
+    missing_fields: list[str] = []
+
+    if repair.vehicle is None or repair.vehicle.external_id == PLACEHOLDER_EXTERNAL_ID:
+        missing_fields.append("машина")
+    if not repair.order_number:
+        missing_fields.append("номер заказ-наряда")
+    if repair.repair_date is None:
+        missing_fields.append("дата ремонта")
+    if repair.service is None:
+        missing_fields.append("сервис")
+    if repair.mileage is None or int(repair.mileage) <= 0:
+        missing_fields.append("пробег")
+    if repair.grand_total is None or float(repair.grand_total) <= 0:
+        missing_fields.append("итоговая сумма")
+
+    return missing_fields
+
+
 def apply_review_action(document: Document, action: str, comment: Optional[str], current_user: User) -> str:
     if action == "employee_confirm":
         document.status = DocumentStatus.CONFIRMED
@@ -658,6 +679,13 @@ def execute_review_action(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
     document = get_visible_document(db, current_user, document_id)
+    if action in {"employee_confirm", "confirm"}:
+        missing_fields = collect_missing_confirmation_fields(document)
+        if missing_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Нельзя подтвердить документ. Заполните обязательные поля: {', '.join(missing_fields)}",
+            )
     old_snapshot = build_repair_state_snapshot(document)
     message = apply_review_action(document, action, payload.comment, current_user)
 

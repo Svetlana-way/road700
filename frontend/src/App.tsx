@@ -9,6 +9,7 @@ import {
   CircularProgress,
   Container,
   Dialog,
+  DialogActions,
   DialogContent,
   DialogTitle,
   Divider,
@@ -2162,6 +2163,7 @@ export default function App() {
   const [activeTechAdminTab, setActiveTechAdminTab] = useState<TechAdminTab>("learning");
   const [activeRepairTab, setActiveRepairTab] = useState<RepairTab>("overview");
   const [activeQualityTab, setActiveQualityTab] = useState<QualityDetailTab>("documents");
+  const [showQualityDialog, setShowQualityDialog] = useState(false);
   const [showTechAdminTab, setShowTechAdminTab] = useState(false);
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [showPasswordRecoveryRequest, setShowPasswordRecoveryRequest] = useState(false);
@@ -4829,213 +4831,255 @@ export default function App() {
               <Box>
                 <Typography variant="h5">Что требует внимания</Typography>
                 <Typography className="muted-copy">
-                  Детализация по проблемным документам, предварительным справочникам и конфликтам импорта.
+                  Полный рабочий список скрыт с главной страницы и открывается по отдельной кнопке.
                 </Typography>
               </Box>
-              <Tabs
-                value={activeQualityTab}
-                onChange={(_event, value: QualityDetailTab) => setActiveQualityTab(value)}
-                variant="scrollable"
-                scrollButtons="auto"
-                allowScrollButtonsMobile
-              >
-                <Tab label={`Документы · ${dataQualityDetails?.counts.documents || 0}`} value="documents" />
-                <Tab label={`Сервисы · ${dataQualityDetails?.counts.services || 0}`} value="services" />
-                <Tab label={`Работы · ${dataQualityDetails?.counts.works || 0}`} value="works" />
-                <Tab label={`Материалы · ${dataQualityDetails?.counts.parts || 0}`} value="parts" />
-                <Tab label={`Конфликты · ${dataQualityDetails?.counts.conflicts || 0}`} value="conflicts" />
-              </Tabs>
-
-              {activeQualityTab === "documents" ? (
-                <Stack spacing={1.5}>
-                  {dataQualityDetails?.documents.length ? (
-                    dataQualityDetails.documents.map((item) => (
-                      <Paper className="repair-line" key={`quality-document-${item.document_id}`} elevation={0}>
-                        <Stack spacing={1}>
-                          <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                            <Typography variant="subtitle1">{item.original_filename}</Typography>
-                            <Stack direction="row" spacing={1}>
-                              <Chip
-                                size="small"
-                                color={statusColor(item.document_status as DocumentStatus)}
-                                label={formatDocumentStatusLabel(item.document_status)}
-                              />
-                              <Chip
-                                size="small"
-                                variant="outlined"
-                                label={`OCR ${formatConfidence(item.ocr_confidence)}`}
-                              />
-                            </Stack>
-                          </Stack>
-                          <Typography className="muted-copy">
-                            {formatQualityVehicle(item)}
-                            {item.repair_date ? ` · ${item.repair_date}` : ""}
-                            {item.repair_status ? ` · ${formatRepairStatus(item.repair_status)}` : ""}
-                          </Typography>
-                          <Stack direction="row" spacing={1}>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              disabled={!item.repair_id}
-                              onClick={() => {
-                                void openQualityRepair(item.document_id, item.repair_id);
-                              }}
-                            >
-                              Открыть ремонт
-                            </Button>
-                          </Stack>
-                        </Stack>
-                      </Paper>
-                    ))
-                  ) : (
-                    <Typography className="muted-copy">Сейчас проблемных документов в выборке нет.</Typography>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
+                <Button
+                  variant="contained"
+                  color="warning"
+                  size="large"
+                  onClick={() => setShowQualityDialog(true)}
+                >
+                  Внимание !!!
+                </Button>
+                <Typography className="muted-copy">
+                  Всего записей для разбора: {(
+                    (dataQualityDetails?.counts.documents || 0) +
+                    (dataQualityDetails?.counts.services || 0) +
+                    (dataQualityDetails?.counts.works || 0) +
+                    (dataQualityDetails?.counts.parts || 0) +
+                    (dataQualityDetails?.counts.conflicts || 0)
                   )}
-                </Stack>
-              ) : null}
+                </Typography>
+              </Stack>
+            </Stack>
+          </Paper>
+          <Dialog
+            open={showQualityDialog}
+            onClose={() => setShowQualityDialog(false)}
+            fullWidth
+            maxWidth="lg"
+          >
+            <DialogTitle>Внимание !!!</DialogTitle>
+            <DialogContent dividers>
+              <Stack spacing={2}>
+                <Typography className="muted-copy">
+                  Детализация по проблемным документам, предварительным справочникам и конфликтам импорта.
+                </Typography>
+                <Tabs
+                  value={activeQualityTab}
+                  onChange={(_event, value: QualityDetailTab) => setActiveQualityTab(value)}
+                  variant="scrollable"
+                  scrollButtons="auto"
+                  allowScrollButtonsMobile
+                >
+                  <Tab label={`Документы · ${dataQualityDetails?.counts.documents || 0}`} value="documents" />
+                  <Tab label={`Сервисы · ${dataQualityDetails?.counts.services || 0}`} value="services" />
+                  <Tab label={`Работы · ${dataQualityDetails?.counts.works || 0}`} value="works" />
+                  <Tab label={`Материалы · ${dataQualityDetails?.counts.parts || 0}`} value="parts" />
+                  <Tab label={`Конфликты · ${dataQualityDetails?.counts.conflicts || 0}`} value="conflicts" />
+                </Tabs>
 
-              {activeQualityTab === "services" ? (
-                <Stack spacing={1.5}>
-                  {dataQualityDetails?.services.length ? (
-                    dataQualityDetails.services.map((item) => (
-                      <Paper className="repair-line" key={`quality-service-${item.service_id}`} elevation={0}>
-                        <Stack spacing={1}>
-                          <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                            <Typography variant="subtitle1">{item.name}</Typography>
-                            <Chip size="small" color="warning" label="Предварительный" />
-                          </Stack>
-                          <Typography className="muted-copy">
-                            {[item.city, `ремонтов ${item.repairs_total}`, item.last_repair_date ? `последний ${item.last_repair_date}` : null]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </Typography>
-                          {user?.role === "admin" ? (
+                {activeQualityTab === "documents" ? (
+                  <Stack spacing={1.5}>
+                    {dataQualityDetails?.documents.length ? (
+                      dataQualityDetails.documents.map((item) => (
+                        <Paper className="repair-line" key={`quality-document-${item.document_id}`} elevation={0}>
+                          <Stack spacing={1}>
+                            <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                              <Typography variant="subtitle1">{item.original_filename}</Typography>
+                              <Stack direction="row" spacing={1}>
+                                <Chip
+                                  size="small"
+                                  color={statusColor(item.document_status as DocumentStatus)}
+                                  label={formatDocumentStatusLabel(item.document_status)}
+                                />
+                                <Chip
+                                  size="small"
+                                  variant="outlined"
+                                  label={`OCR ${formatConfidence(item.ocr_confidence)}`}
+                                />
+                              </Stack>
+                            </Stack>
+                            <Typography className="muted-copy">
+                              {formatQualityVehicle(item)}
+                              {item.repair_date ? ` · ${item.repair_date}` : ""}
+                              {item.repair_status ? ` · ${formatRepairStatus(item.repair_status)}` : ""}
+                            </Typography>
                             <Stack direction="row" spacing={1}>
                               <Button
                                 size="small"
                                 variant="outlined"
+                                disabled={!item.repair_id}
                                 onClick={() => {
-                                  void openQualityService(item.name);
-                                }}
-                              >
-                                Открыть в админке
-                              </Button>
-                            </Stack>
-                          ) : null}
-                        </Stack>
-                      </Paper>
-                    ))
-                  ) : (
-                    <Typography className="muted-copy">Неподтверждённых сервисов в выборке нет.</Typography>
-                  )}
-                </Stack>
-              ) : null}
-
-              {activeQualityTab === "works" ? (
-                <Stack spacing={1.5}>
-                  {dataQualityDetails?.works.length ? (
-                    dataQualityDetails.works.map((item) => (
-                      <Paper className="repair-line" key={`quality-work-${item.work_id}`} elevation={0}>
-                        <Stack spacing={1}>
-                          <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                            <Typography variant="subtitle1">{item.work_name}</Typography>
-                            <Chip size="small" color="warning" label={formatMoney(item.line_total)} />
-                          </Stack>
-                          <Typography className="muted-copy">
-                            {formatQualityVehicle(item)} · {item.repair_date} · ремонт #{item.repair_id}
-                          </Typography>
-                          <Stack direction="row" spacing={1}>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              disabled={!item.repair_id}
-                              onClick={() => {
-                                void openQualityRepair(item.document_id, item.repair_id);
-                              }}
-                            >
-                              Открыть ремонт
-                            </Button>
-                          </Stack>
-                        </Stack>
-                      </Paper>
-                    ))
-                  ) : (
-                    <Typography className="muted-copy">Неподтверждённых работ в выборке нет.</Typography>
-                  )}
-                </Stack>
-              ) : null}
-
-              {activeQualityTab === "parts" ? (
-                <Stack spacing={1.5}>
-                  {dataQualityDetails?.parts.length ? (
-                    dataQualityDetails.parts.map((item) => (
-                      <Paper className="repair-line" key={`quality-part-${item.part_id}`} elevation={0}>
-                        <Stack spacing={1}>
-                          <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                            <Typography variant="subtitle1">{item.part_name}</Typography>
-                            <Chip size="small" color="warning" label={formatMoney(item.line_total)} />
-                          </Stack>
-                          <Typography className="muted-copy">
-                            {formatQualityVehicle(item)} · {item.repair_date} · ремонт #{item.repair_id}
-                          </Typography>
-                          <Stack direction="row" spacing={1}>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              disabled={!item.repair_id}
-                              onClick={() => {
-                                void openQualityRepair(item.document_id, item.repair_id);
-                              }}
-                            >
-                              Открыть ремонт
-                            </Button>
-                          </Stack>
-                        </Stack>
-                      </Paper>
-                    ))
-                  ) : (
-                    <Typography className="muted-copy">Неподтверждённых материалов в выборке нет.</Typography>
-                  )}
-                </Stack>
-              ) : null}
-
-              {activeQualityTab === "conflicts" ? (
-                <Stack spacing={1.5}>
-                  {dataQualityDetails?.conflicts.length ? (
-                    dataQualityDetails.conflicts.map((item) => (
-                      <Paper className="repair-line" key={`quality-conflict-${item.conflict_id}`} elevation={0}>
-                        <Stack spacing={1}>
-                          <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                            <Typography variant="subtitle1">{item.entity_type}</Typography>
-                            <Chip size="small" color="warning" label="Ожидает решения" />
-                          </Stack>
-                          <Typography className="muted-copy">
-                            {[item.conflict_key, item.source_filename, formatQualityVehicle(item), item.created_at ? formatDateTime(item.created_at) : null]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </Typography>
-                          {item.document_id && item.repair_id ? (
-                            <Stack direction="row" spacing={1}>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                onClick={() => {
+                                  setShowQualityDialog(false);
                                   void openQualityRepair(item.document_id, item.repair_id);
                                 }}
                               >
                                 Открыть ремонт
                               </Button>
                             </Stack>
-                          ) : null}
-                        </Stack>
-                      </Paper>
-                    ))
-                  ) : (
-                    <Typography className="muted-copy">Конфликтов импорта в выборке нет.</Typography>
-                  )}
-                </Stack>
-              ) : null}
-            </Stack>
-          </Paper>
+                          </Stack>
+                        </Paper>
+                      ))
+                    ) : (
+                      <Typography className="muted-copy">Сейчас проблемных документов в выборке нет.</Typography>
+                    )}
+                  </Stack>
+                ) : null}
+
+                {activeQualityTab === "services" ? (
+                  <Stack spacing={1.5}>
+                    {dataQualityDetails?.services.length ? (
+                      dataQualityDetails.services.map((item) => (
+                        <Paper className="repair-line" key={`quality-service-${item.service_id}`} elevation={0}>
+                          <Stack spacing={1}>
+                            <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                              <Typography variant="subtitle1">{item.name}</Typography>
+                              <Chip size="small" color="warning" label="Предварительный" />
+                            </Stack>
+                            <Typography className="muted-copy">
+                              {[item.city, `ремонтов ${item.repairs_total}`, item.last_repair_date ? `последний ${item.last_repair_date}` : null]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </Typography>
+                            {user?.role === "admin" ? (
+                              <Stack direction="row" spacing={1}>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  onClick={() => {
+                                    setShowQualityDialog(false);
+                                    void openQualityService(item.name);
+                                  }}
+                                >
+                                  Открыть в админке
+                                </Button>
+                              </Stack>
+                            ) : null}
+                          </Stack>
+                        </Paper>
+                      ))
+                    ) : (
+                      <Typography className="muted-copy">Неподтверждённых сервисов в выборке нет.</Typography>
+                    )}
+                  </Stack>
+                ) : null}
+
+                {activeQualityTab === "works" ? (
+                  <Stack spacing={1.5}>
+                    {dataQualityDetails?.works.length ? (
+                      dataQualityDetails.works.map((item) => (
+                        <Paper className="repair-line" key={`quality-work-${item.work_id}`} elevation={0}>
+                          <Stack spacing={1}>
+                            <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                              <Typography variant="subtitle1">{item.work_name}</Typography>
+                              <Chip size="small" color="warning" label={formatMoney(item.line_total)} />
+                            </Stack>
+                            <Typography className="muted-copy">
+                              {formatQualityVehicle(item)} · {item.repair_date} · ремонт #{item.repair_id}
+                            </Typography>
+                            <Stack direction="row" spacing={1}>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                disabled={!item.repair_id}
+                                onClick={() => {
+                                  setShowQualityDialog(false);
+                                  void openQualityRepair(item.document_id, item.repair_id);
+                                }}
+                              >
+                                Открыть ремонт
+                              </Button>
+                            </Stack>
+                          </Stack>
+                        </Paper>
+                      ))
+                    ) : (
+                      <Typography className="muted-copy">Неподтверждённых работ в выборке нет.</Typography>
+                    )}
+                  </Stack>
+                ) : null}
+
+                {activeQualityTab === "parts" ? (
+                  <Stack spacing={1.5}>
+                    {dataQualityDetails?.parts.length ? (
+                      dataQualityDetails.parts.map((item) => (
+                        <Paper className="repair-line" key={`quality-part-${item.part_id}`} elevation={0}>
+                          <Stack spacing={1}>
+                            <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                              <Typography variant="subtitle1">{item.part_name}</Typography>
+                              <Chip size="small" color="warning" label={formatMoney(item.line_total)} />
+                            </Stack>
+                            <Typography className="muted-copy">
+                              {formatQualityVehicle(item)} · {item.repair_date} · ремонт #{item.repair_id}
+                            </Typography>
+                            <Stack direction="row" spacing={1}>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                disabled={!item.repair_id}
+                                onClick={() => {
+                                  setShowQualityDialog(false);
+                                  void openQualityRepair(item.document_id, item.repair_id);
+                                }}
+                              >
+                                Открыть ремонт
+                              </Button>
+                            </Stack>
+                          </Stack>
+                        </Paper>
+                      ))
+                    ) : (
+                      <Typography className="muted-copy">Неподтверждённых материалов в выборке нет.</Typography>
+                    )}
+                  </Stack>
+                ) : null}
+
+                {activeQualityTab === "conflicts" ? (
+                  <Stack spacing={1.5}>
+                    {dataQualityDetails?.conflicts.length ? (
+                      dataQualityDetails.conflicts.map((item) => (
+                        <Paper className="repair-line" key={`quality-conflict-${item.conflict_id}`} elevation={0}>
+                          <Stack spacing={1}>
+                            <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                              <Typography variant="subtitle1">{item.entity_type}</Typography>
+                              <Chip size="small" color="warning" label="Ожидает решения" />
+                            </Stack>
+                            <Typography className="muted-copy">
+                              {[item.conflict_key, item.source_filename, formatQualityVehicle(item), item.created_at ? formatDateTime(item.created_at) : null]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </Typography>
+                            {item.document_id && item.repair_id ? (
+                              <Stack direction="row" spacing={1}>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  onClick={() => {
+                                    setShowQualityDialog(false);
+                                    void openQualityRepair(item.document_id, item.repair_id);
+                                  }}
+                                >
+                                  Открыть ремонт
+                                </Button>
+                              </Stack>
+                            ) : null}
+                          </Stack>
+                        </Paper>
+                      ))
+                    ) : (
+                      <Typography className="muted-copy">Конфликтов импорта в выборке нет.</Typography>
+                    )}
+                  </Stack>
+                ) : null}
+              </Stack>
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setShowQualityDialog(false)}>Закрыть</Button>
+            </DialogActions>
+          </Dialog>
 
           <Grid container spacing={3}>
             {activeWorkspaceTab === "documents" ? (

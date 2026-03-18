@@ -1343,7 +1343,7 @@ function buildAuditEntryDetails(entry: AuditLogItem) {
   return lines;
 }
 
-function formatMoney(value?: number) {
+function formatMoney(value?: number | null) {
   if (typeof value !== "number") {
     return null;
   }
@@ -1540,6 +1540,41 @@ function formatHours(value: number | null | undefined) {
     return null;
   }
   return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(value)} ч`;
+}
+
+function formatCompactNumber(value: number | null | undefined) {
+  if (typeof value !== "number") {
+    return null;
+  }
+  return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(value);
+}
+
+function readStringValue(item: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = item[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function readNumberValue(item: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = item[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function formatOcrLineUnit(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+  const normalizedValue = value.trim();
+  return normalizedValue || null;
 }
 
 function splitEditorLines(value: string) {
@@ -10657,43 +10692,93 @@ export default function App() {
                                             </Typography>
                                           ) : null}
                                           {selectedRepairDocumentWorks.length > 0 ? (
-                                            <Stack spacing={0.75}>
-                                              <Typography className="metric-label">Работы OCR</Typography>
-                                              {selectedRepairDocumentWorks.slice(0, 6).map((item, index) => (
-                                                <Box key={`review-work-${index}`}>
-                                                  <Typography>
-                                                    {String(item.work_name || item.name || `Работа ${index + 1}`)}
-                                                  </Typography>
-                                                  <Typography className="muted-copy">
-                                                    Кол-во {String(item.quantity || "—")} · Цена {typeof item.price === "number" ? formatMoney(item.price) : "—"}
-                                                    {" · "}Сумма {typeof item.line_total === "number" ? formatMoney(item.line_total) : "—"}
-                                                  </Typography>
-                                                </Box>
-                                              ))}
-                                              {selectedRepairDocumentWorks.length > 6 ? (
+                                            <Stack spacing={1}>
+                                              <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                                                <Typography className="metric-label">Работы OCR</Typography>
+                                                <Chip size="small" variant="outlined" label={`${selectedRepairDocumentWorks.length} строк`} />
+                                              </Stack>
+                                              <Box className="ocr-lines-grid">
+                                                {selectedRepairDocumentWorks.slice(0, 8).map((item, index) => {
+                                                  const name = readStringValue(item, "work_name", "name") || `Работа ${index + 1}`;
+                                                  const code = readStringValue(item, "work_code");
+                                                  const quantity = readNumberValue(item, "quantity");
+                                                  const unitName = formatOcrLineUnit(readStringValue(item, "unit_name"));
+                                                  const price = readNumberValue(item, "price");
+                                                  const lineTotal = readNumberValue(item, "line_total");
+                                                  const standardHours = readNumberValue(item, "standard_hours");
+                                                  const actualHours = readNumberValue(item, "actual_hours");
+
+                                                  return (
+                                                    <Paper className="ocr-line-card" key={`review-work-${index}`} elevation={0}>
+                                                      <Stack spacing={1}>
+                                                        <Stack direction="row" justifyContent="space-between" spacing={1.5} alignItems="flex-start">
+                                                          <Box sx={{ minWidth: 0 }}>
+                                                            <Typography className="ocr-line-title">{name}</Typography>
+                                                            {code ? (
+                                                              <Typography className="muted-copy">Код: {code}</Typography>
+                                                            ) : null}
+                                                          </Box>
+                                                          <Typography className="ocr-line-total">{formatMoney(lineTotal) || "—"}</Typography>
+                                                        </Stack>
+                                                        <Box className="ocr-line-meta">
+                                                          <span>{`Кол-во ${quantity !== null ? formatCompactNumber(quantity) : "—"}${unitName ? ` ${unitName}` : ""}`}</span>
+                                                          <span>{`Цена ${formatMoney(price) || "—"}`}</span>
+                                                          <span>{`Сумма ${formatMoney(lineTotal) || "—"}`}</span>
+                                                          {standardHours !== null ? <span>{`Норма ${formatHours(standardHours)}`}</span> : null}
+                                                          {actualHours !== null ? <span>{`Факт ${formatHours(actualHours)}`}</span> : null}
+                                                        </Box>
+                                                      </Stack>
+                                                    </Paper>
+                                                  );
+                                                })}
+                                              </Box>
+                                              {selectedRepairDocumentWorks.length > 8 ? (
                                                 <Typography className="muted-copy">
-                                                  И ещё {selectedRepairDocumentWorks.length - 6} строк работ.
+                                                  И ещё {selectedRepairDocumentWorks.length - 8} строк работ.
                                                 </Typography>
                                               ) : null}
                                             </Stack>
                                           ) : null}
                                           {selectedRepairDocumentParts.length > 0 ? (
-                                            <Stack spacing={0.75}>
-                                              <Typography className="metric-label">Запчасти OCR</Typography>
-                                              {selectedRepairDocumentParts.slice(0, 6).map((item, index) => (
-                                                <Box key={`review-part-${index}`}>
-                                                  <Typography>
-                                                    {String(item.part_name || item.name || `Запчасть ${index + 1}`)}
-                                                  </Typography>
-                                                  <Typography className="muted-copy">
-                                                    Кол-во {String(item.quantity || "—")} · Цена {typeof item.price === "number" ? formatMoney(item.price) : "—"}
-                                                    {" · "}Сумма {typeof item.line_total === "number" ? formatMoney(item.line_total) : "—"}
-                                                  </Typography>
-                                                </Box>
-                                              ))}
-                                              {selectedRepairDocumentParts.length > 6 ? (
+                                            <Stack spacing={1}>
+                                              <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                                                <Typography className="metric-label">Запчасти OCR</Typography>
+                                                <Chip size="small" variant="outlined" label={`${selectedRepairDocumentParts.length} строк`} />
+                                              </Stack>
+                                              <Box className="ocr-lines-grid">
+                                                {selectedRepairDocumentParts.slice(0, 8).map((item, index) => {
+                                                  const name = readStringValue(item, "part_name", "name") || `Запчасть ${index + 1}`;
+                                                  const article = readStringValue(item, "article");
+                                                  const quantity = readNumberValue(item, "quantity");
+                                                  const unitName = formatOcrLineUnit(readStringValue(item, "unit_name"));
+                                                  const price = readNumberValue(item, "price");
+                                                  const lineTotal = readNumberValue(item, "line_total");
+
+                                                  return (
+                                                    <Paper className="ocr-line-card" key={`review-part-${index}`} elevation={0}>
+                                                      <Stack spacing={1}>
+                                                        <Stack direction="row" justifyContent="space-between" spacing={1.5} alignItems="flex-start">
+                                                          <Box sx={{ minWidth: 0 }}>
+                                                            <Typography className="ocr-line-title">{name}</Typography>
+                                                            {article ? (
+                                                              <Typography className="muted-copy">Артикул: {article}</Typography>
+                                                            ) : null}
+                                                          </Box>
+                                                          <Typography className="ocr-line-total">{formatMoney(lineTotal) || "—"}</Typography>
+                                                        </Stack>
+                                                        <Box className="ocr-line-meta">
+                                                          <span>{`Кол-во ${quantity !== null ? formatCompactNumber(quantity) : "—"}${unitName ? ` ${unitName}` : ""}`}</span>
+                                                          <span>{`Цена ${formatMoney(price) || "—"}`}</span>
+                                                          <span>{`Сумма ${formatMoney(lineTotal) || "—"}`}</span>
+                                                        </Box>
+                                                      </Stack>
+                                                    </Paper>
+                                                  );
+                                                })}
+                                              </Box>
+                                              {selectedRepairDocumentParts.length > 8 ? (
                                                 <Typography className="muted-copy">
-                                                  И ещё {selectedRepairDocumentParts.length - 6} строк запчастей.
+                                                  И ещё {selectedRepairDocumentParts.length - 8} строк запчастей.
                                                 </Typography>
                                               ) : null}
                                             </Stack>

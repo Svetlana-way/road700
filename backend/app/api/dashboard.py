@@ -22,6 +22,7 @@ from app.schemas.dashboard import (
     DashboardQualityWorkItem,
     DashboardSummaryResponse,
 )
+from app.services.service_catalog import get_service_catalog_names
 
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -39,6 +40,14 @@ ACTIVE_REVIEW_DOCUMENT_STATUSES = [
     DocumentStatus.PARTIALLY_RECOGNIZED,
     DocumentStatus.NEEDS_REVIEW,
 ]
+
+
+def get_visible_services_condition():
+    catalog_names = get_service_catalog_names()
+    return or_(
+        Service.name.in_(catalog_names),
+        Service.created_by_user_id.is_not(None),
+    )
 
 
 @router.get("/summary", response_model=DashboardSummaryResponse)
@@ -117,6 +126,7 @@ def get_dashboard_data_quality(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> DashboardDataQualityResponse:
+    visible_services = get_visible_services_condition()
     if current_user.role == UserRole.ADMIN:
         average_ocr_confidence = db.scalar(select(func.avg(Document.ocr_confidence)))
         documents_low_confidence = (
@@ -142,7 +152,13 @@ def get_dashboard_data_quality(
             or 0
         )
         services_preliminary = (
-            db.scalar(select(func.count(Service.id)).where(Service.status == ServiceStatus.PRELIMINARY)) or 0
+            db.scalar(
+                select(func.count(Service.id)).where(
+                    visible_services,
+                    Service.status == ServiceStatus.PRELIMINARY,
+                )
+            )
+            or 0
         )
         works_preliminary = (
             db.scalar(select(func.count(RepairWork.id)).where(RepairWork.status == CatalogStatus.PRELIMINARY)) or 0
@@ -205,6 +221,7 @@ def get_dashboard_data_quality(
                 select(func.count(distinct(Service.id)))
                 .join(Repair, Repair.service_id == Service.id)
                 .where(
+                    visible_services,
                     Repair.vehicle_id.in_(visible_ids),
                     Service.status == ServiceStatus.PRELIMINARY,
                 )
@@ -277,6 +294,7 @@ def get_dashboard_data_quality_details(
 ) -> DashboardDataQualityDetailsResponse:
     safe_limit = min(max(limit, 1), 25)
     visible_ids = get_allowed_vehicle_ids_query(current_user) if current_user.role != UserRole.ADMIN else None
+    visible_services = get_visible_services_condition()
     document_condition = or_(
         Document.status.in_(REVIEW_QUEUE_DOCUMENT_STATUSES),
         Document.ocr_confidence.is_(None),
@@ -328,6 +346,7 @@ def get_dashboard_data_quality_details(
     ]
 
     service_count_stmt = select(func.count(distinct(Service.id))).select_from(Service).where(
+        visible_services,
         Service.status == ServiceStatus.PRELIMINARY
     )
     if visible_ids is not None:
@@ -345,7 +364,10 @@ def get_dashboard_data_quality_details(
             func.max(Repair.repair_date).label("last_repair_date"),
         )
         .outerjoin(Repair, Repair.service_id == Service.id)
-        .where(Service.status == ServiceStatus.PRELIMINARY)
+        .where(
+            visible_services,
+            Service.status == ServiceStatus.PRELIMINARY,
+        )
         .group_by(Service.id, Service.name, Service.city)
         .order_by(func.count(distinct(Repair.id)).desc(), func.max(Repair.repair_date).desc(), Service.name.asc())
         .limit(safe_limit)

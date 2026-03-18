@@ -117,6 +117,7 @@ class RepairDetailResponse(BaseModel):
     parts_total: float
     vat_total: float
     grand_total: float
+    expected_total: Optional[float]
     status: RepairStatus
     is_preliminary: bool
     is_partially_recognized: bool

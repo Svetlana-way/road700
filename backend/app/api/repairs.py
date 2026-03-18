@@ -201,6 +201,7 @@ def serialize_repair(
         parts_total=float(repair.parts_total),
         vat_total=float(repair.vat_total),
         grand_total=float(repair.grand_total),
+        expected_total=float(repair.expected_total) if repair.expected_total is not None else None,
         status=repair.status,
         is_preliminary=repair.is_preliminary,
         is_partially_recognized=repair.is_partially_recognized,

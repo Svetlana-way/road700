@@ -938,6 +938,7 @@ type RepairDetail = {
   parts_total: number;
   vat_total: number;
   grand_total: number;
+  expected_total: number | null;
   status: string;
   is_preliminary: boolean;
   is_partially_recognized: boolean;
@@ -11581,6 +11582,34 @@ export default function App() {
                                   <Typography className="metric-label">Итого</Typography>
                                   <Typography>{formatMoney(selectedRepair.grand_total) || "—"}</Typography>
                                 </Grid>
+                                {selectedRepair.expected_total !== null ? (
+                                  <>
+                                    <Grid item xs={6}>
+                                      <Typography className="metric-label">Ожидаемая стоимость</Typography>
+                                      <Typography>{formatMoney(selectedRepair.expected_total) || "—"}</Typography>
+                                    </Grid>
+                                    <Grid item xs={6}>
+                                      <Typography className="metric-label">Отклонение от ожидаемой</Typography>
+                                      <Typography>
+                                        {(() => {
+                                          const delta = selectedRepair.grand_total - selectedRepair.expected_total;
+                                          const ratio =
+                                            selectedRepair.expected_total > 0
+                                              ? (delta / selectedRepair.expected_total) * 100
+                                              : null;
+                                          const deltaLabel = formatMoney(delta) || "—";
+                                          const ratioLabel =
+                                            ratio !== null
+                                              ? `${delta >= 0 ? "+" : ""}${new Intl.NumberFormat("ru-RU", {
+                                                  maximumFractionDigits: 1,
+                                                }).format(ratio)}%`
+                                              : null;
+                                          return ratioLabel ? `${deltaLabel} · ${ratioLabel}` : deltaLabel;
+                                        })()}
+                                      </Typography>
+                                    </Grid>
+                                  </>
+                                ) : null}
                               </Grid>
                               </Paper>
                             ) : null}

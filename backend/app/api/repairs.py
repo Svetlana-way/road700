@@ -282,6 +282,22 @@ def replace_manual_lines(
                 )
             )
 
+    if parts_payload is not None:
+        db.execute(delete(RepairPart).where(RepairPart.repair_id == repair.id))
+        for item in parts_payload:
+            db.add(
+                RepairPart(
+                    repair_id=repair.id,
+                    article=item.article,
+                    part_name=item.part_name,
+                    quantity=item.quantity,
+                    unit_name=item.unit_name,
+                    price=item.price,
+                    line_total=item.line_total,
+                    status=item.status,
+                )
+            )
+
 
 def get_learning_source_document(repair: Repair) -> Document | None:
     if repair.source_document_id is not None:
@@ -385,23 +401,6 @@ def create_ocr_learning_signals_for_repair(
                 status="new",
             )
         )
-
-    if parts_payload is not None:
-        db.execute(delete(RepairPart).where(RepairPart.repair_id == repair.id))
-        for item in parts_payload:
-            db.add(
-                RepairPart(
-                    repair_id=repair.id,
-                    article=item.article,
-                    part_name=item.part_name,
-                    quantity=item.quantity,
-                    unit_name=item.unit_name,
-                    price=item.price,
-                    line_total=item.line_total,
-                    status=item.status,
-                )
-            )
-
 
 @router.get("/{repair_id}", response_model=RepairDetailResponse)
 def get_repair(

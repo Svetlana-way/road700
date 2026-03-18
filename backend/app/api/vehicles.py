@@ -4,13 +4,16 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.api.access import apply_vehicle_scope
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.models.document import Document
+from app.models.enums import RepairStatus
+from app.models.repair import Repair
 from app.models.enums import VehicleType
 from app.models.user import User
-from app.models.vehicle import Vehicle, VehicleLinkHistory
+from app.models.vehicle import Vehicle, VehicleAssignmentHistory, VehicleLinkHistory
 from app.schemas.vehicle import (
     VehicleDetailResponse,
     VehicleImportRequest,
@@ -98,8 +101,76 @@ def get_vehicle(
         .order_by(VehicleLinkHistory.starts_at.desc(), VehicleLinkHistory.id.desc())
     ).all()
 
+    active_assignments = db.scalars(
+        select(VehicleAssignmentHistory)
+        .options(joinedload(VehicleAssignmentHistory.user))
+        .where(
+            VehicleAssignmentHistory.vehicle_id == vehicle.id,
+            VehicleAssignmentHistory.starts_at <= today,
+            or_(
+                VehicleAssignmentHistory.ends_at.is_(None),
+                VehicleAssignmentHistory.ends_at >= today,
+            ),
+        )
+        .order_by(VehicleAssignmentHistory.starts_at.desc(), VehicleAssignmentHistory.id.desc())
+    ).all()
+
+    repair_history = db.scalars(
+        select(Repair)
+        .options(
+            joinedload(Repair.service),
+            joinedload(Repair.documents),
+        )
+        .where(Repair.vehicle_id == vehicle.id)
+        .order_by(Repair.repair_date.desc(), Repair.id.desc())
+    ).unique().all()
+
+    documents_total = sum(len(repair.documents) for repair in repair_history)
+    confirmed_repairs = sum(1 for repair in repair_history if repair.status == RepairStatus.CONFIRMED)
+    suspicious_repairs = sum(1 for repair in repair_history if repair.status == RepairStatus.SUSPICIOUS)
+    last_repair = repair_history[0] if repair_history else None
+
     payload = VehicleRead.model_validate(vehicle).model_dump()
     payload["active_links"] = links
+    payload["active_assignments"] = [
+        {
+            "id": assignment.id,
+            "user_id": assignment.user_id,
+            "starts_at": assignment.starts_at,
+            "ends_at": assignment.ends_at,
+            "comment": assignment.comment,
+            "user": {
+                "id": assignment.user.id,
+                "full_name": assignment.user.full_name,
+                "email": assignment.user.email,
+                "role": assignment.user.role,
+            },
+        }
+        for assignment in active_assignments
+    ]
+    payload["repair_history"] = [
+        {
+            "repair_id": repair.id,
+            "order_number": repair.order_number,
+            "repair_date": repair.repair_date,
+            "mileage": repair.mileage,
+            "status": repair.status,
+            "service_name": repair.service.name if repair.service is not None else None,
+            "grand_total": float(repair.grand_total),
+            "documents_total": len(repair.documents),
+            "created_at": repair.created_at,
+            "updated_at": repair.updated_at,
+        }
+        for repair in repair_history
+    ]
+    payload["history_summary"] = {
+        "repairs_total": len(repair_history),
+        "documents_total": documents_total,
+        "confirmed_repairs": confirmed_repairs,
+        "suspicious_repairs": suspicious_repairs,
+        "last_repair_date": last_repair.repair_date if last_repair is not None else None,
+        "last_mileage": last_repair.mileage if last_repair is not None else None,
+    }
     return VehicleDetailResponse.model_validate(payload)
 
 

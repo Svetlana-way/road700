@@ -262,8 +262,47 @@ type VehicleLink = {
   comment: string | null;
 };
 
+type VehicleActiveAssignment = {
+  id: number;
+  user_id: number;
+  starts_at: string;
+  ends_at: string | null;
+  comment: string | null;
+  user: {
+    id: number;
+    full_name: string;
+    email: string;
+    role: UserRole;
+  };
+};
+
+type VehicleRepairHistoryItem = {
+  repair_id: number;
+  order_number: string | null;
+  repair_date: string;
+  mileage: number;
+  status: string;
+  service_name: string | null;
+  grand_total: number;
+  documents_total: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type VehicleHistorySummary = {
+  repairs_total: number;
+  documents_total: number;
+  confirmed_repairs: number;
+  suspicious_repairs: number;
+  last_repair_date: string | null;
+  last_mileage: number | null;
+};
+
 type VehicleDetail = Vehicle & {
   active_links: VehicleLink[];
+  active_assignments: VehicleActiveAssignment[];
+  repair_history: VehicleRepairHistoryItem[];
+  history_summary: VehicleHistorySummary;
 };
 
 type ServiceItem = {
@@ -11441,6 +11480,75 @@ export default function App() {
                               </Stack>
                             </Paper>
                             <Paper className="repair-summary" elevation={0}>
+                              <Stack spacing={1.5}>
+                                <Typography variant="h6">История по технике</Typography>
+                                <Grid container spacing={2}>
+                                  <Grid item xs={6} sm={3}>
+                                    <Typography className="metric-label">Ремонтов</Typography>
+                                    <Typography>{selectedFleetVehicle.history_summary.repairs_total}</Typography>
+                                  </Grid>
+                                  <Grid item xs={6} sm={3}>
+                                    <Typography className="metric-label">Документов</Typography>
+                                    <Typography>{selectedFleetVehicle.history_summary.documents_total}</Typography>
+                                  </Grid>
+                                  <Grid item xs={6} sm={3}>
+                                    <Typography className="metric-label">Подтверждено</Typography>
+                                    <Typography>{selectedFleetVehicle.history_summary.confirmed_repairs}</Typography>
+                                  </Grid>
+                                  <Grid item xs={6} sm={3}>
+                                    <Typography className="metric-label">Подозрительных</Typography>
+                                    <Typography>{selectedFleetVehicle.history_summary.suspicious_repairs}</Typography>
+                                  </Grid>
+                                  <Grid item xs={6} sm={6}>
+                                    <Typography className="metric-label">Последний ремонт</Typography>
+                                    <Typography>
+                                      {selectedFleetVehicle.history_summary.last_repair_date
+                                        ? formatDateValue(selectedFleetVehicle.history_summary.last_repair_date)
+                                        : "Не найден"}
+                                    </Typography>
+                                  </Grid>
+                                  <Grid item xs={6} sm={6}>
+                                    <Typography className="metric-label">Последний пробег</Typography>
+                                    <Typography>
+                                      {typeof selectedFleetVehicle.history_summary.last_mileage === "number"
+                                        ? selectedFleetVehicle.history_summary.last_mileage
+                                        : "Не указан"}
+                                    </Typography>
+                                  </Grid>
+                                </Grid>
+                              </Stack>
+                            </Paper>
+                            <Paper className="repair-summary" elevation={0}>
+                              <Stack spacing={1.25}>
+                                <Typography variant="h6">Текущие закрепления</Typography>
+                                {selectedFleetVehicle.active_assignments.length > 0 ? (
+                                  selectedFleetVehicle.active_assignments.map((assignment) => (
+                                    <Paper className="repair-line" key={`vehicle-assignment-${assignment.id}`} elevation={0}>
+                                      <Stack spacing={0.5}>
+                                        <Stack
+                                          direction={{ xs: "column", sm: "row" }}
+                                          justifyContent="space-between"
+                                          spacing={1}
+                                          alignItems={{ xs: "flex-start", sm: "center" }}
+                                        >
+                                          <Typography>{assignment.user.full_name}</Typography>
+                                          <Chip size="small" variant="outlined" label={formatUserRoleLabel(assignment.user.role)} />
+                                        </Stack>
+                                        <Typography className="muted-copy">{assignment.user.email}</Typography>
+                                        <Typography className="muted-copy">
+                                          С {formatDateValue(assignment.starts_at)}
+                                          {assignment.ends_at ? ` по ${formatDateValue(assignment.ends_at)}` : " по настоящее время"}
+                                        </Typography>
+                                        {assignment.comment ? <Typography className="muted-copy">{assignment.comment}</Typography> : null}
+                                      </Stack>
+                                    </Paper>
+                                  ))
+                                ) : (
+                                  <Typography className="muted-copy">Сейчас техника ни за кем не закреплена.</Typography>
+                                )}
+                              </Stack>
+                            </Paper>
+                            <Paper className="repair-summary" elevation={0}>
                               <Stack spacing={1.25}>
                                 <Typography variant="h6">Активные связки</Typography>
                                 {selectedFleetVehicle.active_links.length > 0 ? (
@@ -11471,6 +11579,58 @@ export default function App() {
                                   <Typography className="muted-copy">
                                     Активные связки для этой единицы техники не найдены.
                                   </Typography>
+                                )}
+                              </Stack>
+                            </Paper>
+                            <Paper className="repair-summary" elevation={0}>
+                              <Stack spacing={1.25}>
+                                <Typography variant="h6">История ремонтов</Typography>
+                                {selectedFleetVehicle.repair_history.length > 0 ? (
+                                  selectedFleetVehicle.repair_history.map((repair) => (
+                                    <Paper className="repair-line" key={`vehicle-repair-${repair.repair_id}`} elevation={0}>
+                                      <Stack spacing={0.75}>
+                                        <Stack
+                                          direction={{ xs: "column", sm: "row" }}
+                                          justifyContent="space-between"
+                                          spacing={1}
+                                          alignItems={{ xs: "flex-start", sm: "center" }}
+                                        >
+                                          <Typography>
+                                            Ремонт #{repair.repair_id}
+                                            {repair.order_number ? ` · ${repair.order_number}` : ""}
+                                          </Typography>
+                                          <Stack direction="row" spacing={1}>
+                                            <Chip size="small" variant="outlined" label={formatRepairStatus(repair.status)} />
+                                            <Chip size="small" variant="outlined" label={`документов ${repair.documents_total}`} />
+                                          </Stack>
+                                        </Stack>
+                                        <Typography className="muted-copy">
+                                          {[
+                                            formatDateValue(repair.repair_date),
+                                            `пробег ${repair.mileage}`,
+                                            repair.service_name,
+                                            formatMoney(repair.grand_total),
+                                          ]
+                                            .filter(Boolean)
+                                            .join(" · ")}
+                                        </Typography>
+                                        <Typography className="muted-copy">Обновлено {formatDateTime(repair.updated_at)}</Typography>
+                                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                          <Button
+                                            size="small"
+                                            variant="outlined"
+                                            onClick={() => {
+                                              void openRepairByIds(null, repair.repair_id);
+                                            }}
+                                          >
+                                            Открыть ремонт
+                                          </Button>
+                                        </Stack>
+                                      </Stack>
+                                    </Paper>
+                                  ))
+                                ) : (
+                                  <Typography className="muted-copy">По этой технике ремонтов пока нет.</Typography>
                                 )}
                               </Stack>
                             </Paper>

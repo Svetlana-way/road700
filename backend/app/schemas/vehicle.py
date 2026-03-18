@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import VehicleStatus, VehicleType
+from app.models.enums import RepairStatus, UserRole, VehicleStatus, VehicleType
 
 
 class VehicleRead(BaseModel):
@@ -45,8 +45,49 @@ class VehicleLinkRead(BaseModel):
     comment: Optional[str]
 
 
+class VehicleAssignmentUserRead(BaseModel):
+    id: int
+    full_name: str
+    email: str
+    role: UserRole
+
+
+class VehicleAssignmentRead(BaseModel):
+    id: int
+    user_id: int
+    starts_at: date
+    ends_at: Optional[date]
+    comment: Optional[str]
+    user: VehicleAssignmentUserRead
+
+
+class VehicleRepairHistoryRead(BaseModel):
+    repair_id: int
+    order_number: Optional[str]
+    repair_date: date
+    mileage: int
+    status: RepairStatus
+    service_name: Optional[str]
+    grand_total: float
+    documents_total: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class VehicleHistorySummaryRead(BaseModel):
+    repairs_total: int
+    documents_total: int
+    confirmed_repairs: int
+    suspicious_repairs: int
+    last_repair_date: Optional[date]
+    last_mileage: Optional[int]
+
+
 class VehicleDetailResponse(VehicleRead):
     active_links: list[VehicleLinkRead]
+    active_assignments: list[VehicleAssignmentRead]
+    repair_history: list[VehicleRepairHistoryRead]
+    history_summary: VehicleHistorySummaryRead
 
 
 class VehicleImportRequest(BaseModel):

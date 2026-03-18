@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -91,6 +91,7 @@ FILENAME_SERVICE_PREFIXES = (
     "заказ наряды ",
     "заказ-наряд",
 )
+REPEAT_REPAIR_WINDOW_DAYS = 30
 
 
 def fuzzy_char_pattern(char: str) -> str:
@@ -1690,6 +1691,86 @@ def build_standard_hours_checks(
     return checks
 
 
+def build_repeat_repair_checks(
+    db: Session,
+    repair: Repair,
+    works_payload: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    if not works_payload or repair.vehicle_id is None or repair.repair_date is None:
+        return []
+
+    checks: list[dict[str, object]] = []
+    seen_keys: set[tuple[Optional[str], str]] = set()
+    window_start = repair.repair_date - timedelta(days=REPEAT_REPAIR_WINDOW_DAYS)
+
+    previous_repairs = db.execute(
+        select(Repair, RepairWork)
+        .join(RepairWork, RepairWork.repair_id == Repair.id)
+        .where(
+            Repair.vehicle_id == repair.vehicle_id,
+            Repair.id != repair.id,
+            Repair.repair_date >= window_start,
+            Repair.repair_date <= repair.repair_date,
+        )
+        .order_by(Repair.repair_date.desc(), Repair.id.desc(), RepairWork.id.desc())
+    ).all()
+
+    if not previous_repairs:
+        return checks
+
+    indexed_previous: dict[tuple[Optional[str], str], tuple[Repair, RepairWork]] = {}
+    for previous_repair, previous_work in previous_repairs:
+        normalized_name = build_normalized_name(previous_work.work_name or "")
+        match_key = (previous_work.work_code or None, normalized_name)
+        if match_key not in indexed_previous:
+            indexed_previous[match_key] = (previous_repair, previous_work)
+
+    for item in works_payload:
+        work_name = str(item.get("work_name") or "").strip()
+        if not work_name:
+            continue
+        work_code = str(item.get("work_code")).strip() if item.get("work_code") else None
+        normalized_name = build_normalized_name(work_name)
+        match_key = (work_code, normalized_name)
+        fallback_key = (None, normalized_name)
+
+        previous_match = indexed_previous.get(match_key) or indexed_previous.get(fallback_key)
+        if previous_match is None or match_key in seen_keys:
+            continue
+
+        previous_repair, previous_work = previous_match
+        seen_keys.add(match_key)
+        days_delta = (repair.repair_date - previous_repair.repair_date).days
+
+        checks.append(
+            {
+                "check_type": "ocr_repeat_repair_detected",
+                "severity": CheckSeverity.SUSPICIOUS,
+                "title": "Повторный ремонт по той же работе",
+                "details": (
+                    f"{work_name} · уже было {previous_repair.repair_date.isoformat()} "
+                    f"по заказ-наряду {previous_repair.order_number or 'без номера'} "
+                    f"({days_delta} дн. назад)"
+                ),
+                "payload": {
+                    "work_code": work_code,
+                    "work_name": work_name,
+                    "previous_repair_id": previous_repair.id,
+                    "previous_order_number": previous_repair.order_number,
+                    "previous_repair_date": previous_repair.repair_date.isoformat(),
+                    "previous_service_id": previous_repair.service_id,
+                    "previous_work_id": previous_work.id,
+                    "previous_work_code": previous_work.work_code,
+                    "previous_work_name": previous_work.work_name,
+                    "days_since_previous": days_delta,
+                    "window_days": REPEAT_REPAIR_WINDOW_DAYS,
+                },
+            }
+        )
+
+    return checks
+
+
 def decode_pdf_literal(raw_text: bytes) -> bytes:
     return (
         raw_text.replace(b"\\(", b"(")
@@ -2362,6 +2443,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         works_sum = round(sum(float(item["line_total"]) for item in extracted_items["works"]), 2)
         parts_sum = round(sum(float(item["line_total"]) for item in extracted_items["parts"]), 2)
         checks.extend(build_standard_hours_checks(extracted_items["works"]))
+        checks.extend(build_repeat_repair_checks(db, repair, extracted_items["works"]))
         if extracted_items["works"] and "work_total" in extracted_fields:
             if abs(works_sum - float(extracted_fields["work_total"])) > 0.01:
                 checks.append(
@@ -2429,7 +2511,13 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         recognized_fields_count = len(confidence_map)
         repair.is_preliminary = True
         repair.is_partially_recognized = recognized_fields_count < 4
-        repair.status = RepairStatus.IN_REVIEW if recognized_fields_count else RepairStatus.OCR_ERROR
+        has_blocking_checks = any(item["severity"] in {CheckSeverity.SUSPICIOUS, CheckSeverity.ERROR} for item in checks)
+        if not recognized_fields_count:
+            repair.status = RepairStatus.OCR_ERROR
+        elif has_blocking_checks:
+            repair.status = RepairStatus.SUSPICIOUS
+        else:
+            repair.status = RepairStatus.IN_REVIEW
 
         if recognized_fields_count >= 4:
             document.status = DocumentStatus.RECOGNIZED

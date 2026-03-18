@@ -2713,6 +2713,104 @@ function readCheckResolutionMeta(check: RepairDetail["checks"][number]): CheckRe
   return resolution as CheckResolutionMeta;
 }
 
+function buildCheckPayloadDetails(check: RepairDetail["checks"][number]) {
+  const payload = check.calculation_payload;
+  if (!payload) {
+    return [];
+  }
+
+  const lines: string[] = [];
+  const workName = readStringValue(payload, "work_name");
+  const partName = readStringValue(payload, "part_name");
+
+  if (check.check_type === "ocr_expected_total_exceeded") {
+    const actualTotal = readNumberValue(payload, "actual_total");
+    const expectedTotal = readNumberValue(payload, "expected_total");
+    const actualWorkTotal = readNumberValue(payload, "actual_work_total");
+    const expectedWorkTotal = readNumberValue(payload, "expected_work_total");
+    const lineBreakdown = Array.isArray(payload.line_breakdown) ? payload.line_breakdown.length : 0;
+    if (actualTotal !== null || expectedTotal !== null) {
+      lines.push(`Факт: ${formatMoney(actualTotal) || "—"} · ожидалось: ${formatMoney(expectedTotal) || "—"}`);
+    }
+    if (actualWorkTotal !== null || expectedWorkTotal !== null) {
+      lines.push(`Работы: ${formatMoney(actualWorkTotal) || "—"} · по модели: ${formatMoney(expectedWorkTotal) || "—"}`);
+    }
+    if (lineBreakdown > 0) {
+      lines.push(`В расчёте учтено строк работ: ${lineBreakdown}`);
+    }
+  }
+
+  if (check.check_type === "ocr_repeat_repair_detected") {
+    const previousRepairId = readNumberValue(payload, "previous_repair_id");
+    const previousRepairDate = readStringValue(payload, "previous_repair_date");
+    const previousOrderNumber = readStringValue(payload, "previous_order_number");
+    const daysSincePrevious = readNumberValue(payload, "days_since_previous");
+    if (workName) {
+      lines.push(`Работа: ${workName}`);
+    }
+    lines.push(
+      `Предыдущий ремонт: #${previousRepairId !== null ? String(previousRepairId) : "—"}`
+      + `${previousOrderNumber ? ` · заказ-наряд ${previousOrderNumber}` : ""}`
+      + `${previousRepairDate ? ` · ${previousRepairDate}` : ""}`
+      + `${daysSincePrevious !== null ? ` · ${formatCompactNumber(daysSincePrevious)} дн. назад` : ""}`,
+    );
+  }
+
+  if (check.check_type === "ocr_duplicate_work_lines" || check.check_type === "ocr_duplicate_part_lines") {
+    const duplicateCount = readNumberValue(payload, "duplicate_count");
+    const quantity = readNumberValue(payload, "quantity");
+    const price = readNumberValue(payload, "price");
+    const lineTotal = readNumberValue(payload, "line_total");
+    if (workName || partName) {
+      lines.push(`${workName || partName}`);
+    }
+    lines.push(
+      `Совпадающих строк: ${duplicateCount !== null ? formatCompactNumber(duplicateCount) : "—"}`
+      + `${quantity !== null ? ` · кол-во ${formatCompactNumber(quantity)}` : ""}`
+      + `${price !== null ? ` · цена ${formatMoney(price)}` : ""}`
+      + `${lineTotal !== null ? ` · сумма ${formatMoney(lineTotal)}` : ""}`,
+    );
+  }
+
+  if (check.check_type === "ocr_document_standard_hours_exceeded") {
+    const documentHours = readNumberValue(payload, "document_standard_hours");
+    const catalogHours = readNumberValue(payload, "catalog_standard_hours");
+    if (workName) {
+      lines.push(`Работа: ${workName}`);
+    }
+    lines.push(`Норма в документе: ${formatHours(documentHours) || "—"} · справочник: ${formatHours(catalogHours) || "—"}`);
+  }
+
+  if (check.check_type === "ocr_standard_hours_exceeded") {
+    const actualHours = readNumberValue(payload, "actual_hours");
+    const standardHours = readNumberValue(payload, "standard_hours");
+    if (workName) {
+      lines.push(`Работа: ${workName}`);
+    }
+    lines.push(`Факт: ${formatHours(actualHours) || "—"} · норма: ${formatHours(standardHours) || "—"}`);
+  }
+
+  if (check.check_type === "ocr_work_lines_total_mismatch" || check.check_type === "ocr_part_lines_total_mismatch") {
+    const linesTotal = readNumberValue(payload, "lines_total");
+    const headerTotal = readNumberValue(payload, "header_total");
+    lines.push(`По строкам: ${formatMoney(linesTotal) || "—"} · в шапке: ${formatMoney(headerTotal) || "—"}`);
+  }
+
+  if (check.check_type === "ocr_total_mismatch") {
+    const calculatedTotal = readNumberValue(payload, "calculated_total");
+    const grandTotal = readNumberValue(payload, "grand_total");
+    const workTotal = readNumberValue(payload, "work_total");
+    const partsTotal = readNumberValue(payload, "parts_total");
+    const vatTotal = readNumberValue(payload, "vat_total");
+    lines.push(`Сумма строк: ${formatMoney(calculatedTotal) || "—"} · итог документа: ${formatMoney(grandTotal) || "—"}`);
+    lines.push(
+      `Работы ${formatMoney(workTotal) || "—"} · запчасти ${formatMoney(partsTotal) || "—"} · НДС ${formatMoney(vatTotal) || "—"}`,
+    );
+  }
+
+  return lines;
+}
+
 function readComparisonReviewMeta(value: Record<string, unknown> | null): Record<string, unknown> | null {
   const review = value?.comparison_review;
   if (!review || typeof review !== "object") {
@@ -11977,6 +12075,15 @@ export default function App() {
                                       </Stack>
                                       {check.details ? (
                                         <Typography className="muted-copy">{check.details}</Typography>
+                                      ) : null}
+                                      {buildCheckPayloadDetails(check).length > 0 ? (
+                                        <Stack spacing={0.5}>
+                                          {buildCheckPayloadDetails(check).map((line, index) => (
+                                            <Typography className="muted-copy" key={`check-payload-${check.id}-${index}`}>
+                                              {line}
+                                            </Typography>
+                                          ))}
+                                        </Stack>
                                       ) : null}
                                       {readCheckResolutionMeta(check)?.user_name ? (
                                         <Typography className="muted-copy">

@@ -8,6 +8,9 @@ import {
   Chip,
   CircularProgress,
   Container,
+  Dialog,
+  DialogContent,
+  DialogTitle,
   Divider,
   Grid,
   MenuItem,
@@ -2167,6 +2170,7 @@ export default function App() {
   const [showLaborNormCatalogEditor, setShowLaborNormCatalogEditor] = useState(false);
   const [showLaborNormImport, setShowLaborNormImport] = useState(false);
   const [showLaborNormEntryEditor, setShowLaborNormEntryEditor] = useState(false);
+  const [showLaborNormListDialog, setShowLaborNormListDialog] = useState(false);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [dataQuality, setDataQuality] = useState<DashboardDataQuality | null>(null);
   const [dataQualityDetails, setDataQualityDetails] = useState<DashboardDataQualityDetails | null>(null);
@@ -7682,59 +7686,87 @@ export default function App() {
                         В каталоге {laborNormTotal} записей
                         {laborNormSourceFiles.length > 0 ? ` · источники: ${laborNormSourceFiles.join(", ")}` : ""}
                       </Typography>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
+                        <Button
+                          variant="outlined"
+                          disabled={laborNormLoading || laborNorms.length === 0}
+                          onClick={() => setShowLaborNormListDialog(true)}
+                        >
+                          Открыть список записей
+                        </Button>
+                        <Typography className="muted-copy">
+                          Полный список скрыт с основной страницы, чтобы не растягивать экран.
+                        </Typography>
+                      </Stack>
                       {laborNormLoading ? (
                         <Stack spacing={1} alignItems="center">
                           <CircularProgress size={24} />
                           <Typography className="muted-copy">Загрузка каталога...</Typography>
                         </Stack>
-                      ) : laborNorms.length > 0 ? (
-                        <Stack spacing={1}>
-                          {laborNorms.map((item) => (
-                            <Paper className="repair-line" key={item.id} elevation={0}>
-                              <Stack spacing={0.5}>
-                                <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                  <Typography>{item.code} · {item.name_ru}</Typography>
-                                  <Typography>{formatHours(item.standard_hours) || "—"}</Typography>
-                                </Stack>
-                                <Typography className="muted-copy">
-                                    {item.catalog_name || item.scope}
-                                    {item.brand_family ? ` · ${item.brand_family}` : ""}
-                                    {item.category ? ` · ${item.category}` : " · Без категории"}
-                                    {item.name_ru_alt ? ` · доп. название: ${item.name_ru_alt}` : ""}
-                                    {` · статус ${formatStatus(item.status)}`}
-                                  </Typography>
-                                <Typography className="muted-copy">
-                                  Источник: {item.source_file || "—"}
-                                  {item.source_sheet ? ` · лист ${item.source_sheet}` : ""}
-                                </Typography>
-                                <Stack direction="row" spacing={1} flexWrap="wrap">
-                                  <Button
-                                    size="small"
-                                    variant="outlined"
-                                    onClick={() => handleEditLaborNormItem(item)}
-                                  >
-                                    Редактировать
-                                  </Button>
-                                  {item.status !== "archived" ? (
-                                    <Button
-                                      size="small"
-                                      variant="text"
-                                      disabled={laborNormEntrySaving}
-                                      onClick={() => {
-                                        void handleArchiveLaborNormItem(item);
-                                      }}
-                                    >
-                                      В архив
-                                    </Button>
-                                  ) : null}
-                                </Stack>
-                              </Stack>
-                            </Paper>
-                          ))}
-                        </Stack>
-                      ) : (
+                      ) : laborNorms.length === 0 ? (
                         <Typography className="muted-copy">По текущему фильтру записи не найдены.</Typography>
-                      )}
+                      ) : null}
+                      <Dialog
+                        open={showLaborNormListDialog}
+                        onClose={() => setShowLaborNormListDialog(false)}
+                        fullWidth
+                        maxWidth="lg"
+                      >
+                        <DialogTitle>Записи нормо-часов</DialogTitle>
+                        <DialogContent dividers>
+                          {laborNorms.length > 0 ? (
+                            <Stack spacing={1}>
+                              {laborNorms.map((item) => (
+                                <Paper className="repair-line" key={item.id} elevation={0}>
+                                  <Stack spacing={0.5}>
+                                    <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                      <Typography>{item.code} · {item.name_ru}</Typography>
+                                      <Typography>{formatHours(item.standard_hours) || "—"}</Typography>
+                                    </Stack>
+                                    <Typography className="muted-copy">
+                                      {item.catalog_name || item.scope}
+                                      {item.brand_family ? ` · ${item.brand_family}` : ""}
+                                      {item.category ? ` · ${item.category}` : " · Без категории"}
+                                      {item.name_ru_alt ? ` · доп. название: ${item.name_ru_alt}` : ""}
+                                      {` · статус ${formatStatus(item.status)}`}
+                                    </Typography>
+                                    <Typography className="muted-copy">
+                                      Источник: {item.source_file || "—"}
+                                      {item.source_sheet ? ` · лист ${item.source_sheet}` : ""}
+                                    </Typography>
+                                    <Stack direction="row" spacing={1} flexWrap="wrap">
+                                      <Button
+                                        size="small"
+                                        variant="outlined"
+                                        onClick={() => {
+                                          setShowLaborNormListDialog(false);
+                                          handleEditLaborNormItem(item);
+                                        }}
+                                      >
+                                        Редактировать
+                                      </Button>
+                                      {item.status !== "archived" ? (
+                                        <Button
+                                          size="small"
+                                          variant="text"
+                                          disabled={laborNormEntrySaving}
+                                          onClick={() => {
+                                            void handleArchiveLaborNormItem(item);
+                                          }}
+                                        >
+                                          В архив
+                                        </Button>
+                                      ) : null}
+                                    </Stack>
+                                  </Stack>
+                                </Paper>
+                              ))}
+                            </Stack>
+                          ) : (
+                            <Typography className="muted-copy">По текущему фильтру записи не найдены.</Typography>
+                          )}
+                        </DialogContent>
+                      </Dialog>
                     </Stack>
                   </Paper>
                 ) : null}

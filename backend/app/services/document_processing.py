@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import statistics
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -92,6 +93,15 @@ FILENAME_SERVICE_PREFIXES = (
     "заказ-наряд",
 )
 REPEAT_REPAIR_WINDOW_DAYS = 30
+EXPECTED_TOTAL_THRESHOLD_MULTIPLIER = 1.1
+EXPECTED_TOTAL_SERVICE_SAMPLE_THRESHOLD = 3
+EXPECTED_TOTAL_HOURLY_SAMPLE_THRESHOLD = 5
+EXPECTED_TOTAL_REPAIR_STATUSES = (
+    RepairStatus.CONFIRMED,
+    RepairStatus.EMPLOYEE_CONFIRMED,
+    RepairStatus.SUSPICIOUS,
+    RepairStatus.ARCHIVED,
+)
 
 
 def fuzzy_char_pattern(char: str) -> str:
@@ -1871,6 +1881,182 @@ def build_duplicate_line_checks(
     return checks
 
 
+def resolve_work_reference_hours(item: dict[str, object]) -> Optional[float]:
+    reference_payload = item.get("reference_payload")
+    if not isinstance(reference_payload, dict):
+        reference_payload = {}
+
+    candidate_values = [
+        reference_payload.get("document_standard_hours"),
+        item.get("standard_hours"),
+        reference_payload.get("labor_norm_standard_hours"),
+        item.get("actual_hours"),
+    ]
+    normalized_unit_name = normalize_unit_name(str(item.get("unit_name")) if item.get("unit_name") else None)
+    if normalized_unit_name in {"нч", "ч"} and item.get("quantity") is not None:
+        candidate_values.append(item.get("quantity"))
+
+    for value in candidate_values:
+        if value is None:
+            continue
+        try:
+            normalized_value = float(value)
+        except (TypeError, ValueError):
+            continue
+        if normalized_value > 0:
+            return normalized_value
+    return None
+
+
+def build_expected_total_checks(
+    db: Session,
+    repair: Repair,
+    works_payload: list[dict[str, object]],
+) -> tuple[Optional[float], list[dict[str, object]]]:
+    if not works_payload or repair.vehicle is None:
+        return None, []
+
+    historical_rows = db.execute(
+        select(
+            Repair.id,
+            Repair.repair_date,
+            Repair.service_id,
+            Repair.work_total,
+            Repair.parts_total,
+            Repair.vat_total,
+            Repair.grand_total,
+            RepairWork.work_code,
+            RepairWork.work_name,
+            RepairWork.line_total,
+            RepairWork.standard_hours,
+            RepairWork.actual_hours,
+        )
+        .join(RepairWork, RepairWork.repair_id == Repair.id)
+        .join(Vehicle, Vehicle.id == Repair.vehicle_id)
+        .where(
+            Repair.id != repair.id,
+            Repair.status.in_(EXPECTED_TOTAL_REPAIR_STATUSES),
+            Repair.grand_total > 0,
+            Vehicle.vehicle_type == repair.vehicle.vehicle_type,
+        )
+    ).all()
+
+    if not historical_rows:
+        return None, []
+
+    current_service_id = repair.service_id
+    expected_line_totals: list[float] = []
+    line_breakdown: list[dict[str, object]] = []
+
+    general_hourly_rates: list[float] = []
+    service_hourly_rates: list[float] = []
+    for row in historical_rows:
+        reference_hours = row.standard_hours if row.standard_hours and row.standard_hours > 0 else row.actual_hours
+        if reference_hours is None or reference_hours <= 0:
+            continue
+        hourly_rate = float(row.line_total) / float(reference_hours)
+        if hourly_rate <= 0:
+            continue
+        general_hourly_rates.append(hourly_rate)
+        if current_service_id is not None and row.service_id == current_service_id:
+            service_hourly_rates.append(hourly_rate)
+
+    for item in works_payload:
+        work_name = str(item.get("work_name") or "").strip()
+        if not work_name:
+            continue
+        work_code = str(item.get("work_code")).strip() if item.get("work_code") else None
+        normalized_name = build_normalized_name(work_name)
+
+        line_service_matches: list[float] = []
+        line_general_matches: list[float] = []
+        for row in historical_rows:
+            same_code = bool(work_code and row.work_code and str(row.work_code).strip() == work_code)
+            same_name = build_normalized_name(str(row.work_name or "")) == normalized_name
+            if not same_code and not same_name:
+                continue
+            line_general_matches.append(float(row.line_total))
+            if current_service_id is not None and row.service_id == current_service_id:
+                line_service_matches.append(float(row.line_total))
+
+        selected_matches = (
+            line_service_matches
+            if len(line_service_matches) >= EXPECTED_TOTAL_SERVICE_SAMPLE_THRESHOLD
+            else line_general_matches
+        )
+        if selected_matches:
+            expected_line_total = round(float(statistics.median(selected_matches)), 2)
+            expected_line_totals.append(expected_line_total)
+            line_breakdown.append(
+                {
+                    "work_code": work_code,
+                    "work_name": work_name,
+                    "source": "historical_work_median",
+                    "samples": len(selected_matches),
+                    "expected_line_total": expected_line_total,
+                }
+            )
+            continue
+
+        reference_hours = resolve_work_reference_hours(item)
+        if reference_hours is None:
+            continue
+
+        selected_hourly_rates = (
+            service_hourly_rates
+            if len(service_hourly_rates) >= EXPECTED_TOTAL_HOURLY_SAMPLE_THRESHOLD
+            else general_hourly_rates
+        )
+        if not selected_hourly_rates:
+            continue
+
+        expected_line_total = round(float(statistics.median(selected_hourly_rates)) * reference_hours, 2)
+        expected_line_totals.append(expected_line_total)
+        line_breakdown.append(
+            {
+                "work_code": work_code,
+                "work_name": work_name,
+                "source": "historical_hourly_rate",
+                "samples": len(selected_hourly_rates),
+                "reference_hours": reference_hours,
+                "expected_line_total": expected_line_total,
+            }
+        )
+
+    if not expected_line_totals:
+        return None, []
+
+    expected_work_total = round(sum(expected_line_totals), 2)
+    expected_total = round(expected_work_total + float(repair.parts_total or 0) + float(repair.vat_total or 0), 2)
+    actual_total = round(float(repair.grand_total or 0), 2)
+
+    checks: list[dict[str, object]] = []
+    if expected_total > 0 and actual_total > round(expected_total * EXPECTED_TOTAL_THRESHOLD_MULTIPLIER, 2):
+        checks.append(
+            {
+                "check_type": "ocr_expected_total_exceeded",
+                "severity": CheckSeverity.SUSPICIOUS,
+                "title": "Стоимость ремонта выше ожидаемой",
+                "details": (
+                    f"Итого {actual_total:.2f} руб. при ожидаемой стоимости {expected_total:.2f} руб. "
+                    f"по истории аналогичных работ"
+                ),
+                "payload": {
+                    "actual_total": actual_total,
+                    "expected_total": expected_total,
+                    "expected_work_total": expected_work_total,
+                    "actual_work_total": round(float(repair.work_total or 0), 2),
+                    "actual_parts_total": round(float(repair.parts_total or 0), 2),
+                    "actual_vat_total": round(float(repair.vat_total or 0), 2),
+                    "threshold_multiplier": EXPECTED_TOTAL_THRESHOLD_MULTIPLIER,
+                    "line_breakdown": line_breakdown,
+                },
+            }
+        )
+
+    return expected_total, checks
+
+
 def decode_pdf_literal(raw_text: bytes) -> bytes:
     return (
         raw_text.replace(b"\\(", b"(")
@@ -2545,6 +2731,9 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         checks.extend(build_standard_hours_checks(extracted_items["works"]))
         checks.extend(build_repeat_repair_checks(db, repair, extracted_items["works"]))
         checks.extend(build_duplicate_line_checks(extracted_items["works"], extracted_items["parts"]))
+        expected_total, expected_total_checks = build_expected_total_checks(db, repair, extracted_items["works"])
+        repair.expected_total = expected_total
+        checks.extend(expected_total_checks)
         if extracted_items["works"] and "work_total" in extracted_fields:
             if abs(works_sum - float(extracted_fields["work_total"])) > 0.01:
                 checks.append(

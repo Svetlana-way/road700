@@ -1480,7 +1480,7 @@ def summarize_line_totals(extracted_items: dict[str, list[dict[str, object]]]) -
     return works_total, parts_total
 
 
-def amounts_match(left: Optional[float], right: Optional[float], tolerance: float = 0.01) -> bool:
+def amounts_match(left: Optional[float], right: Optional[float], tolerance: float = 0.0) -> bool:
     if left is None or right is None:
         return False
     return abs(left - right) <= tolerance
@@ -2735,7 +2735,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         repair.expected_total = expected_total
         checks.extend(expected_total_checks)
         if extracted_items["works"] and "work_total" in extracted_fields:
-            if abs(works_sum - float(extracted_fields["work_total"])) > 0.01:
+            if not amounts_match(works_sum, float(extracted_fields["work_total"])):
                 checks.append(
                     {
                         "check_type": "ocr_work_lines_total_mismatch",
@@ -2750,7 +2750,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
                 )
 
         if extracted_items["parts"] and "parts_total" in extracted_fields:
-            if abs(parts_sum - float(extracted_fields["parts_total"])) > 0.01:
+            if not amounts_match(parts_sum, float(extracted_fields["parts_total"])):
                 checks.append(
                     {
                         "check_type": "ocr_part_lines_total_mismatch",
@@ -2769,17 +2769,19 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
             parts_total = float(extracted_fields.get("parts_total", 0) or 0)
             vat_total = float(extracted_fields.get("vat_total", 0) or 0)
             grand_total = float(extracted_fields["grand_total"])
-            if work_total + parts_total + vat_total > grand_total + 0.01:
+            calculated_total = round(work_total + parts_total + vat_total, 2)
+            if not amounts_match(calculated_total, grand_total):
                 checks.append(
                     {
                         "check_type": "ocr_total_mismatch",
                         "severity": CheckSeverity.SUSPICIOUS,
-                        "title": "Сумма строк превышает итоговую сумму",
+                        "title": "Сумма строк не совпадает с итоговой суммой",
                         "details": "Нужна ручная проверка итогов заказ-наряда",
                         "payload": {
                             "work_total": work_total,
                             "parts_total": parts_total,
                             "vat_total": vat_total,
+                            "calculated_total": calculated_total,
                             "grand_total": grand_total,
                         },
                     }

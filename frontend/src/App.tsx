@@ -2673,6 +2673,7 @@ export default function App() {
   const [auditSearchQuery, setAuditSearchQuery] = useState("");
   const [auditEntityTypeFilter, setAuditEntityTypeFilter] = useState("");
   const [auditActionTypeFilter, setAuditActionTypeFilter] = useState("");
+  const [auditUserIdFilter, setAuditUserIdFilter] = useState("");
   const [auditDateFrom, setAuditDateFrom] = useState("");
   const [auditDateTo, setAuditDateTo] = useState("");
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
@@ -3332,6 +3333,9 @@ export default function App() {
       if (auditActionTypeFilter) {
         params.set("action_type", auditActionTypeFilter);
       }
+      if (auditUserIdFilter) {
+        params.set("user_id", auditUserIdFilter);
+      }
       if (auditDateFrom) {
         params.set("date_from", `${auditDateFrom}T00:00:00`);
       }
@@ -3710,6 +3714,7 @@ export default function App() {
     auditDateTo,
     auditEntityTypeFilter,
     auditSearchQuery,
+    auditUserIdFilter,
     token,
   ]);
 
@@ -11930,7 +11935,7 @@ export default function App() {
                         </Typography>
                       </Box>
                       <Grid container spacing={1.5}>
-                        <Grid item xs={12} md={4}>
+                        <Grid item xs={12} md={3}>
                           <TextField
                             label="Поиск по сущности, ID или действию"
                             value={auditSearchQuery}
@@ -11954,7 +11959,7 @@ export default function App() {
                             ))}
                           </TextField>
                         </Grid>
-                        <Grid item xs={12} sm={6} md={3}>
+                        <Grid item xs={12} sm={6} md={2}>
                           <TextField
                             select
                             label="Действие"
@@ -11970,6 +11975,24 @@ export default function App() {
                             ))}
                           </TextField>
                         </Grid>
+                        {user?.role === "admin" ? (
+                          <Grid item xs={12} sm={6} md={3}>
+                            <TextField
+                              select
+                              label="Пользователь"
+                              value={auditUserIdFilter}
+                              onChange={(event) => setAuditUserIdFilter(event.target.value)}
+                              fullWidth
+                            >
+                              <MenuItem value="">Все</MenuItem>
+                              {usersList.map((item) => (
+                                <MenuItem key={`audit-user-${item.id}`} value={String(item.id)}>
+                                  {item.full_name}
+                                </MenuItem>
+                              ))}
+                            </TextField>
+                          </Grid>
+                        ) : null}
                         <Grid item xs={12} sm={6} md={2}>
                           <TextField
                             label="От"
@@ -12010,6 +12033,7 @@ export default function App() {
                             setAuditSearchQuery("");
                             setAuditEntityTypeFilter("");
                             setAuditActionTypeFilter("");
+                            setAuditUserIdFilter("");
                             setAuditDateFrom("");
                             setAuditDateTo("");
                           }}

@@ -306,6 +306,20 @@ def _build_diagnostics_findings(repair: Repair) -> list[dict[str, object]]:
         for item in repair.works
         if _contains_any(_normalize_text(item.work_name), ("диагност", "tech tool", "тех тул", "скан", "компьютер"))
     ]
+    if len(diagnostic_works) < 2:
+        return []
+
+    return [
+        {
+            "title": "В заказ-наряде несколько диагностических работ",
+            "severity": "medium",
+            "category": "Суммы и структура",
+            "summary": "Есть риск дублирования диагностики или раздельного биллинга одной и той же операции.",
+            "rationale": "Для управленческого контроля такие работы нужно разделять только при явном различии этапов или систем.",
+            "evidence": [f"Диагностические позиции: {', '.join(diagnostic_works[:4])}"],
+            "recommendation": "Запросить у сервиса, чем отличаются диагностические позиции и почему они тарифицировались отдельно.",
+        }
+    ]
 
 
 def _build_expensive_part_findings(repair: Repair) -> list[dict[str, object]]:
@@ -346,20 +360,6 @@ def _build_expensive_part_findings(repair: Repair) -> list[dict[str, object]]:
             }
         )
     return findings
-    if len(diagnostic_works) < 2:
-        return []
-
-    return [
-        {
-            "title": "В заказ-наряде несколько диагностических работ",
-            "severity": "medium",
-            "category": "Суммы и структура",
-            "summary": "Есть риск дублирования диагностики или раздельного биллинга одной и той же операции.",
-            "rationale": "Для управленческого контроля такие работы нужно разделять только при явном различии этапов или систем.",
-            "evidence": [f"Диагностические позиции: {', '.join(diagnostic_works[:4])}"],
-            "recommendation": "Запросить у сервиса, чем отличаются диагностические позиции и почему они тарифицировались отдельно.",
-        }
-    ]
 
 
 def _build_document_quality_findings(

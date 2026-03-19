@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin, get_db
+from app.api.upload_validation import validate_historical_import_upload
 from app.models.audit import AuditLog
 from app.models.imports import ImportConflict, ImportJob
 from app.models.user import User
@@ -156,12 +157,8 @@ def upload_historical_repairs(
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_admin),
 ) -> HistoricalRepairImportResponse:
+    validate_historical_import_upload(file)
     filename = (file.filename or "").strip() or "historical_repairs.xlsx"
-    if not filename.lower().endswith(".xlsx"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Поддерживается только .xlsx выгрузка исторических ремонтов",
-        )
 
     try:
         result = import_historical_repairs(

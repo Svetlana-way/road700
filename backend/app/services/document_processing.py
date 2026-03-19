@@ -96,6 +96,7 @@ REPEAT_REPAIR_WINDOW_DAYS = 30
 EXPECTED_TOTAL_THRESHOLD_MULTIPLIER = 1.1
 EXPECTED_TOTAL_SERVICE_SAMPLE_THRESHOLD = 3
 EXPECTED_TOTAL_HOURLY_SAMPLE_THRESHOLD = 5
+PLACEHOLDER_VEHICLE_EXTERNAL_ID = "__batch_import_placeholder__"
 EXPECTED_TOTAL_REPAIR_STATUSES = (
     RepairStatus.CONFIRMED,
     RepairStatus.EMPLOYEE_CONFIRMED,
@@ -628,6 +629,11 @@ def remove_manual_review_reason(reasons: list[str], value: str) -> None:
         reasons.remove(value)
 
 
+def add_manual_review_reason(reasons: list[str], value: str) -> None:
+    if value not in reasons:
+        reasons.append(value)
+
+
 def apply_document_metadata_fallbacks(
     document: Document,
     *,
@@ -690,7 +696,7 @@ def enrich_vehicle_fields_from_repair(
     normalization_notes: list[str],
 ) -> None:
     vehicle = repair.vehicle
-    if vehicle is None or vehicle.external_id == "__batch_import_placeholder__":
+    if vehicle is None or vehicle.external_id == PLACEHOLDER_VEHICLE_EXTERNAL_ID:
         return
 
     if "plate_number" not in extracted_fields and vehicle.plate_number:
@@ -724,7 +730,7 @@ def find_vehicle_by_identifiers(
     partial_plate_matches: dict[int, Vehicle] = {}
 
     for vehicle in vehicles:
-        if vehicle.external_id == "__batch_import_placeholder__":
+        if vehicle.external_id == PLACEHOLDER_VEHICLE_EXTERNAL_ID:
             continue
         vehicle_plate = normalize_compare_token(vehicle.plate_number)
         vehicle_vin = normalize_compare_token(vehicle.vin)
@@ -792,7 +798,7 @@ def auto_link_repair_vehicle_from_registry(
     normalization_notes: list[str],
 ) -> None:
     vehicle = repair.vehicle
-    if vehicle is None or vehicle.external_id != "__batch_import_placeholder__":
+    if vehicle is None or vehicle.external_id != PLACEHOLDER_VEHICLE_EXTERNAL_ID:
         return
 
     matched_vehicle = find_vehicle_by_identifiers(
@@ -2488,6 +2494,87 @@ def resolve_service(db: Session, service_name: str) -> Service:
     return service
 
 
+def build_manual_review_check(
+    reason: str,
+    *,
+    extracted_fields: dict[str, object],
+) -> dict[str, object]:
+    service_name = str(extracted_fields.get("service_name")).strip() if extracted_fields.get("service_name") else None
+    plate_number = str(extracted_fields.get("plate_number")).strip() if extracted_fields.get("plate_number") else None
+    vin = str(extracted_fields.get("vin")).strip() if extracted_fields.get("vin") else None
+
+    if reason == "vehicle_not_found":
+        identifiers = []
+        if plate_number:
+            identifiers.append(f"госномер {plate_number}")
+        if vin:
+            identifiers.append(f"VIN {vin}")
+        details = "Техника из документа не найдена в базе техники."
+        if identifiers:
+            details = f"{details} Распознаны: {', '.join(identifiers)}."
+        return {
+            "check_type": "ocr_vehicle_not_found",
+            "severity": CheckSeverity.WARNING,
+            "title": "Техника не найдена в базе",
+            "details": details,
+            "payload": {
+                "reason": reason,
+                "plate_number": plate_number,
+                "vin": vin,
+            },
+        }
+
+    if reason == "vehicle_missing":
+        return {
+            "check_type": "ocr_vehicle_missing",
+            "severity": CheckSeverity.WARNING,
+            "title": "Не удалось определить технику",
+            "details": "В документе не удалось надёжно определить технику. Нужна ручная привязка.",
+            "payload": {"reason": reason},
+        }
+
+    if reason == "service_not_found":
+        details = "Сервис из документа не найден в справочнике сервисов."
+        if service_name:
+            details = f"{details} Распознанное значение: {service_name}."
+        return {
+            "check_type": "ocr_service_not_found",
+            "severity": CheckSeverity.WARNING,
+            "title": "Сервис не найден в справочнике",
+            "details": details,
+            "payload": {
+                "reason": reason,
+                "service_name": service_name,
+            },
+        }
+
+    if reason == "service_name_missing":
+        return {
+            "check_type": "ocr_service_missing",
+            "severity": CheckSeverity.WARNING,
+            "title": "Не удалось определить сервис",
+            "details": "В документе не удалось надёжно определить сервис. Нужна ручная проверка.",
+            "payload": {"reason": reason},
+        }
+
+    if reason == "text_not_found":
+        return {
+            "check_type": "ocr_text_not_found",
+            "severity": CheckSeverity.WARNING,
+            "title": "Не удалось извлечь текст из документа",
+            "details": "Документ сохранён, но автоматическое распознавание не извлекло текст для проверки.",
+            "payload": {"reason": reason},
+        }
+
+    return {
+        "check_type": f"ocr_{reason}",
+        "severity": CheckSeverity.WARNING,
+        "title": "Нужна ручная проверка OCR",
+        "details": reason,
+        "payload": {"reason": reason},
+    }
+
+
 def replace_ocr_checks(db: Session, repair_id: int, checks: list[dict[str, object]]) -> None:
     db.execute(delete(RepairCheck).where(RepairCheck.repair_id == repair_id, RepairCheck.check_type.like("ocr_%")))
     for item in checks:
@@ -2556,22 +2643,29 @@ def replace_repair_lines(
 
 
 def process_document(db: Session, document_id: int) -> ProcessingResult:
-    document = load_document_for_processing(db, document_id)
-    if document is None or document.repair is None:
+    initial_document = load_document_for_processing(db, document_id)
+    if initial_document is None or initial_document.repair is None:
         raise ValueError("Document not found or repair relation is incomplete")
 
-    storage_path = get_storage_path(document.storage_key)
+    storage_path = get_storage_path(initial_document.storage_key)
     job = ImportJob(
-        document_id=document.id,
+        document_id=initial_document.id,
         import_type="document_ocr",
-        source_filename=document.original_filename,
+        source_filename=initial_document.original_filename,
         status=ImportStatus.PROCESSING,
-        summary={"document_id": document.id, "stage": "started"},
+        summary={"document_id": initial_document.id, "stage": "started"},
     )
     db.add(job)
     db.flush()
+    job_id = job.id
+    db.commit()
 
     try:
+        document = load_document_for_processing(db, document_id)
+        job = db.get(ImportJob, job_id)
+        if document is None or document.repair is None or job is None:
+            raise ValueError("Document processing context could not be reloaded")
+
         if not storage_path.exists():
             raise FileNotFoundError(f"Source document file not found: {storage_path}")
 
@@ -2606,283 +2700,280 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
             job.error_message = None
             db.commit()
 
-            refreshed_document = load_document_for_processing(db, document.id)
-            if refreshed_document is None:
-                raise ValueError("Processed document could not be reloaded")
-            return ProcessingResult(
-                document=refreshed_document,
-                job=job,
-                message="Document stored without OCR",
+            message = "Document stored without OCR"
+        else:
+            text, extracted_from, extraction_failure_reason = extract_document_text(storage_path, document.source_type)
+            profile_selection = select_ocr_profile_scope(db, document, text) if text else OcrProfileSelection(
+                profile_scope="default",
+                source="default",
+                reason="Текст не извлечён, использован default",
             )
+            parsed = parse_document_text(text, db=db, profile_scope=profile_selection.profile_scope) if text else {
+                "extracted_fields": {},
+                "extracted_items": {"works": [], "parts": []},
+                "confidence_map": {},
+                "manual_review_reasons": [extraction_failure_reason or "text_not_found"],
+                "normalization_notes": [],
+            }
 
-        text, extracted_from, extraction_failure_reason = extract_document_text(storage_path, document.source_type)
-        profile_selection = select_ocr_profile_scope(db, document, text) if text else OcrProfileSelection(
-            profile_scope="default",
-            source="default",
-            reason="Текст не извлечён, использован default",
-        )
-        parsed = parse_document_text(text, db=db, profile_scope=profile_selection.profile_scope) if text else {
-            "extracted_fields": {},
-            "extracted_items": {"works": [], "parts": []},
-            "confidence_map": {},
-            "manual_review_reasons": [extraction_failure_reason or "text_not_found"],
-            "normalization_notes": [],
-        }
+            extracted_fields = parsed["extracted_fields"]
+            extracted_items = parsed["extracted_items"]
+            confidence_map = parsed["confidence_map"]
+            manual_review_reasons = parsed["manual_review_reasons"]
+            normalization_notes = parsed.get("normalization_notes", [])
+            apply_document_metadata_fallbacks(
+                document,
+                extracted_fields=extracted_fields,
+                confidence_map=confidence_map,
+                manual_review_reasons=manual_review_reasons,
+                normalization_notes=normalization_notes,
+            )
+            repair = document.repair
+            auto_link_repair_vehicle_from_registry(
+                db,
+                repair,
+                extracted_fields=extracted_fields,
+                normalization_notes=normalization_notes,
+            )
+            enrich_vehicle_fields_from_repair(
+                repair,
+                extracted_fields=extracted_fields,
+                confidence_map=confidence_map,
+                normalization_notes=normalization_notes,
+            )
+            enrich_vehicle_fields_from_registry(
+                db,
+                extracted_fields=extracted_fields,
+                confidence_map=confidence_map,
+                normalization_notes=normalization_notes,
+            )
+            if repair.vehicle is not None and repair.vehicle.external_id == PLACEHOLDER_VEHICLE_EXTERNAL_ID:
+                if extracted_fields.get("plate_number") or extracted_fields.get("vin"):
+                    add_manual_review_reason(manual_review_reasons, "vehicle_not_found")
+                    normalization_notes.append("Техника из документа не найдена в базе и требует ручной привязки.")
+                else:
+                    add_manual_review_reason(manual_review_reasons, "vehicle_missing")
+            labor_norm_applicability = assess_labor_norm_applicability(db, repair.vehicle)
+            labor_norm_notes, labor_norm_summary = enrich_work_payloads_with_labor_norms(
+                db,
+                extracted_items["works"],
+                labor_norm_applicability,
+            )
+            normalization_notes.extend(labor_norm_notes)
+            checks = []
 
-        extracted_fields = parsed["extracted_fields"]
-        extracted_items = parsed["extracted_items"]
-        confidence_map = parsed["confidence_map"]
-        manual_review_reasons = parsed["manual_review_reasons"]
-        normalization_notes = parsed.get("normalization_notes", [])
-        apply_document_metadata_fallbacks(
-            document,
-            extracted_fields=extracted_fields,
-            confidence_map=confidence_map,
-            manual_review_reasons=manual_review_reasons,
-            normalization_notes=normalization_notes,
-        )
-        repair = document.repair
-        auto_link_repair_vehicle_from_registry(
-            db,
-            repair,
-            extracted_fields=extracted_fields,
-            normalization_notes=normalization_notes,
-        )
-        enrich_vehicle_fields_from_repair(
-            repair,
-            extracted_fields=extracted_fields,
-            confidence_map=confidence_map,
-            normalization_notes=normalization_notes,
-        )
-        enrich_vehicle_fields_from_registry(
-            db,
-            extracted_fields=extracted_fields,
-            confidence_map=confidence_map,
-            normalization_notes=normalization_notes,
-        )
-        labor_norm_applicability = assess_labor_norm_applicability(db, repair.vehicle)
-        labor_norm_notes, labor_norm_summary = enrich_work_payloads_with_labor_norms(
-            db,
-            extracted_items["works"],
-            labor_norm_applicability,
-        )
-        normalization_notes.extend(labor_norm_notes)
-        checks = []
-
-        if "order_number" in extracted_fields:
-            repair.order_number = str(extracted_fields["order_number"])
-        if "repair_date" in extracted_fields:
-            parsed_repair_date = parse_date_value(str(extracted_fields["repair_date"]).replace("-", "."))
-            if parsed_repair_date is not None:
-                repair.repair_date = parsed_repair_date
-        if "mileage" in extracted_fields:
-            repair.mileage = int(extracted_fields["mileage"])
-        if "work_total" in extracted_fields:
-            repair.work_total = float(extracted_fields["work_total"])
-        if "parts_total" in extracted_fields:
-            repair.parts_total = float(extracted_fields["parts_total"])
-        if "vat_total" in extracted_fields:
-            repair.vat_total = float(extracted_fields["vat_total"])
-        if "grand_total" in extracted_fields:
-            repair.grand_total = float(extracted_fields["grand_total"])
-        if "service_name" in extracted_fields:
-            service = resolve_service_by_name(db, str(extracted_fields["service_name"]))
-            if service is not None:
-                extracted_fields["service_name"] = service.name
-                repair.service_id = service.id
+            if "order_number" in extracted_fields:
+                repair.order_number = str(extracted_fields["order_number"])
+            if "repair_date" in extracted_fields:
+                parsed_repair_date = parse_date_value(str(extracted_fields["repair_date"]).replace("-", "."))
+                if parsed_repair_date is not None:
+                    repair.repair_date = parsed_repair_date
+            if "mileage" in extracted_fields:
+                repair.mileage = int(extracted_fields["mileage"])
+            if "work_total" in extracted_fields:
+                repair.work_total = float(extracted_fields["work_total"])
+            if "parts_total" in extracted_fields:
+                repair.parts_total = float(extracted_fields["parts_total"])
+            if "vat_total" in extracted_fields:
+                repair.vat_total = float(extracted_fields["vat_total"])
+            if "grand_total" in extracted_fields:
+                repair.grand_total = float(extracted_fields["grand_total"])
+            if "service_name" in extracted_fields:
+                service = resolve_service_by_name(db, str(extracted_fields["service_name"]))
+                if service is not None:
+                    extracted_fields["service_name"] = service.name
+                    repair.service_id = service.id
+                    remove_manual_review_reason(manual_review_reasons, "service_not_found")
+                else:
+                    add_manual_review_reason(manual_review_reasons, "service_not_found")
+                    normalization_notes.append(
+                        f"Сервис из документа не найден в справочнике: {extracted_fields['service_name']}"
+                    )
+                remove_manual_review_reason(manual_review_reasons, "service_name_missing")
             else:
-                if "service_not_found" not in manual_review_reasons:
-                    manual_review_reasons.append("service_not_found")
-                normalization_notes.append(
-                    f"Сервис из документа не найден в справочнике: {extracted_fields['service_name']}"
-                )
-        elif "service_name_missing" not in manual_review_reasons:
-            manual_review_reasons.append("service_name_missing")
+                add_manual_review_reason(manual_review_reasons, "service_name_missing")
 
-        replace_repair_lines(
-            db,
-            repair,
-            works_payload=extracted_items["works"],
-            parts_payload=extracted_items["parts"],
-        )
-
-        if "plate_number" in extracted_fields and repair.vehicle.plate_number:
-            extracted_plate_compare = normalize_compare_token(str(extracted_fields["plate_number"]))
-            vehicle_plate_compare = normalize_compare_token(repair.vehicle.plate_number)
-            if extracted_plate_compare and vehicle_plate_compare and extracted_plate_compare != vehicle_plate_compare:
-                checks.append(
-                    {
-                        "check_type": "ocr_vehicle_plate_mismatch",
-                        "severity": CheckSeverity.WARNING,
-                        "title": "Госномер в документе не совпадает с карточкой техники",
-                        "details": (
-                            f"В документе найден {extracted_fields['plate_number']}, "
-                            f"в системе {repair.vehicle.plate_number}"
-                        ),
-                        "payload": {
-                            "document_plate_number": extracted_fields["plate_number"],
-                            "vehicle_plate_number": repair.vehicle.plate_number,
-                        },
-                    }
-                )
-
-        works_sum = round(sum(float(item["line_total"]) for item in extracted_items["works"]), 2)
-        parts_sum = round(sum(float(item["line_total"]) for item in extracted_items["parts"]), 2)
-        checks.extend(build_standard_hours_checks(extracted_items["works"]))
-        checks.extend(build_repeat_repair_checks(db, repair, extracted_items["works"]))
-        checks.extend(build_duplicate_line_checks(extracted_items["works"], extracted_items["parts"]))
-        expected_total, expected_total_checks = build_expected_total_checks(db, repair, extracted_items["works"])
-        repair.expected_total = expected_total
-        checks.extend(expected_total_checks)
-        if extracted_items["works"] and "work_total" in extracted_fields:
-            if not amounts_match(works_sum, float(extracted_fields["work_total"])):
-                checks.append(
-                    {
-                        "check_type": "ocr_work_lines_total_mismatch",
-                        "severity": CheckSeverity.SUSPICIOUS,
-                        "title": "Сумма строк работ не совпадает с итогом работ",
-                        "details": "Нужна ручная проверка работ в заказ-наряде",
-                        "payload": {
-                            "lines_total": works_sum,
-                            "header_total": float(extracted_fields["work_total"]),
-                        },
-                    }
-                )
-
-        if extracted_items["parts"] and "parts_total" in extracted_fields:
-            if not amounts_match(parts_sum, float(extracted_fields["parts_total"])):
-                checks.append(
-                    {
-                        "check_type": "ocr_part_lines_total_mismatch",
-                        "severity": CheckSeverity.SUSPICIOUS,
-                        "title": "Сумма строк запчастей не совпадает с итогом материалов",
-                        "details": "Нужна ручная проверка состава материалов",
-                        "payload": {
-                            "lines_total": parts_sum,
-                            "header_total": float(extracted_fields["parts_total"]),
-                        },
-                    }
-                )
-
-        if "grand_total" in extracted_fields:
-            work_total = float(extracted_fields.get("work_total", 0) or 0)
-            parts_total = float(extracted_fields.get("parts_total", 0) or 0)
-            vat_total = float(extracted_fields.get("vat_total", 0) or 0)
-            grand_total = float(extracted_fields["grand_total"])
-            calculated_total = round(work_total + parts_total + vat_total, 2)
-            if not amounts_match(calculated_total, grand_total):
-                checks.append(
-                    {
-                        "check_type": "ocr_total_mismatch",
-                        "severity": CheckSeverity.SUSPICIOUS,
-                        "title": "Сумма строк не совпадает с итоговой суммой",
-                        "details": "Нужна ручная проверка итогов заказ-наряда",
-                        "payload": {
-                            "work_total": work_total,
-                            "parts_total": parts_total,
-                            "vat_total": vat_total,
-                            "calculated_total": calculated_total,
-                            "grand_total": grand_total,
-                        },
-                    }
-                )
-
-        for reason in manual_review_reasons:
-            checks.append(
-                {
-                    "check_type": f"ocr_{reason}",
-                    "severity": CheckSeverity.WARNING,
-                    "title": "Нужна ручная проверка OCR",
-                    "details": reason,
-                    "payload": {"reason": reason},
-                }
+            replace_repair_lines(
+                db,
+                repair,
+                works_payload=extracted_items["works"],
+                parts_payload=extracted_items["parts"],
             )
 
-        replace_ocr_checks(db, repair.id, checks)
+            if "plate_number" in extracted_fields and repair.vehicle.plate_number:
+                extracted_plate_compare = normalize_compare_token(str(extracted_fields["plate_number"]))
+                vehicle_plate_compare = normalize_compare_token(repair.vehicle.plate_number)
+                if extracted_plate_compare and vehicle_plate_compare and extracted_plate_compare != vehicle_plate_compare:
+                    checks.append(
+                        {
+                            "check_type": "ocr_vehicle_plate_mismatch",
+                            "severity": CheckSeverity.WARNING,
+                            "title": "Госномер в документе не совпадает с карточкой техники",
+                            "details": (
+                                f"В документе найден {extracted_fields['plate_number']}, "
+                                f"в системе {repair.vehicle.plate_number}"
+                            ),
+                            "payload": {
+                                "document_plate_number": extracted_fields["plate_number"],
+                                "vehicle_plate_number": repair.vehicle.plate_number,
+                            },
+                        }
+                    )
 
-        recognized_fields_count = len(confidence_map)
-        repair.is_preliminary = True
-        repair.is_partially_recognized = recognized_fields_count < 4
-        has_blocking_checks = any(item["severity"] in {CheckSeverity.SUSPICIOUS, CheckSeverity.ERROR} for item in checks)
-        if not recognized_fields_count:
-            repair.status = RepairStatus.OCR_ERROR
-        elif has_blocking_checks:
-            repair.status = RepairStatus.SUSPICIOUS
-        else:
-            repair.status = RepairStatus.IN_REVIEW
+            works_sum = round(sum(float(item["line_total"]) for item in extracted_items["works"]), 2)
+            parts_sum = round(sum(float(item["line_total"]) for item in extracted_items["parts"]), 2)
+            checks.extend(build_standard_hours_checks(extracted_items["works"]))
+            checks.extend(build_repeat_repair_checks(db, repair, extracted_items["works"]))
+            checks.extend(build_duplicate_line_checks(extracted_items["works"], extracted_items["parts"]))
+            expected_total, expected_total_checks = build_expected_total_checks(db, repair, extracted_items["works"])
+            repair.expected_total = expected_total
+            checks.extend(expected_total_checks)
+            if extracted_items["works"] and "work_total" in extracted_fields:
+                if not amounts_match(works_sum, float(extracted_fields["work_total"])):
+                    checks.append(
+                        {
+                            "check_type": "ocr_work_lines_total_mismatch",
+                            "severity": CheckSeverity.SUSPICIOUS,
+                            "title": "Сумма строк работ не совпадает с итогом работ",
+                            "details": "Нужна ручная проверка работ в заказ-наряде",
+                            "payload": {
+                                "lines_total": works_sum,
+                                "header_total": float(extracted_fields["work_total"]),
+                            },
+                        }
+                    )
 
-        if recognized_fields_count >= 4:
-            document.status = DocumentStatus.RECOGNIZED
-            message = "Document processed automatically"
-        elif recognized_fields_count > 0:
-            document.status = DocumentStatus.PARTIALLY_RECOGNIZED
-            message = "Document processed partially and sent for review"
-        elif document.source_type == "pdf":
-            document.status = DocumentStatus.OCR_ERROR
-            message = "Document processing did not extract text"
-        else:
-            document.status = DocumentStatus.NEEDS_REVIEW
-            message = "Image uploaded; manual review is required"
+            if extracted_items["parts"] and "parts_total" in extracted_fields:
+                if not amounts_match(parts_sum, float(extracted_fields["parts_total"])):
+                    checks.append(
+                        {
+                            "check_type": "ocr_part_lines_total_mismatch",
+                            "severity": CheckSeverity.SUSPICIOUS,
+                            "title": "Сумма строк запчастей не совпадает с итогом материалов",
+                            "details": "Нужна ручная проверка состава материалов",
+                            "payload": {
+                                "lines_total": parts_sum,
+                                "header_total": float(extracted_fields["parts_total"]),
+                            },
+                        }
+                    )
 
-        document.ocr_confidence = average_confidence(confidence_map)
-        document.review_queue_priority = 100 if document.status != DocumentStatus.RECOGNIZED else 20
+            if "grand_total" in extracted_fields:
+                work_total = float(extracted_fields.get("work_total", 0) or 0)
+                parts_total = float(extracted_fields.get("parts_total", 0) or 0)
+                vat_total = float(extracted_fields.get("vat_total", 0) or 0)
+                grand_total = float(extracted_fields["grand_total"])
+                calculated_total = round(work_total + parts_total + vat_total, 2)
+                if not amounts_match(calculated_total, grand_total):
+                    checks.append(
+                        {
+                            "check_type": "ocr_total_mismatch",
+                            "severity": CheckSeverity.SUSPICIOUS,
+                            "title": "Сумма строк не совпадает с итоговой суммой",
+                            "details": "Нужна ручная проверка итогов заказ-наряда",
+                            "payload": {
+                                "work_total": work_total,
+                                "parts_total": parts_total,
+                                "vat_total": vat_total,
+                                "calculated_total": calculated_total,
+                                "grand_total": grand_total,
+                            },
+                        }
+                    )
 
-        version_number = max([version.version_number for version in document.versions], default=0) + 1
-        text_excerpt = normalize_text(text.replace("\n", " "))[:500] if text else None
-        parsed_payload = {
-            "processor": "hybrid_document_ocr_v2",
-            "ocr_profile_scope": profile_selection.profile_scope,
-            "ocr_profile_source": profile_selection.source,
-            "ocr_profile_reason": profile_selection.reason,
-            "document_kind": document.kind.value,
-            "extracted_from": extracted_from,
-            "text_length": len(text),
-            "text_excerpt": text_excerpt,
-            "extracted_fields": extracted_fields,
-            "extracted_items": extracted_items,
-            "manual_review_reasons": manual_review_reasons,
-            "normalization_notes": normalization_notes,
-            "labor_norm_applicability": {
-                "eligible": labor_norm_applicability.eligible,
-                "scope": labor_norm_applicability.scope,
-                "reason_code": labor_norm_applicability.reason_code,
-                "reason": labor_norm_applicability.reason,
-                "brand_family": labor_norm_applicability.brand_family,
-                "catalog_name": labor_norm_applicability.catalog_name,
-                "matched_count": labor_norm_summary.matched_count,
-                "unmatched_count": labor_norm_summary.unmatched_count,
-            },
-        }
-        db.add(
-            DocumentVersion(
-                document_id=document.id,
-                version_number=version_number,
-                storage_key=document.storage_key,
-                parsed_payload=parsed_payload,
-                field_confidence_map=confidence_map,
-                change_summary=message,
+            for reason in manual_review_reasons:
+                checks.append(build_manual_review_check(reason, extracted_fields=extracted_fields))
+
+            replace_ocr_checks(db, repair.id, checks)
+
+            recognized_fields_count = len(confidence_map)
+            repair.is_preliminary = True
+            repair.is_partially_recognized = recognized_fields_count < 4
+            has_blocking_checks = any(item["severity"] in {CheckSeverity.SUSPICIOUS, CheckSeverity.ERROR} for item in checks)
+            if not recognized_fields_count:
+                repair.status = RepairStatus.OCR_ERROR
+            elif has_blocking_checks:
+                repair.status = RepairStatus.SUSPICIOUS
+            else:
+                repair.status = RepairStatus.IN_REVIEW
+
+            if recognized_fields_count >= 4:
+                document.status = DocumentStatus.RECOGNIZED
+                message = "Document processed automatically"
+            elif recognized_fields_count > 0:
+                document.status = DocumentStatus.PARTIALLY_RECOGNIZED
+                message = "Document processed partially and sent for review"
+            elif document.source_type == "pdf":
+                document.status = DocumentStatus.OCR_ERROR
+                message = "Document processing did not extract text"
+            else:
+                document.status = DocumentStatus.NEEDS_REVIEW
+                message = "Image uploaded; manual review is required"
+
+            document.ocr_confidence = average_confidence(confidence_map)
+            document.review_queue_priority = 100 if document.status != DocumentStatus.RECOGNIZED else 20
+
+            version_number = max([version.version_number for version in document.versions], default=0) + 1
+            text_excerpt = normalize_text(text.replace("\n", " "))[:500] if text else None
+            parsed_payload = {
+                "processor": "hybrid_document_ocr_v2",
+                "ocr_profile_scope": profile_selection.profile_scope,
+                "ocr_profile_source": profile_selection.source,
+                "ocr_profile_reason": profile_selection.reason,
+                "document_kind": document.kind.value,
+                "extracted_from": extracted_from,
+                "text_length": len(text),
+                "text_excerpt": text_excerpt,
+                "extracted_fields": extracted_fields,
+                "extracted_items": extracted_items,
+                "manual_review_reasons": manual_review_reasons,
+                "normalization_notes": normalization_notes,
+                "labor_norm_applicability": {
+                    "eligible": labor_norm_applicability.eligible,
+                    "scope": labor_norm_applicability.scope,
+                    "reason_code": labor_norm_applicability.reason_code,
+                    "reason": labor_norm_applicability.reason,
+                    "brand_family": labor_norm_applicability.brand_family,
+                    "catalog_name": labor_norm_applicability.catalog_name,
+                    "matched_count": labor_norm_summary.matched_count,
+                    "unmatched_count": labor_norm_summary.unmatched_count,
+                },
+            }
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=version_number,
+                    storage_key=document.storage_key,
+                    parsed_payload=parsed_payload,
+                    field_confidence_map=confidence_map,
+                    change_summary=message,
+                )
             )
-        )
 
-        job.status = (
-            ImportStatus.COMPLETED
-            if document.status == DocumentStatus.RECOGNIZED
-            else ImportStatus.COMPLETED_WITH_CONFLICTS
-        )
-        job.summary = {
-            "document_id": document.id,
-            "document_status": document.status.value,
-            "recognized_fields_count": recognized_fields_count,
-            "works_count": len(extracted_items["works"]),
-            "parts_count": len(extracted_items["parts"]),
-            "manual_review_reasons": manual_review_reasons,
-            "normalization_notes": normalization_notes,
-            "confidence": document.ocr_confidence,
-        }
-        job.error_message = None
+            job.status = (
+                ImportStatus.COMPLETED
+                if document.status == DocumentStatus.RECOGNIZED
+                else ImportStatus.COMPLETED_WITH_CONFLICTS
+            )
+            job.summary = {
+                "document_id": document.id,
+                "document_status": document.status.value,
+                "recognized_fields_count": recognized_fields_count,
+                "works_count": len(extracted_items["works"]),
+                "parts_count": len(extracted_items["parts"]),
+                "manual_review_reasons": manual_review_reasons,
+                "normalization_notes": normalization_notes,
+                "confidence": document.ocr_confidence,
+            }
+            job.error_message = None
 
-        db.commit()
+            db.commit()
     except Exception as exc:
+        db.rollback()
+        document = load_document_for_processing(db, document_id)
+        job = db.get(ImportJob, job_id)
+        if document is None or document.repair is None or job is None:
+            raise
         document.status = DocumentStatus.OCR_ERROR
         document.review_queue_priority = 100
         document.ocr_confidence = 0
@@ -2907,6 +2998,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
         message = "Document processing failed"
 
     refreshed_document = load_document_for_processing(db, document.id)
-    if refreshed_document is None:
+    refreshed_job = db.get(ImportJob, job_id)
+    if refreshed_document is None or refreshed_job is None:
         raise ValueError("Processed document could not be reloaded")
-    return ProcessingResult(document=refreshed_document, job=job, message=message)
+    return ProcessingResult(document=refreshed_document, job=refreshed_job, message=message)

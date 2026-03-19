@@ -4,14 +4,16 @@ from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.access import get_allowed_vehicle_ids_query, get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.api.upload_validation import validate_document_upload
 from app.core.paths import STORAGE_ROOT
+from app.db.session import SessionLocal
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, UserRole, VehicleStatus, VehicleType
@@ -125,20 +127,6 @@ def serialize_document(document: Document) -> DocumentRead:
         repair=DocumentRepairRead.model_validate(document.repair),
         vehicle=DocumentVehicleRead.model_validate(document.repair.vehicle),
     )
-
-
-def detect_source_type(upload: UploadFile) -> str:
-    content_type = upload.content_type or ""
-    if content_type == "application/pdf":
-        return "pdf"
-    if content_type.startswith("image/"):
-        return "image"
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Only PDF files and images are supported",
-    )
-
-
 def build_storage_key(filename: str) -> str:
     suffix = Path(filename).suffix.lower()
     today = date.today()
@@ -470,8 +458,6 @@ def create_or_link_vehicle_from_document(
         )
     )
     db.commit()
-
-    process_document(db, document.id)
     refreshed_document = load_document_with_relations(db, document.id)
     if refreshed_document is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Не удалось обновить документ")
@@ -531,8 +517,6 @@ def link_existing_vehicle_to_document(
         )
     )
     db.commit()
-
-    process_document(db, document.id)
     refreshed_document = load_document_with_relations(db, document.id)
     if refreshed_document is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Не удалось обновить документ")
@@ -563,6 +547,34 @@ def log_document_upload_event(
             },
         )
     )
+
+
+def mark_document_for_reprocessing(db: Session, document_id: int) -> Document:
+    document = load_document_with_relations(db, document_id)
+    if document is None or document.repair is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    document.status = DocumentStatus.UPLOADED
+    document.review_queue_priority = 100
+    document.ocr_confidence = None
+    db.commit()
+
+    refreshed_document = load_document_with_relations(db, document_id)
+    if refreshed_document is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Не удалось обновить документ")
+    return refreshed_document
+
+
+def process_document_in_background(document_id: int) -> None:
+    with SessionLocal() as db:
+        try:
+            process_document(db, document_id)
+        except Exception:
+            db.rollback()
+
+
+def enqueue_document_processing(background_tasks: BackgroundTasks, document_id: int) -> None:
+    background_tasks.add_task(process_document_in_background, document_id)
 
 
 @router.get("", response_model=DocumentListResponse)
@@ -687,6 +699,7 @@ def update_document(
 
 @router.post("/upload", response_model=DocumentUploadResponse)
 def upload_document(
+    background_tasks: BackgroundTasks,
     vehicle_id: Optional[int] = Form(default=None),
     repair_date: Optional[date] = Form(default=None),
     mileage: Optional[int] = Form(default=None),
@@ -712,7 +725,7 @@ def upload_document(
     else:
         vehicle = get_or_create_placeholder_vehicle(db)
 
-    source_type = detect_source_type(file)
+    source_type = validate_document_upload(file)
     storage_key = build_storage_key(file.filename or "document")
     destination = STORAGE_ROOT / storage_key
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -785,21 +798,22 @@ def upload_document(
     if created_document_id is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")
 
-    processing_result = process_document(db, created_document_id)
     created_document = load_document_with_relations(db, created_document_id)
     if created_document is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")
     log_document_upload_event(db, current_user, created_document, action_type="document_uploaded")
     db.commit()
+    enqueue_document_processing(background_tasks, created_document_id)
 
     return DocumentUploadResponse(
         document=serialize_document(created_document),
-        message=processing_result.message,
+        message="Документ загружен и поставлен в очередь на обработку",
     )
 
 
 @router.post("/{document_id}/create-vehicle", response_model=DocumentCreateVehicleResponse)
 def create_vehicle_from_document(
+    background_tasks: BackgroundTasks,
     document_id: int,
     payload: DocumentCreateVehicleRequest,
     db: Session = Depends(get_db),
@@ -823,10 +837,12 @@ def create_vehicle_from_document(
         payload=normalized_payload,
         current_admin=current_admin,
     )
+    updated_document = mark_document_for_reprocessing(db, updated_document.id)
+    enqueue_document_processing(background_tasks, updated_document.id)
     message = (
-        "Карточка техники создана и ремонт перепривязан к ней"
+        "Карточка техники создана и документ поставлен в очередь на перепроверку"
         if created_new_vehicle
-        else "Ремонт перепривязан к существующей карточке техники"
+        else "Ремонт перепривязан к существующей карточке техники и поставлен в очередь на перепроверку"
     )
     return DocumentCreateVehicleResponse(
         message=message,
@@ -838,6 +854,7 @@ def create_vehicle_from_document(
 
 @router.post("/{document_id}/link-vehicle", response_model=DocumentCreateVehicleResponse)
 def link_vehicle_to_document(
+    background_tasks: BackgroundTasks,
     document_id: int,
     payload: DocumentLinkVehicleRequest,
     db: Session = Depends(get_db),
@@ -854,8 +871,10 @@ def link_vehicle_to_document(
         vehicle=vehicle,
         current_user=current_user,
     )
+    updated_document = mark_document_for_reprocessing(db, updated_document.id)
+    enqueue_document_processing(background_tasks, updated_document.id)
     return DocumentCreateVehicleResponse(
-        message="Ремонт перепривязан к выбранной карточке техники",
+        message="Ремонт перепривязан к выбранной карточке техники и поставлен в очередь на перепроверку",
         document=serialize_document(updated_document),
         repair_id=updated_document.repair.id,
         created_new_vehicle=False,
@@ -864,6 +883,7 @@ def link_vehicle_to_document(
 
 @router.post("/upload-to-repair", response_model=DocumentUploadResponse)
 def upload_document_to_repair(
+    background_tasks: BackgroundTasks,
     repair_id: int = Form(...),
     kind: DocumentKind = Form(default=DocumentKind.REPEAT_SCAN),
     notes: Optional[str] = Form(default=None),
@@ -875,7 +895,7 @@ def upload_document_to_repair(
     if repair is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
 
-    source_type = detect_source_type(file)
+    source_type = validate_document_upload(file)
     storage_key = build_storage_key(file.filename or "document")
     destination = STORAGE_ROOT / storage_key
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -937,16 +957,16 @@ def upload_document_to_repair(
     if created_document_id is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")
 
-    processing_result = process_document(db, created_document_id)
     created_document = load_document_with_relations(db, created_document_id)
     if created_document is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")
     log_document_upload_event(db, current_user, created_document, action_type="document_attached")
     db.commit()
+    enqueue_document_processing(background_tasks, created_document_id)
 
     return DocumentUploadResponse(
         document=serialize_document(created_document),
-        message=processing_result.message,
+        message="Документ прикреплён и поставлен в очередь на обработку",
     )
 
 

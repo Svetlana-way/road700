@@ -1032,6 +1032,13 @@ type RepairDetail = {
   }>;
 };
 
+type RepairReportSectionKey = "catalogs" | "labor_norms" | "amounts" | "history" | "ocr";
+type RepairReportSection = {
+  key: RepairReportSectionKey;
+  title: string;
+  checks: RepairDetail["checks"];
+};
+
 type RepairHistoryEntry = RepairDetail["history"][number];
 type RepairDocumentHistoryEntry = RepairDetail["document_history"][number];
 
@@ -1444,7 +1451,7 @@ const repairStatusLabels: Record<string, string> = {
   archived: "Архив",
 };
 const documentStatusLabels: Record<string, string> = {
-  uploaded: "Загружен",
+  uploaded: "В очереди OCR",
   recognized: "Распознан",
   partially_recognized: "Распознан частично",
   needs_review: "Требует ручной проверки",
@@ -1457,7 +1464,7 @@ const genericStatusLabels: Record<string, string> = {
   confirmed: "Подтверждено",
   archived: "Архив",
   merged: "Объединён",
-  uploaded: "Загружен",
+  uploaded: "В очереди OCR",
   recognized: "Распознан",
   partially_recognized: "Распознан частично",
   needs_review: "Требует ручной проверки",
@@ -1475,6 +1482,18 @@ const genericStatusLabels: Record<string, string> = {
   missing: "Файл отсутствует",
   manual: "Вручную",
   full: "Полная",
+};
+const manualReviewReasonLabels: Record<string, string> = {
+  mileage_missing: "не удалось определить пробег",
+  order_number_missing: "не удалось определить номер заказ-наряда",
+  repair_date_invalid: "дата ремонта распознана с ошибкой",
+  repair_date_missing: "не удалось определить дату ремонта",
+  service_name_missing: "не удалось определить сервис",
+  service_name_suspicious: "название сервиса выглядит сомнительно",
+  service_not_found: "сервис не найден в справочнике",
+  text_not_found: "не удалось извлечь текст из документа",
+  vehicle_missing: "не удалось определить технику",
+  vehicle_not_found: "техника не найдена в базе",
 };
 
 function formatStatus(status: string) {
@@ -2370,6 +2389,14 @@ function formatDocumentStatusLabel(status: string | null | undefined) {
   return documentStatusLabels[status] || formatStatus(status);
 }
 
+function formatManualReviewReason(reason: string) {
+  return manualReviewReasonLabels[reason] || formatStatus(reason);
+}
+
+function formatManualReviewReasons(reasons: string[]) {
+  return reasons.map((reason) => formatManualReviewReason(reason)).join(", ");
+}
+
 function formatHistoryActionLabel(actionType: string) {
   return historyActionLabels[actionType] || formatStatus(actionType);
 }
@@ -2887,12 +2914,66 @@ function resolveRepairDocumentId(repair: RepairDetail, preferredDocumentId: numb
   return repair.documents.find((document) => document.is_primary)?.id ?? repair.documents[0]?.id ?? null;
 }
 
+function isDocumentAwaitingOcr(status: string | null | undefined) {
+  return status === "uploaded";
+}
+
+function repairHasDocumentsAwaitingOcr(repair: RepairDetail | null) {
+  return repair?.documents.some((document) => isDocumentAwaitingOcr(document.status)) ?? false;
+}
+
 function readCheckResolutionMeta(check: RepairDetail["checks"][number]): CheckResolutionMeta | null {
   const resolution = check.calculation_payload?.resolution;
   if (!resolution || typeof resolution !== "object") {
     return null;
   }
   return resolution as CheckResolutionMeta;
+}
+
+function getRepairCheckReportSectionKey(checkType: string): RepairReportSectionKey {
+  if (checkType.includes("vehicle") || checkType.includes("service")) {
+    return "catalogs";
+  }
+  if (checkType.includes("standard_hours")) {
+    return "labor_norms";
+  }
+  if (
+    checkType.includes("total")
+    || checkType.includes("duplicate")
+    || checkType.includes("expected_total")
+  ) {
+    return "amounts";
+  }
+  if (checkType.includes("repeat_repair")) {
+    return "history";
+  }
+  return "ocr";
+}
+
+function groupRepairChecksForReport(checks: RepairDetail["checks"]): RepairReportSection[] {
+  const sectionTitles: Record<RepairReportSectionKey, string> = {
+    catalogs: "Справочники",
+    labor_norms: "Нормо-часы",
+    amounts: "Суммы и структура",
+    history: "История и аномалии",
+    ocr: "OCR и ручная проверка",
+  };
+  const sectionOrder: RepairReportSectionKey[] = ["catalogs", "labor_norms", "amounts", "history", "ocr"];
+  const grouped = new Map<RepairReportSectionKey, RepairDetail["checks"]>();
+
+  for (const check of checks) {
+    const key = getRepairCheckReportSectionKey(check.check_type);
+    const existing = grouped.get(key) ?? [];
+    grouped.set(key, [...existing, check]);
+  }
+
+  return sectionOrder
+    .filter((key) => (grouped.get(key)?.length ?? 0) > 0)
+    .map((key) => ({
+      key,
+      title: sectionTitles[key],
+      checks: grouped.get(key) ?? [],
+    }));
 }
 
 function buildCheckPayloadDetails(check: RepairDetail["checks"][number]) {
@@ -3253,6 +3334,8 @@ export default function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [lastUploadedDocument, setLastUploadedDocument] = useState<DocumentItem | null>(null);
   const uploadFileInputRef = useRef<HTMLInputElement | null>(null);
+  const workspaceAutoRefreshInFlightRef = useRef(false);
+  const repairAutoRefreshInFlightRef = useRef(false);
   const attachedFileInputRef = useRef<HTMLInputElement | null>(null);
   const [bootLoading, setBootLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
@@ -3329,6 +3412,14 @@ export default function App() {
   const selectedRepairDocumentParts = Array.isArray(selectedRepairDocumentExtractedItems?.parts)
     ? selectedRepairDocumentExtractedItems.parts
     : [];
+  const selectedRepairUnresolvedChecks = selectedRepair
+    ? selectedRepair.checks.filter((item) => !item.is_resolved)
+    : [];
+  const selectedRepairAwaitingOcr = repairHasDocumentsAwaitingOcr(selectedRepair);
+  const selectedRepairHasBlockingFindings = selectedRepairUnresolvedChecks.some(
+    (item) => item.severity === "suspicious" || item.severity === "error",
+  );
+  const selectedRepairReportSections = groupRepairChecksForReport(selectedRepairUnresolvedChecks);
   const repairVisualBars = buildRepairVisualBars(summary, dataQuality);
   const repairVisualMax = Math.max(...repairVisualBars.map((item) => item.value), 0);
   const qualityVisualBars = buildQualityVisualBars(dataQuality);
@@ -4026,8 +4117,15 @@ export default function App() {
     }
   }
 
-  async function loadWorkspace(activeToken: string, reviewCategory: ReviewQueueCategory = selectedReviewCategory) {
-    setBootLoading(true);
+  async function loadWorkspace(
+    activeToken: string,
+    reviewCategory: ReviewQueueCategory = selectedReviewCategory,
+    options?: { silent?: boolean },
+  ) {
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      setBootLoading(true);
+    }
     try {
       const me = await apiRequest<User>("/auth/me", { method: "GET" }, activeToken);
       const [
@@ -4097,6 +4195,12 @@ export default function App() {
       setFleetVehiclesTotal(vehicleList.total);
       setSelectedFleetVehicleId((current) => current ?? vehicleList.items[0]?.id ?? null);
       setDocuments(recentDocuments.items);
+      setLastUploadedDocument((current) => {
+        if (!current) {
+          return current;
+        }
+        return recentDocuments.items.find((item) => item.id === current.id) ?? current;
+      });
       setUsersList(usersPayload?.items || []);
       setUsersTotal(usersPayload?.total || 0);
       setSelectedManagedUserId((current) => current ?? usersPayload?.items?.[0]?.id ?? null);
@@ -4130,17 +4234,93 @@ export default function App() {
           setSelectedDocumentId(defaultDocumentId);
         }
       }
-      setErrorMessage("");
+      if (!silent) {
+        setErrorMessage("");
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Не удалось загрузить рабочее пространство";
-      setErrorMessage(message);
+      if (!silent) {
+        setErrorMessage(message);
+      }
       if (message.toLowerCase().includes("validate credentials")) {
         localStorage.removeItem(TOKEN_STORAGE_KEY);
         setToken("");
         setUser(null);
       }
     } finally {
-      setBootLoading(false);
+      if (!silent) {
+        setBootLoading(false);
+      }
+    }
+  }
+
+  async function loadRepairDetail(
+    activeToken: string,
+    repairId: number,
+    preferredDocumentId: number | null,
+    options?: { silent?: boolean; resetTransientState?: boolean },
+  ) {
+    const silent = options?.silent ?? false;
+    const resetTransientState = options?.resetTransientState ?? true;
+
+    if (!silent) {
+      setRepairLoading(true);
+      setErrorMessage("");
+    }
+    try {
+      const payload = await apiRequest<RepairDetail>(`/repairs/${repairId}`, { method: "GET" }, activeToken);
+      setSelectedRepair(payload);
+      if (resetTransientState) {
+        setCheckComments({});
+        setDocumentComparison(null);
+        setDocumentComparisonComment("");
+        setHistoryFilter("all");
+        setHistorySearch("");
+        setExpandedHistoryEntries({});
+        setAttachedDocumentKind("repeat_scan");
+        setAttachedDocumentNotes("");
+        setAttachedDocumentFile(null);
+      }
+      setSelectedDocumentId((current) => resolveRepairDocumentId(payload, preferredDocumentId ?? current));
+      if (!isEditingRepair) {
+        setRepairDraft(createRepairDraft(payload));
+      }
+      setLastUploadedDocument((current) => {
+        if (!current) {
+          return current;
+        }
+        const refreshedDocument = payload.documents.find((item) => item.id === current.id);
+        if (!refreshedDocument) {
+          return current;
+        }
+        const latestVersion = refreshedDocument.versions[refreshedDocument.versions.length - 1];
+        return {
+          ...current,
+          mime_type: refreshedDocument.mime_type,
+          status: refreshedDocument.status as DocumentStatus,
+          is_primary: refreshedDocument.is_primary,
+          ocr_confidence: refreshedDocument.ocr_confidence,
+          review_queue_priority: refreshedDocument.review_queue_priority,
+          notes: refreshedDocument.notes,
+          created_at: refreshedDocument.created_at,
+          parsed_payload: (latestVersion?.parsed_payload as DocumentItem["parsed_payload"]) ?? current.parsed_payload,
+          repair: {
+            id: payload.id,
+            order_number: payload.order_number,
+            repair_date: payload.repair_date,
+            mileage: payload.mileage,
+            status: payload.status,
+          },
+        };
+      });
+    } catch (error) {
+      if (!silent) {
+        setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить ремонт");
+      }
+    } finally {
+      if (!silent) {
+        setRepairLoading(false);
+      }
     }
   }
 
@@ -4321,31 +4501,54 @@ export default function App() {
       return;
     }
 
-    setRepairLoading(true);
-    void apiRequest<RepairDetail>(`/repairs/${selectedRepairId}`, { method: "GET" }, token)
-      .then((payload) => {
-        setSelectedRepair(payload);
-        setCheckComments({});
-        setDocumentComparison(null);
-        setDocumentComparisonComment("");
-        setHistoryFilter("all");
-        setHistorySearch("");
-        setExpandedHistoryEntries({});
-        setAttachedDocumentKind("repeat_scan");
-        setAttachedDocumentNotes("");
-        setAttachedDocumentFile(null);
-        setSelectedDocumentId((current) => resolveRepairDocumentId(payload, current));
-        if (!isEditingRepair) {
-          setRepairDraft(createRepairDraft(payload));
-        }
-      })
-      .catch((error) => {
-        setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить ремонт");
-      })
-      .finally(() => {
-        setRepairLoading(false);
-      });
+    const repairAlreadyLoaded = selectedRepair?.id === selectedRepairId;
+    void loadRepairDetail(token, selectedRepairId, selectedDocumentId, {
+      silent: repairAlreadyLoaded,
+      resetTransientState: !repairAlreadyLoaded,
+    });
   }, [documents, isEditingRepair, reviewQueue, selectedDocumentId, token]);
+
+  useEffect(() => {
+    if (!token) {
+      workspaceAutoRefreshInFlightRef.current = false;
+      repairAutoRefreshInFlightRef.current = false;
+      return;
+    }
+
+    const shouldRefreshWorkspace =
+      documents.some((document) => isDocumentAwaitingOcr(document.status)) ||
+      (lastUploadedDocument !== null && isDocumentAwaitingOcr(lastUploadedDocument.status));
+    const shouldRefreshRepair = repairHasDocumentsAwaitingOcr(selectedRepair);
+
+    if (!shouldRefreshWorkspace && !shouldRefreshRepair) {
+      workspaceAutoRefreshInFlightRef.current = false;
+      repairAutoRefreshInFlightRef.current = false;
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      if (shouldRefreshWorkspace && !workspaceAutoRefreshInFlightRef.current) {
+        workspaceAutoRefreshInFlightRef.current = true;
+        void loadWorkspace(token, selectedReviewCategory, { silent: true }).finally(() => {
+          workspaceAutoRefreshInFlightRef.current = false;
+        });
+      }
+
+      if (shouldRefreshRepair && selectedRepair && !repairAutoRefreshInFlightRef.current) {
+        repairAutoRefreshInFlightRef.current = true;
+        void loadRepairDetail(token, selectedRepair.id, selectedDocumentId, {
+          silent: true,
+          resetTransientState: false,
+        }).finally(() => {
+          repairAutoRefreshInFlightRef.current = false;
+        });
+      }
+    }, 4000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [documents, lastUploadedDocument, selectedDocumentId, selectedRepair, selectedReviewCategory, token]);
 
   useEffect(() => {
     setDocumentVehicleForm(createVehicleFormFromPayload(selectedRepairDocumentPayload));
@@ -4617,25 +4820,7 @@ export default function App() {
     if (!token) {
       return;
     }
-    setRepairLoading(true);
-    setErrorMessage("");
-    try {
-      const payload = await apiRequest<RepairDetail>(`/repairs/${repairId}`, { method: "GET" }, token);
-      setSelectedRepair(payload);
-      setSelectedDocumentId(resolveRepairDocumentId(payload, documentId));
-      setDocumentComparison(null);
-      setDocumentComparisonComment("");
-      setHistoryFilter("all");
-      setHistorySearch("");
-      setExpandedHistoryEntries({});
-      setAttachedDocumentKind("repeat_scan");
-      setAttachedDocumentNotes("");
-      setAttachedDocumentFile(null);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить ремонт");
-    } finally {
-      setRepairLoading(false);
-    }
+    await loadRepairDetail(token, repairId, documentId, { resetTransientState: true });
   }
 
   function openFleetVehicleById(vehicleId: number) {
@@ -7991,7 +8176,7 @@ export default function App() {
                             ) : null}
                             {document.parsed_payload?.manual_review_reasons?.length ? (
                               <Typography className="muted-copy">
-                                Проверить вручную: {document.parsed_payload.manual_review_reasons.join(", ")}
+                                Проверить вручную: {formatManualReviewReasons(document.parsed_payload.manual_review_reasons)}
                               </Typography>
                             ) : null}
                             {formatOcrProfileMeta(document.parsed_payload ?? null) ? (
@@ -11352,7 +11537,7 @@ export default function App() {
                                           {Array.isArray(selectedRepairDocumentPayload?.manual_review_reasons) &&
                                           selectedRepairDocumentPayload.manual_review_reasons.length > 0 ? (
                                             <Typography className="muted-copy">
-                                              Требует ручной проверки: {selectedRepairDocumentPayload.manual_review_reasons.join(", ")}
+                                              Требует ручной проверки: {formatManualReviewReasons(selectedRepairDocumentPayload.manual_review_reasons)}
                                             </Typography>
                                           ) : null}
                                           {formatOcrProfileMeta(selectedRepairDocumentPayload) ? (
@@ -11957,60 +12142,180 @@ export default function App() {
                           <>
                             {activeRepairTab === "overview" ? (
                               <Paper className="repair-summary" elevation={0}>
-                              <Grid container spacing={2}>
-                                <Grid item xs={12} sm={6}>
-                                  <Typography className="metric-label">Заказ-наряд</Typography>
-                                  <Typography>{selectedRepair.order_number || "Не указан"}</Typography>
-                                </Grid>
-                                <Grid item xs={12} sm={6}>
-                                  <Typography className="metric-label">Техника</Typography>
-                                  <Typography>{formatVehicle(selectedRepair.vehicle)}</Typography>
-                                </Grid>
-                                <Grid item xs={6}>
-                                  <Typography className="metric-label">Работы</Typography>
-                                  <Typography>{formatMoney(selectedRepair.work_total) || "—"}</Typography>
-                                </Grid>
-                                <Grid item xs={6}>
-                                  <Typography className="metric-label">Запчасти</Typography>
-                                  <Typography>{formatMoney(selectedRepair.parts_total) || "—"}</Typography>
-                                </Grid>
-                                <Grid item xs={6}>
-                                  <Typography className="metric-label">НДС</Typography>
-                                  <Typography>{formatMoney(selectedRepair.vat_total) || "—"}</Typography>
-                                </Grid>
-                                <Grid item xs={6}>
-                                  <Typography className="metric-label">Итого</Typography>
-                                  <Typography>{formatMoney(selectedRepair.grand_total) || "—"}</Typography>
-                                </Grid>
-                                {selectedRepair.expected_total !== null ? (
-                                  <>
-                                    <Grid item xs={6}>
-                                      <Typography className="metric-label">Ожидаемая стоимость</Typography>
-                                      <Typography>{formatMoney(selectedRepair.expected_total) || "—"}</Typography>
-                                    </Grid>
-                                    <Grid item xs={6}>
-                                      <Typography className="metric-label">Отклонение от ожидаемой</Typography>
-                                      <Typography>
-                                        {(() => {
-                                          const delta = selectedRepair.grand_total - selectedRepair.expected_total;
-                                          const ratio =
-                                            selectedRepair.expected_total > 0
-                                              ? (delta / selectedRepair.expected_total) * 100
-                                              : null;
-                                          const deltaLabel = formatMoney(delta) || "—";
-                                          const ratioLabel =
-                                            ratio !== null
-                                              ? `${delta >= 0 ? "+" : ""}${new Intl.NumberFormat("ru-RU", {
-                                                  maximumFractionDigits: 1,
-                                                }).format(ratio)}%`
-                                              : null;
-                                          return ratioLabel ? `${deltaLabel} · ${ratioLabel}` : deltaLabel;
-                                        })()}
+                                <Stack spacing={2}>
+                                  <Stack
+                                    direction={{ xs: "column", md: "row" }}
+                                    spacing={1.5}
+                                    justifyContent="space-between"
+                                    alignItems={{ xs: "flex-start", md: "center" }}
+                                  >
+                                    <Box>
+                                      <Typography variant="h6">Итоговый отчёт по заказ-наряду</Typography>
+                                      <Typography className="muted-copy">
+                                        Единая сводка по реквизитам, суммам и всем несоответствиям выбранного ремонта.
                                       </Typography>
+                                    </Box>
+                                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                      <Chip size="small" label={formatRepairStatus(selectedRepair.status)} />
+                                      {selectedRepairDocument ? (
+                                        <Chip
+                                          size="small"
+                                          variant="outlined"
+                                          color={statusColor(selectedRepairDocument.status as DocumentStatus)}
+                                          label={`Документ: ${formatDocumentStatusLabel(selectedRepairDocument.status)}`}
+                                        />
+                                      ) : null}
+                                      <Chip
+                                        size="small"
+                                        variant="outlined"
+                                        color={selectedRepairUnresolvedChecks.length > 0 ? "warning" : "success"}
+                                        label={
+                                          selectedRepairUnresolvedChecks.length > 0
+                                            ? `Несоответствий: ${selectedRepairUnresolvedChecks.length}`
+                                            : "Несоответствий нет"
+                                        }
+                                      />
+                                    </Stack>
+                                  </Stack>
+
+                                  <Grid container spacing={2}>
+                                    <Grid item xs={12} sm={6} md={4}>
+                                      <Typography className="metric-label">Заказ-наряд</Typography>
+                                      <Typography>{selectedRepair.order_number || "Не указан"}</Typography>
                                     </Grid>
-                                  </>
-                                ) : null}
-                              </Grid>
+                                    <Grid item xs={12} sm={6} md={4}>
+                                      <Typography className="metric-label">Дата ремонта</Typography>
+                                      <Typography>{selectedRepair.repair_date || "—"}</Typography>
+                                    </Grid>
+                                    <Grid item xs={12} sm={6} md={4}>
+                                      <Typography className="metric-label">Пробег</Typography>
+                                      <Typography>{selectedRepair.mileage > 0 ? formatCompactNumber(selectedRepair.mileage) : "—"}</Typography>
+                                    </Grid>
+                                    <Grid item xs={12} sm={6}>
+                                      <Typography className="metric-label">Техника</Typography>
+                                      <Typography>{formatVehicle(selectedRepair.vehicle)}</Typography>
+                                    </Grid>
+                                    <Grid item xs={12} sm={6}>
+                                      <Typography className="metric-label">Сервис</Typography>
+                                      <Typography>{selectedRepair.service?.name || "Не назначен"}</Typography>
+                                    </Grid>
+                                    <Grid item xs={6} md={3}>
+                                      <Typography className="metric-label">Работы</Typography>
+                                      <Typography>{formatMoney(selectedRepair.work_total) || "—"}</Typography>
+                                    </Grid>
+                                    <Grid item xs={6} md={3}>
+                                      <Typography className="metric-label">Запчасти</Typography>
+                                      <Typography>{formatMoney(selectedRepair.parts_total) || "—"}</Typography>
+                                    </Grid>
+                                    <Grid item xs={6} md={3}>
+                                      <Typography className="metric-label">НДС</Typography>
+                                      <Typography>{formatMoney(selectedRepair.vat_total) || "—"}</Typography>
+                                    </Grid>
+                                    <Grid item xs={6} md={3}>
+                                      <Typography className="metric-label">Итого</Typography>
+                                      <Typography>{formatMoney(selectedRepair.grand_total) || "—"}</Typography>
+                                    </Grid>
+                                    <Grid item xs={6} md={3}>
+                                      <Typography className="metric-label">Работ распознано</Typography>
+                                      <Typography>{formatCompactNumber(selectedRepair.works.length)}</Typography>
+                                    </Grid>
+                                    <Grid item xs={6} md={3}>
+                                      <Typography className="metric-label">Запчастей распознано</Typography>
+                                      <Typography>{formatCompactNumber(selectedRepair.parts.length)}</Typography>
+                                    </Grid>
+                                    {selectedRepair.expected_total !== null ? (
+                                      <>
+                                        <Grid item xs={6} md={3}>
+                                          <Typography className="metric-label">Ожидаемая стоимость</Typography>
+                                          <Typography>{formatMoney(selectedRepair.expected_total) || "—"}</Typography>
+                                        </Grid>
+                                        <Grid item xs={6} md={3}>
+                                          <Typography className="metric-label">Отклонение от ожидаемой</Typography>
+                                          <Typography>
+                                            {(() => {
+                                              const delta = selectedRepair.grand_total - selectedRepair.expected_total;
+                                              const ratio =
+                                                selectedRepair.expected_total > 0
+                                                  ? (delta / selectedRepair.expected_total) * 100
+                                                  : null;
+                                              const deltaLabel = formatMoney(delta) || "—";
+                                              const ratioLabel =
+                                                ratio !== null
+                                                  ? `${delta >= 0 ? "+" : ""}${new Intl.NumberFormat("ru-RU", {
+                                                      maximumFractionDigits: 1,
+                                                    }).format(ratio)}%`
+                                                  : null;
+                                              return ratioLabel ? `${deltaLabel} · ${ratioLabel}` : deltaLabel;
+                                            })()}
+                                          </Typography>
+                                        </Grid>
+                                      </>
+                                    ) : null}
+                                  </Grid>
+
+                                  <Divider />
+
+                                  {selectedRepairAwaitingOcr ? (
+                                    <Alert severity="info">
+                                      Документ ещё находится в очереди OCR или перепроверки. Итоговый отчёт будет автоматически обновлён после завершения обработки.
+                                    </Alert>
+                                  ) : selectedRepairUnresolvedChecks.length === 0 ? (
+                                    <Alert severity="success">
+                                      По текущему заказ-наряду открытых несоответствий не найдено. Ремонт готов к следующему этапу подтверждения.
+                                    </Alert>
+                                  ) : (
+                                    <Alert severity={selectedRepairHasBlockingFindings ? "warning" : "info"}>
+                                      В отчёте есть несоответствия, требующие ручного решения сотрудника. Ниже они сгруппированы по типам проверки.
+                                    </Alert>
+                                  )}
+
+                                  {selectedRepairReportSections.length > 0 ? (
+                                    <Stack spacing={1.5}>
+                                      {selectedRepairReportSections.map((section) => (
+                                        <Stack spacing={1} key={`report-section-${section.key}`}>
+                                          <Typography variant="subtitle1">{section.title}</Typography>
+                                          {section.checks.map((check) => {
+                                            const payloadDetails = buildCheckPayloadDetails(check);
+                                            return (
+                                              <Paper className="repair-line" elevation={0} key={`report-check-${check.id}`}>
+                                                <Stack spacing={0.75}>
+                                                  <Stack
+                                                    direction={{ xs: "column", sm: "row" }}
+                                                    justifyContent="space-between"
+                                                    spacing={1}
+                                                    alignItems={{ xs: "flex-start", sm: "center" }}
+                                                  >
+                                                    <Typography>{check.title}</Typography>
+                                                    <Chip
+                                                      size="small"
+                                                      color={checkSeverityColor(check.severity)}
+                                                      label={formatStatus(check.severity)}
+                                                    />
+                                                  </Stack>
+                                                  {check.details ? (
+                                                    <Typography className="muted-copy">{check.details}</Typography>
+                                                  ) : null}
+                                                  {payloadDetails.length > 0 ? (
+                                                    <Stack spacing={0.5}>
+                                                      {payloadDetails.map((line, index) => (
+                                                        <Typography
+                                                          className="muted-copy"
+                                                          key={`report-check-payload-${check.id}-${index}`}
+                                                        >
+                                                          {line}
+                                                        </Typography>
+                                                      ))}
+                                                    </Stack>
+                                                  ) : null}
+                                                </Stack>
+                                              </Paper>
+                                            );
+                                          })}
+                                        </Stack>
+                                      ))}
+                                    </Stack>
+                                  ) : null}
+                                </Stack>
                               </Paper>
                             ) : null}
 
@@ -12196,7 +12501,7 @@ export default function App() {
                                             Array.isArray(version.parsed_payload.manual_review_reasons) &&
                                             version.parsed_payload.manual_review_reasons.length > 0 ? (
                                               <Typography className="muted-copy">
-                                                Ручная проверка: {version.parsed_payload.manual_review_reasons.join(", ")}
+                                                Ручная проверка: {formatManualReviewReasons(version.parsed_payload.manual_review_reasons)}
                                               </Typography>
                                             ) : null}
                                             {formatOcrProfileMeta(version.parsed_payload) ? (

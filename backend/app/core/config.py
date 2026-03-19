@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     project_name: str = "Road700 Fleet Repairs"
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
+    max_document_upload_size_bytes: int = 25 * 1024 * 1024
+    max_import_upload_size_bytes: int = 20 * 1024 * 1024
     database_url_override: Optional[str] = Field(default=None, validation_alias="DATABASE_URL")
     postgres_db: str = "road700"
     postgres_user: str = "road700"

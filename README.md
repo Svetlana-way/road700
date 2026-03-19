@@ -17,6 +17,7 @@ Initial project scaffold for the fleet repairs platform.
 - `docker-compose.yml` local infrastructure
 - `Вопросы и ответы по проекту.md` agreed requirements log
 - `План реализации и архитектура проекта.md` working implementation plan
+- `Use Case сотрудника и чек-лист соответствия.md` deployment acceptance checklist for the employee workflow
 
 ## Next implementation targets
 

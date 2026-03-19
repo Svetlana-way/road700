@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import statistics
+from collections import Counter
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -8,11 +10,17 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin, get_db
 from app.api.upload_validation import validate_historical_import_upload
+from app.models.repair import Repair, RepairWork
+from app.models.service import Service
+from app.models.vehicle import Vehicle
 from app.models.audit import AuditLog
 from app.models.imports import ImportConflict, ImportJob
 from app.models.user import User
 from app.schemas.imports import (
     HistoricalRepairImportResponse,
+    HistoricalWorkReferenceListResponse,
+    HistoricalWorkReferenceRead,
+    HistoricalWorkReferenceServiceRead,
     ImportConflictListResponse,
     ImportConflictRead,
     ImportConflictResolveRequest,
@@ -20,11 +28,188 @@ from app.schemas.imports import (
     ImportJobListResponse,
     ImportJobRead,
 )
-from app.services.historical_repairs_import import import_historical_repairs
+from app.services.historical_repairs_import import IMPORT_REASON_PREFIX, import_historical_repairs
+from app.services.labor_norms import build_normalized_name
 
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 ALLOWED_CONFLICT_STATUSES = {"pending", "resolved", "ignored"}
+
+
+def build_historical_work_reference(
+    db: Session,
+    *,
+    q: str | None,
+    limit: int,
+    min_samples: int,
+) -> HistoricalWorkReferenceListResponse:
+    rows = db.execute(
+        select(
+            Repair.id.label("repair_id"),
+            Repair.repair_date,
+            RepairWork.work_code,
+            RepairWork.work_name,
+            RepairWork.quantity,
+            RepairWork.price,
+            RepairWork.line_total,
+            RepairWork.standard_hours,
+            RepairWork.actual_hours,
+            Service.id.label("service_id"),
+            Service.name.label("service_name"),
+            Vehicle.vehicle_type,
+        )
+        .join(Repair, Repair.id == RepairWork.repair_id)
+        .join(Vehicle, Vehicle.id == Repair.vehicle_id)
+        .join(Service, Service.id == Repair.service_id, isouter=True)
+        .where(
+            Repair.reason.like(f"{IMPORT_REASON_PREFIX}%"),
+            RepairWork.work_name.is_not(None),
+        )
+    ).all()
+
+    normalized_query = (q or "").strip().lower()
+    grouped: dict[str, dict[str, object]] = {}
+
+    for row in rows:
+        work_name = str(row.work_name or "").strip()
+        if not work_name:
+            continue
+        work_code = str(row.work_code).strip() if row.work_code else None
+        normalized_name = build_normalized_name(work_name, work_code)
+        if not normalized_name and not work_code:
+            continue
+
+        key = f"code:{work_code}" if work_code else f"name:{normalized_name}"
+        service_name = str(row.service_name).strip() if row.service_name else "Без сервиса"
+        vehicle_type = row.vehicle_type.value if row.vehicle_type is not None else "unknown"
+
+        entry = grouped.setdefault(
+            key,
+            {
+                "key": key,
+                "work_code": work_code,
+                "work_name": work_name,
+                "normalized_name": normalized_name,
+                "repair_ids": set(),
+                "line_totals": [],
+                "prices": [],
+                "quantities": [],
+                "standard_hours": [],
+                "actual_hours": [],
+                "vehicle_types": set(),
+                "recent_repair_date": None,
+                "service_counts": Counter(),
+            },
+        )
+
+        if not entry["work_code"] and work_code:
+            entry["work_code"] = work_code
+        if len(work_name) > len(str(entry["work_name"])):
+            entry["work_name"] = work_name
+        if not entry["normalized_name"] and normalized_name:
+            entry["normalized_name"] = normalized_name
+
+        cast_repair_ids = entry["repair_ids"]
+        cast_line_totals = entry["line_totals"]
+        cast_prices = entry["prices"]
+        cast_quantities = entry["quantities"]
+        cast_standard_hours = entry["standard_hours"]
+        cast_actual_hours = entry["actual_hours"]
+        cast_vehicle_types = entry["vehicle_types"]
+        cast_service_counts = entry["service_counts"]
+
+        cast_repair_ids.add(int(row.repair_id))
+        cast_line_totals.append(float(row.line_total))
+        cast_prices.append(float(row.price))
+        cast_quantities.append(float(row.quantity))
+        if row.standard_hours is not None:
+            cast_standard_hours.append(float(row.standard_hours))
+        if row.actual_hours is not None:
+            cast_actual_hours.append(float(row.actual_hours))
+        cast_vehicle_types.add(vehicle_type)
+        cast_service_counts[(row.service_id, service_name)] += 1
+
+        recent_repair_date = entry["recent_repair_date"]
+        if recent_repair_date is None or row.repair_date > recent_repair_date:
+            entry["recent_repair_date"] = row.repair_date
+
+    filtered_items: list[HistoricalWorkReferenceRead] = []
+    for entry in grouped.values():
+        sample_lines = len(entry["line_totals"])
+        if sample_lines < min_samples:
+            continue
+
+        haystack = " ".join(
+            [
+                str(entry["work_code"] or ""),
+                str(entry["work_name"]),
+                str(entry["normalized_name"]),
+                " ".join(name for _, name in entry["service_counts"].keys()),
+            ]
+        ).lower()
+        if normalized_query and normalized_query not in haystack:
+            continue
+
+        top_services = [
+            HistoricalWorkReferenceServiceRead(
+                service_id=service_id,
+                service_name=service_name,
+                samples=samples,
+            )
+            for (service_id, service_name), samples in entry["service_counts"].most_common(3)
+        ]
+
+        filtered_items.append(
+            HistoricalWorkReferenceRead(
+                key=str(entry["key"]),
+                work_code=entry["work_code"],
+                work_name=str(entry["work_name"]),
+                normalized_name=str(entry["normalized_name"]),
+                sample_repairs=len(entry["repair_ids"]),
+                sample_lines=sample_lines,
+                services_count=len(entry["service_counts"]),
+                vehicle_types=sorted(entry["vehicle_types"]),
+                median_line_total=round(float(statistics.median(entry["line_totals"])), 2),
+                min_line_total=round(float(min(entry["line_totals"])), 2),
+                max_line_total=round(float(max(entry["line_totals"])), 2),
+                median_price=round(float(statistics.median(entry["prices"])), 2),
+                median_quantity=round(float(statistics.median(entry["quantities"])), 2),
+                median_standard_hours=(
+                    round(float(statistics.median(entry["standard_hours"])), 2)
+                    if entry["standard_hours"]
+                    else None
+                ),
+                median_actual_hours=(
+                    round(float(statistics.median(entry["actual_hours"])), 2)
+                    if entry["actual_hours"]
+                    else None
+                ),
+                recent_repair_date=(
+                    datetime.combine(entry["recent_repair_date"], datetime.min.time(), tzinfo=timezone.utc)
+                    if entry["recent_repair_date"] is not None
+                    else None
+                ),
+                top_services=top_services,
+            )
+        )
+
+    filtered_items.sort(
+        key=lambda item: (
+            item.sample_lines,
+            item.sample_repairs,
+            item.recent_repair_date or datetime.min.replace(tzinfo=timezone.utc),
+            item.work_name,
+        ),
+        reverse=True,
+    )
+
+    return HistoricalWorkReferenceListResponse(
+        items=filtered_items[:limit],
+        total=len(filtered_items),
+        limit=limit,
+        q=normalized_query or None,
+        min_samples=min_samples,
+    )
 
 
 def serialize_import_conflict(conflict: ImportConflict, *, source_filename: str | None = None) -> ImportConflictRead:
@@ -189,3 +374,14 @@ def upload_historical_repairs(
         recent_repair_ids=result.recent_repair_ids,
         sample_conflicts=result.sample_conflicts,
     )
+
+
+@router.get("/historical-work-reference", response_model=HistoricalWorkReferenceListResponse)
+def list_historical_work_reference(
+    q: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    min_samples: int = Query(default=2, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> HistoricalWorkReferenceListResponse:
+    return build_historical_work_reference(db, q=q, limit=limit, min_samples=min_samples)

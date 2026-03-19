@@ -373,6 +373,40 @@ type HistoricalRepairImportResponse = {
   sample_conflicts: string[];
 };
 
+type HistoricalWorkReferenceServiceItem = {
+  service_id: number | null;
+  service_name: string;
+  samples: number;
+};
+
+type HistoricalWorkReferenceItem = {
+  key: string;
+  work_code: string | null;
+  work_name: string;
+  normalized_name: string;
+  sample_repairs: number;
+  sample_lines: number;
+  services_count: number;
+  vehicle_types: string[];
+  median_line_total: number;
+  min_line_total: number;
+  max_line_total: number;
+  median_price: number;
+  median_quantity: number;
+  median_standard_hours: number | null;
+  median_actual_hours: number | null;
+  recent_repair_date: string | null;
+  top_services: HistoricalWorkReferenceServiceItem[];
+};
+
+type HistoricalWorkReferenceResponse = {
+  items: HistoricalWorkReferenceItem[];
+  total: number;
+  limit: number;
+  q: string | null;
+  min_samples: number;
+};
+
 type ImportJobItem = {
   id: number;
   import_type: string;
@@ -3267,6 +3301,11 @@ export default function App() {
   const [historicalImportResult, setHistoricalImportResult] = useState<HistoricalRepairImportResponse | null>(null);
   const [historicalImportJobs, setHistoricalImportJobs] = useState<ImportJobItem[]>([]);
   const [historicalImportJobsLoading, setHistoricalImportJobsLoading] = useState(false);
+  const [historicalWorkReference, setHistoricalWorkReference] = useState<HistoricalWorkReferenceItem[]>([]);
+  const [historicalWorkReferenceLoading, setHistoricalWorkReferenceLoading] = useState(false);
+  const [historicalWorkReferenceTotal, setHistoricalWorkReferenceTotal] = useState(0);
+  const [historicalWorkReferenceQuery, setHistoricalWorkReferenceQuery] = useState("");
+  const [historicalWorkReferenceMinSamples, setHistoricalWorkReferenceMinSamples] = useState("2");
   const [importConflicts, setImportConflicts] = useState<ImportConflictItem[]>([]);
   const [importConflictsLoading, setImportConflictsLoading] = useState(false);
   const [selectedImportConflict, setSelectedImportConflict] = useState<ImportConflictItem | null>(null);
@@ -3764,6 +3803,35 @@ export default function App() {
       setHistoricalImportJobs(payload.items);
     } finally {
       setHistoricalImportJobsLoading(false);
+    }
+  }
+
+  async function loadHistoricalWorkReference(
+    activeToken: string,
+    query: string = historicalWorkReferenceQuery,
+    minSamplesValue: string = historicalWorkReferenceMinSamples,
+  ) {
+    setHistoricalWorkReferenceLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", "20");
+      const normalizedQuery = query.trim();
+      if (normalizedQuery) {
+        params.set("q", normalizedQuery);
+      }
+      const normalizedMinSamples = Number(minSamplesValue.trim());
+      if (Number.isFinite(normalizedMinSamples) && normalizedMinSamples > 0) {
+        params.set("min_samples", String(Math.round(normalizedMinSamples)));
+      }
+      const payload = await apiRequest<HistoricalWorkReferenceResponse>(
+        `/imports/historical-work-reference?${params.toString()}`,
+        { method: "GET" },
+        activeToken,
+      );
+      setHistoricalWorkReference(payload.items);
+      setHistoricalWorkReferenceTotal(payload.total);
+    } finally {
+      setHistoricalWorkReferenceLoading(false);
     }
   }
 
@@ -4463,7 +4531,7 @@ export default function App() {
     if (!token || user?.role !== "admin" || activeWorkspaceTab !== "admin" || activeAdminTab !== "imports") {
       return;
     }
-    void Promise.all([loadHistoricalImportJobs(token), loadImportConflicts(token)]).catch((error) => {
+    void Promise.all([loadHistoricalImportJobs(token), loadHistoricalWorkReference(token), loadImportConflicts(token)]).catch((error) => {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить историю импортов");
     });
   }, [activeAdminTab, activeWorkspaceTab, token, user?.role]);
@@ -6101,7 +6169,7 @@ export default function App() {
         `${result.message}. Создано ремонтов ${result.created_repairs}, конфликтов ${result.conflicts_created}, дублей ${result.duplicate_repairs}.`,
       );
       setHistoricalImportFile(null);
-      await Promise.all([loadHistoricalImportJobs(token), loadImportConflicts(token)]);
+      await Promise.all([loadHistoricalImportJobs(token), loadHistoricalWorkReference(token), loadImportConflicts(token)]);
       await loadWorkspace(token);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось импортировать историю ремонтов");
@@ -10057,10 +10125,14 @@ export default function App() {
                                 </Button>
                                 <Button
                                   variant="text"
-                                  disabled={(historicalImportJobsLoading || importConflictsLoading) || !token}
+                                  disabled={(historicalImportJobsLoading || historicalWorkReferenceLoading || importConflictsLoading) || !token}
                                   onClick={() => {
                                     if (token) {
-                                      void Promise.all([loadHistoricalImportJobs(token), loadImportConflicts(token)]);
+                                      void Promise.all([
+                                        loadHistoricalImportJobs(token),
+                                        loadHistoricalWorkReference(token),
+                                        loadImportConflicts(token),
+                                      ]);
                                     }
                                   }}
                                 >
@@ -10116,6 +10188,103 @@ export default function App() {
                           </Stack>
                         </Paper>
                       ) : null}
+
+                      <Paper className="repair-line" elevation={0}>
+                        <Stack spacing={1.25}>
+                          <Box>
+                            <Typography className="metric-label">Справочник работ из исторического файла</Typography>
+                            <Typography className="muted-copy">
+                              Агрегированный каталог по импортированной истории. Его можно использовать как эталон для сверки новых работ,
+                              цен и повторяемости.
+                            </Typography>
+                          </Box>
+                          <Grid container spacing={1.5}>
+                            <Grid item xs={12} sm={6}>
+                              <TextField
+                                fullWidth
+                                label="Поиск по работе, коду или сервису"
+                                value={historicalWorkReferenceQuery}
+                                onChange={(event) => setHistoricalWorkReferenceQuery(event.target.value)}
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <TextField
+                                fullWidth
+                                type="number"
+                                label="Мин. повторений"
+                                value={historicalWorkReferenceMinSamples}
+                                onChange={(event) => setHistoricalWorkReferenceMinSamples(event.target.value)}
+                              />
+                            </Grid>
+                            <Grid item xs={12} sm={3}>
+                              <Button
+                                fullWidth
+                                variant="contained"
+                                disabled={historicalWorkReferenceLoading || !token}
+                                onClick={() => {
+                                  if (token) {
+                                    void loadHistoricalWorkReference(token);
+                                  }
+                                }}
+                              >
+                                {historicalWorkReferenceLoading ? "Загрузка..." : "Обновить справочник"}
+                              </Button>
+                            </Grid>
+                          </Grid>
+                          <Typography className="muted-copy">
+                            Найдено агрегированных работ: {historicalWorkReferenceTotal}
+                          </Typography>
+                          {historicalWorkReferenceLoading ? (
+                            <Typography className="muted-copy">Собираем исторический справочник работ...</Typography>
+                          ) : historicalWorkReference.length > 0 ? (
+                            <Stack spacing={1}>
+                              {historicalWorkReference.map((item) => (
+                                <Paper className="repair-line" key={item.key} elevation={0}>
+                                  <Stack spacing={0.75}>
+                                    <Stack
+                                      direction={{ xs: "column", sm: "row" }}
+                                      spacing={1}
+                                      justifyContent="space-between"
+                                      alignItems={{ xs: "flex-start", sm: "center" }}
+                                    >
+                                      <Box>
+                                        <Typography>{item.work_name}</Typography>
+                                        <Typography className="muted-copy">
+                                          {item.work_code ? `${item.work_code} · ` : ""}
+                                          ремонтов {item.sample_repairs} · строк {item.sample_lines} · сервисов {item.services_count}
+                                        </Typography>
+                                      </Box>
+                                      <Chip size="small" variant="outlined" label={`Медиана ${formatMoney(item.median_line_total) || "—"}`} />
+                                    </Stack>
+                                    <Typography className="muted-copy">
+                                      Кол-во {formatCompactNumber(item.median_quantity)} · цена {formatMoney(item.median_price) || "—"} ·
+                                      диапазон {formatMoney(item.min_line_total) || "—"} - {formatMoney(item.max_line_total) || "—"}
+                                    </Typography>
+                                    <Typography className="muted-copy">
+                                      Типы ТС: {item.vehicle_types.join(", ") || "—"}
+                                      {item.median_standard_hours !== null ? ` · норма ${formatHours(item.median_standard_hours)}` : ""}
+                                      {item.median_actual_hours !== null ? ` · факт ${formatHours(item.median_actual_hours)}` : ""}
+                                      {item.recent_repair_date ? ` · последнее использование ${formatDateValue(item.recent_repair_date)}` : ""}
+                                    </Typography>
+                                    {item.top_services.length > 0 ? (
+                                      <Typography className="muted-copy">
+                                        Часто встречается:{" "}
+                                        {item.top_services
+                                          .map((service) => `${service.service_name} (${service.samples})`)
+                                          .join(", ")}
+                                      </Typography>
+                                    ) : null}
+                                  </Stack>
+                                </Paper>
+                              ))}
+                            </Stack>
+                          ) : (
+                            <Typography className="muted-copy">
+                              Исторический справочник работ пока пуст. Сначала импортируйте `2025 для ИИ.xlsx`.
+                            </Typography>
+                          )}
+                        </Stack>
+                      </Paper>
 
                       <Paper className="repair-line" elevation={0}>
                         <Stack spacing={1}>

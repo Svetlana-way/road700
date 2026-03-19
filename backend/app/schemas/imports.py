@@ -27,6 +27,40 @@ class HistoricalRepairImportResponse(BaseModel):
     sample_conflicts: list[str]
 
 
+class HistoricalWorkReferenceServiceRead(BaseModel):
+    service_id: Optional[int]
+    service_name: str
+    samples: int
+
+
+class HistoricalWorkReferenceRead(BaseModel):
+    key: str
+    work_code: Optional[str]
+    work_name: str
+    normalized_name: str
+    sample_repairs: int
+    sample_lines: int
+    services_count: int
+    vehicle_types: list[str]
+    median_line_total: float
+    min_line_total: float
+    max_line_total: float
+    median_price: float
+    median_quantity: float
+    median_standard_hours: Optional[float]
+    median_actual_hours: Optional[float]
+    recent_repair_date: Optional[datetime]
+    top_services: list[HistoricalWorkReferenceServiceRead]
+
+
+class HistoricalWorkReferenceListResponse(BaseModel):
+    items: list[HistoricalWorkReferenceRead]
+    total: int
+    limit: int
+    q: Optional[str]
+    min_samples: int
+
+
 class ImportJobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -40,6 +40,10 @@ class HistoricalWorkReferenceRead(BaseModel):
     normalized_name: str
     sample_repairs: int
     sample_lines: int
+    historical_sample_repairs: int
+    historical_sample_lines: int
+    operational_sample_repairs: int
+    operational_sample_lines: int
     services_count: int
     vehicle_types: list[str]
     median_line_total: float
@@ -47,9 +51,13 @@ class HistoricalWorkReferenceRead(BaseModel):
     max_line_total: float
     median_price: float
     median_quantity: float
+    median_mileage: Optional[int]
+    min_mileage: Optional[int]
+    max_mileage: Optional[int]
     median_standard_hours: Optional[float]
     median_actual_hours: Optional[float]
     recent_repair_date: Optional[datetime]
+    recent_operational_repair_date: Optional[datetime]
     top_services: list[HistoricalWorkReferenceServiceRead]
 
 

@@ -411,6 +411,10 @@ type HistoricalWorkReferenceItem = {
   normalized_name: string;
   sample_repairs: number;
   sample_lines: number;
+  historical_sample_repairs: number;
+  historical_sample_lines: number;
+  operational_sample_repairs: number;
+  operational_sample_lines: number;
   services_count: number;
   vehicle_types: string[];
   median_line_total: number;
@@ -418,9 +422,13 @@ type HistoricalWorkReferenceItem = {
   max_line_total: number;
   median_price: number;
   median_quantity: number;
+  median_mileage: number | null;
+  min_mileage: number | null;
+  max_mileage: number | null;
   median_standard_hours: number | null;
   median_actual_hours: number | null;
   recent_repair_date: string | null;
+  recent_operational_repair_date: string | null;
   top_services: HistoricalWorkReferenceServiceItem[];
 };
 
@@ -10217,10 +10225,10 @@ export default function App() {
                       <Paper className="repair-line" elevation={0}>
                         <Stack spacing={1.25}>
                           <Box>
-                            <Typography className="metric-label">Справочник работ из исторического файла</Typography>
+                            <Typography className="metric-label">Динамический справочник работ</Typography>
                             <Typography className="muted-copy">
-                              Агрегированный каталог по импортированной истории. Его можно использовать как эталон для сверки новых работ,
-                              цен и повторяемости.
+                              Каталог собирается из архива `2025 для ИИ` и автоматически дополняется новыми подтвержденными ремонтами.
+                              Его можно использовать как актуальный эталон по ценам, повторяемости и пробегам.
                             </Typography>
                           </Box>
                           <Grid container spacing={1.5}>
@@ -10256,11 +10264,11 @@ export default function App() {
                               </Button>
                             </Grid>
                           </Grid>
-                          <Typography className="muted-copy">
-                            Найдено агрегированных работ: {historicalWorkReferenceTotal}
-                          </Typography>
+                            <Typography className="muted-copy">
+                              Найдено агрегированных работ: {historicalWorkReferenceTotal}
+                            </Typography>
                           {historicalWorkReferenceLoading ? (
-                            <Typography className="muted-copy">Собираем исторический справочник работ...</Typography>
+                            <Typography className="muted-copy">Собираем динамический справочник работ...</Typography>
                           ) : historicalWorkReference.length > 0 ? (
                             <Stack spacing={1}>
                               {historicalWorkReference.map((item) => (
@@ -10282,14 +10290,24 @@ export default function App() {
                                       <Chip size="small" variant="outlined" label={`Медиана ${formatMoney(item.median_line_total) || "—"}`} />
                                     </Stack>
                                     <Typography className="muted-copy">
+                                      Архив 2025: ремонтов {item.historical_sample_repairs} · строк {item.historical_sample_lines}
+                                      {` · `}
+                                      Новые подтвержденные: ремонтов {item.operational_sample_repairs} · строк {item.operational_sample_lines}
+                                    </Typography>
+                                    <Typography className="muted-copy">
                                       Кол-во {formatCompactNumber(item.median_quantity)} · цена {formatMoney(item.median_price) || "—"} ·
                                       диапазон {formatMoney(item.min_line_total) || "—"} - {formatMoney(item.max_line_total) || "—"}
                                     </Typography>
                                     <Typography className="muted-copy">
                                       Типы ТС: {item.vehicle_types.join(", ") || "—"}
+                                      {item.median_mileage !== null ? ` · медианный пробег ${item.median_mileage}` : ""}
+                                      {item.min_mileage !== null && item.max_mileage !== null ? ` · диапазон пробега ${item.min_mileage}-${item.max_mileage}` : ""}
                                       {item.median_standard_hours !== null ? ` · норма ${formatHours(item.median_standard_hours)}` : ""}
                                       {item.median_actual_hours !== null ? ` · факт ${formatHours(item.median_actual_hours)}` : ""}
                                       {item.recent_repair_date ? ` · последнее использование ${formatDateValue(item.recent_repair_date)}` : ""}
+                                      {item.recent_operational_repair_date
+                                        ? ` · последняя новая запись ${formatDateValue(item.recent_operational_repair_date)}`
+                                        : ""}
                                     </Typography>
                                     {item.top_services.length > 0 ? (
                                       <Typography className="muted-copy">
@@ -10305,7 +10323,7 @@ export default function App() {
                             </Stack>
                           ) : (
                             <Typography className="muted-copy">
-                              Исторический справочник работ пока пуст. Сначала импортируйте `2025 для ИИ.xlsx`.
+                              Справочник пока пуст. Сначала импортируйте `2025 для ИИ.xlsx` или накопите подтвержденные ремонты.
                             </Typography>
                           )}
                         </Stack>

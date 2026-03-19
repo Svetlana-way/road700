@@ -5,11 +5,12 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin, get_db
 from app.api.upload_validation import validate_historical_import_upload
+from app.models.enums import RepairStatus
 from app.models.repair import Repair, RepairWork
 from app.models.service import Service
 from app.models.vehicle import Vehicle
@@ -34,6 +35,7 @@ from app.services.labor_norms import build_normalized_name
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 ALLOWED_CONFLICT_STATUSES = {"pending", "resolved", "ignored"}
+REFERENCE_OPERATIONAL_STATUSES = (RepairStatus.CONFIRMED, RepairStatus.EMPLOYEE_CONFIRMED)
 
 
 def build_historical_work_reference(
@@ -47,6 +49,9 @@ def build_historical_work_reference(
         select(
             Repair.id.label("repair_id"),
             Repair.repair_date,
+            Repair.status,
+            Repair.reason,
+            Repair.mileage,
             RepairWork.work_code,
             RepairWork.work_name,
             RepairWork.quantity,
@@ -62,7 +67,10 @@ def build_historical_work_reference(
         .join(Vehicle, Vehicle.id == Repair.vehicle_id)
         .join(Service, Service.id == Repair.service_id, isouter=True)
         .where(
-            Repair.reason.like(f"{IMPORT_REASON_PREFIX}%"),
+            or_(
+                Repair.reason.like(f"{IMPORT_REASON_PREFIX}%"),
+                Repair.status.in_(REFERENCE_OPERATIONAL_STATUSES),
+            ),
             RepairWork.work_name.is_not(None),
         )
     ).all()
@@ -73,6 +81,10 @@ def build_historical_work_reference(
     for row in rows:
         work_name = str(row.work_name or "").strip()
         if not work_name:
+            continue
+        is_historical = bool(row.reason) and str(row.reason).startswith(IMPORT_REASON_PREFIX)
+        is_operational = not is_historical and row.status in REFERENCE_OPERATIONAL_STATUSES
+        if not is_historical and not is_operational:
             continue
         work_code = str(row.work_code).strip() if row.work_code else None
         normalized_name = build_normalized_name(work_name, work_code)
@@ -91,14 +103,20 @@ def build_historical_work_reference(
                 "work_name": work_name,
                 "normalized_name": normalized_name,
                 "repair_ids": set(),
+                "historical_repair_ids": set(),
+                "operational_repair_ids": set(),
                 "line_totals": [],
                 "prices": [],
                 "quantities": [],
+                "mileages": [],
                 "standard_hours": [],
                 "actual_hours": [],
                 "vehicle_types": set(),
                 "recent_repair_date": None,
+                "recent_operational_repair_date": None,
                 "service_counts": Counter(),
+                "historical_sample_lines": 0,
+                "operational_sample_lines": 0,
             },
         )
 
@@ -110,18 +128,29 @@ def build_historical_work_reference(
             entry["normalized_name"] = normalized_name
 
         cast_repair_ids = entry["repair_ids"]
+        cast_historical_repair_ids = entry["historical_repair_ids"]
+        cast_operational_repair_ids = entry["operational_repair_ids"]
         cast_line_totals = entry["line_totals"]
         cast_prices = entry["prices"]
         cast_quantities = entry["quantities"]
+        cast_mileages = entry["mileages"]
         cast_standard_hours = entry["standard_hours"]
         cast_actual_hours = entry["actual_hours"]
         cast_vehicle_types = entry["vehicle_types"]
         cast_service_counts = entry["service_counts"]
 
         cast_repair_ids.add(int(row.repair_id))
+        if is_historical:
+            cast_historical_repair_ids.add(int(row.repair_id))
+            entry["historical_sample_lines"] = int(entry["historical_sample_lines"]) + 1
+        if is_operational:
+            cast_operational_repair_ids.add(int(row.repair_id))
+            entry["operational_sample_lines"] = int(entry["operational_sample_lines"]) + 1
         cast_line_totals.append(float(row.line_total))
         cast_prices.append(float(row.price))
         cast_quantities.append(float(row.quantity))
+        if row.mileage is not None:
+            cast_mileages.append(int(row.mileage))
         if row.standard_hours is not None:
             cast_standard_hours.append(float(row.standard_hours))
         if row.actual_hours is not None:
@@ -132,6 +161,10 @@ def build_historical_work_reference(
         recent_repair_date = entry["recent_repair_date"]
         if recent_repair_date is None or row.repair_date > recent_repair_date:
             entry["recent_repair_date"] = row.repair_date
+        if is_operational:
+            recent_operational_repair_date = entry["recent_operational_repair_date"]
+            if recent_operational_repair_date is None or row.repair_date > recent_operational_repair_date:
+                entry["recent_operational_repair_date"] = row.repair_date
 
     filtered_items: list[HistoricalWorkReferenceRead] = []
     for entry in grouped.values():
@@ -167,6 +200,10 @@ def build_historical_work_reference(
                 normalized_name=str(entry["normalized_name"]),
                 sample_repairs=len(entry["repair_ids"]),
                 sample_lines=sample_lines,
+                historical_sample_repairs=len(entry["historical_repair_ids"]),
+                historical_sample_lines=int(entry["historical_sample_lines"]),
+                operational_sample_repairs=len(entry["operational_repair_ids"]),
+                operational_sample_lines=int(entry["operational_sample_lines"]),
                 services_count=len(entry["service_counts"]),
                 vehicle_types=sorted(entry["vehicle_types"]),
                 median_line_total=round(float(statistics.median(entry["line_totals"])), 2),
@@ -174,6 +211,13 @@ def build_historical_work_reference(
                 max_line_total=round(float(max(entry["line_totals"])), 2),
                 median_price=round(float(statistics.median(entry["prices"])), 2),
                 median_quantity=round(float(statistics.median(entry["quantities"])), 2),
+                median_mileage=(
+                    int(round(float(statistics.median(entry["mileages"]))))
+                    if entry["mileages"]
+                    else None
+                ),
+                min_mileage=min(entry["mileages"]) if entry["mileages"] else None,
+                max_mileage=max(entry["mileages"]) if entry["mileages"] else None,
                 median_standard_hours=(
                     round(float(statistics.median(entry["standard_hours"])), 2)
                     if entry["standard_hours"]
@@ -187,6 +231,11 @@ def build_historical_work_reference(
                 recent_repair_date=(
                     datetime.combine(entry["recent_repair_date"], datetime.min.time(), tzinfo=timezone.utc)
                     if entry["recent_repair_date"] is not None
+                    else None
+                ),
+                recent_operational_repair_date=(
+                    datetime.combine(entry["recent_operational_repair_date"], datetime.min.time(), tzinfo=timezone.utc)
+                    if entry["recent_operational_repair_date"] is not None
                     else None
                 ),
                 top_services=top_services,

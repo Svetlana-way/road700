@@ -63,6 +63,7 @@ The repository includes a dedicated server stack:
 - `docker-compose.server.yml` runs `postgres`, `app`, and `caddy`
 - `deploy/server/Caddyfile` serves the application over HTTPS
 - `deploy/server/.env.example` contains the required production variables
+- `scripts/predeploy-usecase-check.sh` runs the local pre-deploy checklist for the employee workflow
 - `scripts/deploy-server.sh` safely syncs the project to the server without deleting `.env.server` and `storage/`
 
 Typical server bootstrap:
@@ -78,9 +79,12 @@ Typical server bootstrap:
 Typical update deploy from the local workstation:
 
 1. Keep the server `.env.server` in the project root on the server
-2. Run:
+2. Run the local use case check:
+   - `bash ./scripts/predeploy-usecase-check.sh`
+3. Run:
    - `DEPLOY_HOST=46.8.220.177 DEPLOY_PASSWORD=your-password ./scripts/deploy-server.sh`
-3. The script:
+4. The deploy script:
+   - runs `scripts/predeploy-usecase-check.sh` automatically unless `SKIP_USE_CASE_CHECK=1`
    - syncs the repository
    - protects `.env.server` and `storage/` from deletion during `rsync --delete`
    - rebuilds `app` and `caddy`

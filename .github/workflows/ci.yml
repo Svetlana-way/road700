@@ -14,6 +14,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Run employee workflow pre-deploy check
+        run: bash ./scripts/predeploy-usecase-check.sh
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

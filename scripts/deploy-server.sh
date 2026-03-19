@@ -21,12 +21,18 @@ Optional environment variables:
   DEPLOY_ENV_FILE   Remote env file name, default: .env.server
   DEPLOY_PASSWORD   Password for sshpass-based deploy
   SSH_PASSWORD      Alternative password variable name
+  SKIP_USE_CASE_CHECK=1  Skip local pre-deploy use case check
 EOF
 }
 
 if [[ -z "$REMOTE_HOST" ]]; then
   usage
   exit 1
+fi
+
+if [[ "${SKIP_USE_CASE_CHECK:-0}" != "1" ]]; then
+  echo "Running local pre-deploy use case check"
+  bash "$ROOT_DIR/scripts/predeploy-usecase-check.sh"
 fi
 
 SSH_BASE_ARGS=(-o StrictHostKeyChecking=no)

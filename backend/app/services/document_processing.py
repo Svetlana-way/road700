@@ -36,7 +36,6 @@ from app.models.ocr_rule import OcrRule
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
 from app.models.vehicle import Vehicle
-from app.services.historical_repairs_import import IMPORT_REASON_PREFIX
 from app.services.service_catalog import find_service_name_in_text, normalize_service_key, resolve_service_by_name
 from app.services.labor_norms import (
     LaborNormApplicability,
@@ -106,6 +105,7 @@ WORK_REFERENCE_WARNING_LOWER_MULTIPLIER = 0.8
 WORK_REFERENCE_SUSPICIOUS_LOWER_MULTIPLIER = 0.65
 WORK_REFERENCE_MILEAGE_MARGIN_RATIO = 0.2
 WORK_REFERENCE_MIN_MILEAGE_MARGIN = 10000
+HISTORICAL_IMPORT_REASON_PREFIX = "historical_import:"
 PLACEHOLDER_VEHICLE_EXTERNAL_ID = "__batch_import_placeholder__"
 WORK_REFERENCE_OPERATIONAL_STATUSES = (
     RepairStatus.CONFIRMED,
@@ -2116,7 +2116,7 @@ def build_dynamic_work_reference_checks(
             RepairWork.work_name.is_not(None),
             Vehicle.vehicle_type == repair.vehicle.vehicle_type,
             (
-                Repair.reason.like(f"{IMPORT_REASON_PREFIX}%")
+                Repair.reason.like(f"{HISTORICAL_IMPORT_REASON_PREFIX}%")
                 | Repair.status.in_(WORK_REFERENCE_OPERATIONAL_STATUSES)
             ),
         )
@@ -2198,7 +2198,9 @@ def build_dynamic_work_reference_checks(
         prices = [float(row.price) for row in selected_matches if row.price is not None]
         mileages = [int(row.mileage) for row in selected_matches if row.mileage is not None and int(row.mileage) > 0]
         historical_sample_lines = sum(
-            1 for row in matches if row.reason is not None and str(row.reason).startswith(IMPORT_REASON_PREFIX)
+            1
+            for row in matches
+            if row.reason is not None and str(row.reason).startswith(HISTORICAL_IMPORT_REASON_PREFIX)
         )
         operational_sample_lines = len(matches) - historical_sample_lines
 

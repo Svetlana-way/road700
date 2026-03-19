@@ -30,6 +30,7 @@ import { EmployeesAdminPanel } from "./components/EmployeesAdminPanel";
 import { FleetPanel } from "./components/FleetPanel";
 import { GlobalSearchPanel } from "./components/GlobalSearchPanel";
 import { HistoricalImportsAdminPanel } from "./components/HistoricalImportsAdminPanel";
+import { OcrLearningAdminPanel } from "./components/OcrLearningAdminPanel";
 import { RepairPanel } from "./components/RepairPanel";
 import { ReviewRulesAdminPanel } from "./components/ReviewRulesAdminPanel";
 import { ReviewQueuePanel } from "./components/ReviewQueuePanel";
@@ -9289,250 +9290,52 @@ export default function App() {
                 ) : null}
 
                 {activeWorkspaceTab === "tech_admin" && activeTechAdminTab === "learning" && user?.role === "admin" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                    <Stack spacing={2}>
-                      <Box>
-                        <Typography variant="h5">Очередь обучения OCR</Typography>
-                        <Typography className="muted-copy">
-                          Сигналы строятся из ручных исправлений администратора и показывают, где OCR регулярно ошибается или ничего не извлекает.
-                        </Typography>
-                      </Box>
-                      <Grid container spacing={1.5}>
-                        <Grid item xs={12} sm={4}>
-                          <TextField
-                            select
-                            label="Статус"
-                            value={ocrLearningStatusFilter}
-                            onChange={(event) => setOcrLearningStatusFilter(event.target.value)}
-                            fullWidth
-                          >
-                            <MenuItem value="">Все кроме отклонённых</MenuItem>
-                            {ocrLearningStatuses.map((item) => (
-                              <MenuItem key={item} value={item}>
-                                {formatOcrLearningStatusLabel(item)}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        </Grid>
-                        <Grid item xs={12} sm={4}>
-                          <TextField
-                            select
-                            label="Поле"
-                            value={ocrLearningTargetFieldFilter}
-                            onChange={(event) => setOcrLearningTargetFieldFilter(event.target.value)}
-                            fullWidth
-                          >
-                            <MenuItem value="">Все поля</MenuItem>
-                            {ocrLearningTargetFields.map((item) => (
-                              <MenuItem key={item} value={item}>
-                                {formatOcrFieldLabel(item)}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        </Grid>
-                        <Grid item xs={12} sm={4}>
-                          <TextField
-                            select
-                            label="Шаблон OCR"
-                            value={ocrLearningProfileScopeFilter}
-                            onChange={(event) => setOcrLearningProfileScopeFilter(event.target.value)}
-                            fullWidth
-                          >
-                            <MenuItem value="">Все шаблоны</MenuItem>
-                            {ocrLearningProfileScopes.map((item) => (
-                              <MenuItem key={item} value={item}>
-                                {formatOcrProfileName(item)}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        </Grid>
-                      </Grid>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                        <Button
-                          variant="outlined"
-                          onClick={() => {
-                            if (token) {
-                              void loadOcrLearningSignals(token);
-                            }
-                          }}
-                          disabled={ocrLearningLoading}
-                        >
-                          {ocrLearningLoading ? "Загрузка..." : "Обновить"}
-                        </Button>
-                        <Button
-                          variant="text"
-                          disabled={ocrLearningLoading}
-                          onClick={() => {
-                            setOcrLearningStatusFilter("");
-                            setOcrLearningTargetFieldFilter("");
-                            setOcrLearningProfileScopeFilter("");
-                            if (token) {
-                              void loadOcrLearningSignals(token, "", "", "");
-                            }
-                          }}
-                        >
-                          Сбросить фильтр
-                        </Button>
-                      </Stack>
-                      {ocrLearningSummaries.length > 0 ? (
-                        <Stack spacing={1}>
-                          {ocrLearningSummaries.slice(0, 6).map((item, index) => (
-                            <Paper className="repair-line" key={`ocr-learning-summary-${index}`} elevation={0}>
-                              <Stack spacing={0.5}>
-                                <Typography>{item.suggestion_summary}</Typography>
-                                <Typography className="muted-copy">
-                                  Сигналов {item.count}
-                                  {item.ocr_profile_scope ? ` · шаблон ${formatOcrProfileName(item.ocr_profile_scope)}` : ""}
-                                  {` · поле ${formatOcrFieldLabel(item.target_field)}`}
-                                  {` · тип ${formatOcrSignalTypeLabel(item.signal_type)}`}
-                                </Typography>
-                                {item.example_services.length > 0 ? (
-                                  <Typography className="muted-copy">
-                                    Сервисы: {item.example_services.join(", ")}
-                                  </Typography>
-                                ) : null}
-                                {item.example_filenames.length > 0 ? (
-                                  <Typography className="muted-copy">
-                                    Файлы: {item.example_filenames.join(", ")}
-                                  </Typography>
-                                ) : null}
-                              </Stack>
-                            </Paper>
-                          ))}
-                        </Stack>
-                      ) : null}
-                      {ocrLearningSignals.length > 0 ? (
-                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
-                          <Button
-                            variant="outlined"
-                            disabled={ocrLearningLoading}
-                            onClick={() => setShowOcrLearningListDialog(true)}
-                          >
-                            Открыть список сигналов
-                          </Button>
-                          <Typography className="muted-copy">
-                            На основной странице показана только сводка, полный список сигналов скрыт.
-                          </Typography>
-                        </Stack>
-                      ) : (
-                        <Typography className="muted-copy">
-                          Сигналы обучения пока не накоплены.
-                        </Typography>
-                      )}
-                      <Dialog
-                        open={showOcrLearningListDialog}
-                        onClose={() => setShowOcrLearningListDialog(false)}
-                        fullWidth
-                        maxWidth="lg"
-                      >
-                        <DialogTitle>Сигналы обучения OCR</DialogTitle>
-                        <DialogContent dividers>
-                          {ocrLearningSignals.length > 0 ? (
-                            <Stack spacing={1}>
-                              {ocrLearningSignals.map((item) => (
-                                <Paper className="repair-line" key={`ocr-learning-${item.id}`} elevation={0}>
-                                  <Stack spacing={0.5}>
-                                    <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                      <Typography>
-                                        {formatOcrFieldLabel(item.target_field)} · {formatOcrSignalTypeLabel(item.signal_type)}
-                                      </Typography>
-                                      <Stack direction="row" spacing={1}>
-                                        <Chip size="small" variant="outlined" label={formatOcrLearningStatusLabel(item.status)} />
-                                        {item.ocr_profile_scope ? (
-                                          <Chip size="small" variant="outlined" label={formatOcrProfileName(item.ocr_profile_scope)} />
-                                        ) : null}
-                                      </Stack>
-                                    </Stack>
-                                    <Typography className="muted-copy">
-                                      Ремонт #{item.repair_id}
-                                      {item.document_id ? ` · документ #${item.document_id}` : ""}
-                                      {item.service_name ? ` · ${item.service_name}` : ""}
-                                      {item.document_filename ? ` · ${item.document_filename}` : ""}
-                                    </Typography>
-                                    <Typography className="muted-copy">
-                                      OCR: {item.extracted_value || "не извлечено"}
-                                      {` · Исправлено: ${item.corrected_value}`}
-                                    </Typography>
-                                    {item.suggestion_summary ? (
-                                      <Typography className="muted-copy">{item.suggestion_summary}</Typography>
-                                    ) : null}
-                                    {item.text_excerpt ? (
-                                      <Typography className="muted-copy">
-                                        Фрагмент: {item.text_excerpt.slice(0, 180)}
-                                        {item.text_excerpt.length > 180 ? "..." : ""}
-                                      </Typography>
-                                    ) : null}
-                                    <Stack direction="row" spacing={1} flexWrap="wrap">
-                                      <Button
-                                        size="small"
-                                        variant="outlined"
-                                        disabled={ocrLearningDraftId === item.id}
-                                        onClick={() => {
-                                          void handleLoadOcrLearningDraft(item.id, "ocr_rule");
-                                        }}
-                                      >
-                                        В OCR-правило
-                                      </Button>
-                                      <Button
-                                        size="small"
-                                        variant="outlined"
-                                        disabled={ocrLearningDraftId === item.id}
-                                        onClick={() => {
-                                          void handleLoadOcrLearningDraft(item.id, "matcher");
-                                        }}
-                                      >
-                                        В правило выбора
-                                      </Button>
-                                      {item.status !== "reviewed" ? (
-                                        <Button
-                                          size="small"
-                                          variant="outlined"
-                                          disabled={ocrLearningUpdateId === item.id}
-                                          onClick={() => {
-                                            void handleUpdateOcrLearningSignal(item.id, "reviewed");
-                                          }}
-                                        >
-                                          Пометить просмотренным
-                                        </Button>
-                                      ) : null}
-                                      {item.status !== "applied" ? (
-                                        <Button
-                                          size="small"
-                                          variant="text"
-                                          disabled={ocrLearningUpdateId === item.id}
-                                          onClick={() => {
-                                            void handleUpdateOcrLearningSignal(item.id, "applied");
-                                          }}
-                                        >
-                                          Применить
-                                        </Button>
-                                      ) : null}
-                                      {item.status !== "rejected" ? (
-                                        <Button
-                                          size="small"
-                                          variant="text"
-                                          disabled={ocrLearningUpdateId === item.id}
-                                          onClick={() => {
-                                            void handleUpdateOcrLearningSignal(item.id, "rejected");
-                                          }}
-                                        >
-                                          Отклонить
-                                        </Button>
-                                      ) : null}
-                                    </Stack>
-                                  </Stack>
-                                </Paper>
-                              ))}
-                            </Stack>
-                          ) : (
-                            <Typography className="muted-copy">
-                              Сигналы обучения пока не накоплены.
-                            </Typography>
-                          )}
-                        </DialogContent>
-                      </Dialog>
-                    </Stack>
-                  </Paper>
+                  <OcrLearningAdminPanel
+                    ocrLearningStatusFilter={ocrLearningStatusFilter}
+                    ocrLearningTargetFieldFilter={ocrLearningTargetFieldFilter}
+                    ocrLearningProfileScopeFilter={ocrLearningProfileScopeFilter}
+                    ocrLearningStatuses={ocrLearningStatuses}
+                    ocrLearningTargetFields={ocrLearningTargetFields}
+                    ocrLearningProfileScopes={ocrLearningProfileScopes}
+                    ocrLearningLoading={ocrLearningLoading}
+                    ocrLearningSummaries={ocrLearningSummaries}
+                    ocrLearningSignals={ocrLearningSignals}
+                    showOcrLearningListDialog={showOcrLearningListDialog}
+                    ocrLearningDraftId={ocrLearningDraftId}
+                    ocrLearningUpdateId={ocrLearningUpdateId}
+                    onOcrLearningStatusFilterChange={setOcrLearningStatusFilter}
+                    onOcrLearningTargetFieldFilterChange={setOcrLearningTargetFieldFilter}
+                    onOcrLearningProfileScopeFilterChange={setOcrLearningProfileScopeFilter}
+                    onRefresh={() => {
+                      if (token) {
+                        void loadOcrLearningSignals(token);
+                      }
+                    }}
+                    onReset={() => {
+                      setOcrLearningStatusFilter("");
+                      setOcrLearningTargetFieldFilter("");
+                      setOcrLearningProfileScopeFilter("");
+                      if (token) {
+                        void loadOcrLearningSignals(token, "", "", "");
+                      }
+                    }}
+                    onOpenListDialog={() => {
+                      setShowOcrLearningListDialog(true);
+                    }}
+                    onCloseListDialog={() => {
+                      setShowOcrLearningListDialog(false);
+                    }}
+                    onLoadDraft={(signalId, draftType) => {
+                      void handleLoadOcrLearningDraft(signalId, draftType);
+                    }}
+                    onUpdateSignalStatus={(signalId, nextStatus) => {
+                      void handleUpdateOcrLearningSignal(signalId, nextStatus);
+                    }}
+                    formatOcrLearningStatusLabel={formatOcrLearningStatusLabel}
+                    formatOcrProfileName={formatOcrProfileName}
+                    formatOcrFieldLabel={formatOcrFieldLabel}
+                    formatOcrSignalTypeLabel={formatOcrSignalTypeLabel}
+                  />
                 ) : null}
 
                 {activeWorkspaceTab === "tech_admin" &&

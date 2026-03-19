@@ -273,6 +273,8 @@ type Vehicle = {
   comment: string | null;
   status: VehicleStatus;
   archived_at: string | null;
+  historical_repairs_total: number;
+  historical_last_repair_date: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -334,11 +336,34 @@ type VehicleHistorySummary = {
   last_mileage: number | null;
 };
 
+type VehicleHistoricalRepairHistoryItem = {
+  repair_id: number;
+  order_number: string | null;
+  repair_date: string;
+  mileage: number;
+  service_name: string | null;
+  grand_total: number;
+  employee_comment: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type VehicleHistoricalHistorySummary = {
+  repairs_total: number;
+  services_total: number;
+  total_spend: number;
+  first_repair_date: string | null;
+  last_repair_date: string | null;
+  last_mileage: number | null;
+};
+
 type VehicleDetail = Vehicle & {
   active_links: VehicleLink[];
   active_assignments: VehicleActiveAssignment[];
   repair_history: VehicleRepairHistoryItem[];
   history_summary: VehicleHistorySummary;
+  historical_repair_history: VehicleHistoricalRepairHistoryItem[];
+  historical_history_summary: VehicleHistoricalHistorySummary;
 };
 
 type ServiceItem = {
@@ -13656,6 +13681,16 @@ export default function App() {
                                       Водитель: {vehicle.current_driver_name || "не указан"}
                                       {vehicle.mechanic_name ? ` · механик: ${vehicle.mechanic_name}` : ""}
                                     </Typography>
+                                    <Typography className="muted-copy">
+                                      История 2025:{" "}
+                                      {vehicle.historical_repairs_total > 0
+                                        ? `${vehicle.historical_repairs_total} ремонтов${
+                                            vehicle.historical_last_repair_date
+                                              ? ` · последний ${formatDateValue(vehicle.historical_last_repair_date)}`
+                                              : ""
+                                          }`
+                                        : "не найдена"}
+                                    </Typography>
                                     <Stack direction="row" spacing={1}>
                                       <Button
                                         size="small"
@@ -13796,6 +13831,96 @@ export default function App() {
                                     </Typography>
                                   </Grid>
                                 </Grid>
+                              </Stack>
+                            </Paper>
+                            <Paper className="repair-summary" elevation={0}>
+                              <Stack spacing={1.5}>
+                                <Typography variant="h6">История из 2025 для ИИ</Typography>
+                                <Grid container spacing={2}>
+                                  <Grid item xs={6} sm={4}>
+                                    <Typography className="metric-label">Исторических ремонтов</Typography>
+                                    <Typography>{selectedFleetVehicle.historical_history_summary.repairs_total}</Typography>
+                                  </Grid>
+                                  <Grid item xs={6} sm={4}>
+                                    <Typography className="metric-label">Сервисов</Typography>
+                                    <Typography>{selectedFleetVehicle.historical_history_summary.services_total}</Typography>
+                                  </Grid>
+                                  <Grid item xs={12} sm={4}>
+                                    <Typography className="metric-label">Сумма по истории</Typography>
+                                    <Typography>{formatMoney(selectedFleetVehicle.historical_history_summary.total_spend)}</Typography>
+                                  </Grid>
+                                  <Grid item xs={6} sm={6}>
+                                    <Typography className="metric-label">Первый ремонт в истории</Typography>
+                                    <Typography>
+                                      {selectedFleetVehicle.historical_history_summary.first_repair_date
+                                        ? formatDateValue(selectedFleetVehicle.historical_history_summary.first_repair_date)
+                                        : "Не найден"}
+                                    </Typography>
+                                  </Grid>
+                                  <Grid item xs={6} sm={6}>
+                                    <Typography className="metric-label">Последний ремонт в истории</Typography>
+                                    <Typography>
+                                      {selectedFleetVehicle.historical_history_summary.last_repair_date
+                                        ? formatDateValue(selectedFleetVehicle.historical_history_summary.last_repair_date)
+                                        : "Не найден"}
+                                    </Typography>
+                                  </Grid>
+                                  <Grid item xs={12} sm={6}>
+                                    <Typography className="metric-label">Последний исторический пробег</Typography>
+                                    <Typography>
+                                      {typeof selectedFleetVehicle.historical_history_summary.last_mileage === "number"
+                                        ? selectedFleetVehicle.historical_history_summary.last_mileage
+                                        : "Не указан"}
+                                    </Typography>
+                                  </Grid>
+                                </Grid>
+                                {selectedFleetVehicle.historical_repair_history.length > 0 ? (
+                                  selectedFleetVehicle.historical_repair_history.map((repair) => (
+                                    <Paper className="repair-line" key={`vehicle-historical-repair-${repair.repair_id}`} elevation={0}>
+                                      <Stack spacing={0.75}>
+                                        <Stack
+                                          direction={{ xs: "column", sm: "row" }}
+                                          justifyContent="space-between"
+                                          spacing={1}
+                                          alignItems={{ xs: "flex-start", sm: "center" }}
+                                        >
+                                          <Typography>
+                                            История #{repair.repair_id}
+                                            {repair.order_number ? ` · ${repair.order_number}` : ""}
+                                          </Typography>
+                                          <Chip size="small" variant="outlined" label={formatMoney(repair.grand_total)} />
+                                        </Stack>
+                                        <Typography className="muted-copy">
+                                          {[
+                                            formatDateValue(repair.repair_date),
+                                            `пробег ${repair.mileage}`,
+                                            repair.service_name,
+                                          ]
+                                            .filter(Boolean)
+                                            .join(" · ")}
+                                        </Typography>
+                                        {repair.employee_comment ? (
+                                          <Typography className="muted-copy">{repair.employee_comment}</Typography>
+                                        ) : null}
+                                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                          <Button
+                                            size="small"
+                                            variant="outlined"
+                                            onClick={() => {
+                                              void openRepairByIds(null, repair.repair_id);
+                                            }}
+                                          >
+                                            Открыть исторический ремонт
+                                          </Button>
+                                        </Stack>
+                                      </Stack>
+                                    </Paper>
+                                  ))
+                                ) : (
+                                  <Typography className="muted-copy">
+                                    По этой технике история из `2025 для ИИ` не найдена.
+                                  </Typography>
+                                )}
                               </Stack>
                             </Paper>
                             <Paper className="repair-summary" elevation={0}>

@@ -26,6 +26,7 @@ from app.schemas.vehicle import (
     VehicleUpdateRequest,
 )
 from app.services.exporting import append_rows, safe_filename
+from app.services.historical_repairs_import import IMPORT_REASON_PREFIX
 from app.scripts.import_vehicles import (
     DEFAULT_TRAILERS_PATH,
     DEFAULT_TRUCKS_PATH,
@@ -34,6 +35,63 @@ from app.scripts.import_vehicles import (
 
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
+
+
+def build_historical_summary_map(db: Session, vehicle_ids: list[int]) -> dict[int, dict[str, object]]:
+    if not vehicle_ids:
+        return {}
+
+    rows = db.execute(
+        select(
+            Repair.vehicle_id.label("vehicle_id"),
+            func.count(Repair.id).label("repairs_total"),
+            func.max(Repair.repair_date).label("last_repair_date"),
+        )
+        .where(
+            Repair.vehicle_id.in_(vehicle_ids),
+            Repair.reason.is_not(None),
+            Repair.reason.like(f"{IMPORT_REASON_PREFIX}%"),
+        )
+        .group_by(Repair.vehicle_id)
+    ).all()
+
+    return {
+        int(row.vehicle_id): {
+            "historical_repairs_total": int(row.repairs_total or 0),
+            "historical_last_repair_date": row.last_repair_date,
+        }
+        for row in rows
+    }
+
+
+def build_history_summary(repair_history: list[Repair]) -> dict[str, object]:
+    documents_total = sum(len(repair.documents) for repair in repair_history)
+    confirmed_repairs = sum(1 for repair in repair_history if repair.status == RepairStatus.CONFIRMED)
+    suspicious_repairs = sum(1 for repair in repair_history if repair.status == RepairStatus.SUSPICIOUS)
+    last_repair = repair_history[0] if repair_history else None
+    return {
+        "repairs_total": len(repair_history),
+        "documents_total": documents_total,
+        "confirmed_repairs": confirmed_repairs,
+        "suspicious_repairs": suspicious_repairs,
+        "last_repair_date": last_repair.repair_date if last_repair is not None else None,
+        "last_mileage": last_repair.mileage if last_repair is not None else None,
+    }
+
+
+def build_historical_history_summary(repair_history: list[Repair]) -> dict[str, object]:
+    last_repair = repair_history[0] if repair_history else None
+    first_repair = repair_history[-1] if repair_history else None
+    services_total = len({repair.service_id for repair in repair_history if repair.service_id is not None})
+    total_spend = round(sum(float(repair.grand_total) for repair in repair_history), 2)
+    return {
+        "repairs_total": len(repair_history),
+        "services_total": services_total,
+        "total_spend": total_spend,
+        "first_repair_date": first_repair.repair_date if first_repair is not None else None,
+        "last_repair_date": last_repair.repair_date if last_repair is not None else None,
+        "last_mileage": last_repair.mileage if last_repair is not None else None,
+    }
 
 
 def build_vehicle_detail_payload(db: Session, vehicle: Vehicle) -> dict:
@@ -78,12 +136,8 @@ def build_vehicle_detail_payload(db: Session, vehicle: Vehicle) -> dict:
         .order_by(Repair.repair_date.desc(), Repair.id.desc())
     ).unique().all()
 
-    documents_total = sum(len(repair.documents) for repair in repair_history)
-    confirmed_repairs = sum(1 for repair in repair_history if repair.status == RepairStatus.CONFIRMED)
-    suspicious_repairs = sum(1 for repair in repair_history if repair.status == RepairStatus.SUSPICIOUS)
-    last_repair = repair_history[0] if repair_history else None
-
     payload = VehicleRead.model_validate(vehicle).model_dump()
+    payload.update(build_historical_summary_map(db, [vehicle.id]).get(vehicle.id, {}))
     payload["active_links"] = links
     payload["active_assignments"] = [
         {
@@ -101,6 +155,11 @@ def build_vehicle_detail_payload(db: Session, vehicle: Vehicle) -> dict:
         }
         for assignment in active_assignments
     ]
+    historical_repair_history = [
+        repair
+        for repair in repair_history
+        if repair.reason is not None and repair.reason.startswith(IMPORT_REASON_PREFIX)
+    ]
     payload["repair_history"] = [
         {
             "repair_id": repair.id,
@@ -116,14 +175,22 @@ def build_vehicle_detail_payload(db: Session, vehicle: Vehicle) -> dict:
         }
         for repair in repair_history
     ]
-    payload["history_summary"] = {
-        "repairs_total": len(repair_history),
-        "documents_total": documents_total,
-        "confirmed_repairs": confirmed_repairs,
-        "suspicious_repairs": suspicious_repairs,
-        "last_repair_date": last_repair.repair_date if last_repair is not None else None,
-        "last_mileage": last_repair.mileage if last_repair is not None else None,
-    }
+    payload["history_summary"] = build_history_summary(repair_history)
+    payload["historical_repair_history"] = [
+        {
+            "repair_id": repair.id,
+            "order_number": repair.order_number,
+            "repair_date": repair.repair_date,
+            "mileage": repair.mileage,
+            "service_name": repair.service.name if repair.service is not None else None,
+            "grand_total": float(repair.grand_total),
+            "employee_comment": repair.employee_comment,
+            "created_at": repair.created_at,
+            "updated_at": repair.updated_at,
+        }
+        for repair in historical_repair_history
+    ]
+    payload["historical_history_summary"] = build_historical_history_summary(historical_repair_history)
     return payload
 
 
@@ -165,9 +232,18 @@ def list_vehicles(
 
     items = db.scalars(base_stmt.offset(offset).limit(limit)).unique().all()
     total = db.scalar(count_stmt) or 0
+    historical_summary_map = build_historical_summary_map(db, [item.id for item in items])
 
     return VehicleListResponse(
-        items=[VehicleRead.model_validate(item) for item in items],
+        items=[
+            VehicleRead.model_validate(
+                {
+                    **VehicleRead.model_validate(item).model_dump(),
+                    **historical_summary_map.get(item.id, {}),
+                }
+            )
+            for item in items
+        ],
         total=total,
         limit=limit,
         offset=offset,
@@ -276,6 +352,11 @@ def export_vehicle(
             ("Подозрительных ремонтов", payload["history_summary"]["suspicious_repairs"]),
             ("Последний ремонт", payload["history_summary"]["last_repair_date"] or ""),
             ("Последний пробег", payload["history_summary"]["last_mileage"] or ""),
+            ("Исторических ремонтов 2025", payload["historical_history_summary"]["repairs_total"]),
+            ("Исторических сервисов", payload["historical_history_summary"]["services_total"]),
+            ("Историческая сумма", payload["historical_history_summary"]["total_spend"]),
+            ("Первый исторический ремонт", payload["historical_history_summary"]["first_repair_date"] or ""),
+            ("Последний исторический ремонт", payload["historical_history_summary"]["last_repair_date"] or ""),
             ("Создано", payload["created_at"].isoformat()),
             ("Обновлено", payload["updated_at"].isoformat()),
         ],
@@ -331,6 +412,25 @@ def export_vehicle(
                 repair["updated_at"].isoformat(),
             )
             for repair in payload["repair_history"]
+        ],
+    )
+
+    historical_sheet = workbook.create_sheet("История 2025")
+    append_rows(
+        historical_sheet,
+        [("ID ремонта", "Заказ-наряд", "Дата", "Пробег", "Сервис", "Итого", "Комментарий", "Обновлено")]
+        + [
+            (
+                repair["repair_id"],
+                repair["order_number"] or "",
+                repair["repair_date"].isoformat(),
+                repair["mileage"],
+                repair["service_name"] or "",
+                repair["grand_total"],
+                repair["employee_comment"] or "",
+                repair["updated_at"].isoformat(),
+            )
+            for repair in payload["historical_repair_history"]
         ],
     )
 

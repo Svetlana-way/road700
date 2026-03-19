@@ -24,6 +24,8 @@ class VehicleRead(BaseModel):
     comment: Optional[str]
     status: VehicleStatus
     archived_at: Optional[datetime]
+    historical_repairs_total: int = 0
+    historical_last_repair_date: Optional[date] = None
     created_at: datetime
     updated_at: datetime
 
@@ -84,11 +86,34 @@ class VehicleHistorySummaryRead(BaseModel):
     last_mileage: Optional[int]
 
 
+class VehicleHistoricalRepairHistoryRead(BaseModel):
+    repair_id: int
+    order_number: Optional[str]
+    repair_date: date
+    mileage: int
+    service_name: Optional[str]
+    grand_total: float
+    employee_comment: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class VehicleHistoricalSummaryRead(BaseModel):
+    repairs_total: int
+    services_total: int
+    total_spend: float
+    first_repair_date: Optional[date]
+    last_repair_date: Optional[date]
+    last_mileage: Optional[int]
+
+
 class VehicleDetailResponse(VehicleRead):
     active_links: list[VehicleLinkRead]
     active_assignments: list[VehicleAssignmentRead]
     repair_history: list[VehicleRepairHistoryRead]
     history_summary: VehicleHistorySummaryRead
+    historical_repair_history: list[VehicleHistoricalRepairHistoryRead]
+    historical_history_summary: VehicleHistoricalSummaryRead
 
 
 class VehicleImportRequest(BaseModel):

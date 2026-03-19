@@ -23,6 +23,7 @@ import {
   Typography,
 } from "@mui/material";
 import { AuditLogPanel } from "./components/AuditLogPanel";
+import { FleetPanel } from "./components/FleetPanel";
 import { GlobalSearchPanel } from "./components/GlobalSearchPanel";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
 
@@ -14272,165 +14273,40 @@ export default function App() {
                 ) : null}
 
                 {activeWorkspaceTab === "fleet" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                  <Stack spacing={2}>
-                    <Box>
-                      <Typography variant="h5">Техника</Typography>
-                      <Typography className="muted-copy">
-                        Поиск по технике, фильтр по типу и просмотр активных связок по выбранной единице.
-                      </Typography>
-                    </Box>
-                    {fleetViewMode === "detail" ? (
-                      <Stack spacing={2}>
-                        <Stack
-                          direction={{ xs: "column", sm: "row" }}
-                          spacing={1}
-                          justifyContent="space-between"
-                          alignItems={{ xs: "flex-start", sm: "center" }}
-                        >
-                          <Button variant="text" onClick={returnToFleetList}>
-                            Назад к списку
-                          </Button>
-                          <Typography className="muted-copy">
-                            Возврат сохранит фильтры и позицию списка.
-                          </Typography>
-                        </Stack>
-                        {renderSelectedFleetVehicleDetail()}
-                      </Stack>
-                    ) : (
-                      <Stack spacing={1.5}>
-                        <Grid container spacing={1.5}>
-                          <Grid item xs={12} md={4}>
-                            <TextField
-                              label="Поиск по VIN, госномеру, бренду или модели"
-                              value={fleetQuery}
-                              onChange={(event) => setFleetQuery(event.target.value)}
-                              fullWidth
-                            />
-                          </Grid>
-                          <Grid item xs={12} md={4}>
-                            <TextField
-                              select
-                              label="Тип техники"
-                              value={fleetVehicleTypeFilter}
-                              onChange={(event) => setFleetVehicleTypeFilter(event.target.value as "" | VehicleType)}
-                              fullWidth
-                            >
-                              <MenuItem value="">Все</MenuItem>
-                              <MenuItem value="truck">Грузовики</MenuItem>
-                              <MenuItem value="trailer">Прицепы</MenuItem>
-                            </TextField>
-                          </Grid>
-                          <Grid item xs={12} md={4}>
-                            <TextField
-                              select
-                              label="Статус"
-                              value={fleetStatusFilter}
-                              onChange={(event) => setFleetStatusFilter(event.target.value as "" | VehicleStatus)}
-                              fullWidth
-                            >
-                              <MenuItem value="">Все</MenuItem>
-                              <MenuItem value="active">В работе</MenuItem>
-                              <MenuItem value="in_repair">В ремонте</MenuItem>
-                              <MenuItem value="waiting_repair">Ожидает ремонта</MenuItem>
-                              <MenuItem value="inactive">Не используется</MenuItem>
-                              <MenuItem value="decommissioned">Списан</MenuItem>
-                              <MenuItem value="archived">Архив</MenuItem>
-                            </TextField>
-                          </Grid>
-                        </Grid>
-                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                          <Button
-                            variant="outlined"
-                            disabled={fleetLoading}
-                            onClick={() => {
-                              if (token) {
-                                void loadFleetVehicles(token);
-                              }
-                            }}
-                          >
-                            {fleetLoading ? "Загрузка..." : "Обновить список"}
-                          </Button>
-                          <Button
-                            variant="text"
-                            disabled={fleetLoading}
-                            onClick={() => {
-                              setFleetQuery("");
-                              setFleetVehicleTypeFilter("");
-                              setFleetStatusFilter("");
-                              if (token) {
-                                void loadFleetVehicles(token, "", "", "");
-                              }
-                            }}
-                          >
-                            Сбросить фильтр
-                          </Button>
-                        </Stack>
-                        <Typography className="muted-copy">
-                          Найдено {fleetVehicles.length} из {fleetVehiclesTotal}
-                        </Typography>
-                        {fleetLoading ? (
-                          <Stack spacing={1} alignItems="center" className="repair-placeholder">
-                            <CircularProgress size={24} />
-                            <Typography className="muted-copy">Загрузка списка техники...</Typography>
-                          </Stack>
-                        ) : fleetVehicles.length > 0 ? (
-                          <Stack spacing={1}>
-                            {fleetVehicles.map((vehicle) => (
-                              <Paper
-                                key={`fleet-${vehicle.id}`}
-                                className={`document-row${selectedFleetVehicleId === vehicle.id ? " document-row-active" : ""}`}
-                                elevation={0}
-                              >
-                                <Stack spacing={1}>
-                                  <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                                    <Box>
-                                      <Typography>{formatVehicle(vehicle)}</Typography>
-                                      <Typography className="muted-copy">
-                                        {vehicle.vin || "VIN не указан"}
-                                      </Typography>
-                                    </Box>
-                                    <Stack direction="row" spacing={1}>
-                                      <Chip size="small" variant="outlined" label={formatVehicleTypeLabel(vehicle.vehicle_type)} />
-                                      <Chip size="small" color={vehicleStatusColor(vehicle.status)} label={formatVehicleStatusLabel(vehicle.status)} />
-                                    </Stack>
-                                  </Stack>
-                                  <Typography className="muted-copy">
-                                    Водитель: {vehicle.current_driver_name || "не указан"}
-                                    {vehicle.mechanic_name ? ` · механик: ${vehicle.mechanic_name}` : ""}
-                                  </Typography>
-                                  <Typography className="muted-copy">
-                                    История 2025:{" "}
-                                    {vehicle.historical_repairs_total > 0
-                                      ? `${vehicle.historical_repairs_total} ремонтов${
-                                          vehicle.historical_last_repair_date
-                                            ? ` · последний ${formatDateValue(vehicle.historical_last_repair_date)}`
-                                            : ""
-                                        }`
-                                      : "не найдена"}
-                                  </Typography>
-                                  <Stack direction="row" spacing={1}>
-                                    <Button
-                                      size="small"
-                                      variant="outlined"
-                                      onClick={() => {
-                                        openFleetVehicleCard(vehicle.id);
-                                      }}
-                                    >
-                                      Открыть карточку
-                                    </Button>
-                                  </Stack>
-                                </Stack>
-                              </Paper>
-                            ))}
-                          </Stack>
-                        ) : (
-                          <Typography className="muted-copy">По текущему фильтру техника не найдена.</Typography>
-                        )}
-                      </Stack>
-                    )}
-                  </Stack>
-                  </Paper>
+                  <FleetPanel
+                    viewMode={fleetViewMode}
+                    detailContent={renderSelectedFleetVehicleDetail()}
+                    fleetQuery={fleetQuery}
+                    fleetVehicleTypeFilter={fleetVehicleTypeFilter}
+                    fleetStatusFilter={fleetStatusFilter}
+                    fleetVehiclesTotal={fleetVehiclesTotal}
+                    selectedFleetVehicleId={selectedFleetVehicleId}
+                    fleetVehicles={fleetVehicles}
+                    fleetLoading={fleetLoading}
+                    onFleetQueryChange={setFleetQuery}
+                    onFleetVehicleTypeFilterChange={setFleetVehicleTypeFilter}
+                    onFleetStatusFilterChange={setFleetStatusFilter}
+                    onRefresh={() => {
+                      if (token) {
+                        void loadFleetVehicles(token);
+                      }
+                    }}
+                    onReset={() => {
+                      setFleetQuery("");
+                      setFleetVehicleTypeFilter("");
+                      setFleetStatusFilter("");
+                      if (token) {
+                        void loadFleetVehicles(token, "", "", "");
+                      }
+                    }}
+                    onReturnToList={returnToFleetList}
+                    onOpenVehicleCard={openFleetVehicleCard}
+                    formatVehicle={formatVehicle}
+                    formatVehicleTypeLabel={formatVehicleTypeLabel}
+                    formatVehicleStatusLabel={formatVehicleStatusLabel}
+                    formatDateValue={formatDateValue}
+                    vehicleStatusColor={vehicleStatusColor}
+                  />
                 ) : null}
               </Stack>
             </Grid>

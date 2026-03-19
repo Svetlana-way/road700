@@ -29,6 +29,7 @@ from app.schemas.repair import (
 )
 from app.services.document_processing import build_manual_review_check, replace_ocr_checks, resolve_service
 from app.services.exporting import append_rows, safe_filename
+from app.services.repair_report_analysis import build_repair_executive_report
 
 
 router = APIRouter(prefix="/repairs", tags=["repairs"])
@@ -209,6 +210,11 @@ def serialize_repair(
 ) -> RepairDetailResponse:
     documents = sorted(repair.documents, key=lambda item: (item.created_at, item.id), reverse=True)
     documents_by_id = {str(item.id): item for item in documents}
+    executive_report = build_repair_executive_report(
+        repair,
+        source_payload=get_report_source_payload(repair),
+        manual_review_reason_labels=MANUAL_REVIEW_REASON_LABELS,
+    )
     return RepairDetailResponse(
         id=repair.id,
         order_number=repair.order_number,
@@ -289,6 +295,7 @@ def serialize_repair(
             }
             for entry in history_entries
         ],
+        executive_report=executive_report,
     )
 
 

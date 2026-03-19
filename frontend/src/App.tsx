@@ -1097,6 +1097,28 @@ type RepairDetail = {
     old_value: Record<string, unknown> | null;
     new_value: Record<string, unknown> | null;
   }>;
+  executive_report: {
+    headline: string;
+    summary: string;
+    status: string;
+    overall_risk: "low" | "medium" | "high";
+    highlights: string[];
+    findings: Array<{
+      title: string;
+      severity: "low" | "medium" | "high";
+      category: string;
+      summary: string;
+      rationale: string | null;
+      evidence: string[];
+      recommendation: string | null;
+    }>;
+    risk_matrix: Array<{
+      zone: string;
+      level: "low" | "medium" | "high";
+      comment: string;
+    }>;
+    recommendations: string[];
+  };
 };
 
 type RepairReportSectionKey = "catalogs" | "labor_norms" | "amounts" | "history" | "ocr";
@@ -2417,6 +2439,26 @@ function checkSeverityColor(severity: CheckSeverity): "default" | "success" | "e
     return "success";
   }
   return "default";
+}
+
+function executiveRiskColor(level: "low" | "medium" | "high"): "success" | "warning" | "error" {
+  if (level === "high") {
+    return "error";
+  }
+  if (level === "medium") {
+    return "warning";
+  }
+  return "success";
+}
+
+function formatExecutiveRiskLabel(level: "low" | "medium" | "high") {
+  if (level === "high") {
+    return "Высокий риск";
+  }
+  if (level === "medium") {
+    return "Средний риск";
+  }
+  return "Низкий риск";
 }
 
 function reviewPriorityColor(bucket: ReviewPriorityBucket): "default" | "error" | "warning" {
@@ -5110,6 +5152,7 @@ export default function App() {
       return null;
     }
 
+    const executiveReport = selectedRepair.executive_report;
     const vehicleMatched =
       !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
       Boolean(selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id);
@@ -5128,11 +5171,7 @@ export default function App() {
         : "В отчёте есть несоответствия. Ниже они сгруппированы по типам проверки.";
     const conciseReportTitle = selectedRepairAwaitingOcr
       ? "Документ обрабатывается"
-      : selectedRepairUnresolvedChecks.length === 0
-        ? "Заказ-наряд проверен"
-        : selectedRepairHasBlockingFindings
-          ? "Нужна ручная проверка"
-          : "Есть замечания";
+      : executiveReport.headline;
     const overviewAttentionItems = reviewRequiredFieldComparisons.filter(
       (item) => item.status === "missing" || item.status === "mismatch",
     );
@@ -5146,28 +5185,24 @@ export default function App() {
         : null;
     const conciseExecutiveSummary = selectedRepairAwaitingOcr
       ? `Заказ-наряд ${selectedRepair.order_number || "без номера"} загружен. Документ еще проходит OCR, итог проверки появится автоматически после распознавания.`
-      : selectedRepairUnresolvedChecks.length === 0
-        ? `Заказ-наряд ${selectedRepair.order_number || "без номера"}${selectedRepair.repair_date ? ` от ${selectedRepair.repair_date}` : ""} на сумму ${formatMoney(selectedRepair.grand_total) || "—"} проверен. Машина, сервис и основные суммы соотнесены без открытых замечаний.`
-        : `Заказ-наряд ${selectedRepair.order_number || "без номера"}${selectedRepair.repair_date ? ` от ${selectedRepair.repair_date}` : ""} на сумму ${formatMoney(selectedRepair.grand_total) || "—"} проверен. Найдены несоответствия, перед подтверждением нужна ручная проверка.`;
-    const conciseFacts = [
-      `Машина: ${vehicleMatched ? formatVehicle(selectedRepair.vehicle) : "не найдена в базе"}`,
-      `Сервис: ${serviceMatched ? selectedRepair.service?.name : "не найден в справочнике"}`,
-      `Проверка по базе, справочникам и истории: ${
-        selectedRepairAwaitingOcr
-          ? "ожидает завершения OCR"
-          : selectedRepairUnresolvedChecks.length === 0
-            ? "замечаний нет"
-            : `найдено ${selectedRepairUnresolvedChecks.length} несоответствий`
-      }`,
-      `Структура заказ-наряда: работ ${selectedRepair.works.length}, запчастей ${selectedRepair.parts.length}`,
-    ];
+      : executiveReport.summary;
+    const conciseFacts = executiveReport.highlights.length > 0
+      ? executiveReport.highlights
+      : [
+          `Машина: ${vehicleMatched ? formatVehicle(selectedRepair.vehicle) : "не найдена в базе"}`,
+          `Сервис: ${serviceMatched ? selectedRepair.service?.name : "не найден в справочнике"}`,
+          `Проверка по базе, справочникам и истории: ${
+            selectedRepairAwaitingOcr
+              ? "ожидает завершения OCR"
+              : selectedRepairUnresolvedChecks.length === 0
+                ? "замечаний нет"
+                : `найдено ${selectedRepairUnresolvedChecks.length} несоответствий`
+          }`,
+          `Структура заказ-наряда: работ ${selectedRepair.works.length}, запчастей ${selectedRepair.parts.length}`,
+        ];
     const conciseIssues = selectedRepairAwaitingOcr
       ? ["Документ ещё проходит OCR или перепроверку."]
-      : [
-          ...selectedRepairUnresolvedChecks.map((check) => check.title),
-          ...selectedRepairDocumentManualReviewReasons.map((reason) => manualReviewReasonLabels[reason] || formatStatus(reason)),
-          ...overviewAttentionItems.map((item) => `${item.label}: в ремонте ${item.currentDisplay} · OCR ${item.ocrDisplay}`),
-        ].slice(0, 4);
+      : executiveReport.findings.slice(0, 4).map((item) => item.title);
 
     return (
       <Paper className="repair-summary" elevation={0}>
@@ -5186,6 +5221,11 @@ export default function App() {
             </Box>
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               <Chip size="small" label={formatRepairStatus(selectedRepair.status)} />
+              <Chip
+                size="small"
+                color={executiveRiskColor(executiveReport.overall_risk)}
+                label={formatExecutiveRiskLabel(executiveReport.overall_risk)}
+              />
               {selectedRepairDocument ? (
                 <Chip
                   size="small"
@@ -5242,6 +5282,103 @@ export default function App() {
               <Alert severity={reportAlertSeverity}>
                 {reportAlertText}
               </Alert>
+
+              <Paper className="repair-line" elevation={0}>
+                <Stack spacing={1.25}>
+                  <Stack
+                    direction={{ xs: "column", sm: "row" }}
+                    spacing={1}
+                    justifyContent="space-between"
+                    alignItems={{ xs: "flex-start", sm: "center" }}
+                  >
+                    <Box>
+                      <Typography variant="subtitle1">{executiveReport.headline}</Typography>
+                      <Typography className="muted-copy">{executiveReport.summary}</Typography>
+                    </Box>
+                    <Chip
+                      size="small"
+                      color={executiveRiskColor(executiveReport.overall_risk)}
+                      label={formatExecutiveRiskLabel(executiveReport.overall_risk)}
+                    />
+                  </Stack>
+                  {executiveReport.risk_matrix.length > 0 ? (
+                    <Stack spacing={1}>
+                      <Typography className="metric-label">Сводная оценка рисков</Typography>
+                      {executiveReport.risk_matrix.map((item) => (
+                        <Paper className="repair-line" elevation={0} key={`executive-risk-${item.zone}`}>
+                          <Stack
+                            direction={{ xs: "column", sm: "row" }}
+                            spacing={1}
+                            justifyContent="space-between"
+                            alignItems={{ xs: "flex-start", sm: "center" }}
+                          >
+                            <Box>
+                              <Typography>{item.zone}</Typography>
+                              <Typography className="muted-copy">{item.comment}</Typography>
+                            </Box>
+                            <Chip
+                              size="small"
+                              color={executiveRiskColor(item.level)}
+                              label={formatExecutiveRiskLabel(item.level)}
+                            />
+                          </Stack>
+                        </Paper>
+                      ))}
+                    </Stack>
+                  ) : null}
+                  {executiveReport.findings.length > 0 ? (
+                    <Stack spacing={1}>
+                      <Typography className="metric-label">Подозрительные моменты и риски</Typography>
+                      {executiveReport.findings.map((item, index) => (
+                        <Paper className="repair-line" elevation={0} key={`executive-finding-${index}`}>
+                          <Stack spacing={0.75}>
+                            <Stack
+                              direction={{ xs: "column", sm: "row" }}
+                              spacing={1}
+                              justifyContent="space-between"
+                              alignItems={{ xs: "flex-start", sm: "center" }}
+                            >
+                              <Typography>{item.title}</Typography>
+                              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                <Chip size="small" variant="outlined" label={item.category} />
+                                <Chip
+                                  size="small"
+                                  color={executiveRiskColor(item.severity)}
+                                  label={formatExecutiveRiskLabel(item.severity)}
+                                />
+                              </Stack>
+                            </Stack>
+                            <Typography className="muted-copy">{item.summary}</Typography>
+                            {item.rationale ? <Typography className="muted-copy">{item.rationale}</Typography> : null}
+                            {item.evidence.length > 0 ? (
+                              <Stack spacing={0.5}>
+                                {item.evidence.map((line, evidenceIndex) => (
+                                  <Typography className="muted-copy" key={`executive-evidence-${index}-${evidenceIndex}`}>
+                                    {line}
+                                  </Typography>
+                                ))}
+                              </Stack>
+                            ) : null}
+                            {item.recommendation ? (
+                              <Typography className="muted-copy">Рекомендация: {item.recommendation}</Typography>
+                            ) : null}
+                          </Stack>
+                        </Paper>
+                      ))}
+                    </Stack>
+                  ) : null}
+                  {executiveReport.recommendations.length > 0 ? (
+                    <Stack spacing={0.5}>
+                      <Typography className="metric-label">Что рекомендовано сделать</Typography>
+                      {executiveReport.recommendations.map((item, index) => (
+                        <Typography className="muted-copy" key={`executive-recommendation-${index}`}>
+                          {item}
+                        </Typography>
+                      ))}
+                    </Stack>
+                  ) : null}
+                </Stack>
+              </Paper>
 
               <Grid container spacing={2}>
                 <Grid item xs={12} md={6}>

@@ -107,6 +107,33 @@ class RepairDocumentRead(BaseModel):
     versions: list[RepairDocumentVersionRead]
 
 
+class RepairExecutiveReportFindingRead(BaseModel):
+    title: str
+    severity: str
+    category: str
+    summary: str
+    rationale: Optional[str]
+    evidence: list[str]
+    recommendation: Optional[str]
+
+
+class RepairExecutiveReportRiskRead(BaseModel):
+    zone: str
+    level: str
+    comment: str
+
+
+class RepairExecutiveReportRead(BaseModel):
+    headline: str
+    summary: str
+    status: str
+    overall_risk: str
+    highlights: list[str]
+    findings: list[RepairExecutiveReportFindingRead]
+    risk_matrix: list[RepairExecutiveReportRiskRead]
+    recommendations: list[str]
+
+
 class RepairDetailResponse(BaseModel):
     id: int
     order_number: Optional[str]
@@ -133,6 +160,7 @@ class RepairDetailResponse(BaseModel):
     documents: list[RepairDocumentRead]
     document_history: list[RepairDocumentHistoryEntryRead]
     history: list[RepairHistoryEntryRead]
+    executive_report: RepairExecutiveReportRead
 
 
 class RepairWorkUpdateInput(BaseModel):

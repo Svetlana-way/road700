@@ -45,6 +45,10 @@ class Document(Base, TimestampMixin):
         back_populates="document",
         cascade="all, delete-orphan",
     )
+    import_jobs: Mapped[list["ImportJob"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )
 
 
 class DocumentVersion(Base, TimestampMixin):

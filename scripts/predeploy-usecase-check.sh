@@ -4,10 +4,20 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-echo "[1/3] Компиляция backend"
+echo "[1/4] Компиляция backend"
 python3 -m compileall backend/app >/dev/null
 
-echo "[2/3] Статическая проверка покрытия use case"
+echo "[2/4] Backend tests"
+(
+  cd backend
+  DATABASE_URL=sqlite:///local.db \
+  INITIAL_ADMIN_EMAIL=admin@example.com \
+  INITIAL_ADMIN_LOGIN=admin \
+  INITIAL_ADMIN_PASSWORD=change-me \
+  ./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+)
+
+echo "[3/4] Статическая проверка покрытия use case"
 ROOT_DIR="$ROOT_DIR" python3 - <<'PY'
 from __future__ import annotations
 
@@ -47,8 +57,22 @@ checks: list[tuple[str, list[str]]] = [
         "backend/app/api/documents.py",
         [
             "validate_document_upload",
-            "def process_document_in_background(",
-            "def enqueue_document_processing(",
+            "def queue_document_processing(",
+            "enqueue_document_processing_job(",
+        ],
+    ),
+    (
+        "backend/app/api/jobs.py",
+        [
+            '@router.get("/{job_id}", response_model=ImportJobRead)',
+            '@router.post("/{job_id}/retry", response_model=ImportJobRetryResponse)',
+        ],
+    ),
+    (
+        "backend/app/scripts/run_job_worker.py",
+        [
+            "def process_single_job(",
+            "claim_next_document_processing_job(",
         ],
     ),
     (
@@ -103,7 +127,7 @@ if errors:
 print("Static use case markers are present.")
 PY
 
-echo "[3/3] Напоминание по ручной проверке"
+echo "[4/4] Напоминание по ручной проверке"
 cat <<'EOF'
 Перед production deploy дополнительно подтвердите вручную:
 - сотрудник может загрузить заказ-наряд и документ уходит в OCR, а не теряется;

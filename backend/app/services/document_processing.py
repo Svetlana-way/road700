@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import statistics
@@ -36,6 +37,7 @@ from app.models.ocr_rule import OcrRule
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
 from app.models.vehicle import Vehicle
+from app.services.import_jobs import mark_job_completed, mark_job_failed
 from app.services.service_catalog import find_service_name_in_text, normalize_service_key, resolve_service_by_name
 from app.services.labor_norms import (
     LaborNormApplicability,
@@ -50,6 +52,7 @@ from app.core.paths import STORAGE_ROOT
 
 LOCAL_STORAGE_ROOT = STORAGE_ROOT
 VISION_OCR_SCRIPT = Path(__file__).with_name("vision_ocr.swift")
+logger = logging.getLogger(__name__)
 
 OCR_CONFUSABLE_CHARSETS = {
     "а": "аa4@",
@@ -2880,29 +2883,39 @@ def replace_repair_lines(
         )
 
 
-def process_document(db: Session, document_id: int) -> ProcessingResult:
+def process_document(db: Session, document_id: int, *, job_id: int | None = None) -> ProcessingResult:
     initial_document = load_document_for_processing(db, document_id)
     if initial_document is None or initial_document.repair is None:
         raise ValueError("Document not found or repair relation is incomplete")
 
     storage_path = get_storage_path(initial_document.storage_key)
-    job = ImportJob(
-        document_id=initial_document.id,
-        import_type="document_ocr",
-        source_filename=initial_document.original_filename,
-        status=ImportStatus.PROCESSING,
-        summary={"document_id": initial_document.id, "stage": "started"},
-    )
-    db.add(job)
-    db.flush()
-    job_id = job.id
-    db.commit()
+    if job_id is None:
+        job = ImportJob(
+            document_id=initial_document.id,
+            import_type="document_ocr",
+            source_filename=initial_document.original_filename,
+            status=ImportStatus.PROCESSING,
+            summary={"document_id": initial_document.id, "stage": "started"},
+            attempts=1,
+            started_at=datetime.now().astimezone(),
+            finished_at=None,
+        )
+        db.add(job)
+        db.flush()
+        job_id = job.id
+        db.commit()
+    else:
+        job = db.get(ImportJob, job_id)
+        if job is None:
+            raise ValueError(f"Import job {job_id} not found")
 
     try:
         document = load_document_for_processing(db, document_id)
         job = db.get(ImportJob, job_id)
         if document is None or document.repair is None or job is None:
             raise ValueError("Document processing context could not be reloaded")
+
+        logger.info("document_processing_started", extra={"document_id": document.id, "job_id": job.id})
 
         if not storage_path.exists():
             raise FileNotFoundError(f"Source document file not found: {storage_path}")
@@ -2928,23 +2941,31 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
                     change_summary="Stored without OCR",
                 )
             )
-            job.status = ImportStatus.COMPLETED
-            job.summary = {
-                "document_id": document.id,
-                "document_kind": document.kind.value,
-                "document_status": document.status.value,
-                "ocr_skipped": True,
-            }
-            job.error_message = None
+            mark_job_completed(
+                db,
+                job,
+                status=ImportStatus.COMPLETED,
+                summary={
+                    "document_id": document.id,
+                    "document_kind": document.kind.value,
+                    "document_status": document.status.value,
+                    "ocr_skipped": True,
+                },
+            )
             db.commit()
 
             message = "Document stored without OCR"
         else:
+            logger.info("document_processing_extract_text", extra={"document_id": document.id, "job_id": job.id})
             text, extracted_from, extraction_failure_reason = extract_document_text(storage_path, document.source_type)
             profile_selection = select_ocr_profile_scope(db, document, text) if text else OcrProfileSelection(
                 profile_scope="default",
                 source="default",
                 reason="Текст не извлечён, использован default",
+            )
+            logger.info(
+                "document_processing_parse",
+                extra={"document_id": document.id, "job_id": job.id, "profile_scope": profile_selection.profile_scope},
             )
             parsed = parse_document_text(text, db=db, profile_scope=profile_selection.profile_scope) if text else {
                 "extracted_fields": {},
@@ -3031,6 +3052,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
             else:
                 add_manual_review_reason(manual_review_reasons, "service_name_missing")
 
+            logger.info("document_processing_match_and_checks", extra={"document_id": document.id, "job_id": job.id})
             checks.extend(build_dynamic_work_reference_checks(db, repair, extracted_items["works"]))
             replace_repair_lines(
                 db,
@@ -3189,25 +3211,31 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
                 )
             )
 
-            job.status = (
-                ImportStatus.COMPLETED
-                if document.status == DocumentStatus.RECOGNIZED
-                else ImportStatus.COMPLETED_WITH_CONFLICTS
+            final_job_status = (
+                ImportStatus.COMPLETED if document.status == DocumentStatus.RECOGNIZED else ImportStatus.COMPLETED_WITH_CONFLICTS
             )
-            job.summary = {
-                "document_id": document.id,
-                "document_status": document.status.value,
-                "recognized_fields_count": recognized_fields_count,
-                "works_count": len(extracted_items["works"]),
-                "parts_count": len(extracted_items["parts"]),
-                "manual_review_reasons": manual_review_reasons,
-                "normalization_notes": normalization_notes,
-                "confidence": document.ocr_confidence,
-            }
-            job.error_message = None
-
+            mark_job_completed(
+                db,
+                job,
+                status=final_job_status,
+                summary={
+                    "document_id": document.id,
+                    "document_status": document.status.value,
+                    "recognized_fields_count": recognized_fields_count,
+                    "works_count": len(extracted_items["works"]),
+                    "parts_count": len(extracted_items["parts"]),
+                    "manual_review_reasons": manual_review_reasons,
+                    "normalization_notes": normalization_notes,
+                    "confidence": document.ocr_confidence,
+                },
+            )
+            logger.info(
+                "document_processing_completed",
+                extra={"document_id": document.id, "job_id": job.id, "document_status": document.status.value},
+            )
             db.commit()
     except Exception as exc:
+        logger.exception("document_processing_failed", extra={"document_id": document_id, "job_id": job_id})
         db.rollback()
         document = load_document_for_processing(db, document_id)
         job = db.get(ImportJob, job_id)
@@ -3230,9 +3258,12 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
                 }
             ],
         )
-        job.status = ImportStatus.FAILED
-        job.summary = {"document_id": document.id, "document_status": document.status.value}
-        job.error_message = str(exc)
+        mark_job_failed(
+            db,
+            job,
+            error_message=str(exc),
+            summary={"document_id": document.id, "document_status": document.status.value},
+        )
         db.commit()
         message = "Document processing failed"
 

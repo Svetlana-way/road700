@@ -29,6 +29,7 @@ type VehicleStatus = "active" | "in_repair" | "waiting_repair" | "inactive" | "d
 type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
 type ServiceStatus = "preliminary" | "confirmed" | "archived";
 type ImportStatus = "draft" | "processing" | "completed" | "completed_with_conflicts" | "failed";
+type ImportJobStatus = "queued" | "retry" | "draft" | "processing" | "completed" | "completed_with_conflicts" | "failed";
 type DocumentStatus =
   | "uploaded"
   | "recognized"
@@ -714,6 +715,16 @@ type DocumentItem = {
     brand: string | null;
     model: string | null;
   };
+  latest_import_job?: {
+    id: number;
+    status: ImportJobStatus;
+    error_message?: string | null;
+    attempts: number;
+    started_at?: string | null;
+    finished_at?: string | null;
+    created_at: string;
+    updated_at: string;
+  } | null;
 };
 
 type DocumentsResponse = {
@@ -723,11 +734,14 @@ type DocumentsResponse = {
 type DocumentUploadResponse = {
   document: DocumentItem;
   message: string;
+  job_id?: number | null;
+  import_status?: string | null;
 };
 
 type DocumentBatchProcessResponse = {
   processed_count: number;
   document_ids: number[];
+  job_ids?: number[];
   status_counts: Record<string, number>;
   message: string;
 };
@@ -1559,6 +1573,9 @@ const documentStatusLabels: Record<string, string> = {
   archived: "Архив",
 };
 const genericStatusLabels: Record<string, string> = {
+  queued: "В очереди",
+  retry: "Повторная очередь",
+  processing: "Обрабатывается",
   preliminary: "Предварительный",
   confirmed: "Подтверждено",
   archived: "Архив",
@@ -3037,6 +3054,27 @@ function isDocumentAwaitingOcr(status: string | null | undefined) {
   return status === "uploaded";
 }
 
+function isImportJobActive(status: string | null | undefined) {
+  return status === "queued" || status === "retry" || status === "processing";
+}
+
+function documentHasActiveImportJob(document: DocumentItem | null | undefined) {
+  return isImportJobActive(document?.latest_import_job?.status);
+}
+
+function importJobStatusColor(status: string | null | undefined): "default" | "success" | "error" | "warning" {
+  if (status === "completed") {
+    return "success";
+  }
+  if (status === "failed") {
+    return "error";
+  }
+  if (status === "queued" || status === "retry" || status === "processing" || status === "completed_with_conflicts") {
+    return "warning";
+  }
+  return "default";
+}
+
 function repairHasDocumentsAwaitingOcr(repair: RepairDetail | null) {
   return repair?.documents.some((document) => isDocumentAwaitingOcr(document.status)) ?? false;
 }
@@ -4425,6 +4463,16 @@ export default function App() {
           : Promise.resolve(null),
       ]);
 
+      const applyRecentDocuments = (items: DocumentItem[]) => {
+        setDocuments(items);
+        setLastUploadedDocument((current) => {
+          if (!current) {
+            return current;
+          }
+          return items.find((item) => item.id === current.id) ?? current;
+        });
+      };
+
       setUser(me);
       setSummary(dashboard);
       setDataQuality(dataQualityPayload);
@@ -4433,13 +4481,7 @@ export default function App() {
       setFleetVehicles(vehicleList.items);
       setFleetVehiclesTotal(vehicleList.total);
       setSelectedFleetVehicleId((current) => current ?? vehicleList.items[0]?.id ?? null);
-      setDocuments(recentDocuments.items);
-      setLastUploadedDocument((current) => {
-        if (!current) {
-          return current;
-        }
-        return recentDocuments.items.find((item) => item.id === current.id) ?? current;
-      });
+      applyRecentDocuments(recentDocuments.items);
       setUsersList(usersPayload?.items || []);
       setUsersTotal(usersPayload?.total || 0);
       setSelectedManagedUserId((current) => current ?? usersPayload?.items?.[0]?.id ?? null);
@@ -4491,6 +4533,17 @@ export default function App() {
         setBootLoading(false);
       }
     }
+  }
+
+  async function loadRecentDocuments(activeToken: string) {
+    const recentDocuments = await apiRequest<DocumentsResponse>("/documents?limit=8", { method: "GET" }, activeToken);
+    setDocuments(recentDocuments.items);
+    setLastUploadedDocument((current) => {
+      if (!current) {
+        return current;
+      }
+      return recentDocuments.items.find((item) => item.id === current.id) ?? current;
+    });
   }
 
   async function loadRepairDetail(
@@ -4756,8 +4809,9 @@ export default function App() {
     }
 
     const shouldRefreshWorkspace =
-      documents.some((document) => isDocumentAwaitingOcr(document.status)) ||
-      (lastUploadedDocument !== null && isDocumentAwaitingOcr(lastUploadedDocument.status));
+      documents.some((document) => isDocumentAwaitingOcr(document.status) || documentHasActiveImportJob(document)) ||
+      (lastUploadedDocument !== null &&
+        (isDocumentAwaitingOcr(lastUploadedDocument.status) || documentHasActiveImportJob(lastUploadedDocument)));
     const shouldRefreshRepair = repairHasDocumentsAwaitingOcr(selectedRepair);
 
     if (!shouldRefreshWorkspace && !shouldRefreshRepair) {
@@ -4769,7 +4823,7 @@ export default function App() {
     const intervalId = window.setInterval(() => {
       if (shouldRefreshWorkspace && !workspaceAutoRefreshInFlightRef.current) {
         workspaceAutoRefreshInFlightRef.current = true;
-        void loadWorkspace(token, selectedReviewCategory, { silent: true }).finally(() => {
+        void loadRecentDocuments(token).finally(() => {
           workspaceAutoRefreshInFlightRef.current = false;
         });
       }
@@ -8804,6 +8858,13 @@ export default function App() {
                                     variant="outlined"
                                     label={formatDocumentKind(lastUploadedDocument.kind)}
                                   />
+                                  {lastUploadedDocument.latest_import_job ? (
+                                    <Chip
+                                      size="small"
+                                      color={importJobStatusColor(lastUploadedDocument.latest_import_job.status)}
+                                      label={`OCR: ${formatStatus(lastUploadedDocument.latest_import_job.status)}`}
+                                    />
+                                  ) : null}
                                   <Chip
                                     size="small"
                                     color={statusColor(lastUploadedDocument.status)}
@@ -8811,9 +8872,14 @@ export default function App() {
                                   />
                                 </Stack>
                               </Stack>
-                              <Typography>{isDocumentAwaitingOcr(lastUploadedDocument.status)
+                              <Typography>{isDocumentAwaitingOcr(lastUploadedDocument.status) || documentHasActiveImportJob(lastUploadedDocument)
                                 ? `Заказ-наряд ${lastUploadedDocument.repair.order_number || "без номера"} загружен. Сейчас идет распознавание и автоматическая сверка по машине, сервису, справочникам и истории.`
                                 : `Заказ-наряд ${lastUploadedDocument.repair.order_number || "без номера"} загружен и обработан. Карточка ремонта заполнена, можно открыть итог проверки.`}</Typography>
+                              {lastUploadedDocument.latest_import_job?.error_message ? (
+                                <Alert severity="warning">
+                                  OCR-задача завершилась с ошибкой: {lastUploadedDocument.latest_import_job.error_message}
+                                </Alert>
+                              ) : null}
                               <Typography className="selected-file">{lastUploadedDocument.original_filename}</Typography>
                               <Typography className="muted-copy">
                                 Машина: {!isPlaceholderVehicle(lastUploadedDocument.vehicle.external_id)
@@ -9156,6 +9222,13 @@ export default function App() {
                               <Typography variant="subtitle1">{document.original_filename}</Typography>
                               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                                 <Chip size="small" variant="outlined" label={formatDocumentKind(document.kind)} />
+                                {document.latest_import_job ? (
+                                  <Chip
+                                    size="small"
+                                    color={importJobStatusColor(document.latest_import_job.status)}
+                                    label={`OCR: ${formatStatus(document.latest_import_job.status)}`}
+                                  />
+                                ) : null}
                                 <Chip
                                   size="small"
                                   color={statusColor(document.status)}
@@ -9169,6 +9242,12 @@ export default function App() {
                             <Typography className="muted-copy">
                               Ремонт #{document.repair.id} · {document.repair.repair_date} · пробег {document.repair.mileage}
                             </Typography>
+                            {document.latest_import_job ? (
+                              <Typography className="muted-copy">
+                                OCR-задача: {formatStatus(document.latest_import_job.status)}
+                                {document.latest_import_job.attempts > 0 ? ` · попытка ${document.latest_import_job.attempts}` : ""}
+                              </Typography>
+                            ) : null}
                             {document.parsed_payload?.extracted_fields?.order_number ? (
                               <Typography className="muted-copy">
                                 OCR: заказ-наряд {document.parsed_payload.extracted_fields.order_number}
@@ -9204,6 +9283,9 @@ export default function App() {
                               <Typography className="muted-copy">
                                 Проверить вручную: {formatManualReviewReasons(document.parsed_payload.manual_review_reasons)}
                               </Typography>
+                            ) : null}
+                            {document.latest_import_job?.error_message ? (
+                              <Alert severity="warning">Ошибка OCR: {document.latest_import_job.error_message}</Alert>
                             ) : null}
                             {formatOcrProfileMeta(document.parsed_payload ?? null) ? (
                               <Typography className="muted-copy">

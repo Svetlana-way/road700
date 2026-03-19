@@ -73,17 +73,26 @@ class ImportJobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    document_id: Optional[int]
     import_type: str
     source_filename: str
     status: ImportStatus
     summary: Optional[dict]
     error_message: Optional[str]
+    attempts: int
+    started_at: Optional[datetime]
+    finished_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
 
 
 class ImportJobListResponse(BaseModel):
     items: list[ImportJobRead]
+
+
+class ImportJobRetryResponse(BaseModel):
+    message: str
+    job: ImportJobRead
 
 
 class ImportConflictRead(BaseModel):

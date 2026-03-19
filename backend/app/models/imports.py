@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import Enum, ForeignKey, JSON, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from datetime import datetime
+
+from sqlalchemy import DateTime, Enum, ForeignKey, JSON, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
 from app.models.enums import ImportStatus
@@ -19,6 +21,11 @@ class ImportJob(Base, TimestampMixin):
     status: Mapped[ImportStatus] = mapped_column(Enum(ImportStatus), nullable=False, index=True)
     summary: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(nullable=False, default=0)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    document: Mapped["Document | None"] = relationship(back_populates="import_jobs")
 
 
 class ImportConflict(Base, TimestampMixin):

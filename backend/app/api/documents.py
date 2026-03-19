@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
@@ -13,7 +13,6 @@ from app.api.access import get_allowed_vehicle_ids_query, get_repair_visibility_
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.api.upload_validation import validate_document_upload
 from app.core.paths import STORAGE_ROOT
-from app.db.session import SessionLocal
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, UserRole, VehicleStatus, VehicleType
@@ -28,6 +27,7 @@ from app.schemas.document import (
     DocumentCreateVehicleRequest,
     DocumentCreateVehicleResponse,
     DocumentComparisonResponse,
+    DocumentImportJobRead,
     DocumentLinkVehicleRequest,
     DocumentListResponse,
     DocumentProcessResponse,
@@ -37,7 +37,7 @@ from app.schemas.document import (
     DocumentUploadResponse,
     DocumentVehicleRead,
 )
-from app.services.document_processing import process_document
+from app.services.import_jobs import enqueue_document_processing_job
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 COMPARISON_REVIEW_ACTIONS = {"keep_current_primary", "make_document_primary", "mark_reviewed"}
@@ -110,6 +110,9 @@ def serialize_document(document: Document) -> DocumentRead:
     latest_version = None
     if document.versions:
         latest_version = max(document.versions, key=lambda version: version.version_number)
+    latest_import_job = None
+    if document.import_jobs:
+        latest_import_job = max(document.import_jobs, key=lambda item: item.id)
 
     return DocumentRead(
         id=document.id,
@@ -126,7 +129,10 @@ def serialize_document(document: Document) -> DocumentRead:
         parsed_payload=latest_version.parsed_payload if latest_version is not None else None,
         repair=DocumentRepairRead.model_validate(document.repair),
         vehicle=DocumentVehicleRead.model_validate(document.repair.vehicle),
+        latest_import_job=DocumentImportJobRead.model_validate(latest_import_job) if latest_import_job is not None else None,
     )
+
+
 def build_storage_key(filename: str) -> str:
     suffix = Path(filename).suffix.lower()
     today = date.today()
@@ -139,6 +145,7 @@ def load_document_with_relations(db: Session, document_id: int) -> Optional[Docu
         .options(
             joinedload(Document.repair).joinedload(Repair.vehicle),
             joinedload(Document.versions),
+            joinedload(Document.import_jobs),
         )
         .where(Document.id == document_id)
     )
@@ -565,16 +572,12 @@ def mark_document_for_reprocessing(db: Session, document_id: int) -> Document:
     return refreshed_document
 
 
-def process_document_in_background(document_id: int) -> None:
-    with SessionLocal() as db:
-        try:
-            process_document(db, document_id)
-        except Exception:
-            db.rollback()
-
-
-def enqueue_document_processing(background_tasks: BackgroundTasks, document_id: int) -> None:
-    background_tasks.add_task(process_document_in_background, document_id)
+def queue_document_processing(db: Session, document_id: int, *, retry_failed: bool = False):
+    document = load_document_with_relations(db, document_id)
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    job, _ = enqueue_document_processing_job(db, document, retry_failed=retry_failed)
+    return job
 
 
 @router.get("", response_model=DocumentListResponse)
@@ -591,6 +594,7 @@ def list_documents(
         .options(
             joinedload(Document.repair).joinedload(Repair.vehicle),
             joinedload(Document.versions),
+            joinedload(Document.import_jobs),
         )
     )
     count_stmt = select(func.count(Document.id)).join(Document.repair)
@@ -630,6 +634,7 @@ def update_document(
             joinedload(Document.repair).joinedload(Repair.vehicle),
             joinedload(Document.repair).joinedload(Repair.documents),
             joinedload(Document.versions),
+            joinedload(Document.import_jobs),
         )
         .where(Document.id == document_id)
     ).unique().scalar_one_or_none()
@@ -699,7 +704,6 @@ def update_document(
 
 @router.post("/upload", response_model=DocumentUploadResponse)
 def upload_document(
-    background_tasks: BackgroundTasks,
     vehicle_id: Optional[int] = Form(default=None),
     repair_date: Optional[date] = Form(default=None),
     mileage: Optional[int] = Form(default=None),
@@ -802,18 +806,19 @@ def upload_document(
     if created_document is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")
     log_document_upload_event(db, current_user, created_document, action_type="document_uploaded")
+    job = queue_document_processing(db, created_document_id)
     db.commit()
-    enqueue_document_processing(background_tasks, created_document_id)
 
     return DocumentUploadResponse(
         document=serialize_document(created_document),
         message="Документ загружен и поставлен в очередь на обработку",
+        job_id=job.id,
+        import_status=job.status.value,
     )
 
 
 @router.post("/{document_id}/create-vehicle", response_model=DocumentCreateVehicleResponse)
 def create_vehicle_from_document(
-    background_tasks: BackgroundTasks,
     document_id: int,
     payload: DocumentCreateVehicleRequest,
     db: Session = Depends(get_db),
@@ -838,7 +843,8 @@ def create_vehicle_from_document(
         current_admin=current_admin,
     )
     updated_document = mark_document_for_reprocessing(db, updated_document.id)
-    enqueue_document_processing(background_tasks, updated_document.id)
+    job = queue_document_processing(db, updated_document.id)
+    db.commit()
     message = (
         "Карточка техники создана и документ поставлен в очередь на перепроверку"
         if created_new_vehicle
@@ -849,12 +855,13 @@ def create_vehicle_from_document(
         document=serialize_document(updated_document),
         repair_id=updated_document.repair.id,
         created_new_vehicle=created_new_vehicle,
+        job_id=job.id,
+        import_status=job.status.value,
     )
 
 
 @router.post("/{document_id}/link-vehicle", response_model=DocumentCreateVehicleResponse)
 def link_vehicle_to_document(
-    background_tasks: BackgroundTasks,
     document_id: int,
     payload: DocumentLinkVehicleRequest,
     db: Session = Depends(get_db),
@@ -872,18 +879,20 @@ def link_vehicle_to_document(
         current_user=current_user,
     )
     updated_document = mark_document_for_reprocessing(db, updated_document.id)
-    enqueue_document_processing(background_tasks, updated_document.id)
+    job = queue_document_processing(db, updated_document.id)
+    db.commit()
     return DocumentCreateVehicleResponse(
         message="Ремонт перепривязан к выбранной карточке техники и поставлен в очередь на перепроверку",
         document=serialize_document(updated_document),
         repair_id=updated_document.repair.id,
         created_new_vehicle=False,
+        job_id=job.id,
+        import_status=job.status.value,
     )
 
 
 @router.post("/upload-to-repair", response_model=DocumentUploadResponse)
 def upload_document_to_repair(
-    background_tasks: BackgroundTasks,
     repair_id: int = Form(...),
     kind: DocumentKind = Form(default=DocumentKind.REPEAT_SCAN),
     notes: Optional[str] = Form(default=None),
@@ -961,12 +970,14 @@ def upload_document_to_repair(
     if created_document is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")
     log_document_upload_event(db, current_user, created_document, action_type="document_attached")
+    job = queue_document_processing(db, created_document_id)
     db.commit()
-    enqueue_document_processing(background_tasks, created_document_id)
 
     return DocumentUploadResponse(
         document=serialize_document(created_document),
         message="Документ прикреплён и поставлен в очередь на обработку",
+        job_id=job.id,
+        import_status=job.status.value,
     )
 
 
@@ -984,16 +995,17 @@ def process_single_document(
         if visible_vehicle is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    result = process_document(db, document_id)
+    job = queue_document_processing(db, document_id, retry_failed=True)
+    db.commit()
     processed_document = load_document_with_relations(db, document_id)
     if processed_document is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not processed")
 
     return DocumentProcessResponse(
         document=serialize_document(processed_document),
-        job_id=result.job.id,
-        import_status=result.job.status.value,
-        message=result.message,
+        job_id=job.id,
+        import_status=job.status.value,
+        message="Документ поставлен в очередь на обработку",
     )
 
 
@@ -1085,6 +1097,7 @@ def set_primary_document(
         .options(
             joinedload(Document.repair).joinedload(Repair.vehicle),
             joinedload(Document.versions),
+            joinedload(Document.import_jobs),
         )
         .where(Document.repair_id == document.repair_id)
     ).unique().scalars().all()
@@ -1149,6 +1162,7 @@ def review_document_comparison(
         .options(
             joinedload(Document.repair).joinedload(Repair.vehicle),
             joinedload(Document.versions),
+            joinedload(Document.import_jobs),
         )
         .where(Document.repair_id == compared_document.repair_id)
     ).unique().scalars().all()
@@ -1240,15 +1254,19 @@ def process_pending_documents(
     ).scalars().all()
 
     processed_ids = []
+    job_ids: list[int] = []
     for document_id in pending_documents:
-        process_document(db, document_id)
+        job = queue_document_processing(db, document_id, retry_failed=True)
         processed_ids.append(document_id)
+        job_ids.append(job.id)
+    db.commit()
 
     return DocumentBatchProcessResponse(
         processed_count=len(processed_ids),
         document_ids=processed_ids,
+        job_ids=job_ids,
         status_counts={},
-        message="Pending documents processed",
+        message="Pending documents queued for processing",
     )
 
 
@@ -1277,16 +1295,20 @@ def reprocess_existing_documents(
     ).scalars().all()
 
     processed_ids: list[int] = []
+    job_ids: list[int] = []
     status_counts: dict[str, int] = {}
     for document_id in document_ids:
-        result = process_document(db, document_id)
+        result = queue_document_processing(db, document_id, retry_failed=True)
         processed_ids.append(document_id)
-        status_key = result.document.status.value
+        job_ids.append(result.id)
+        status_key = result.status.value
         status_counts[status_key] = status_counts.get(status_key, 0) + 1
+    db.commit()
 
     return DocumentBatchProcessResponse(
         processed_count=len(processed_ids),
         document_ids=processed_ids,
+        job_ids=job_ids,
         status_counts=status_counts,
-        message="Existing documents reprocessed",
+        message="Existing documents queued for reprocessing",
     )

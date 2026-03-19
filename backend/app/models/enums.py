@@ -68,6 +68,8 @@ class CheckSeverity(str, enum.Enum):
 
 
 class ImportStatus(str, enum.Enum):
+    QUEUED = "queued"
+    RETRY = "retry"
     DRAFT = "draft"
     PROCESSING = "processing"
     COMPLETED = "completed"

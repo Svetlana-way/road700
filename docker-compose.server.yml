@@ -49,6 +49,37 @@ services:
       timeout: 5s
       retries: 8
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    restart: unless-stopped
+    command: ["python", "-m", "app.scripts.run_job_worker"]
+    environment:
+      PROJECT_NAME: ${PROJECT_NAME}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      INITIAL_ADMIN_FULL_NAME: ${INITIAL_ADMIN_FULL_NAME}
+      INITIAL_ADMIN_LOGIN: ${INITIAL_ADMIN_LOGIN}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD}
+      BACKEND_CORS_ORIGINS: https://${DOMAIN}
+      ROAD700_PROJECT_ROOT: /app
+      ROAD700_STORAGE_ROOT: /app/storage
+      ROAD700_FRONTEND_DIST: /app/frontend/dist
+    depends_on:
+      app:
+        condition: service_healthy
+    volumes:
+      - app_storage:/app/storage
+      - ./backend/data:/app/data:ro
+      - ./Реестр автомобилей:/app/Реестр автомобилей:ro
+      - ./Заказ-наряды:/app/Заказ-наряды:ro
+      - ./Сервисы:/app/Сервисы:ro
+      - ./Норма часов Донг Фенг 2025 год.xlsx:/app/Норма часов Донг Фенг 2025 год.xlsx:ro
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

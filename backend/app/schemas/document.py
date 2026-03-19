@@ -4,6 +4,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, VehicleType
+from app.models.enums import ImportStatus
 
 
 class DocumentVehicleRead(BaseModel):
@@ -42,6 +43,20 @@ class DocumentRead(BaseModel):
     parsed_payload: Optional[dict]
     repair: DocumentRepairRead
     vehicle: DocumentVehicleRead
+    latest_import_job: "DocumentImportJobRead | None" = None
+
+
+class DocumentImportJobRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: ImportStatus
+    error_message: Optional[str]
+    attempts: int
+    started_at: Optional[datetime]
+    finished_at: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
 
 
 class DocumentUpdateRequest(BaseModel):
@@ -58,6 +73,8 @@ class DocumentListResponse(BaseModel):
 class DocumentUploadResponse(BaseModel):
     document: DocumentRead
     message: str
+    job_id: Optional[int] = None
+    import_status: Optional[str] = None
 
 
 class DocumentCreateVehicleRequest(BaseModel):
@@ -79,6 +96,8 @@ class DocumentCreateVehicleResponse(BaseModel):
     document: DocumentRead
     repair_id: int
     created_new_vehicle: bool
+    job_id: Optional[int] = None
+    import_status: Optional[str] = None
 
 
 class DocumentProcessResponse(BaseModel):
@@ -91,6 +110,7 @@ class DocumentProcessResponse(BaseModel):
 class DocumentBatchProcessResponse(BaseModel):
     processed_count: int
     document_ids: list[int]
+    job_ids: list[int] = []
     status_counts: dict[str, int]
     message: str
 

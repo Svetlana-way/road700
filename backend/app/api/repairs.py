@@ -129,6 +129,7 @@ def build_repair_query():
             joinedload(Repair.parts),
             joinedload(Repair.checks),
             joinedload(Repair.documents).joinedload(Document.versions),
+            joinedload(Repair.documents).joinedload(Document.import_jobs),
         )
     )
 
@@ -254,6 +255,20 @@ def serialize_repair(
         checks=sorted(repair.checks, key=lambda item: item.id),
         documents=[
             {
+                "latest_import_job": (
+                    {
+                        "id": latest_job.id,
+                        "status": latest_job.status,
+                        "error_message": latest_job.error_message,
+                        "attempts": latest_job.attempts,
+                        "started_at": latest_job.started_at,
+                        "finished_at": latest_job.finished_at,
+                        "created_at": latest_job.created_at,
+                        "updated_at": latest_job.updated_at,
+                    }
+                    if (latest_job := max(document.import_jobs, key=lambda item: item.id, default=None)) is not None
+                    else None
+                ),
                 "id": document.id,
                 "original_filename": document.original_filename,
                 "source_type": document.source_type,

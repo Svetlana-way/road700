@@ -1083,6 +1083,16 @@ type RepairDetail = {
     notes: string | null;
     created_at: string;
     updated_at: string;
+    latest_import_job?: {
+      id: number;
+      status: ImportJobStatus;
+      error_message?: string | null;
+      attempts: number;
+      started_at?: string | null;
+      finished_at?: string | null;
+      created_at: string;
+      updated_at: string;
+    } | null;
     versions: Array<{
       id: number;
       version_number: number;
@@ -3058,7 +3068,9 @@ function isImportJobActive(status: string | null | undefined) {
   return status === "queued" || status === "retry" || status === "processing";
 }
 
-function documentHasActiveImportJob(document: DocumentItem | null | undefined) {
+function documentHasActiveImportJob(
+  document: { latest_import_job?: { status?: string | null } | null } | null | undefined,
+) {
   return isImportJobActive(document?.latest_import_job?.status);
 }
 
@@ -3076,7 +3088,10 @@ function importJobStatusColor(status: string | null | undefined): "default" | "s
 }
 
 function repairHasDocumentsAwaitingOcr(repair: RepairDetail | null) {
-  return repair?.documents.some((document) => isDocumentAwaitingOcr(document.status)) ?? false;
+  return (
+    repair?.documents.some((document) => isDocumentAwaitingOcr(document.status) || documentHasActiveImportJob(document)) ??
+    false
+  );
 }
 
 function readCheckResolutionMeta(check: RepairDetail["checks"][number]): CheckResolutionMeta | null {
@@ -13461,9 +13476,16 @@ export default function App() {
                                     <Stack spacing={1}>
                                       <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
                                         <Typography>{document.original_filename}</Typography>
-                                        <Stack direction="row" spacing={1}>
+                                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                                           {document.is_primary ? <Chip size="small" label="основной" /> : null}
                                           <Chip size="small" variant="outlined" label={formatDocumentKind(document.kind)} />
+                                          {document.latest_import_job ? (
+                                            <Chip
+                                              size="small"
+                                              color={importJobStatusColor(document.latest_import_job.status)}
+                                              label={`OCR: ${formatStatus(document.latest_import_job.status)}`}
+                                            />
+                                          ) : null}
                                           <Chip
                                             size="small"
                                             color={statusColor(document.status as DocumentStatus)}
@@ -13474,8 +13496,17 @@ export default function App() {
                                       <Typography className="muted-copy">
                                         {formatDateTime(document.created_at)} · {formatSourceTypeLabel(document.source_type)} · OCR {formatConfidence(document.ocr_confidence)}
                                       </Typography>
+                                      {document.latest_import_job ? (
+                                        <Typography className="muted-copy">
+                                          OCR-задача: {formatStatus(document.latest_import_job.status)}
+                                          {document.latest_import_job.attempts > 0 ? ` · попытка ${document.latest_import_job.attempts}` : ""}
+                                        </Typography>
+                                      ) : null}
                                       {document.notes ? (
                                         <Typography className="muted-copy">{document.notes}</Typography>
+                                      ) : null}
+                                      {document.latest_import_job?.error_message ? (
+                                        <Alert severity="warning">Ошибка OCR: {document.latest_import_job.error_message}</Alert>
                                       ) : null}
                                       <Stack direction="row" spacing={1} flexWrap="wrap">
                                         <Button

@@ -4,6 +4,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 from app.models.enums import CatalogStatus, CheckSeverity, DocumentKind, RepairStatus
+from app.schemas.document import DocumentImportJobRead
 
 
 class RepairWorkRead(BaseModel):
@@ -104,6 +105,7 @@ class RepairDocumentRead(BaseModel):
     notes: Optional[str]
     created_at: datetime
     updated_at: datetime
+    latest_import_job: DocumentImportJobRead | None = None
     versions: list[RepairDocumentVersionRead]
 
 

@@ -5076,6 +5076,285 @@ export default function App() {
     }
   }
 
+  function renderRepairOverviewReport() {
+    if (!selectedRepair) {
+      return null;
+    }
+
+    const reportAlertSeverity = selectedRepairAwaitingOcr
+      ? "info"
+      : selectedRepairUnresolvedChecks.length === 0
+        ? "success"
+        : selectedRepairHasBlockingFindings
+          ? "warning"
+          : "info";
+    const reportAlertText = selectedRepairAwaitingOcr
+      ? "Документ ещё находится в очереди OCR или перепроверки. Итоговый отчёт будет обновлён автоматически."
+      : selectedRepairUnresolvedChecks.length === 0
+        ? "По заказ-наряду открытых несоответствий не найдено."
+        : "В отчёте есть несоответствия. Ниже они сгруппированы по типам проверки.";
+    const overviewAttentionItems = reviewRequiredFieldComparisons.filter(
+      (item) => item.status === "missing" || item.status === "mismatch",
+    );
+    const moneyDelta =
+      selectedRepair.expected_total !== null
+        ? selectedRepair.grand_total - selectedRepair.expected_total
+        : null;
+    const moneyDeltaRatio =
+      selectedRepair.expected_total !== null && selectedRepair.expected_total > 0
+        ? (moneyDelta! / selectedRepair.expected_total) * 100
+        : null;
+
+    return (
+      <Paper className="repair-summary" elevation={0}>
+        <Stack spacing={2}>
+          <Stack
+            direction={{ xs: "column", md: "row" }}
+            spacing={1.5}
+            justifyContent="space-between"
+            alignItems={{ xs: "flex-start", md: "center" }}
+          >
+            <Box>
+              <Typography variant="h6">Итоговый отчёт по заказ-наряду</Typography>
+              <Typography className="muted-copy">
+                Короткая сводка по заказ-наряду: что это за ремонт, сколько стоит и что требует внимания.
+              </Typography>
+            </Box>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Chip size="small" label={formatRepairStatus(selectedRepair.status)} />
+              {selectedRepairDocument ? (
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  color={statusColor(selectedRepairDocument.status as DocumentStatus)}
+                  label={`Документ: ${formatDocumentStatusLabel(selectedRepairDocument.status)}`}
+                />
+              ) : null}
+              <Chip
+                size="small"
+                variant="outlined"
+                color={selectedRepairUnresolvedChecks.length > 0 ? "warning" : "success"}
+                label={
+                  selectedRepairUnresolvedChecks.length > 0
+                    ? `Несоответствий: ${selectedRepairUnresolvedChecks.length}`
+                    : "Несоответствий нет"
+                }
+              />
+            </Stack>
+          </Stack>
+
+          <Alert severity={reportAlertSeverity}>
+            {reportAlertText}
+          </Alert>
+
+          <Grid container spacing={2}>
+            <Grid item xs={12} md={6}>
+              <Paper className="repair-line" elevation={0}>
+                <Stack spacing={1}>
+                  <Typography className="metric-label">Карточка заказ-наряда</Typography>
+                  <Grid container spacing={1.25}>
+                    <Grid item xs={12} sm={6}>
+                      <Typography className="metric-label">Номер</Typography>
+                      <Typography>{selectedRepair.order_number || "Не указан"}</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <Typography className="metric-label">Дата ремонта</Typography>
+                      <Typography>{selectedRepair.repair_date || "—"}</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <Typography className="metric-label">Техника</Typography>
+                      <Typography>{formatVehicle(selectedRepair.vehicle)}</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <Typography className="metric-label">Сервис</Typography>
+                      <Typography>{selectedRepair.service?.name || "Не назначен"}</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <Typography className="metric-label">Пробег</Typography>
+                      <Typography>{selectedRepair.mileage > 0 ? formatCompactNumber(selectedRepair.mileage) : "—"}</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <Typography className="metric-label">OCR</Typography>
+                      <Typography>
+                        {selectedRepairDocument
+                          ? `${formatDocumentStatusLabel(selectedRepairDocument.status)} · ${formatConfidence(selectedRepairDocument.ocr_confidence)}`
+                          : "Документ не выбран"}
+                      </Typography>
+                    </Grid>
+                  </Grid>
+                </Stack>
+              </Paper>
+            </Grid>
+
+            <Grid item xs={12} md={6}>
+              <Paper className="repair-line" elevation={0}>
+                <Stack spacing={1}>
+                  <Typography className="metric-label">Суммы</Typography>
+                  <Grid container spacing={1.25}>
+                    <Grid item xs={6}>
+                      <Typography className="metric-label">Работы</Typography>
+                      <Typography>{formatMoney(selectedRepair.work_total) || "—"}</Typography>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Typography className="metric-label">Запчасти</Typography>
+                      <Typography>{formatMoney(selectedRepair.parts_total) || "—"}</Typography>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Typography className="metric-label">НДС</Typography>
+                      <Typography>{formatMoney(selectedRepair.vat_total) || "—"}</Typography>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Typography className="metric-label">Итого</Typography>
+                      <Typography>{formatMoney(selectedRepair.grand_total) || "—"}</Typography>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Typography className="metric-label">Работ</Typography>
+                      <Typography>{formatCompactNumber(selectedRepair.works.length)}</Typography>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Typography className="metric-label">Запчастей</Typography>
+                      <Typography>{formatCompactNumber(selectedRepair.parts.length)}</Typography>
+                    </Grid>
+                    {selectedRepair.expected_total !== null ? (
+                      <>
+                        <Grid item xs={6}>
+                          <Typography className="metric-label">Ожидаемая сумма</Typography>
+                          <Typography>{formatMoney(selectedRepair.expected_total) || "—"}</Typography>
+                        </Grid>
+                        <Grid item xs={6}>
+                          <Typography className="metric-label">Отклонение</Typography>
+                          <Typography>
+                            {moneyDelta !== null ? formatMoney(moneyDelta) : "—"}
+                            {moneyDeltaRatio !== null
+                              ? ` · ${moneyDelta! >= 0 ? "+" : ""}${new Intl.NumberFormat("ru-RU", {
+                                  maximumFractionDigits: 1,
+                                }).format(moneyDeltaRatio)}%`
+                              : ""}
+                          </Typography>
+                        </Grid>
+                      </>
+                    ) : null}
+                  </Grid>
+                </Stack>
+              </Paper>
+            </Grid>
+          </Grid>
+
+          {selectedRepairDocument ? (
+            <Paper className="repair-line" elevation={0}>
+              <Stack spacing={1}>
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={1}
+                  justifyContent="space-between"
+                  alignItems={{ xs: "flex-start", sm: "center" }}
+                >
+                  <Typography className="metric-label">Короткая сверка OCR</Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      label={`OCR ${formatConfidence(selectedRepairDocument.ocr_confidence)}`}
+                    />
+                    <Chip
+                      size="small"
+                      color={selectedRepairComparisonAttentionCount > 0 ? "warning" : "success"}
+                      label={
+                        selectedRepairComparisonAttentionCount > 0
+                          ? `Требует сверки: ${selectedRepairComparisonAttentionCount}`
+                          : "Ключевые поля сверены"
+                      }
+                    />
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      label={`Строк: работ ${selectedRepairDocumentWorks.length}, запчастей ${selectedRepairDocumentParts.length}`}
+                    />
+                  </Stack>
+                </Stack>
+                {overviewAttentionItems.length > 0 ? (
+                  <Stack spacing={0.75}>
+                    {overviewAttentionItems.map((item) => (
+                      <Typography className="muted-copy" key={`overview-attention-${item.key}`}>
+                        {item.label}: в ремонте {item.currentDisplay} · OCR {item.ocrDisplay}
+                      </Typography>
+                    ))}
+                  </Stack>
+                ) : (
+                  <Typography className="muted-copy">Ключевые поля OCR совпадают с подтверждёнными данными.</Typography>
+                )}
+                {selectedRepairDocumentManualReviewReasons.length > 0 ? (
+                  <Typography className="muted-copy">
+                    Ручная проверка OCR: {formatManualReviewReasons(selectedRepairDocumentManualReviewReasons)}.
+                  </Typography>
+                ) : null}
+              </Stack>
+            </Paper>
+          ) : null}
+
+          {selectedRepairReportSections.length > 0 ? (
+            <Stack spacing={1.5}>
+              {selectedRepairReportSections.map((section) => (
+                <Stack spacing={1} key={`report-section-${section.key}`}>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <Typography variant="subtitle1">{section.title}</Typography>
+                    <Chip size="small" variant="outlined" label={formatCompactNumber(section.checks.length)} />
+                  </Stack>
+                  {section.checks.map((check) => {
+                    const payloadDetails = buildCheckPayloadDetails(check);
+                    const linkedRepairId = getCheckLinkedRepairId(check);
+                    return (
+                      <Paper className="repair-line" elevation={0} key={`report-check-${check.id}`}>
+                        <Stack spacing={0.75}>
+                          <Stack
+                            direction={{ xs: "column", sm: "row" }}
+                            justifyContent="space-between"
+                            spacing={1}
+                            alignItems={{ xs: "flex-start", sm: "center" }}
+                          >
+                            <Typography>{check.title}</Typography>
+                            <Chip
+                              size="small"
+                              color={checkSeverityColor(check.severity)}
+                              label={formatStatus(check.severity)}
+                            />
+                          </Stack>
+                          {check.details ? <Typography className="muted-copy">{check.details}</Typography> : null}
+                          {payloadDetails.length > 0 ? (
+                            <Stack spacing={0.5}>
+                              {payloadDetails.slice(0, 3).map((line, index) => (
+                                <Typography className="muted-copy" key={`report-check-payload-${check.id}-${index}`}>
+                                  {line}
+                                </Typography>
+                              ))}
+                            </Stack>
+                          ) : null}
+                          {linkedRepairId !== null ? (
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                              <Button
+                                size="small"
+                                variant="text"
+                                onClick={() => {
+                                  void openRepairByIds(null, linkedRepairId);
+                                }}
+                              >
+                                Открыть предыдущий ремонт
+                              </Button>
+                            </Stack>
+                          ) : null}
+                        </Stack>
+                      </Paper>
+                    );
+                  })}
+                </Stack>
+              ))}
+            </Stack>
+          ) : null}
+        </Stack>
+      </Paper>
+    );
+  }
+
   function renderSelectedFleetVehicleDetail() {
     if (selectedFleetVehicleLoading) {
       return (
@@ -12782,285 +13061,7 @@ export default function App() {
                         ) : (
                           <>
                             {activeRepairTab === "overview" ? (
-                              <Paper className="repair-summary" elevation={0}>
-                                <Stack spacing={2}>
-                                  <Stack
-                                    direction={{ xs: "column", md: "row" }}
-                                    spacing={1.5}
-                                    justifyContent="space-between"
-                                    alignItems={{ xs: "flex-start", md: "center" }}
-                                  >
-                                    <Box>
-                                      <Typography variant="h6">Итоговый отчёт по заказ-наряду</Typography>
-                                      <Typography className="muted-copy">
-                                        Единая сводка по реквизитам, суммам и всем несоответствиям выбранного ремонта.
-                                      </Typography>
-                                    </Box>
-                                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                      <Chip size="small" label={formatRepairStatus(selectedRepair.status)} />
-                                      {selectedRepairDocument ? (
-                                        <Chip
-                                          size="small"
-                                          variant="outlined"
-                                          color={statusColor(selectedRepairDocument.status as DocumentStatus)}
-                                          label={`Документ: ${formatDocumentStatusLabel(selectedRepairDocument.status)}`}
-                                        />
-                                      ) : null}
-                                      <Chip
-                                        size="small"
-                                        variant="outlined"
-                                        color={selectedRepairUnresolvedChecks.length > 0 ? "warning" : "success"}
-                                        label={
-                                          selectedRepairUnresolvedChecks.length > 0
-                                            ? `Несоответствий: ${selectedRepairUnresolvedChecks.length}`
-                                            : "Несоответствий нет"
-                                        }
-                                      />
-                                    </Stack>
-                                  </Stack>
-
-                                  <Grid container spacing={2}>
-                                    <Grid item xs={12} sm={6} md={4}>
-                                      <Typography className="metric-label">Заказ-наряд</Typography>
-                                      <Typography>{selectedRepair.order_number || "Не указан"}</Typography>
-                                    </Grid>
-                                    <Grid item xs={12} sm={6} md={4}>
-                                      <Typography className="metric-label">Дата ремонта</Typography>
-                                      <Typography>{selectedRepair.repair_date || "—"}</Typography>
-                                    </Grid>
-                                    <Grid item xs={12} sm={6} md={4}>
-                                      <Typography className="metric-label">Пробег</Typography>
-                                      <Typography>{selectedRepair.mileage > 0 ? formatCompactNumber(selectedRepair.mileage) : "—"}</Typography>
-                                    </Grid>
-                                    <Grid item xs={12} sm={6}>
-                                      <Typography className="metric-label">Техника</Typography>
-                                      <Typography>{formatVehicle(selectedRepair.vehicle)}</Typography>
-                                    </Grid>
-                                    <Grid item xs={12} sm={6}>
-                                      <Typography className="metric-label">Сервис</Typography>
-                                      <Typography>{selectedRepair.service?.name || "Не назначен"}</Typography>
-                                    </Grid>
-                                    <Grid item xs={6} md={3}>
-                                      <Typography className="metric-label">Работы</Typography>
-                                      <Typography>{formatMoney(selectedRepair.work_total) || "—"}</Typography>
-                                    </Grid>
-                                    <Grid item xs={6} md={3}>
-                                      <Typography className="metric-label">Запчасти</Typography>
-                                      <Typography>{formatMoney(selectedRepair.parts_total) || "—"}</Typography>
-                                    </Grid>
-                                    <Grid item xs={6} md={3}>
-                                      <Typography className="metric-label">НДС</Typography>
-                                      <Typography>{formatMoney(selectedRepair.vat_total) || "—"}</Typography>
-                                    </Grid>
-                                    <Grid item xs={6} md={3}>
-                                      <Typography className="metric-label">Итого</Typography>
-                                      <Typography>{formatMoney(selectedRepair.grand_total) || "—"}</Typography>
-                                    </Grid>
-                                    <Grid item xs={6} md={3}>
-                                      <Typography className="metric-label">Работ распознано</Typography>
-                                      <Typography>{formatCompactNumber(selectedRepair.works.length)}</Typography>
-                                    </Grid>
-                                    <Grid item xs={6} md={3}>
-                                      <Typography className="metric-label">Запчастей распознано</Typography>
-                                      <Typography>{formatCompactNumber(selectedRepair.parts.length)}</Typography>
-                                    </Grid>
-                                    {selectedRepair.expected_total !== null ? (
-                                      <>
-                                        <Grid item xs={6} md={3}>
-                                          <Typography className="metric-label">Ожидаемая стоимость</Typography>
-                                          <Typography>{formatMoney(selectedRepair.expected_total) || "—"}</Typography>
-                                        </Grid>
-                                        <Grid item xs={6} md={3}>
-                                          <Typography className="metric-label">Отклонение от ожидаемой</Typography>
-                                          <Typography>
-                                            {(() => {
-                                              const delta = selectedRepair.grand_total - selectedRepair.expected_total;
-                                              const ratio =
-                                                selectedRepair.expected_total > 0
-                                                  ? (delta / selectedRepair.expected_total) * 100
-                                                  : null;
-                                              const deltaLabel = formatMoney(delta) || "—";
-                                              const ratioLabel =
-                                                ratio !== null
-                                                  ? `${delta >= 0 ? "+" : ""}${new Intl.NumberFormat("ru-RU", {
-                                                      maximumFractionDigits: 1,
-                                                    }).format(ratio)}%`
-                                                  : null;
-                                              return ratioLabel ? `${deltaLabel} · ${ratioLabel}` : deltaLabel;
-                                            })()}
-                                          </Typography>
-                                        </Grid>
-                                      </>
-                                    ) : null}
-                                  </Grid>
-
-                                  <Divider />
-
-                                  {selectedRepairDocument ? (
-                                    <Stack spacing={1.5}>
-                                      <Box>
-                                        <Typography variant="subtitle1">Сверка OCR и подтверждённых полей</Typography>
-                                        <Typography className="muted-copy">
-                                          Сотрудник видит, что было распознано из документа и какие обязательные поля уже подтверждены в ремонте.
-                                        </Typography>
-                                      </Box>
-                                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                        <Chip
-                                          size="small"
-                                          variant="outlined"
-                                          label={`OCR ${formatConfidence(selectedRepairDocument.ocr_confidence)}`}
-                                        />
-                                        <Chip
-                                          size="small"
-                                          color={selectedRepairComparisonAttentionCount > 0 ? "warning" : "success"}
-                                          label={
-                                            selectedRepairComparisonAttentionCount > 0
-                                              ? `Требует сверки: ${selectedRepairComparisonAttentionCount}`
-                                              : "Обязательные поля сверены"
-                                          }
-                                        />
-                                        <Chip
-                                          size="small"
-                                          variant="outlined"
-                                          label={`Строк OCR: работ ${selectedRepairDocumentWorks.length}, запчастей ${selectedRepairDocumentParts.length}`}
-                                        />
-                                      </Stack>
-                                      {reviewRequiredFieldComparisons.length > 0 ? (
-                                        <Grid container spacing={1.25}>
-                                          {reviewRequiredFieldComparisons.map((item) => (
-                                            <Grid item xs={12} md={6} key={`overview-review-field-${item.key}`}>
-                                              <Paper className="repair-line" elevation={0}>
-                                                <Stack spacing={0.75}>
-                                                  <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
-                                                    <Typography className="metric-label">{item.label}</Typography>
-                                                    <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap justifyContent="flex-end">
-                                                      <Chip
-                                                        size="small"
-                                                        color={getReviewComparisonColor(item.status)}
-                                                        label={getReviewComparisonLabel(item.status)}
-                                                      />
-                                                      <Chip
-                                                        size="small"
-                                                        variant="outlined"
-                                                        color={getConfidenceColor(item.confidenceValue)}
-                                                        label={formatConfidenceLabel(item.confidenceValue)}
-                                                      />
-                                                    </Stack>
-                                                  </Stack>
-                                                  <Typography>В ремонте: {item.currentDisplay}</Typography>
-                                                  <Typography className="muted-copy">OCR: {item.ocrDisplay}</Typography>
-                                                </Stack>
-                                              </Paper>
-                                            </Grid>
-                                          ))}
-                                        </Grid>
-                                      ) : null}
-                                      {selectedRepairDocumentManualReviewReasons.length > 0 ? (
-                                        <Alert severity="warning">
-                                          OCR требует ручной проверки: {formatManualReviewReasons(selectedRepairDocumentManualReviewReasons)}.
-                                        </Alert>
-                                      ) : null}
-                                      {selectedRepairDocumentFieldSnapshots.length > 0 ? (
-                                        <Box className="ocr-lines-grid">
-                                          {selectedRepairDocumentFieldSnapshots.slice(0, 6).map((item) => (
-                                            <Paper className="ocr-line-card" key={`overview-ocr-field-${item.key}`} elevation={0}>
-                                              <Stack spacing={1}>
-                                                <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
-                                                  <Typography className="metric-label">{item.label}</Typography>
-                                                  <Chip
-                                                    size="small"
-                                                    variant="outlined"
-                                                    color={getConfidenceColor(item.confidenceValue)}
-                                                    label={formatConfidenceLabel(item.confidenceValue)}
-                                                  />
-                                                </Stack>
-                                                <Typography className="ocr-line-title">{item.value}</Typography>
-                                              </Stack>
-                                            </Paper>
-                                          ))}
-                                        </Box>
-                                      ) : null}
-                                    </Stack>
-                                  ) : null}
-
-                                  <Divider />
-
-                                  {selectedRepairAwaitingOcr ? (
-                                    <Alert severity="info">
-                                      Документ ещё находится в очереди OCR или перепроверки. Итоговый отчёт будет автоматически обновлён после завершения обработки.
-                                    </Alert>
-                                  ) : selectedRepairUnresolvedChecks.length === 0 ? (
-                                    <Alert severity="success">
-                                      По текущему заказ-наряду открытых несоответствий не найдено. Ремонт готов к следующему этапу подтверждения.
-                                    </Alert>
-                                  ) : (
-                                    <Alert severity={selectedRepairHasBlockingFindings ? "warning" : "info"}>
-                                      В отчёте есть несоответствия, требующие ручного решения сотрудника. Ниже они сгруппированы по типам проверки.
-                                    </Alert>
-                                  )}
-
-                                  {selectedRepairReportSections.length > 0 ? (
-                                    <Stack spacing={1.5}>
-                                      {selectedRepairReportSections.map((section) => (
-                                        <Stack spacing={1} key={`report-section-${section.key}`}>
-                                          <Typography variant="subtitle1">{section.title}</Typography>
-                                          {section.checks.map((check) => {
-                                            const payloadDetails = buildCheckPayloadDetails(check);
-                                            const linkedRepairId = getCheckLinkedRepairId(check);
-                                            return (
-                                              <Paper className="repair-line" elevation={0} key={`report-check-${check.id}`}>
-                                                <Stack spacing={0.75}>
-                                                  <Stack
-                                                    direction={{ xs: "column", sm: "row" }}
-                                                    justifyContent="space-between"
-                                                    spacing={1}
-                                                    alignItems={{ xs: "flex-start", sm: "center" }}
-                                                  >
-                                                    <Typography>{check.title}</Typography>
-                                                    <Chip
-                                                      size="small"
-                                                      color={checkSeverityColor(check.severity)}
-                                                      label={formatStatus(check.severity)}
-                                                    />
-                                                  </Stack>
-                                                  {check.details ? (
-                                                    <Typography className="muted-copy">{check.details}</Typography>
-                                                  ) : null}
-                                                  {payloadDetails.length > 0 ? (
-                                                    <Stack spacing={0.5}>
-                                                      {payloadDetails.map((line, index) => (
-                                                        <Typography
-                                                          className="muted-copy"
-                                                          key={`report-check-payload-${check.id}-${index}`}
-                                                        >
-                                                          {line}
-                                                        </Typography>
-                                                      ))}
-                                                    </Stack>
-                                                  ) : null}
-                                                  {linkedRepairId !== null ? (
-                                                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                                      <Button
-                                                        size="small"
-                                                        variant="text"
-                                                        onClick={() => {
-                                                          void openRepairByIds(null, linkedRepairId);
-                                                        }}
-                                                      >
-                                                        Открыть предыдущий ремонт
-                                                      </Button>
-                                                    </Stack>
-                                                  ) : null}
-                                                </Stack>
-                                              </Paper>
-                                            );
-                                          })}
-                                        </Stack>
-                                      ))}
-                                    </Stack>
-                                  ) : null}
-                                </Stack>
-                              </Paper>
+                              renderRepairOverviewReport()
                             ) : null}
 
                             {activeRepairTab === "documents" ? (

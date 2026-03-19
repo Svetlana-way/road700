@@ -36,6 +36,7 @@ from app.models.ocr_rule import OcrRule
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
 from app.models.vehicle import Vehicle
+from app.services.historical_repairs_import import IMPORT_REASON_PREFIX
 from app.services.service_catalog import find_service_name_in_text, normalize_service_key, resolve_service_by_name
 from app.services.labor_norms import (
     LaborNormApplicability,
@@ -96,7 +97,20 @@ REPEAT_REPAIR_WINDOW_DAYS = 30
 EXPECTED_TOTAL_THRESHOLD_MULTIPLIER = 1.1
 EXPECTED_TOTAL_SERVICE_SAMPLE_THRESHOLD = 3
 EXPECTED_TOTAL_HOURLY_SAMPLE_THRESHOLD = 5
+WORK_REFERENCE_MIN_SAMPLES = 3
+WORK_REFERENCE_SERVICE_SAMPLE_THRESHOLD = 3
+WORK_REFERENCE_VEHICLE_SAMPLE_THRESHOLD = 2
+WORK_REFERENCE_WARNING_MULTIPLIER = 1.2
+WORK_REFERENCE_SUSPICIOUS_MULTIPLIER = 1.35
+WORK_REFERENCE_WARNING_LOWER_MULTIPLIER = 0.8
+WORK_REFERENCE_SUSPICIOUS_LOWER_MULTIPLIER = 0.65
+WORK_REFERENCE_MILEAGE_MARGIN_RATIO = 0.2
+WORK_REFERENCE_MIN_MILEAGE_MARGIN = 10000
 PLACEHOLDER_VEHICLE_EXTERNAL_ID = "__batch_import_placeholder__"
+WORK_REFERENCE_OPERATIONAL_STATUSES = (
+    RepairStatus.CONFIRMED,
+    RepairStatus.EMPLOYEE_CONFIRMED,
+)
 EXPECTED_TOTAL_REPAIR_STATUSES = (
     RepairStatus.CONFIRMED,
     RepairStatus.EMPLOYEE_CONFIRMED,
@@ -2063,6 +2077,228 @@ def build_expected_total_checks(
     return expected_total, checks
 
 
+def describe_work_reference_source(source: str) -> str:
+    if source == "same_vehicle":
+        return "по этой же технике"
+    if source == "same_service":
+        return "по этому же сервису"
+    return "по типу техники"
+
+
+def build_dynamic_work_reference_checks(
+    db: Session,
+    repair: Repair,
+    works_payload: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    if not works_payload or repair.vehicle is None:
+        return []
+
+    historical_rows = db.execute(
+        select(
+            Repair.id.label("repair_id"),
+            Repair.vehicle_id,
+            Repair.service_id,
+            Repair.repair_date,
+            Repair.mileage,
+            Repair.status,
+            Repair.reason,
+            RepairWork.id.label("work_id"),
+            RepairWork.work_code,
+            RepairWork.work_name,
+            RepairWork.quantity,
+            RepairWork.price,
+            RepairWork.line_total,
+        )
+        .join(RepairWork, RepairWork.repair_id == Repair.id)
+        .join(Vehicle, Vehicle.id == Repair.vehicle_id)
+        .where(
+            Repair.id != repair.id,
+            RepairWork.work_name.is_not(None),
+            Vehicle.vehicle_type == repair.vehicle.vehicle_type,
+            (
+                Repair.reason.like(f"{IMPORT_REASON_PREFIX}%")
+                | Repair.status.in_(WORK_REFERENCE_OPERATIONAL_STATUSES)
+            ),
+        )
+    ).all()
+
+    if not historical_rows:
+        return []
+
+    indexed_rows: dict[tuple[Optional[str], str], list[object]] = {}
+    for row in historical_rows:
+        work_name = str(row.work_name or "").strip()
+        if not work_name:
+            continue
+        work_code = str(row.work_code).strip() if row.work_code else None
+        normalized_name = build_normalized_name(work_name)
+        key = (work_code, normalized_name)
+        fallback_key = (None, normalized_name)
+        indexed_rows.setdefault(key, []).append(row)
+        if fallback_key != key:
+            indexed_rows.setdefault(fallback_key, []).append(row)
+
+    checks: list[dict[str, object]] = []
+    seen_missing_keys: set[tuple[Optional[str], str]] = set()
+    current_service_id = repair.service_id
+
+    for item in works_payload:
+        work_name = str(item.get("work_name") or "").strip()
+        if not work_name:
+            continue
+        work_code = str(item.get("work_code")).strip() if item.get("work_code") else None
+        normalized_name = build_normalized_name(work_name)
+        match_key = (work_code, normalized_name)
+        matches = indexed_rows.get(match_key) or indexed_rows.get((None, normalized_name)) or []
+
+        reference_payload = item.get("reference_payload")
+        if not isinstance(reference_payload, dict):
+            reference_payload = {}
+            item["reference_payload"] = reference_payload
+
+        if not matches:
+            if match_key not in seen_missing_keys:
+                checks.append(
+                    {
+                        "check_type": "ocr_work_reference_missing",
+                        "severity": CheckSeverity.WARNING,
+                        "title": "Работа не найдена в динамическом справочнике",
+                        "details": f"{work_name} · в базе пока нет подтвержденной истории для сверки",
+                        "payload": {
+                            "work_code": work_code,
+                            "work_name": work_name,
+                            "comparison_source": "none",
+                            "vehicle_type": repair.vehicle.vehicle_type.value,
+                            "repair_mileage": repair.mileage,
+                        },
+                    }
+                )
+                seen_missing_keys.add(match_key)
+            reference_payload["dynamic_work_reference"] = {
+                "comparison_source": "none",
+                "sample_lines": 0,
+                "historical_sample_lines": 0,
+                "operational_sample_lines": 0,
+            }
+            continue
+
+        vehicle_matches = [row for row in matches if row.vehicle_id == repair.vehicle_id]
+        service_matches = [row for row in matches if current_service_id is not None and row.service_id == current_service_id]
+        if len(vehicle_matches) >= WORK_REFERENCE_VEHICLE_SAMPLE_THRESHOLD:
+            selected_matches = vehicle_matches
+            comparison_source = "same_vehicle"
+        elif len(service_matches) >= WORK_REFERENCE_SERVICE_SAMPLE_THRESHOLD:
+            selected_matches = service_matches
+            comparison_source = "same_service"
+        else:
+            selected_matches = matches
+            comparison_source = "vehicle_type"
+
+        line_totals = [float(row.line_total) for row in selected_matches if row.line_total is not None]
+        prices = [float(row.price) for row in selected_matches if row.price is not None]
+        mileages = [int(row.mileage) for row in selected_matches if row.mileage is not None and int(row.mileage) > 0]
+        historical_sample_lines = sum(
+            1 for row in matches if row.reason is not None and str(row.reason).startswith(IMPORT_REASON_PREFIX)
+        )
+        operational_sample_lines = len(matches) - historical_sample_lines
+
+        reference_payload["dynamic_work_reference"] = {
+            "comparison_source": comparison_source,
+            "comparison_source_label": describe_work_reference_source(comparison_source),
+            "sample_lines": len(selected_matches),
+            "all_sample_lines": len(matches),
+            "historical_sample_lines": historical_sample_lines,
+            "operational_sample_lines": operational_sample_lines,
+            "median_line_total": round(float(statistics.median(line_totals)), 2) if line_totals else None,
+            "median_price": round(float(statistics.median(prices)), 2) if prices else None,
+            "median_mileage": int(round(float(statistics.median(mileages)))) if mileages else None,
+            "min_mileage": min(mileages) if mileages else None,
+            "max_mileage": max(mileages) if mileages else None,
+        }
+
+        if len(selected_matches) < WORK_REFERENCE_MIN_SAMPLES:
+            continue
+
+        current_price = float(item["price"]) if item.get("price") is not None else None
+        median_price = float(statistics.median(prices)) if prices else None
+        if current_price is not None and median_price is not None and median_price > 0:
+            price_ratio = round(current_price / median_price, 4)
+            if (
+                price_ratio >= WORK_REFERENCE_SUSPICIOUS_MULTIPLIER
+                or price_ratio <= WORK_REFERENCE_SUSPICIOUS_LOWER_MULTIPLIER
+            ):
+                severity = CheckSeverity.SUSPICIOUS
+            elif (
+                price_ratio >= WORK_REFERENCE_WARNING_MULTIPLIER
+                or price_ratio <= WORK_REFERENCE_WARNING_LOWER_MULTIPLIER
+            ):
+                severity = CheckSeverity.WARNING
+            else:
+                severity = None
+
+            if severity is not None:
+                checks.append(
+                    {
+                        "check_type": "ocr_work_reference_price_deviation",
+                        "severity": severity,
+                        "title": "Цена работы отклоняется от динамического справочника",
+                        "details": (
+                            f"{work_name} · цена {current_price:.2f} руб., медиана {median_price:.2f} руб. "
+                            f"{describe_work_reference_source(comparison_source)}"
+                        ),
+                        "payload": {
+                            "work_code": work_code,
+                            "work_name": work_name,
+                            "current_price": current_price,
+                            "median_price": round(median_price, 2),
+                            "price_ratio": price_ratio,
+                            "comparison_source": comparison_source,
+                            "comparison_source_label": describe_work_reference_source(comparison_source),
+                            "sample_lines": len(selected_matches),
+                            "all_sample_lines": len(matches),
+                            "historical_sample_lines": historical_sample_lines,
+                            "operational_sample_lines": operational_sample_lines,
+                        },
+                    }
+                )
+
+        if repair.mileage > 0 and len(mileages) >= WORK_REFERENCE_MIN_SAMPLES:
+            min_mileage = min(mileages)
+            max_mileage = max(mileages)
+            median_mileage = int(round(float(statistics.median(mileages))))
+            mileage_margin = max(
+                WORK_REFERENCE_MIN_MILEAGE_MARGIN,
+                int(round((max_mileage - min_mileage) * WORK_REFERENCE_MILEAGE_MARGIN_RATIO)),
+            )
+            if repair.mileage < (min_mileage - mileage_margin) or repair.mileage > (max_mileage + mileage_margin):
+                checks.append(
+                    {
+                        "check_type": "ocr_work_reference_mileage_outlier",
+                        "severity": CheckSeverity.WARNING,
+                        "title": "Работа нетипична для текущего пробега",
+                        "details": (
+                            f"{work_name} · пробег {repair.mileage} км, "
+                            f"наблюдаемый диапазон {min_mileage}-{max_mileage} км "
+                            f"{describe_work_reference_source(comparison_source)}"
+                        ),
+                        "payload": {
+                            "work_code": work_code,
+                            "work_name": work_name,
+                            "repair_mileage": repair.mileage,
+                            "median_mileage": median_mileage,
+                            "min_mileage": min_mileage,
+                            "max_mileage": max_mileage,
+                            "mileage_margin": mileage_margin,
+                            "comparison_source": comparison_source,
+                            "comparison_source_label": describe_work_reference_source(comparison_source),
+                            "sample_lines": len(selected_matches),
+                        },
+                    }
+                )
+
+    return checks
+
+
 def decode_pdf_literal(raw_text: bytes) -> bytes:
     return (
         raw_text.replace(b"\\(", b"(")
@@ -2793,6 +3029,7 @@ def process_document(db: Session, document_id: int) -> ProcessingResult:
             else:
                 add_manual_review_reason(manual_review_reasons, "service_name_missing")
 
+            checks.extend(build_dynamic_work_reference_checks(db, repair, extracted_items["works"]))
             replace_repair_lines(
                 db,
                 repair,

@@ -3004,6 +3004,9 @@ function getRepairCheckReportSectionKey(checkType: string): RepairReportSectionK
   if (checkType.includes("standard_hours")) {
     return "labor_norms";
   }
+  if (checkType.includes("work_reference")) {
+    return "history";
+  }
   if (
     checkType.includes("total")
     || checkType.includes("duplicate")
@@ -3135,6 +3138,62 @@ function buildCheckPayloadDetails(check: RepairDetail["checks"][number]) {
     lines.push(`Сумма строк: ${formatMoney(calculatedTotal) || "—"} · итог документа: ${formatMoney(grandTotal) || "—"}`);
     lines.push(
       `Работы ${formatMoney(workTotal) || "—"} · запчасти ${formatMoney(partsTotal) || "—"} · НДС ${formatMoney(vatTotal) || "—"}`,
+    );
+  }
+
+  if (check.check_type === "ocr_work_reference_missing") {
+    const comparisonSourceLabel = readStringValue(payload, "comparison_source_label");
+    const repairMileage = readNumberValue(payload, "repair_mileage");
+    if (workName) {
+      lines.push(`Работа: ${workName}`);
+    }
+    lines.push(
+      `${comparisonSourceLabel || "История"}: недостаточно данных`
+      + `${repairMileage !== null ? ` · текущий пробег ${formatCompactNumber(repairMileage)} км` : ""}`,
+    );
+  }
+
+  if (check.check_type === "ocr_work_reference_price_deviation") {
+    const currentPrice = readNumberValue(payload, "current_price");
+    const medianPrice = readNumberValue(payload, "median_price");
+    const sampleLines = readNumberValue(payload, "sample_lines");
+    const allSampleLines = readNumberValue(payload, "all_sample_lines");
+    const historicalSampleLines = readNumberValue(payload, "historical_sample_lines");
+    const operationalSampleLines = readNumberValue(payload, "operational_sample_lines");
+    const comparisonSourceLabel = readStringValue(payload, "comparison_source_label");
+    if (workName) {
+      lines.push(`Работа: ${workName}`);
+    }
+    lines.push(
+      `Цена: ${formatMoney(currentPrice) || "—"} · медиана: ${formatMoney(medianPrice) || "—"}`
+      + `${comparisonSourceLabel ? ` · ${comparisonSourceLabel}` : ""}`,
+    );
+    lines.push(
+      `Выборка: ${sampleLines !== null ? formatCompactNumber(sampleLines) : "—"} строк`
+      + `${allSampleLines !== null ? ` из ${formatCompactNumber(allSampleLines)}` : ""}`
+      + `${historicalSampleLines !== null ? ` · архив ${formatCompactNumber(historicalSampleLines)}` : ""}`
+      + `${operationalSampleLines !== null ? ` · новые ${formatCompactNumber(operationalSampleLines)}` : ""}`,
+    );
+  }
+
+  if (check.check_type === "ocr_work_reference_mileage_outlier") {
+    const repairMileage = readNumberValue(payload, "repair_mileage");
+    const medianMileage = readNumberValue(payload, "median_mileage");
+    const minMileage = readNumberValue(payload, "min_mileage");
+    const maxMileage = readNumberValue(payload, "max_mileage");
+    const sampleLines = readNumberValue(payload, "sample_lines");
+    const comparisonSourceLabel = readStringValue(payload, "comparison_source_label");
+    if (workName) {
+      lines.push(`Работа: ${workName}`);
+    }
+    lines.push(
+      `Пробег сейчас: ${repairMileage !== null ? `${formatCompactNumber(repairMileage)} км` : "—"}`
+      + `${medianMileage !== null ? ` · медиана ${formatCompactNumber(medianMileage)} км` : ""}`,
+    );
+    lines.push(
+      `Диапазон: ${minMileage !== null ? formatCompactNumber(minMileage) : "—"}-${maxMileage !== null ? formatCompactNumber(maxMileage) : "—"} км`
+      + `${comparisonSourceLabel ? ` · ${comparisonSourceLabel}` : ""}`
+      + `${sampleLines !== null ? ` · выборка ${formatCompactNumber(sampleLines)}` : ""}`,
     );
   }
 

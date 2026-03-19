@@ -23,9 +23,12 @@ import {
   Typography,
 } from "@mui/material";
 import { AuditLogPanel } from "./components/AuditLogPanel";
+import { DocumentsListPanel } from "./components/DocumentsListPanel";
+import { DocumentsUploadPanel } from "./components/DocumentsUploadPanel";
 import { FleetPanel } from "./components/FleetPanel";
 import { GlobalSearchPanel } from "./components/GlobalSearchPanel";
 import { RepairPanel } from "./components/RepairPanel";
+import { ReviewQueuePanel } from "./components/ReviewQueuePanel";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
 
 type UserRole = "admin" | "employee";
@@ -5357,6 +5360,29 @@ export default function App() {
     }
   }
 
+  function handleUploadFieldChange(field: keyof UploadFormState, value: string) {
+    setUploadForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  function handleUploadFileSelect(nextFile: File | null) {
+    setLastUploadedDocument(null);
+    setSelectedFile(nextFile);
+    if (!nextFile) {
+      return;
+    }
+
+    const parsedRepairDate = parseRepairDateFromFilename(nextFile.name);
+    const parsedOrderNumber = parseOrderNumberFromFilename(nextFile.name);
+    setUploadForm((current) => ({
+      ...current,
+      repairDate: parsedRepairDate || current.repairDate,
+      orderNumber: current.orderNumber.trim() || !parsedOrderNumber ? current.orderNumber : parsedOrderNumber,
+    }));
+  }
+
   async function openRepairByIds(documentId: number | null, repairId: number) {
     if (activeWorkspaceTab !== "repair") {
       repairReturnTabRef.current = activeWorkspaceTab;
@@ -8888,317 +8914,36 @@ export default function App() {
 
           <Grid container spacing={3}>
             {activeWorkspaceTab === "documents" ? (
-              <Grid item xs={12} md={7}>
-              <Paper className="workspace-panel" elevation={0}>
-                <Stack spacing={2}>
-                  <Box>
-                    <Typography variant="h5">Загрузка заказ-наряда</Typography>
-                    <Typography className="muted-copy">
-                      После загрузки система сама распознаёт документ, сопоставляет машину и сервис, сверяет данные по базе, справочникам и истории, а затем показывает короткий итог.
-                    </Typography>
-                  </Box>
-
-                  <Box component="form" onSubmit={handleUpload}>
-                    <Grid container spacing={2}>
-                      <Grid item xs={12} md={6}>
-                        <TextField
-                          select
-                          label="Техника"
-                          value={uploadForm.vehicleId}
-                          onChange={(event) =>
-                            setUploadForm((current) => ({ ...current, vehicleId: event.target.value }))
-                          }
-                          fullWidth
-                          helperText="Можно оставить пустым: OCR попробует определить технику по документу"
-                        >
-                          <MenuItem value="">Определить автоматически после OCR</MenuItem>
-                          {vehicles.map((vehicle) => (
-                            <MenuItem key={vehicle.id} value={String(vehicle.id)}>
-                              {formatVehicle(vehicle)}
-                            </MenuItem>
-                          ))}
-                        </TextField>
-                      </Grid>
-                      <Grid item xs={12} md={6}>
-                        <TextField
-                          select
-                          label="Вид документа"
-                          value={uploadForm.documentKind}
-                          onChange={(event) =>
-                            setUploadForm((current) => ({
-                              ...current,
-                              documentKind: event.target.value as DocumentKind,
-                            }))
-                          }
-                          fullWidth
-                          required
-                        >
-                          {rootDocumentKindOptions.map((option) => (
-                            <MenuItem key={option.value} value={option.value}>
-                              {option.label}
-                            </MenuItem>
-                          ))}
-                        </TextField>
-                      </Grid>
-                      <Grid item xs={12} md={3}>
-                        <TextField
-                          label="Дата ремонта"
-                          type="date"
-                          value={uploadForm.repairDate}
-                          onChange={(event) =>
-                            setUploadForm((current) => ({ ...current, repairDate: event.target.value }))
-                          }
-                          InputLabelProps={{ shrink: true }}
-                          fullWidth
-                          helperText="Необязательно. Если оставить пустым, система попытается распознать дату из файла"
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={3}>
-                        <TextField
-                          label="Пробег"
-                          type="number"
-                          value={uploadForm.mileage}
-                          onChange={(event) =>
-                            setUploadForm((current) => ({ ...current, mileage: event.target.value }))
-                          }
-                          fullWidth
-                          helperText="Необязательно. OCR попытается найти пробег автоматически"
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={6}>
-                        <TextField
-                          label="Номер заказ-наряда"
-                          value={uploadForm.orderNumber}
-                          onChange={(event) =>
-                            setUploadForm((current) => ({ ...current, orderNumber: event.target.value }))
-                          }
-                          fullWidth
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={6}>
-                        <TextField
-                          label="Причина ремонта"
-                          value={uploadForm.reason}
-                          onChange={(event) =>
-                            setUploadForm((current) => ({ ...current, reason: event.target.value }))
-                          }
-                          fullWidth
-                        />
-                      </Grid>
-                      <Grid item xs={12}>
-                        <TextField
-                          label="Комментарий сотрудника"
-                          value={uploadForm.employeeComment}
-                          onChange={(event) =>
-                            setUploadForm((current) => ({
-                              ...current,
-                              employeeComment: event.target.value,
-                            }))
-                          }
-                          fullWidth
-                          multiline
-                          minRows={2}
-                        />
-                      </Grid>
-                      <Grid item xs={12}>
-                        <TextField
-                          label="Примечание к документу"
-                          value={uploadForm.notes}
-                          onChange={(event) =>
-                            setUploadForm((current) => ({ ...current, notes: event.target.value }))
-                          }
-                          fullWidth
-                          multiline
-                          minRows={2}
-                        />
-                      </Grid>
-                      <Grid item xs={12}>
-                        <Paper className="file-drop" elevation={0}>
-                          <Stack
-                            direction={{ xs: "column", sm: "row" }}
-                            spacing={2}
-                            justifyContent="space-between"
-                            alignItems={{ xs: "stretch", sm: "center" }}
-                          >
-                            <Box>
-                              <Typography variant="subtitle1">Файл документа</Typography>
-                              <Typography className="muted-copy">
-                                Поддерживаются PDF и изображения. Для PDF с текстовым слоем OCR срабатывает автоматически, для фото и сканов используется локальное распознавание.
-                              </Typography>
-                            </Box>
-                            <input
-                              ref={uploadFileInputRef}
-                              hidden
-                              type="file"
-                              accept=".pdf,image/*"
-                              onClick={(event) => {
-                                event.currentTarget.value = "";
-                              }}
-                              onChange={(event) => {
-                                const nextFile = event.target.files?.[0] ?? null;
-                                setLastUploadedDocument(null);
-                                setSelectedFile(nextFile);
-                                if (!nextFile) {
-                                  return;
-                                }
-                                const parsedRepairDate = parseRepairDateFromFilename(nextFile.name);
-                                const parsedOrderNumber = parseOrderNumberFromFilename(nextFile.name);
-                                setUploadForm((current) => ({
-                                  ...current,
-                                  repairDate: parsedRepairDate || current.repairDate,
-                                  orderNumber: current.orderNumber.trim() || !parsedOrderNumber ? current.orderNumber : parsedOrderNumber,
-                                }));
-                              }}
-                            />
-                            <Button
-                              variant="outlined"
-                              onClick={() => uploadFileInputRef.current?.click()}
-                              sx={{
-                                flexShrink: 0,
-                                width: { xs: "100%", sm: "auto" },
-                                minWidth: { xs: 0, sm: 152 },
-                                whiteSpace: "normal",
-                                textAlign: "center",
-                                fontWeight: 700,
-                                textTransform: "none",
-                              }}
-                            >
-                              Выбрать файл
-                            </Button>
-                          </Stack>
-                          {selectedFile ? (
-                            <Alert severity="success" className="selected-file-alert">
-                              <Typography className="selected-file-title">Файл выбран</Typography>
-                              <Typography className="selected-file">{selectedFile.name}</Typography>
-                              <Typography className="muted-copy">
-                                Файл пока только выбран локально. Можно загружать сразу: техника, дата и пробег теперь необязательны, OCR попытается заполнить их автоматически.
-                              </Typography>
-                            </Alert>
-                          ) : (
-                            <Typography className="selected-file">Файл ещё не выбран</Typography>
-                          )}
-                          {selectedFile && uploadMissingRequirements.length > 0 ? (
-                            <Alert severity="info">
-                              Для загрузки ещё нужно указать: {uploadMissingRequirements.join(", ")}.
-                            </Alert>
-                          ) : selectedFile ? (
-                            <Alert severity="info">
-                              После загрузки система создаст черновик ремонта, выполнит OCR, проверит машину, сервис, справочники и историю, а затем подготовит короткий итог по заказ-наряду.
-                            </Alert>
-                          ) : null}
-                        </Paper>
-                      </Grid>
-                      <Grid item xs={12}>
-                        <Button
-                          type="submit"
-                          variant="contained"
-                          size="large"
-                          disabled={uploadLoading || uploadMissingRequirements.length > 0}
-                        >
-                          {uploadLoading ? "Загрузка..." : "Загрузить и запустить проверку"}
-                        </Button>
-                      </Grid>
-                      {lastUploadedDocument ? (
-                        <Grid item xs={12}>
-                          <Paper className="repair-summary upload-result-card" elevation={0}>
-                            <Stack spacing={1.5}>
-                              <Stack
-                                direction={{ xs: "column", sm: "row" }}
-                                spacing={1}
-                                justifyContent="space-between"
-                                alignItems={{ xs: "flex-start", sm: "center" }}
-                              >
-                                <Box>
-                                  <Typography variant="subtitle1">Короткий итог по загрузке</Typography>
-                                  <Typography className="muted-copy">
-                                    Система приняла заказ-наряд и подготовила карточку ремонта для автоматической проверки.
-                                  </Typography>
-                                </Box>
-                                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                  <Chip
-                                    size="small"
-                                    variant="outlined"
-                                    label={formatDocumentKind(lastUploadedDocument.kind)}
-                                  />
-                                  {lastUploadedDocument.latest_import_job ? (
-                                    <Chip
-                                      size="small"
-                                      color={importJobStatusColor(lastUploadedDocument.latest_import_job.status)}
-                                      label={`OCR: ${formatStatus(lastUploadedDocument.latest_import_job.status)}`}
-                                    />
-                                  ) : null}
-                                  <Chip
-                                    size="small"
-                                    color={statusColor(lastUploadedDocument.status)}
-                                    label={formatDocumentStatusLabel(lastUploadedDocument.status)}
-                                  />
-                                </Stack>
-                              </Stack>
-                              <Typography>{isDocumentAwaitingOcr(lastUploadedDocument.status) || documentHasActiveImportJob(lastUploadedDocument)
-                                ? `Заказ-наряд ${lastUploadedDocument.repair.order_number || "без номера"} загружен. Сейчас идет распознавание и автоматическая сверка по машине, сервису, справочникам и истории.`
-                                : `Заказ-наряд ${lastUploadedDocument.repair.order_number || "без номера"} загружен и обработан. Карточка ремонта заполнена, можно открыть итог проверки.`}</Typography>
-                              {lastUploadedDocument.latest_import_job?.error_message ? (
-                                <Alert severity="warning">
-                                  OCR-задача завершилась с ошибкой: {lastUploadedDocument.latest_import_job.error_message}
-                                </Alert>
-                              ) : null}
-                              <Typography className="selected-file">{lastUploadedDocument.original_filename}</Typography>
-                              <Typography className="muted-copy">
-                                Машина: {!isPlaceholderVehicle(lastUploadedDocument.vehicle.external_id)
-                                  ? formatVehicle(lastUploadedDocument.vehicle)
-                                  : "не определена автоматически"}
-                              </Typography>
-                              <Typography className="muted-copy">
-                                Сервис: {lastUploadedDocument.parsed_payload?.extracted_fields?.service_name
-                                  ? String(lastUploadedDocument.parsed_payload.extracted_fields.service_name)
-                                  : "будет уточнен после проверки"}
-                              </Typography>
-                              <Typography className="muted-copy">
-                                Ремонт #{lastUploadedDocument.repair.id}
-                                {lastUploadedDocument.repair.order_number
-                                  ? ` · ${lastUploadedDocument.repair.order_number}`
-                                  : ""}
-                                {lastUploadedDocument.repair.repair_date ? ` · ${lastUploadedDocument.repair.repair_date}` : ""}
-                                {lastUploadedDocument.repair.mileage > 0 ? ` · пробег ${lastUploadedDocument.repair.mileage}` : ""}
-                              </Typography>
-                              <Typography className="muted-copy">
-                                Статус: {isDocumentAwaitingOcr(lastUploadedDocument.status)
-                                  ? "идет автоматическая проверка"
-                                  : "автоматическая обработка выполнена"}
-                                {typeof lastUploadedDocument.ocr_confidence === "number"
-                                  ? ` · OCR ${formatConfidence(lastUploadedDocument.ocr_confidence)}`
-                                  : ""}
-                              </Typography>
-                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                <Button
-                                  variant="contained"
-                                  onClick={() => {
-                                    void openRepairByIds(
-                                      lastUploadedDocument.id,
-                                      lastUploadedDocument.repair.id,
-                                    );
-                                  }}
-                                >
-                                  Открыть итог по заказ-наряду
-                                </Button>
-                                <Button
-                                  variant="outlined"
-                                  onClick={() => {
-                                    setLastUploadedDocument(null);
-                                  }}
-                                >
-                                  Скрыть
-                                </Button>
-                              </Stack>
-                            </Stack>
-                          </Paper>
-                        </Grid>
-                      ) : null}
-                    </Grid>
-                  </Box>
-                </Stack>
-              </Paper>
-              </Grid>
+              <DocumentsUploadPanel
+                uploadForm={uploadForm}
+                vehicles={vehicles}
+                rootDocumentKindOptions={rootDocumentKindOptions}
+                selectedFile={selectedFile}
+                uploadMissingRequirements={uploadMissingRequirements}
+                uploadLoading={uploadLoading}
+                lastUploadedDocument={lastUploadedDocument}
+                uploadFileInputRef={uploadFileInputRef}
+                onSubmit={handleUpload}
+                onUploadFieldChange={handleUploadFieldChange}
+                onFileSelect={handleUploadFileSelect}
+                onOpenFilePicker={() => uploadFileInputRef.current?.click()}
+                onOpenUploadedRepair={(documentId, repairId) => {
+                  void openRepairByIds(documentId, repairId);
+                }}
+                onHideUploadedResult={() => {
+                  setLastUploadedDocument(null);
+                }}
+                formatVehicle={formatVehicle}
+                formatDocumentKind={formatDocumentKind}
+                importJobStatusColor={importJobStatusColor}
+                formatStatus={formatStatus}
+                statusColor={statusColor}
+                formatDocumentStatusLabel={formatDocumentStatusLabel}
+                isDocumentAwaitingOcr={isDocumentAwaitingOcr}
+                documentHasActiveImportJob={documentHasActiveImportJob}
+                isPlaceholderVehicle={isPlaceholderVehicle}
+                formatConfidence={formatConfidence}
+              />
             ) : null}
 
             <Grid item xs={12} md={activeWorkspaceTab === "documents" ? 5 : 12}>
@@ -9280,347 +9025,73 @@ export default function App() {
                   </Paper>
                 ) : null}
                 {activeWorkspaceTab === "documents" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                  <Stack spacing={2}>
-                    <Box>
-                      <Typography variant="h5">Очередь проверки</Typography>
-                      <Typography className="muted-copy">
-                        Сначала показываются подозрительные и проблемные заказ-наряды по доступной технике.
-                      </Typography>
-                    </Box>
-                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                      {reviewQueueFilters.map((filter) => (
-                        <Chip
-                          key={filter.key}
-                          label={`${filter.label} · ${reviewQueueCounts[filter.key] || 0}`}
-                          color={selectedReviewCategory === filter.key ? "primary" : "default"}
-                          variant={selectedReviewCategory === filter.key ? "filled" : "outlined"}
-                          onClick={() => {
-                            setSelectedReviewCategory(filter.key);
-                          }}
-                        />
-                      ))}
-                    </Stack>
-                    <Typography className="muted-copy">
-                      Показано {reviewQueue.length} из {reviewQueueCounts[selectedReviewCategory] || 0} по выбранному фильтру.
-                    </Typography>
-                    <Stack spacing={1.5}>
-                      {reviewQueue.map((item) => (
-                        <Paper className="document-row" key={`review-${item.document.id}`} elevation={0}>
-                          <Stack spacing={1.25}>
-                            <Stack
-                              direction={{ xs: "column", sm: "row" }}
-                              spacing={1}
-                              alignItems={{ xs: "flex-start", sm: "center" }}
-                              justifyContent="space-between"
-                            >
-                              <Typography variant="subtitle1">{item.document.original_filename}</Typography>
-                              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                <Chip
-                                  size="small"
-                                  variant="outlined"
-                                  label={formatDocumentKind(item.document.kind)}
-                                />
-                                <Chip
-                                  size="small"
-                                  color={reviewPriorityColor(item.priority_bucket)}
-                                  label={formatReviewPriority(item.priority_bucket)}
-                                />
-                                <Chip
-                                  size="small"
-                                  color={statusColor(item.document.status)}
-                                  label={formatDocumentStatusLabel(item.document.status)}
-                                />
-                              </Stack>
-                            </Stack>
-                            <Typography className="muted-copy">{formatVehicle(item.vehicle)}</Typography>
-                            <Typography className="muted-copy">
-                              Ремонт #{item.repair.id}
-                              {item.repair.order_number ? ` · ${item.repair.order_number}` : ""}
-                              {" · "}
-                              {item.repair.repair_date}
-                              {" · "}
-                              пробег {item.repair.mileage}
-                            </Typography>
-                            <Typography className="muted-copy">
-                              Приоритет {item.priority_score} · OCR {formatConfidence(item.document.ocr_confidence)} · нерешённых проверок {item.repair.unresolved_checks_total}
-                            </Typography>
-                            {item.extracted_order_number ? (
-                              <Typography className="muted-copy">
-                                OCR: заказ-наряд {item.extracted_order_number}
-                                {item.extracted_grand_total !== null
-                                  ? ` · итог ${formatMoney(item.extracted_grand_total)}`
-                                  : ""}
-                              </Typography>
-                            ) : null}
-                            {item.issue_titles.length > 0 ? (
-                              <Typography className="muted-copy">
-                                Требует внимания: {item.issue_titles.slice(0, 3).join(", ")}
-                                {item.issue_titles.length > 3 ? ` и ещё ${item.issue_titles.length - 3}` : ""}
-                              </Typography>
-                            ) : null}
-                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} flexWrap="wrap" useFlexGap>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                onClick={() => {
-                                  void handleOpenReviewQueueItem(item);
-                                }}
-                              >
-                                Открыть ремонт
-                              </Button>
-                              {user?.role === "admin" ? (
-                                <Button
-                                  size="small"
-                                  variant="text"
-                                  disabled={reprocessLoading}
-                                  onClick={() => {
-                                    void handleReprocessDocumentById(item.document.id, item.repair.id);
-                                  }}
-                                >
-                                  {reprocessLoading && selectedDocumentId === item.document.id ? "Повтор..." : "Повторить OCR"}
-                                </Button>
-                              ) : null}
-                            </Stack>
-                          </Stack>
-                        </Paper>
-                      ))}
-                      {reviewQueue.length === 0 ? (
-                        <Typography className="muted-copy">
-                          По выбранному фильтру элементов нет.
-                        </Typography>
-                      ) : null}
-                    </Stack>
-                  </Stack>
-                  </Paper>
+                  <ReviewQueuePanel
+                    reviewQueueFilters={reviewQueueFilters}
+                    reviewQueueCounts={reviewQueueCounts}
+                    selectedReviewCategory={selectedReviewCategory}
+                    reviewQueue={reviewQueue}
+                    userRole={user?.role}
+                    reprocessLoading={reprocessLoading}
+                    selectedDocumentId={selectedDocumentId}
+                    onSelectCategory={setSelectedReviewCategory}
+                    onOpenReviewQueueItem={(item) => {
+                      void handleOpenReviewQueueItem(item);
+                    }}
+                    onReprocessDocumentById={(documentId, repairId) => {
+                      void handleReprocessDocumentById(documentId, repairId);
+                    }}
+                    formatDocumentKind={formatDocumentKind}
+                    reviewPriorityColor={reviewPriorityColor}
+                    formatReviewPriority={formatReviewPriority}
+                    statusColor={statusColor}
+                    formatDocumentStatusLabel={formatDocumentStatusLabel}
+                    formatVehicle={formatVehicle}
+                    formatConfidence={formatConfidence}
+                    formatMoney={formatMoney}
+                  />
                 ) : null}
 
                 {activeWorkspaceTab === "documents" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                  <Stack spacing={2}>
-                    <Box>
-                      <Typography variant="h5">Последние документы</Typography>
-                      <Typography className="muted-copy">
-                        Последние загруженные заказ-наряды и сканы по доступной технике.
-                      </Typography>
-                    </Box>
-                    {user?.role === "admin" ? (
-                      <Paper className="repair-line" elevation={0}>
-                        <Stack spacing={1.25}>
-                          <Box>
-                            <Typography className="metric-label">Массовая переобработка заказ-нарядов</Typography>
-                            <Typography className="muted-copy">
-                              Пересчитывает OCR, строки работ и применимость нормо-часов по уже загруженным документам.
-                            </Typography>
-                          </Box>
-                          <Grid container spacing={1.5}>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Сколько документов"
-                                type="number"
-                                value={batchReprocessLimit}
-                                onChange={(event) => setBatchReprocessLimit(event.target.value)}
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={5}>
-                              <TextField
-                                select
-                                label="Статус документов"
-                                value={batchReprocessStatusFilter}
-                                onChange={(event) => setBatchReprocessStatusFilter(event.target.value)}
-                                fullWidth
-                              >
-                                <MenuItem value="">Все рабочие статусы</MenuItem>
-                                <MenuItem value="uploaded">Загружен</MenuItem>
-                                <MenuItem value="recognized">Распознан</MenuItem>
-                                <MenuItem value="partially_recognized">Распознан частично</MenuItem>
-                                <MenuItem value="needs_review">Требует ручной проверки</MenuItem>
-                                <MenuItem value="confirmed">Подтвержден</MenuItem>
-                                <MenuItem value="ocr_error">Ошибка OCR</MenuItem>
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                select
-                                label="Какие документы брать"
-                                value={batchReprocessPrimaryOnly}
-                                onChange={(event) => setBatchReprocessPrimaryOnly(event.target.value as "false" | "true")}
-                                fullWidth
-                              >
-                                <MenuItem value="false">Все заказ-наряды и повторные сканы</MenuItem>
-                                <MenuItem value="true">Только основные документы</MenuItem>
-                              </TextField>
-                            </Grid>
-                          </Grid>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <Button
-                              variant="contained"
-                              disabled={batchReprocessLoading}
-                              onClick={() => {
-                                void handleBatchReprocessDocuments();
-                              }}
-                            >
-                              {batchReprocessLoading ? "Переобработка..." : "Массово пересчитать документы"}
-                            </Button>
-                          </Stack>
-                        </Stack>
-                      </Paper>
-                    ) : null}
-                    <Stack spacing={1.5}>
-                      {documents.map((document) => (
-                        <Paper
-                          className={`document-row${selectedDocumentId === document.id ? " document-row-active" : ""}`}
-                          key={document.id}
-                          elevation={0}
-                        >
-                          <Stack spacing={1.25}>
-                            <Stack
-                              direction={{ xs: "column", sm: "row" }}
-                              spacing={1}
-                              alignItems={{ xs: "flex-start", sm: "center" }}
-                              justifyContent="space-between"
-                            >
-                              <Typography variant="subtitle1">{document.original_filename}</Typography>
-                              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                <Chip size="small" variant="outlined" label={formatDocumentKind(document.kind)} />
-                                {document.latest_import_job ? (
-                                  <Chip
-                                    size="small"
-                                    color={importJobStatusColor(document.latest_import_job.status)}
-                                    label={`OCR: ${formatStatus(document.latest_import_job.status)}`}
-                                  />
-                                ) : null}
-                                <Chip
-                                  size="small"
-                                  color={statusColor(document.status)}
-                                  label={formatDocumentStatusLabel(document.status)}
-                                />
-                              </Stack>
-                            </Stack>
-                            <Typography className="muted-copy">
-                              {formatVehicle(document.vehicle)}
-                            </Typography>
-                            <Typography className="muted-copy">
-                              Ремонт #{document.repair.id} · {document.repair.repair_date} · пробег {document.repair.mileage}
-                            </Typography>
-                            {document.latest_import_job ? (
-                              <Typography className="muted-copy">
-                                OCR-задача: {formatStatus(document.latest_import_job.status)}
-                                {document.latest_import_job.attempts > 0 ? ` · попытка ${document.latest_import_job.attempts}` : ""}
-                              </Typography>
-                            ) : null}
-                            {document.parsed_payload?.extracted_fields?.order_number ? (
-                              <Typography className="muted-copy">
-                                OCR: заказ-наряд {document.parsed_payload.extracted_fields.order_number}
-                              </Typography>
-                            ) : null}
-                            {document.parsed_payload?.extracted_fields?.plate_number ||
-                            document.parsed_payload?.extracted_fields?.vin ? (
-                              <Typography className="muted-copy">
-                                OCR:{" "}
-                                {[
-                                  document.parsed_payload?.extracted_fields?.plate_number
-                                    ? `госномер ${document.parsed_payload.extracted_fields.plate_number}`
-                                    : null,
-                                  document.parsed_payload?.extracted_fields?.vin
-                                    ? `VIN ${document.parsed_payload.extracted_fields.vin}`
-                                    : null,
-                                ]
-                                  .filter(Boolean)
-                                  .join(" · ")}
-                              </Typography>
-                            ) : null}
-                            {document.parsed_payload?.extracted_fields?.grand_total ? (
-                              <Typography className="muted-copy">
-                                OCR: итог {formatMoney(document.parsed_payload.extracted_fields.grand_total)}
-                              </Typography>
-                            ) : null}
-                            {document.parsed_payload?.extracted_items ? (
-                              <Typography className="muted-copy">
-                                OCR: работ {document.parsed_payload.extracted_items.works?.length || 0}, запчастей {document.parsed_payload.extracted_items.parts?.length || 0}
-                              </Typography>
-                            ) : null}
-                            {document.parsed_payload?.manual_review_reasons?.length ? (
-                              <Typography className="muted-copy">
-                                Проверить вручную: {formatManualReviewReasons(document.parsed_payload.manual_review_reasons)}
-                              </Typography>
-                            ) : null}
-                            {document.latest_import_job?.error_message ? (
-                              <Alert severity="warning">Ошибка OCR: {document.latest_import_job.error_message}</Alert>
-                            ) : null}
-                            {formatOcrProfileMeta(document.parsed_payload ?? null) ? (
-                              <Typography className="muted-copy">
-                                {formatOcrProfileMeta(document.parsed_payload ?? null)}
-                              </Typography>
-                            ) : null}
-                            {formatLaborNormApplicability(document.parsed_payload ?? null) ? (
-                              <Typography className="muted-copy">
-                                {formatLaborNormApplicability(document.parsed_payload ?? null)}
-                              </Typography>
-                            ) : null}
-                            {document.notes ? (
-                              <Typography className="muted-copy">{document.notes}</Typography>
-                            ) : null}
-                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} flexWrap="wrap" useFlexGap>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                onClick={() => {
-                                  void handleOpenRepair(document);
-                                }}
-                              >
-                                Открыть ремонт
-                              </Button>
-                              {user?.role === "admin" ? (
-                                <Button
-                                  size="small"
-                                  variant="text"
-                                  disabled={reprocessLoading || document.status === "archived"}
-                                  onClick={() => {
-                                    void handleReprocessDocument(document);
-                                  }}
-                                >
-                                  {reprocessLoading && selectedDocumentId === document.id ? "Повтор..." : "Повторить OCR"}
-                                </Button>
-                              ) : null}
-                              {user?.role === "admin" && document.is_primary ? (
-                                <Button
-                                  size="small"
-                                  variant="text"
-                                  color="error"
-                                  disabled={repairDeleteLoading}
-                                  onClick={() => {
-                                    void handleDeleteRepair(document.repair.id);
-                                  }}
-                                >
-                                  {repairDeleteLoading ? "Удаление..." : "Удалить"}
-                                </Button>
-                              ) : null}
-                              {user?.role === "admin" && document.status !== "archived" ? (
-                                <Button
-                                  size="small"
-                                  variant="text"
-                                  disabled={documentArchiveLoadingId === document.id}
-                                  onClick={() => {
-                                    void handleArchiveDocument(document.id, document.repair.id);
-                                  }}
-                                >
-                                  {documentArchiveLoadingId === document.id ? "Архивация..." : "В архив"}
-                                </Button>
-                              ) : null}
-                            </Stack>
-                          </Stack>
-                        </Paper>
-                      ))}
-                      {documents.length === 0 ? (
-                        <Typography className="muted-copy">
-                          Документы ещё не загружались.
-                        </Typography>
-                      ) : null}
-                    </Stack>
-                  </Stack>
-                  </Paper>
+                  <DocumentsListPanel
+                    userRole={user?.role}
+                    documents={documents}
+                    selectedDocumentId={selectedDocumentId}
+                    batchReprocessLimit={batchReprocessLimit}
+                    batchReprocessStatusFilter={batchReprocessStatusFilter}
+                    batchReprocessPrimaryOnly={batchReprocessPrimaryOnly}
+                    batchReprocessLoading={batchReprocessLoading}
+                    reprocessLoading={reprocessLoading}
+                    repairDeleteLoading={repairDeleteLoading}
+                    documentArchiveLoadingId={documentArchiveLoadingId}
+                    onBatchReprocessLimitChange={setBatchReprocessLimit}
+                    onBatchReprocessStatusFilterChange={setBatchReprocessStatusFilter}
+                    onBatchReprocessPrimaryOnlyChange={setBatchReprocessPrimaryOnly}
+                    onBatchReprocess={() => {
+                      void handleBatchReprocessDocuments();
+                    }}
+                    onOpenRepair={(document) => {
+                      void handleOpenRepair(document);
+                    }}
+                    onReprocessDocument={(document) => {
+                      void handleReprocessDocument(document);
+                    }}
+                    onDeleteRepair={(repairId) => {
+                      void handleDeleteRepair(repairId);
+                    }}
+                    onArchiveDocument={(documentId, repairId) => {
+                      void handleArchiveDocument(documentId, repairId);
+                    }}
+                    formatDocumentKind={formatDocumentKind}
+                    importJobStatusColor={importJobStatusColor}
+                    formatStatus={formatStatus}
+                    statusColor={statusColor}
+                    formatDocumentStatusLabel={formatDocumentStatusLabel}
+                    formatVehicle={formatVehicle}
+                    formatMoney={formatMoney}
+                    formatManualReviewReasons={formatManualReviewReasons}
+                    formatOcrProfileMeta={formatOcrProfileMeta}
+                    formatLaborNormApplicability={formatLaborNormApplicability}
+                  />
                 ) : null}
 
                 {activeWorkspaceTab === "admin" && activeAdminTab === "employees" && user?.role === "admin" ? (

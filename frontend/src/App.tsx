@@ -22,19 +22,26 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { AdminWorkspacePanel } from "./components/AdminWorkspacePanel";
 import { AuditLogPanel } from "./components/AuditLogPanel";
 import { BackupsAdminPanel } from "./components/BackupsAdminPanel";
+import { DataQualityOverviewPanel } from "./components/DataQualityOverviewPanel";
 import { DocumentsListPanel } from "./components/DocumentsListPanel";
 import { DocumentsUploadPanel } from "./components/DocumentsUploadPanel";
 import { EmployeesAdminPanel } from "./components/EmployeesAdminPanel";
 import { FleetPanel } from "./components/FleetPanel";
 import { GlobalSearchPanel } from "./components/GlobalSearchPanel";
 import { HistoricalImportsAdminPanel } from "./components/HistoricalImportsAdminPanel";
+import { LaborNormsAdminPanel } from "./components/LaborNormsAdminPanel";
 import { OcrLearningAdminPanel } from "./components/OcrLearningAdminPanel";
+import { OcrMatchersAdminPanel } from "./components/OcrMatchersAdminPanel";
+import { OcrRulesAdminPanel } from "./components/OcrRulesAdminPanel";
 import { RepairPanel } from "./components/RepairPanel";
 import { ReviewRulesAdminPanel } from "./components/ReviewRulesAdminPanel";
 import { ReviewQueuePanel } from "./components/ReviewQueuePanel";
 import { ServicesAdminPanel } from "./components/ServicesAdminPanel";
+import { TechAdminWorkspacePanel } from "./components/TechAdminWorkspacePanel";
+import { WorkspaceChromePanels } from "./components/WorkspaceChromePanels";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
 
 type UserRole = "admin" | "employee";
@@ -8239,594 +8246,75 @@ export default function App() {
     <Box className="app-shell">
       <Container maxWidth="xl">
         <Stack spacing={3}>
-          <Paper className="topbar" elevation={0}>
-            <Stack direction={{ xs: "column", md: "row" }} spacing={2} justifyContent="space-between">
-              <Box>
-                <Typography variant="overline" className="eyebrow">
-                  Road700 workspace
-                </Typography>
-                <Typography variant="h4" component="h1">
-                  Операционная панель заказ-нарядов
-                </Typography>
-                <Typography className="muted-copy">
-                  {user ? `${user.full_name} · ${user.role}` : "Загрузка профиля"}
-                </Typography>
-              </Box>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }}>
-                <Chip label={user?.email || "user"} />
-                <Button
-                  variant={showPasswordChange ? "contained" : "outlined"}
-                  onClick={() => setShowPasswordChange((current) => !current)}
-                >
-                  Сменить пароль
-                </Button>
-                <Button variant="outlined" onClick={handleLogout}>
-                  Выйти
-                </Button>
-              </Stack>
-            </Stack>
-          </Paper>
+          <WorkspaceChromePanels
+            user={user ? { full_name: user.full_name, email: user.email, role: user.role } : null}
+            showPasswordChange={showPasswordChange}
+            currentPasswordValue={currentPasswordValue}
+            newPasswordValue={newPasswordValue}
+            passwordChangeLoading={passwordChangeLoading}
+            errorMessage={errorMessage}
+            successMessage={successMessage}
+            bootLoading={bootLoading}
+            activeWorkspaceTab={activeWorkspaceTab}
+            documentsCount={documents.length}
+            selectedRepairId={selectedRepair?.id ?? null}
+            showTechAdminTab={showTechAdminTab}
+            vehiclesCount={vehicles.length}
+            workspaceDescription={workspaceTabDescriptions[activeWorkspaceTab]}
+            summary={summary}
+            summaryCards={summaryCards}
+            onTogglePasswordChange={() => setShowPasswordChange((current) => !current)}
+            onCurrentPasswordValueChange={setCurrentPasswordValue}
+            onNewPasswordValueChange={setNewPasswordValue}
+            onChangePassword={() => {
+              void handleChangePassword();
+            }}
+            onCancelPasswordChange={() => {
+              setShowPasswordChange(false);
+              setCurrentPasswordValue("");
+              setNewPasswordValue("");
+            }}
+            onLogout={handleLogout}
+            onWorkspaceTabChange={handleWorkspaceTabChange}
+          />
 
-          {showPasswordChange ? (
-            <Paper className="workspace-panel" elevation={0}>
-              <Stack spacing={1.5}>
-                <Box>
-                  <Typography variant="h6">Смена пароля</Typography>
-                  <Typography className="muted-copy">
-                    Новый пароль должен быть не короче 8 символов.
-                  </Typography>
-                </Box>
-                <Grid container spacing={1.5}>
-                  <Grid item xs={12} md={4}>
-                    <TextField
-                      label="Текущий пароль"
-                      type="password"
-                      value={currentPasswordValue}
-                      onChange={(event) => setCurrentPasswordValue(event.target.value)}
-                      fullWidth
-                    />
-                  </Grid>
-                  <Grid item xs={12} md={4}>
-                    <TextField
-                      label="Новый пароль"
-                      type="password"
-                      value={newPasswordValue}
-                      onChange={(event) => setNewPasswordValue(event.target.value)}
-                      fullWidth
-                    />
-                  </Grid>
-                  <Grid item xs={12} md={4}>
-                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                      <Button
-                        variant="contained"
-                        disabled={passwordChangeLoading}
-                        onClick={() => {
-                          void handleChangePassword();
-                        }}
-                      >
-                        {passwordChangeLoading ? "Сохранение..." : "Обновить пароль"}
-                      </Button>
-                      <Button
-                        variant="text"
-                        disabled={passwordChangeLoading}
-                        onClick={() => {
-                          setShowPasswordChange(false);
-                          setCurrentPasswordValue("");
-                          setNewPasswordValue("");
-                        }}
-                      >
-                        Отмена
-                      </Button>
-                    </Stack>
-                  </Grid>
-                </Grid>
-              </Stack>
-            </Paper>
-          ) : null}
-
-          {errorMessage ? <Alert severity="error">{errorMessage}</Alert> : null}
-          {successMessage ? <Alert severity="success">{successMessage}</Alert> : null}
-
-          {bootLoading ? (
-            <Paper className="loading-panel" elevation={0}>
-              <Stack spacing={2} alignItems="center">
-                <CircularProgress />
-                <Typography>Обновление данных...</Typography>
-              </Stack>
-            </Paper>
-          ) : null}
-
-          <Paper className="workspace-panel" elevation={0}>
-            <Stack spacing={1.5}>
-              <Tabs
-                value={activeWorkspaceTab}
-                onChange={(_event, value: WorkspaceTab) => handleWorkspaceTabChange(value)}
-                variant="scrollable"
-                scrollButtons="auto"
-                allowScrollButtonsMobile
-              >
-                <Tab label={`Документы · ${documents.length}`} value="documents" />
-                <Tab label={selectedRepair ? `Ремонт · #${selectedRepair.id}` : "Ремонт"} value="repair" />
-                <Tab label="Поиск" value="search" />
-                <Tab label="Журнал" value="audit" />
-                {user?.role === "admin" ? <Tab label="Админка" value="admin" /> : null}
-                {user?.role === "admin" && showTechAdminTab ? <Tab label="Тех. админка" value="tech_admin" /> : null}
-                <Tab label={`Техника · ${summary?.vehicles_total ?? vehicles.length}`} value="fleet" />
-              </Tabs>
-              <Typography className="muted-copy">{workspaceTabDescriptions[activeWorkspaceTab]}</Typography>
-            </Stack>
-          </Paper>
-
-          <Grid container spacing={2}>
-            {summaryCards.map((card) => (
-              <Grid item xs={12} sm={6} lg={3} key={card.key}>
-                <Paper className="metric-card" elevation={0}>
-                  <Typography className="metric-label">{card.label}</Typography>
-                  <Typography variant="h3">
-                    {summary ? summary[card.key] : "—"}
-                  </Typography>
-                </Paper>
-              </Grid>
-            ))}
-          </Grid>
-
-          <Paper className="workspace-panel" elevation={0}>
-            <Stack spacing={2}>
-              <Box>
-                <Typography variant="h5">Качество данных</Typography>
-                <Typography className="muted-copy">
-                  Контроль OCR, очереди проверки, предварительных справочников и конфликтов импорта.
-                </Typography>
-              </Box>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={6} lg={3}>
-                  <Paper className="metric-card" elevation={0}>
-                    <Typography className="metric-label">Средняя уверенность OCR</Typography>
-                    <Typography variant="h3">
-                      {dataQuality ? formatConfidence(dataQuality.average_ocr_confidence) : "—"}
-                    </Typography>
-                  </Paper>
-                </Grid>
-                {qualityCards.map((card) => (
-                  <Grid item xs={12} sm={6} lg={3} key={card.key}>
-                    <Paper className="metric-card" elevation={0}>
-                      <Typography className="metric-label">{card.label}</Typography>
-                      <Typography variant="h3">
-                        {dataQuality ? dataQuality[card.key] : "—"}
-                      </Typography>
-                    </Paper>
-                  </Grid>
-                ))}
-              </Grid>
-            </Stack>
-          </Paper>
-
-          <Paper className="workspace-panel" elevation={0}>
-            <Stack spacing={2}>
-              <Box>
-                <Typography variant="h5">Визуальные дашборды</Typography>
-                <Typography className="muted-copy">
-                  Наглядная картина по ремонтам, качеству OCR и точкам накопления ручной работы.
-                </Typography>
-              </Box>
-              <Grid container spacing={2}>
-                <Grid item xs={12} lg={4}>
-                  <Paper className="dashboard-visual-card" elevation={0}>
-                    <Stack spacing={1.25}>
-                      <Box>
-                        <Typography className="metric-label">Ремонтный контур</Typography>
-                        <Typography variant="h6">Статусы и поток документов</Typography>
-                      </Box>
-                      {repairVisualBars.length > 0 ? (
-                        <Stack spacing={1}>
-                          {repairVisualBars.map((item) => (
-                            <Box key={item.label} className="dashboard-bar-row">
-                              <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                <Typography>{item.label}</Typography>
-                                <Typography className="dashboard-bar-value">{item.value}</Typography>
-                              </Stack>
-                              <Box className="dashboard-bar-track">
-                                <Box
-                                  className={`dashboard-bar-fill tone-${item.tone}`}
-                                  sx={{ width: buildDashboardVisualBarWidth(item.value, repairVisualMax) }}
-                                />
-                              </Box>
-                              {item.hint ? <Typography className="muted-copy">{item.hint}</Typography> : null}
-                            </Box>
-                          ))}
-                        </Stack>
-                      ) : (
-                        <Typography className="muted-copy">Данных для визуализации пока нет.</Typography>
-                      )}
-                    </Stack>
-                  </Paper>
-                </Grid>
-                <Grid item xs={12} lg={4}>
-                  <Paper className="dashboard-visual-card" elevation={0}>
-                    <Stack spacing={1.25}>
-                      <Box>
-                        <Typography className="metric-label">OCR и контроль</Typography>
-                        <Typography variant="h6">Качество распознавания</Typography>
-                      </Box>
-                      {qualityVisualBars.length > 0 ? (
-                        <Stack spacing={1}>
-                          {qualityVisualBars.map((item) => (
-                            <Box key={item.label} className="dashboard-bar-row">
-                              <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                <Typography>{item.label}</Typography>
-                                <Typography className="dashboard-bar-value">{item.value}</Typography>
-                              </Stack>
-                              <Box className="dashboard-bar-track">
-                                <Box
-                                  className={`dashboard-bar-fill tone-${item.tone}`}
-                                  sx={{ width: buildDashboardVisualBarWidth(item.value, qualityVisualMax) }}
-                                />
-                              </Box>
-                              {item.hint ? <Typography className="muted-copy">{item.hint}</Typography> : null}
-                            </Box>
-                          ))}
-                        </Stack>
-                      ) : (
-                        <Typography className="muted-copy">Критичных сигналов OCR сейчас нет.</Typography>
-                      )}
-                    </Stack>
-                  </Paper>
-                </Grid>
-                <Grid item xs={12} lg={4}>
-                  <Paper className="dashboard-visual-card" elevation={0}>
-                    <Stack spacing={1.25}>
-                      <Box>
-                        <Typography className="metric-label">Точки внимания</Typography>
-                        <Typography variant="h6">Где копится разбор</Typography>
-                      </Box>
-                      {attentionVisualBars.length > 0 ? (
-                        <Stack spacing={1}>
-                          {attentionVisualBars.map((item) => (
-                            <Box key={item.label} className="dashboard-bar-row">
-                              <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                <Typography>{item.label}</Typography>
-                                <Typography className="dashboard-bar-value">{item.value}</Typography>
-                              </Stack>
-                              <Box className="dashboard-bar-track">
-                                <Box
-                                  className={`dashboard-bar-fill tone-${item.tone}`}
-                                  sx={{ width: buildDashboardVisualBarWidth(item.value, attentionVisualMax) }}
-                                />
-                              </Box>
-                              {item.hint ? <Typography className="muted-copy">{item.hint}</Typography> : null}
-                            </Box>
-                          ))}
-                        </Stack>
-                      ) : (
-                        <Typography className="muted-copy">Нечего выносить в приоритетный разбор.</Typography>
-                      )}
-                      {topAttentionServices.length > 0 ? (
-                        <Stack spacing={0.75}>
-                          <Divider />
-                          <Typography className="metric-label">Сервисы с накоплением ремонтов</Typography>
-                          {topAttentionServices.map((item) => (
-                            <Stack
-                              key={`dashboard-service-${item.service_id}`}
-                              direction="row"
-                              justifyContent="space-between"
-                              spacing={1}
-                              alignItems="center"
-                            >
-                              <Box sx={{ minWidth: 0 }}>
-                                <Typography>{item.name}</Typography>
-                                <Typography className="muted-copy">
-                                  {item.city || "Город не указан"}
-                                  {item.last_repair_date ? ` · последний ремонт ${item.last_repair_date}` : ""}
-                                </Typography>
-                              </Box>
-                              <Chip size="small" variant="outlined" label={`${item.repairs_total} ремонтов`} />
-                            </Stack>
-                          ))}
-                        </Stack>
-                      ) : null}
-                    </Stack>
-                  </Paper>
-                </Grid>
-              </Grid>
-            </Stack>
-          </Paper>
-
-          <Paper className="workspace-panel" elevation={0}>
-            <Stack spacing={2}>
-              <Box>
-                <Typography variant="h5">Что требует внимания</Typography>
-                <Typography className="muted-copy">
-                  Полный рабочий список скрыт с главной страницы и открывается по отдельной кнопке.
-                </Typography>
-              </Box>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
-                <Button
-                  variant="contained"
-                  color="warning"
-                  size="large"
-                  onClick={() => setShowQualityDialog(true)}
-                  sx={{
-                    minWidth: { xs: "100%", sm: 180 },
-                    whiteSpace: "nowrap",
-                    fontWeight: 800,
-                    textTransform: "none",
-                  }}
-                >
-                  Внимание !!!
-                </Button>
-                <Typography className="muted-copy">
-                  Всего записей для разбора: {(
-                    (dataQualityDetails?.counts.documents || 0) +
-                    (dataQualityDetails?.counts.services || 0) +
-                    (dataQualityDetails?.counts.works || 0) +
-                    (dataQualityDetails?.counts.parts || 0) +
-                    (dataQualityDetails?.counts.conflicts || 0)
-                  )}
-                </Typography>
-              </Stack>
-            </Stack>
-          </Paper>
-          <Dialog
-            open={showQualityDialog}
-            onClose={() => setShowQualityDialog(false)}
-            fullWidth
-            maxWidth="lg"
-          >
-            <DialogTitle>Внимание !!!</DialogTitle>
-            <DialogContent dividers>
-              <Stack spacing={2}>
-                <Typography className="muted-copy">
-                  Детализация по проблемным документам, предварительным справочникам и конфликтам импорта.
-                </Typography>
-                <Tabs
-                  value={activeQualityTab}
-                  onChange={(_event, value: QualityDetailTab) => setActiveQualityTab(value)}
-                  variant="scrollable"
-                  scrollButtons="auto"
-                  allowScrollButtonsMobile
-                >
-                  <Tab label={`Документы · ${dataQualityDetails?.counts.documents || 0}`} value="documents" />
-                  <Tab label={`Сервисы · ${dataQualityDetails?.counts.services || 0}`} value="services" />
-                  <Tab label={`Работы · ${dataQualityDetails?.counts.works || 0}`} value="works" />
-                  <Tab label={`Материалы · ${dataQualityDetails?.counts.parts || 0}`} value="parts" />
-                  <Tab label={`Конфликты · ${dataQualityDetails?.counts.conflicts || 0}`} value="conflicts" />
-                </Tabs>
-
-                {activeQualityTab === "documents" ? (
-                  <Stack spacing={1.5}>
-                    {dataQualityDetails?.documents.length ? (
-                      dataQualityDetails.documents.map((item) => (
-                        <Paper className="repair-line" key={`quality-document-${item.document_id}`} elevation={0}>
-                          <Stack spacing={1}>
-                            <Stack
-                              direction={{ xs: "column", sm: "row" }}
-                              justifyContent="space-between"
-                              spacing={1}
-                              alignItems={{ xs: "flex-start", sm: "center" }}
-                            >
-                              <Typography variant="subtitle1">{item.original_filename}</Typography>
-                              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                <Chip
-                                  size="small"
-                                  color={statusColor(item.document_status as DocumentStatus)}
-                                  label={formatDocumentStatusLabel(item.document_status)}
-                                />
-                                <Chip
-                                  size="small"
-                                  variant="outlined"
-                                  label={`OCR ${formatConfidence(item.ocr_confidence)}`}
-                                />
-                              </Stack>
-                            </Stack>
-                            <Typography className="muted-copy">
-                              {formatQualityVehicle(item)}
-                              {item.repair_date ? ` · ${item.repair_date}` : ""}
-                              {item.repair_status ? ` · ${formatRepairStatus(item.repair_status)}` : ""}
-                            </Typography>
-                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                disabled={!item.repair_id}
-                                onClick={() => {
-                                  setShowQualityDialog(false);
-                                  void openQualityRepair(item.document_id, item.repair_id);
-                                }}
-                              >
-                                Открыть ремонт
-                              </Button>
-                            </Stack>
-                          </Stack>
-                        </Paper>
-                      ))
-                    ) : (
-                      <Typography className="muted-copy">Сейчас проблемных документов в выборке нет.</Typography>
-                    )}
-                  </Stack>
-                ) : null}
-
-                {activeQualityTab === "services" ? (
-                  <Stack spacing={1.5}>
-                    {dataQualityDetails?.services.length ? (
-                      dataQualityDetails.services.map((item) => (
-                        <Paper className="repair-line" key={`quality-service-${item.service_id}`} elevation={0}>
-                          <Stack spacing={1}>
-                            <Stack
-                              direction={{ xs: "column", sm: "row" }}
-                              justifyContent="space-between"
-                              spacing={1}
-                              alignItems={{ xs: "flex-start", sm: "center" }}
-                            >
-                              <Typography variant="subtitle1">{item.name}</Typography>
-                              <Chip size="small" color="warning" label="Предварительный" />
-                            </Stack>
-                            <Typography className="muted-copy">
-                              {[item.city, `ремонтов ${item.repairs_total}`, item.last_repair_date ? `последний ${item.last_repair_date}` : null]
-                                .filter(Boolean)
-                                .join(" · ")}
-                            </Typography>
-                            {user?.role === "admin" ? (
-                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  onClick={() => {
-                                    setShowQualityDialog(false);
-                                    void openQualityService(item.name);
-                                  }}
-                                >
-                                  Открыть в админке
-                                </Button>
-                              </Stack>
-                            ) : null}
-                          </Stack>
-                        </Paper>
-                      ))
-                    ) : (
-                      <Typography className="muted-copy">Неподтверждённых сервисов в выборке нет.</Typography>
-                    )}
-                  </Stack>
-                ) : null}
-
-                {activeQualityTab === "works" ? (
-                  <Stack spacing={1.5}>
-                    {dataQualityDetails?.works.length ? (
-                      dataQualityDetails.works.map((item) => (
-                        <Paper className="repair-line" key={`quality-work-${item.work_id}`} elevation={0}>
-                          <Stack spacing={1}>
-                            <Stack
-                              direction={{ xs: "column", sm: "row" }}
-                              justifyContent="space-between"
-                              spacing={1}
-                              alignItems={{ xs: "flex-start", sm: "center" }}
-                            >
-                              <Typography variant="subtitle1">{item.work_name}</Typography>
-                              <Chip size="small" color="warning" label={formatMoney(item.line_total)} />
-                            </Stack>
-                            <Typography className="muted-copy">
-                              {formatQualityVehicle(item)} · {item.repair_date} · ремонт #{item.repair_id}
-                            </Typography>
-                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                disabled={!item.repair_id}
-                                onClick={() => {
-                                  setShowQualityDialog(false);
-                                  void openQualityRepair(item.document_id, item.repair_id);
-                                }}
-                              >
-                                Открыть ремонт
-                              </Button>
-                            </Stack>
-                          </Stack>
-                        </Paper>
-                      ))
-                    ) : (
-                      <Typography className="muted-copy">Неподтверждённых работ в выборке нет.</Typography>
-                    )}
-                  </Stack>
-                ) : null}
-
-                {activeQualityTab === "parts" ? (
-                  <Stack spacing={1.5}>
-                    {dataQualityDetails?.parts.length ? (
-                      dataQualityDetails.parts.map((item) => (
-                        <Paper className="repair-line" key={`quality-part-${item.part_id}`} elevation={0}>
-                          <Stack spacing={1}>
-                            <Stack
-                              direction={{ xs: "column", sm: "row" }}
-                              justifyContent="space-between"
-                              spacing={1}
-                              alignItems={{ xs: "flex-start", sm: "center" }}
-                            >
-                              <Typography variant="subtitle1">{item.part_name}</Typography>
-                              <Chip size="small" color="warning" label={formatMoney(item.line_total)} />
-                            </Stack>
-                            <Typography className="muted-copy">
-                              {formatQualityVehicle(item)} · {item.repair_date} · ремонт #{item.repair_id}
-                            </Typography>
-                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                disabled={!item.repair_id}
-                                onClick={() => {
-                                  setShowQualityDialog(false);
-                                  void openQualityRepair(item.document_id, item.repair_id);
-                                }}
-                              >
-                                Открыть ремонт
-                              </Button>
-                            </Stack>
-                          </Stack>
-                        </Paper>
-                      ))
-                    ) : (
-                      <Typography className="muted-copy">Неподтверждённых материалов в выборке нет.</Typography>
-                    )}
-                  </Stack>
-                ) : null}
-
-                {activeQualityTab === "conflicts" ? (
-                  <Stack spacing={1.5}>
-                    {dataQualityDetails?.conflicts.length ? (
-                      dataQualityDetails.conflicts.map((item) => (
-                        <Paper className="repair-line" key={`quality-conflict-${item.conflict_id}`} elevation={0}>
-                          <Stack spacing={1}>
-                            <Stack
-                              direction={{ xs: "column", sm: "row" }}
-                              justifyContent="space-between"
-                              spacing={1}
-                              alignItems={{ xs: "flex-start", sm: "center" }}
-                            >
-                              <Typography variant="subtitle1">{item.entity_type}</Typography>
-                              <Chip size="small" color="warning" label="Ожидает решения" />
-                            </Stack>
-                            <Typography className="muted-copy">
-                              {[item.conflict_key, item.source_filename, formatQualityVehicle(item), item.created_at ? formatDateTime(item.created_at) : null]
-                                .filter(Boolean)
-                                .join(" · ")}
-                            </Typography>
-                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                              {user?.role === "admin" ? (
-                                <Button
-                                  size="small"
-                                  variant="contained"
-                                  onClick={() => {
-                                    void openImportConflict(item.conflict_id);
-                                  }}
-                                >
-                                  Разобрать конфликт
-                                </Button>
-                              ) : null}
-                              {item.document_id && item.repair_id ? (
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  onClick={() => {
-                                    setShowQualityDialog(false);
-                                    void openQualityRepair(item.document_id, item.repair_id);
-                                  }}
-                                >
-                                  Открыть ремонт
-                                </Button>
-                              ) : null}
-                            </Stack>
-                          </Stack>
-                        </Paper>
-                      ))
-                    ) : (
-                      <Typography className="muted-copy">Конфликтов импорта в выборке нет.</Typography>
-                    )}
-                  </Stack>
-                ) : null}
-              </Stack>
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setShowQualityDialog(false)}>Закрыть</Button>
-            </DialogActions>
-          </Dialog>
+          <DataQualityOverviewPanel
+            dataQuality={dataQuality}
+            qualityCards={qualityCards}
+            repairVisualBars={repairVisualBars}
+            repairVisualMax={repairVisualMax}
+            qualityVisualBars={qualityVisualBars}
+            qualityVisualMax={qualityVisualMax}
+            attentionVisualBars={attentionVisualBars}
+            attentionVisualMax={attentionVisualMax}
+            topAttentionServices={topAttentionServices}
+            dataQualityDetails={dataQualityDetails}
+            showQualityDialog={showQualityDialog}
+            activeQualityTab={activeQualityTab}
+            userRole={user?.role}
+            onOpenQualityDialog={() => setShowQualityDialog(true)}
+            onCloseQualityDialog={() => setShowQualityDialog(false)}
+            onQualityTabChange={setActiveQualityTab}
+            onOpenQualityRepair={(documentId, repairId) => {
+              setShowQualityDialog(false);
+              void openQualityRepair(documentId, repairId);
+            }}
+            onOpenQualityService={(name) => {
+              setShowQualityDialog(false);
+              void openQualityService(name);
+            }}
+            onOpenImportConflict={(conflictId) => {
+              void openImportConflict(conflictId);
+            }}
+            buildDashboardVisualBarWidth={buildDashboardVisualBarWidth}
+            formatConfidence={formatConfidence}
+            formatMoney={formatMoney}
+            formatQualityVehicle={formatQualityVehicle}
+            statusColor={statusColor}
+            formatDocumentStatusLabel={formatDocumentStatusLabel}
+            formatRepairStatus={formatRepairStatus}
+            formatDateTime={formatDateTime}
+          />
           <Dialog
             open={showImportConflictDialog}
             onClose={() => {
@@ -8955,80 +8443,21 @@ export default function App() {
             <Grid item xs={12} md={activeWorkspaceTab === "documents" ? 5 : 12}>
               <Stack spacing={3}>
                 {activeWorkspaceTab === "admin" && user?.role === "admin" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                    <Stack spacing={1.5}>
-                      <Stack
-                        direction={{ xs: "column", md: "row" }}
-                        spacing={1.5}
-                        justifyContent="space-between"
-                        alignItems={{ xs: "flex-start", md: "center" }}
-                      >
-                        <Box>
-                          <Typography variant="h5">Администрирование</Typography>
-                          <Typography className="muted-copy">
-                            Основные справочники и правила системы разнесены по отдельным вкладкам.
-                          </Typography>
-                        </Box>
-                        <Button variant="outlined" onClick={() => openTechAdmin()}>
-                          Открыть тех. админку
-                        </Button>
-                      </Stack>
-                      <Tabs
-                        value={activeAdminTab}
-                        onChange={(_event, value: AdminTab) => handleAdminTabChange(value)}
-                        variant="scrollable"
-                        scrollButtons="auto"
-                        allowScrollButtonsMobile
-                      >
-                        <Tab label="Сотрудники" value="employees" />
-                        <Tab label="Сервисы" value="services" />
-                        <Tab label="Резервные копии" value="backups" />
-                        <Tab label="Контроль" value="control" />
-                        <Tab label="Нормо-часы" value="labor_norms" />
-                        <Tab label="Импорт истории" value="imports" />
-                      </Tabs>
-                      <Typography className="muted-copy">{adminTabDescriptions[activeAdminTab]}</Typography>
-                    </Stack>
-                  </Paper>
+                  <AdminWorkspacePanel
+                    activeAdminTab={activeAdminTab}
+                    description={adminTabDescriptions[activeAdminTab]}
+                    onAdminTabChange={handleAdminTabChange}
+                    onOpenTechAdmin={openTechAdmin}
+                  />
                 ) : null}
                 {activeWorkspaceTab === "tech_admin" && user?.role === "admin" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                    <Stack spacing={1.5}>
-                      <Stack
-                        direction={{ xs: "column", md: "row" }}
-                        spacing={1.5}
-                        justifyContent="space-between"
-                        alignItems={{ xs: "flex-start", md: "center" }}
-                      >
-                        <Box>
-                          <Typography variant="h5">Техническая админка</Typography>
-                          <Typography className="muted-copy">
-                            Отдельный экран для OCR-обучения, выбора шаблонов и правил извлечения полей.
-                          </Typography>
-                        </Box>
-                        <Button variant="outlined" onClick={closeTechAdmin}>
-                          Вернуться в админку
-                        </Button>
-                      </Stack>
-                      <Tabs
-                        value={activeTechAdminTab}
-                        onChange={(_event, value: TechAdminTab) => handleTechAdminTabChange(value)}
-                        variant="scrollable"
-                        scrollButtons="auto"
-                        allowScrollButtonsMobile
-                      >
-                        <Tab label="Обучение OCR" value="learning" />
-                        <Tab label="Выбор шаблона" value="matchers" />
-                        <Tab label="Извлечение полей" value="rules" />
-                      </Tabs>
-                      <Typography className="muted-copy">{techAdminTabDescriptions[activeTechAdminTab]}</Typography>
-                      <Alert severity={systemStatus?.password_recovery_email_configured ? "success" : "warning"}>
-                        {systemStatus?.password_recovery_email_configured
-                          ? "Письма для восстановления пароля отправляются автоматически."
-                          : "Письма для восстановления пароля пока не настроены. Сейчас система работает в ручном режиме."}
-                      </Alert>
-                    </Stack>
-                  </Paper>
+                  <TechAdminWorkspacePanel
+                    activeTechAdminTab={activeTechAdminTab}
+                    description={techAdminTabDescriptions[activeTechAdminTab]}
+                    isPasswordRecoveryEmailConfigured={Boolean(systemStatus?.password_recovery_email_configured)}
+                    onTechAdminTabChange={handleTechAdminTabChange}
+                    onCloseTechAdmin={closeTechAdmin}
+                  />
                 ) : null}
                 {activeWorkspaceTab === "documents" ? (
                   <ReviewQueuePanel
@@ -9341,488 +8770,77 @@ export default function App() {
                 {activeWorkspaceTab === "tech_admin" &&
                 activeTechAdminTab === "matchers" &&
                 user?.role === "admin" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                    <Stack spacing={2}>
-                      <Box>
-                        <Typography variant="h5">Автовыбор шаблона OCR</Typography>
-                        <Typography className="muted-copy">
-                          Правила выбора шаблона распознавания по типу файла, имени файла, сервису и текстовым признакам документа. Если правил нет, используется история ремонта и затем базовый шаблон.
-                        </Typography>
-                      </Box>
-                      <Grid container spacing={1.5}>
-                        <Grid item xs={12} sm={4}>
-                          <TextField
-                            select
-                            label="Шаблон OCR"
-                            value={ocrProfileMatcherProfileFilter}
-                            onChange={(event) => setOcrProfileMatcherProfileFilter(event.target.value)}
-                            fullWidth
-                          >
-                            <MenuItem value="">Все шаблоны</MenuItem>
-                            {ocrProfileMatcherProfiles.map((item) => (
-                              <MenuItem key={item} value={item}>
-                                {formatOcrProfileName(item)}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        </Grid>
-                        <Grid item xs={12} sm={8}>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <Button
-                              variant="outlined"
-                              onClick={() => {
-                                if (token) {
-                                  void loadOcrProfileMatchers(token, ocrProfileMatcherProfileFilter);
-                                }
-                              }}
-                            >
-                              Обновить список
-                            </Button>
-                            <Button
-                              variant="text"
-                              onClick={() => {
-                                setOcrProfileMatcherProfileFilter("");
-                                if (token) {
-                                  void loadOcrProfileMatchers(token, "");
-                                }
-                              }}
-                            >
-                              Сбросить фильтр
-                            </Button>
-                          </Stack>
-                        </Grid>
-                      </Grid>
-                      <Paper className="repair-line" elevation={0}>
-                        <Stack spacing={1.25}>
-                          <Typography className="metric-label">
-                            Создание и редактирование правила выбора шаблона
-                          </Typography>
-                          <Grid container spacing={1.5}>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Шаблон OCR"
-                                value={ocrProfileMatcherForm.profile_scope}
-                                onChange={(event) =>
-                                  setOcrProfileMatcherForm((current) => ({ ...current, profile_scope: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={5}>
-                              <TextField
-                                label="Название"
-                                value={ocrProfileMatcherForm.title}
-                                onChange={(event) =>
-                                  setOcrProfileMatcherForm((current) => ({ ...current, title: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={2}>
-                              <TextField
-                                select
-                                label="Тип файла"
-                                value={ocrProfileMatcherForm.source_type}
-                                onChange={(event) =>
-                                  setOcrProfileMatcherForm((current) => ({ ...current, source_type: event.target.value }))
-                                }
-                                fullWidth
-                              >
-                                <MenuItem value="">Любой</MenuItem>
-                                <MenuItem value="pdf">PDF</MenuItem>
-                                <MenuItem value="image">Изображение</MenuItem>
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={2}>
-                              <TextField
-                                label="Приоритет"
-                                value={ocrProfileMatcherForm.priority}
-                                onChange={(event) =>
-                                  setOcrProfileMatcherForm((current) => ({ ...current, priority: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Шаблон имени файла"
-                                value={ocrProfileMatcherForm.filename_pattern}
-                                onChange={(event) =>
-                                  setOcrProfileMatcherForm((current) => ({ ...current, filename_pattern: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Текстовый признак"
-                                value={ocrProfileMatcherForm.text_pattern}
-                                onChange={(event) =>
-                                  setOcrProfileMatcherForm((current) => ({ ...current, text_pattern: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Признак сервиса"
-                                value={ocrProfileMatcherForm.service_name_pattern}
-                                onChange={(event) =>
-                                  setOcrProfileMatcherForm((current) => ({
-                                    ...current,
-                                    service_name_pattern: event.target.value,
-                                  }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                select
-                                label="Активность"
-                                value={ocrProfileMatcherForm.is_active}
-                                onChange={(event) =>
-                                  setOcrProfileMatcherForm((current) => ({
-                                    ...current,
-                                    is_active: event.target.value as "true" | "false",
-                                  }))
-                                }
-                                fullWidth
-                              >
-                                <MenuItem value="true">Активно</MenuItem>
-                                <MenuItem value="false">Отключено</MenuItem>
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={9}>
-                              <TextField
-                                label="Примечание"
-                                value={ocrProfileMatcherForm.notes}
-                                onChange={(event) =>
-                                  setOcrProfileMatcherForm((current) => ({ ...current, notes: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                          </Grid>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <Button
-                              variant="contained"
-                              disabled={ocrProfileMatcherSaving}
-                              onClick={() => {
-                                void handleSaveOcrProfileMatcher();
-                              }}
-                            >
-                              {ocrProfileMatcherSaving
-                                ? "Сохранение..."
-                                : ocrProfileMatcherForm.id
-                                  ? "Сохранить правило выбора"
-                                  : "Создать правило выбора"}
-                            </Button>
-                            <Button variant="text" disabled={ocrProfileMatcherSaving} onClick={resetOcrProfileMatcherEditor}>
-                              Сбросить форму
-                            </Button>
-                          </Stack>
-                        </Stack>
-                      </Paper>
-                      <Typography className="muted-copy">
-                        В правилах выбора шаблона {ocrProfileMatchers.length} записей.
-                      </Typography>
-                      {ocrProfileMatchers.length > 0 ? (
-                        <Stack spacing={1}>
-                          {ocrProfileMatchers.map((item) => (
-                            <Paper className="repair-line" key={`ocr-matcher-${item.id}`} elevation={0}>
-                              <Stack spacing={0.5}>
-                                <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                  <Typography>{item.title}</Typography>
-                                  <Stack direction="row" spacing={1}>
-                                    <Chip
-                                      size="small"
-                                      color={item.is_active ? "success" : "default"}
-                                      label={item.is_active ? "Активно" : "Отключено"}
-                                    />
-                                    <Chip size="small" variant="outlined" label={formatOcrProfileName(item.profile_scope)} />
-                                  </Stack>
-                                </Stack>
-                                <Typography className="muted-copy">
-                                  {item.source_type ? `тип файла ${formatSourceTypeLabel(item.source_type)} · ` : ""}
-                                  {`приоритет ${item.priority}`}
-                                </Typography>
-                                <Typography className="muted-copy">
-                                  Файл: {item.filename_pattern || "—"}
-                                  {` · Текст: ${item.text_pattern || "—"}`}
-                                  {` · Сервис: ${item.service_name_pattern || "—"}`}
-                                </Typography>
-                                {item.notes ? <Typography className="muted-copy">{item.notes}</Typography> : null}
-                                <Stack direction="row" spacing={1}>
-                                  <Button
-                                    size="small"
-                                    variant="outlined"
-                                    onClick={() => handleEditOcrProfileMatcher(item)}
-                                  >
-                                    Редактировать
-                                  </Button>
-                                </Stack>
-                              </Stack>
-                            </Paper>
-                          ))}
-                        </Stack>
-                      ) : (
-                        <Typography className="muted-copy">Правила выбора шаблона по текущему фильтру не найдены.</Typography>
-                      )}
-                    </Stack>
-                  </Paper>
+                  <OcrMatchersAdminPanel
+                    ocrProfileMatcherProfileFilter={ocrProfileMatcherProfileFilter}
+                    ocrProfileMatcherProfiles={ocrProfileMatcherProfiles}
+                    ocrProfileMatchers={ocrProfileMatchers}
+                    ocrProfileMatcherForm={ocrProfileMatcherForm}
+                    ocrProfileMatcherSaving={ocrProfileMatcherSaving}
+                    onProfileFilterChange={setOcrProfileMatcherProfileFilter}
+                    onRefresh={() => {
+                      if (token) {
+                        void loadOcrProfileMatchers(token, ocrProfileMatcherProfileFilter);
+                      }
+                    }}
+                    onResetFilter={() => {
+                      setOcrProfileMatcherProfileFilter("");
+                      if (token) {
+                        void loadOcrProfileMatchers(token, "");
+                      }
+                    }}
+                    onFormChange={(field, value) => {
+                      setOcrProfileMatcherForm((current) => ({
+                        ...current,
+                        [field]: value,
+                      }));
+                    }}
+                    onSave={() => {
+                      void handleSaveOcrProfileMatcher();
+                    }}
+                    onResetForm={resetOcrProfileMatcherEditor}
+                    onEdit={handleEditOcrProfileMatcher}
+                    formatOcrProfileName={formatOcrProfileName}
+                    formatSourceTypeLabel={formatSourceTypeLabel}
+                  />
                 ) : null}
 
                 {activeWorkspaceTab === "tech_admin" &&
                 activeTechAdminTab === "rules" &&
                 user?.role === "admin" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                    <Stack spacing={2}>
-                      <Box>
-                        <Typography variant="h5">Правила извлечения полей OCR</Typography>
-                        <Typography className="muted-copy">
-                          Шаблоны и правила поиска для извлечения номера заказ-наряда, даты, пробега, VIN, сервиса и сумм из разных форматов документов.
-                        </Typography>
-                      </Box>
-                      <Grid container spacing={1.5}>
-                        <Grid item xs={12} sm={4}>
-                          <TextField
-                            select
-                            label="Шаблон OCR"
-                            value={ocrRuleProfileFilter}
-                            onChange={(event) => setOcrRuleProfileFilter(event.target.value)}
-                            fullWidth
-                          >
-                            <MenuItem value="">Все шаблоны</MenuItem>
-                            {ocrRuleProfiles.map((item) => (
-                              <MenuItem key={item} value={item}>
-                                {formatOcrProfileName(item)}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        </Grid>
-                        <Grid item xs={12} sm={8}>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <Button
-                              variant="outlined"
-                              onClick={() => {
-                                if (token) {
-                                  void loadOcrRules(token, ocrRuleProfileFilter);
-                                }
-                              }}
-                            >
-                              Обновить список
-                            </Button>
-                            <Button
-                              variant="text"
-                              onClick={() => {
-                                setOcrRuleProfileFilter("");
-                                if (token) {
-                                  void loadOcrRules(token, "");
-                                }
-                              }}
-                            >
-                              Сбросить фильтр
-                            </Button>
-                          </Stack>
-                        </Grid>
-                      </Grid>
-                      <Paper className="repair-line" elevation={0}>
-                        <Stack spacing={1.25}>
-                          <Typography className="metric-label">
-                            Создание и редактирование OCR-правила
-                          </Typography>
-                          <Grid container spacing={1.5}>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Шаблон OCR"
-                                value={ocrRuleForm.profile_scope}
-                                onChange={(event) =>
-                                  setOcrRuleForm((current) => ({ ...current, profile_scope: event.target.value }))
-                                }
-                                helperText="Например: Базовый или код шаблона сервиса"
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                select
-                                label="Поле"
-                                value={ocrRuleForm.target_field}
-                                onChange={(event) =>
-                                  setOcrRuleForm((current) => ({ ...current, target_field: event.target.value }))
-                                }
-                                fullWidth
-                              >
-                                {[
-                                  "order_number",
-                                  "repair_date",
-                                  "mileage",
-                                  "plate_number",
-                                  "vin",
-                                  "service_name",
-                                  "work_total",
-                                  "parts_total",
-                                  "vat_total",
-                                  "grand_total",
-                                  ...ocrRuleTargetFields.filter(
-                                    (item) =>
-                                      ![
-                                        "order_number",
-                                        "repair_date",
-                                        "mileage",
-                                        "plate_number",
-                                        "vin",
-                                        "service_name",
-                                        "work_total",
-                                        "parts_total",
-                                        "vat_total",
-                                        "grand_total",
-                                      ].includes(item),
-                                  ),
-                                ].map((item) => (
-                                  <MenuItem key={item} value={item}>
-                                    {formatOcrFieldLabel(item)}
-                                  </MenuItem>
-                                ))}
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={2}>
-                              <TextField
-                                select
-                                label="Обработка значения"
-                                value={ocrRuleForm.value_parser}
-                                onChange={(event) =>
-                                  setOcrRuleForm((current) => ({ ...current, value_parser: event.target.value }))
-                                }
-                                fullWidth
-                              >
-                                <MenuItem value="raw">Без обработки</MenuItem>
-                                <MenuItem value="date">Дата</MenuItem>
-                                <MenuItem value="amount">Сумма</MenuItem>
-                                <MenuItem value="digits_int">Целое число</MenuItem>
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={2}>
-                              <TextField
-                                label="Уверенность"
-                                value={ocrRuleForm.confidence}
-                                onChange={(event) =>
-                                  setOcrRuleForm((current) => ({ ...current, confidence: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={2}>
-                              <TextField
-                                label="Приоритет"
-                                value={ocrRuleForm.priority}
-                                onChange={(event) =>
-                                  setOcrRuleForm((current) => ({ ...current, priority: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                select
-                                label="Активность"
-                                value={ocrRuleForm.is_active}
-                                onChange={(event) =>
-                                  setOcrRuleForm((current) => ({
-                                    ...current,
-                                    is_active: event.target.value as "true" | "false",
-                                  }))
-                                }
-                                fullWidth
-                              >
-                                <MenuItem value="true">Активно</MenuItem>
-                                <MenuItem value="false">Отключено</MenuItem>
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={9}>
-                              <TextField
-                                label="Выражение поиска"
-                                value={ocrRuleForm.pattern}
-                                onChange={(event) =>
-                                  setOcrRuleForm((current) => ({ ...current, pattern: event.target.value }))
-                                }
-                                fullWidth
-                                multiline
-                                minRows={3}
-                              />
-                            </Grid>
-                            <Grid item xs={12}>
-                              <TextField
-                                label="Примечание"
-                                value={ocrRuleForm.notes}
-                                onChange={(event) =>
-                                  setOcrRuleForm((current) => ({ ...current, notes: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                          </Grid>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <Button
-                              variant="contained"
-                              disabled={ocrRuleSaving}
-                              onClick={() => {
-                                void handleSaveOcrRule();
-                              }}
-                            >
-                              {ocrRuleSaving ? "Сохранение..." : ocrRuleForm.id ? "Сохранить OCR-правило" : "Создать OCR-правило"}
-                            </Button>
-                            <Button variant="text" disabled={ocrRuleSaving} onClick={resetOcrRuleEditor}>
-                              Сбросить форму
-                            </Button>
-                          </Stack>
-                        </Stack>
-                      </Paper>
-                      <Typography className="muted-copy">
-                        В OCR-справочнике {ocrRules.length} правил по текущему фильтру.
-                      </Typography>
-                      {ocrRules.length > 0 ? (
-                        <Stack spacing={1}>
-                          {ocrRules.map((item) => (
-                            <Paper className="repair-line" key={`ocr-rule-${item.id}`} elevation={0}>
-                              <Stack spacing={0.5}>
-                                <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                  <Typography>{formatOcrFieldLabel(item.target_field)}</Typography>
-                                  <Stack direction="row" spacing={1}>
-                                    <Chip
-                                      size="small"
-                                      color={item.is_active ? "success" : "default"}
-                                      label={item.is_active ? "Активно" : "Отключено"}
-                                    />
-                                    <Chip size="small" variant="outlined" label={formatOcrProfileName(item.profile_scope)} />
-                                  </Stack>
-                                </Stack>
-                                <Typography className="muted-copy">
-                                  обработка {formatValueParserLabel(item.value_parser)} · уверенность {item.confidence} · приоритет {item.priority}
-                                </Typography>
-                                <Typography className="muted-copy" sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                                  {item.pattern}
-                                </Typography>
-                                {item.notes ? <Typography className="muted-copy">{item.notes}</Typography> : null}
-                                <Stack direction="row" spacing={1}>
-                                  <Button
-                                    size="small"
-                                    variant="outlined"
-                                    onClick={() => handleEditOcrRule(item)}
-                                  >
-                                    Редактировать
-                                  </Button>
-                                </Stack>
-                              </Stack>
-                            </Paper>
-                          ))}
-                        </Stack>
-                      ) : (
-                        <Typography className="muted-copy">OCR-правила по текущему фильтру не найдены.</Typography>
-                      )}
-                    </Stack>
-                  </Paper>
+                  <OcrRulesAdminPanel
+                    ocrRuleProfileFilter={ocrRuleProfileFilter}
+                    ocrRuleProfiles={ocrRuleProfiles}
+                    ocrRuleTargetFields={ocrRuleTargetFields}
+                    ocrRules={ocrRules}
+                    ocrRuleForm={ocrRuleForm}
+                    ocrRuleSaving={ocrRuleSaving}
+                    onProfileFilterChange={setOcrRuleProfileFilter}
+                    onRefresh={() => {
+                      if (token) {
+                        void loadOcrRules(token, ocrRuleProfileFilter);
+                      }
+                    }}
+                    onResetFilter={() => {
+                      setOcrRuleProfileFilter("");
+                      if (token) {
+                        void loadOcrRules(token, "");
+                      }
+                    }}
+                    onFormChange={(field, value) => {
+                      setOcrRuleForm((current) => ({
+                        ...current,
+                        [field]: value,
+                      }));
+                    }}
+                    onSave={() => {
+                      void handleSaveOcrRule();
+                    }}
+                    onResetForm={resetOcrRuleEditor}
+                    onEdit={handleEditOcrRule}
+                    formatOcrProfileName={formatOcrProfileName}
+                    formatOcrFieldLabel={formatOcrFieldLabel}
+                    formatValueParserLabel={formatValueParserLabel}
+                  />
                 ) : null}
 
                 {activeWorkspaceTab === "admin" && activeAdminTab === "imports" && user?.role === "admin" ? (
@@ -9878,680 +8896,92 @@ export default function App() {
                 ) : null}
 
                 {activeWorkspaceTab === "admin" && activeAdminTab === "labor_norms" && user?.role === "admin" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                    <Stack spacing={2}>
-                      <Box>
-                        <Typography variant="h5">Справочник нормо-часов</Typography>
-                        <Typography className="muted-copy">
-                          Администратор управляет каталогами, правилами применимости, импортом и отдельными строками без участия разработчика.
-                        </Typography>
-                      </Box>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} flexWrap="wrap" useFlexGap>
-                        <Button
-                          variant={showLaborNormCatalogEditor ? "outlined" : "contained"}
-                          onClick={() => setShowLaborNormCatalogEditor((current) => !current)}
-                        >
-                          {showLaborNormCatalogEditor ? "Скрыть каталог" : "Каталоги и применимость"}
-                        </Button>
-                        <Button
-                          variant={showLaborNormImport ? "outlined" : "contained"}
-                          onClick={() => setShowLaborNormImport((current) => !current)}
-                        >
-                          {showLaborNormImport ? "Скрыть импорт" : "Импорт справочника"}
-                        </Button>
-                        <Button
-                          variant={showLaborNormEntryEditor ? "outlined" : "contained"}
-                          onClick={() => setShowLaborNormEntryEditor((current) => !current)}
-                        >
-                          {showLaborNormEntryEditor ? "Скрыть форму записи" : "Добавить запись"}
-                        </Button>
-                      </Stack>
-                      {showLaborNormCatalogEditor ? (
-                      <Paper className="repair-line" elevation={0}>
-                        <Stack spacing={1.25}>
-                          <Typography className="metric-label">
-                            Каталоги и правила применимости
-                          </Typography>
-                          <Grid container spacing={1.5}>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Код каталога"
-                                value={laborNormCatalogForm.scope}
-                                onChange={(event) =>
-                                  setLaborNormCatalogForm((current) => ({ ...current, scope: event.target.value }))
-                                }
-                                fullWidth
-                                disabled={editingLaborNormCatalogId !== null}
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Название каталога"
-                                value={laborNormCatalogForm.catalog_name}
-                                onChange={(event) =>
-                                  setLaborNormCatalogForm((current) => ({ ...current, catalog_name: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Семейство бренда"
-                                value={laborNormCatalogForm.brand_family}
-                                onChange={(event) =>
-                                  setLaborNormCatalogForm((current) => ({ ...current, brand_family: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                select
-                                label="Тип техники"
-                                value={laborNormCatalogForm.vehicle_type}
-                                onChange={(event) =>
-                                  setLaborNormCatalogForm((current) => ({
-                                    ...current,
-                                    vehicle_type: event.target.value as "" | VehicleType,
-                                  }))
-                                }
-                                fullWidth
-                              >
-                                <MenuItem value="">Любой</MenuItem>
-                                <MenuItem value="truck">Грузовик</MenuItem>
-                                <MenuItem value="trailer">Прицеп</MenuItem>
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Год от"
-                                type="number"
-                                value={laborNormCatalogForm.year_from}
-                                onChange={(event) =>
-                                  setLaborNormCatalogForm((current) => ({ ...current, year_from: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Год до"
-                                type="number"
-                                value={laborNormCatalogForm.year_to}
-                                onChange={(event) =>
-                                  setLaborNormCatalogForm((current) => ({ ...current, year_to: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Приоритет"
-                                type="number"
-                                value={laborNormCatalogForm.priority}
-                                onChange={(event) =>
-                                  setLaborNormCatalogForm((current) => ({ ...current, priority: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                select
-                                label="Авто-матчинг"
-                                value={laborNormCatalogForm.auto_match_enabled}
-                                onChange={(event) =>
-                                  setLaborNormCatalogForm((current) => ({
-                                    ...current,
-                                    auto_match_enabled: event.target.value as "true" | "false",
-                                  }))
-                                }
-                                fullWidth
-                              >
-                                <MenuItem value="true">Включён</MenuItem>
-                                <MenuItem value="false">Выключен</MenuItem>
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                select
-                                label="Статус"
-                                value={laborNormCatalogForm.status}
-                                onChange={(event) =>
-                                  setLaborNormCatalogForm((current) => ({ ...current, status: event.target.value }))
-                                }
-                                fullWidth
-                              >
-                                <MenuItem value="preliminary">Предварительный</MenuItem>
-                                <MenuItem value="confirmed">Подтверждён</MenuItem>
-                                <MenuItem value="merged">Объединён</MenuItem>
-                                <MenuItem value="archived">Архив</MenuItem>
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="VIN-префиксы"
-                                value={laborNormCatalogForm.vin_prefixes}
-                                onChange={(event) =>
-                                  setLaborNormCatalogForm((current) => ({ ...current, vin_prefixes: event.target.value }))
-                                }
-                                helperText="По одному значению в строке"
-                                fullWidth
-                                multiline
-                                minRows={3}
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Ключевые бренды"
-                                value={laborNormCatalogForm.brand_keywords}
-                                onChange={(event) =>
-                                  setLaborNormCatalogForm((current) => ({ ...current, brand_keywords: event.target.value }))
-                                }
-                                helperText="Например: dongfeng, dfh4180"
-                                fullWidth
-                                multiline
-                                minRows={3}
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Ключевые модели"
-                                value={laborNormCatalogForm.model_keywords}
-                                onChange={(event) =>
-                                  setLaborNormCatalogForm((current) => ({ ...current, model_keywords: event.target.value }))
-                                }
-                                helperText="Например: тягач"
-                                fullWidth
-                                multiline
-                                minRows={3}
-                              />
-                            </Grid>
-                            <Grid item xs={12}>
-                              <TextField
-                                label="Примечание"
-                                value={laborNormCatalogForm.notes}
-                                onChange={(event) =>
-                                  setLaborNormCatalogForm((current) => ({ ...current, notes: event.target.value }))
-                                }
-                                fullWidth
-                                multiline
-                                minRows={2}
-                              />
-                            </Grid>
-                          </Grid>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <Button
-                              variant="contained"
-                              disabled={laborNormCatalogSaving}
-                              onClick={() => {
-                                void handleSaveLaborNormCatalog();
-                              }}
-                            >
-                              {laborNormCatalogSaving
-                                ? "Сохранение..."
-                                : editingLaborNormCatalogId
-                                  ? "Сохранить каталог"
-                                  : "Создать каталог"}
-                            </Button>
-                            <Button
-                              variant="text"
-                              onClick={() => {
-                                resetLaborNormCatalogEditor();
-                                setShowLaborNormCatalogEditor(false);
-                              }}
-                              disabled={laborNormCatalogSaving}
-                            >
-                              Сбросить форму
-                            </Button>
-                          </Stack>
-                          {laborNormCatalogs.length > 0 ? (
-                            <Stack spacing={1}>
-                              {laborNormCatalogs.map((item) => (
-                                <Paper className="repair-line" key={`catalog-${item.id}`} elevation={0}>
-                                  <Stack spacing={0.75}>
-                                    <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                      <Typography>{item.catalog_name}</Typography>
-                                      <Stack direction="row" spacing={1}>
-                                        <Chip
-                                          size="small"
-                                          color={item.auto_match_enabled ? "success" : "default"}
-                                          label={item.auto_match_enabled ? "Авто-матчинг" : "Только вручную"}
-                                        />
-                                        <Chip size="small" variant="outlined" label={formatCatalogCodeLabel(item.scope)} />
-                                      </Stack>
-                                    </Stack>
-                                    <Typography className="muted-copy">
-                                      {item.brand_family ? `${item.brand_family} · ` : ""}
-                                      {item.vehicle_type === "truck"
-                                        ? "Грузовик"
-                                        : item.vehicle_type === "trailer"
-                                          ? "Прицеп"
-                                          : "Тип не ограничен"}
-                                      {item.year_from !== null || item.year_to !== null
-                                        ? ` · годы ${item.year_from ?? "—"}-${item.year_to ?? "—"}`
-                                        : ""}
-                                      {` · приоритет ${item.priority}`}
-                                      {` · статус ${formatStatus(item.status)}`}
-                                    </Typography>
-                                    <Typography className="muted-copy">
-                                      Бренды: {(item.brand_keywords || []).join(", ") || "—"}
-                                      {` · модели: ${(item.model_keywords || []).join(", ") || "—"}`}
-                                      {` · VIN: ${(item.vin_prefixes || []).join(", ") || "—"}`}
-                                    </Typography>
-                                    {item.notes ? <Typography className="muted-copy">{item.notes}</Typography> : null}
-                                    <Stack direction="row" spacing={1} flexWrap="wrap">
-                                      <Button
-                                        size="small"
-                                        variant="outlined"
-                                        onClick={() => handleEditLaborNormCatalog(item)}
-                                      >
-                                        Редактировать
-                                      </Button>
-                                      <Button
-                                        size="small"
-                                        variant="text"
-                                        onClick={() => handleCatalogScopeSelected(item.scope)}
-                                      >
-                                        Использовать в импорте
-                                      </Button>
-                                    </Stack>
-                                  </Stack>
-                                </Paper>
-                              ))}
-                            </Stack>
-                          ) : (
-                            <Typography className="muted-copy">
-                              Каталоги ещё не настроены.
-                            </Typography>
-                          )}
-                        </Stack>
-                      </Paper>
-                      ) : null}
-                      <Grid container spacing={1.5}>
-                        <Grid item xs={12} sm={4}>
-                          <TextField
-                            label="Поиск по коду или названию"
-                            value={laborNormQuery}
-                            onChange={(event) => setLaborNormQuery(event.target.value)}
-                            fullWidth
-                          />
-                        </Grid>
-                        <Grid item xs={12} sm={4}>
-                          <TextField
-                            select
-                            label="Каталог"
-                            value={laborNormScope}
-                            onChange={(event) => setLaborNormScope(event.target.value)}
-                            fullWidth
-                          >
-                            <MenuItem value="">Все каталоги</MenuItem>
-                            {laborNormScopes.map((scope) => (
-                              <MenuItem key={scope} value={scope}>
-                                {formatCatalogCodeLabel(scope)}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        </Grid>
-                        <Grid item xs={12} sm={4}>
-                          <TextField
-                            select
-                            label="Категория"
-                            value={laborNormCategory}
-                            onChange={(event) => setLaborNormCategory(event.target.value)}
-                            fullWidth
-                          >
-                            <MenuItem value="">Все категории</MenuItem>
-                            {laborNormCategories.map((category) => (
-                              <MenuItem key={category} value={category}>
-                                {category}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        </Grid>
-                      </Grid>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                        <Button variant="outlined" onClick={() => void handleLaborNormSearch()} disabled={laborNormLoading}>
-                          {laborNormLoading ? "Загрузка..." : "Обновить список"}
-                        </Button>
-                        <Button
-                          variant="text"
-                          onClick={() => {
-                            setLaborNormQuery("");
-                            setLaborNormScope("");
-                            setLaborNormCategory("");
-                            if (token) {
-                              void loadLaborNormCatalog(token, "", "", "");
-                            }
-                          }}
-                          disabled={laborNormLoading}
-                        >
-                          Сбросить фильтр
-                        </Button>
-                      </Stack>
-                      {showLaborNormImport ? (
-                      <Paper className="repair-line" elevation={0}>
-                        <Stack spacing={1.25}>
-                          <Typography className="metric-label">
-                            Импорт / обновление каталога
-                          </Typography>
-                          <Grid container spacing={1.5}>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                select
-                                label="Каталог"
-                                value={laborNormImportScope}
-                                onChange={(event) => handleCatalogScopeSelected(event.target.value)}
-                                fullWidth
-                              >
-                                {laborNormCatalogs.length === 0 ? (
-                                  <MenuItem value="" disabled>
-                                    Сначала создайте каталог
-                                  </MenuItem>
-                                ) : null}
-                                {laborNormCatalogs.map((item) => (
-                                  <MenuItem key={`import-${item.scope}`} value={item.scope}>
-                                    {item.catalog_name} · {formatCatalogCodeLabel(item.scope)}
-                                  </MenuItem>
-                                ))}
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Семейство бренда"
-                                value={laborNormImportBrandFamily}
-                                onChange={(event) => setLaborNormImportBrandFamily(event.target.value)}
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Название каталога"
-                                value={laborNormImportCatalogName}
-                                onChange={(event) => setLaborNormImportCatalogName(event.target.value)}
-                                fullWidth
-                              />
-                            </Grid>
-                          </Grid>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
-                            <Button component="label" variant="outlined">
-                              Выбрать .xlsx/.csv
-                              <input
-                                hidden
-                                type="file"
-                                accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
-                                onChange={(event) => setLaborNormFile(event.target.files?.[0] ?? null)}
-                              />
-                            </Button>
-                            <Typography className="muted-copy">
-                              {laborNormFile ? laborNormFile.name : "Файл не выбран"}
-                            </Typography>
-                          </Stack>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <Button
-                              variant="contained"
-                              disabled={laborNormImportLoading || !laborNormFile || !laborNormImportScope}
-                              onClick={() => {
-                                void handleLaborNormImport();
-                              }}
-                            >
-                              {laborNormImportLoading ? "Импорт..." : "Импортировать справочник"}
-                            </Button>
-                          </Stack>
-                        </Stack>
-                      </Paper>
-                      ) : null}
-                      {showLaborNormEntryEditor ? (
-                      <Paper className="repair-line" elevation={0}>
-                        <Stack spacing={1.25}>
-                          <Typography className="metric-label">
-                            Ручное добавление и правка строк
-                          </Typography>
-                          <Grid container spacing={1.5}>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                select
-                                label="Каталог"
-                                value={laborNormEntryForm.scope}
-                                onChange={(event) =>
-                                  setLaborNormEntryForm((current) => ({ ...current, scope: event.target.value }))
-                                }
-                                fullWidth
-                              >
-                                {laborNormCatalogs.length === 0 ? (
-                                  <MenuItem value="" disabled>
-                                    Сначала создайте каталог
-                                  </MenuItem>
-                                ) : null}
-                                {laborNormCatalogs.map((item) => (
-                                  <MenuItem key={`entry-${item.scope}`} value={item.scope}>
-                                    {item.catalog_name} · {item.scope}
-                                  </MenuItem>
-                                ))}
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Код"
-                                value={laborNormEntryForm.code}
-                                onChange={(event) =>
-                                  setLaborNormEntryForm((current) => ({ ...current, code: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Категория"
-                                value={laborNormEntryForm.category}
-                                onChange={(event) =>
-                                  setLaborNormEntryForm((current) => ({ ...current, category: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Нормо-часы"
-                                value={laborNormEntryForm.standard_hours}
-                                onChange={(event) =>
-                                  setLaborNormEntryForm((current) => ({ ...current, standard_hours: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={6}>
-                              <TextField
-                                label="Название на русском"
-                                value={laborNormEntryForm.name_ru}
-                                onChange={(event) =>
-                                  setLaborNormEntryForm((current) => ({ ...current, name_ru: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={6}>
-                              <TextField
-                                label="Альтернативное название на русском"
-                                value={laborNormEntryForm.name_ru_alt}
-                                onChange={(event) =>
-                                  setLaborNormEntryForm((current) => ({ ...current, name_ru_alt: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Название на китайском"
-                                value={laborNormEntryForm.name_cn}
-                                onChange={(event) =>
-                                  setLaborNormEntryForm((current) => ({ ...current, name_cn: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Название на английском"
-                                value={laborNormEntryForm.name_en}
-                                onChange={(event) =>
-                                  setLaborNormEntryForm((current) => ({ ...current, name_en: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={2}>
-                              <TextField
-                                label="Лист"
-                                value={laborNormEntryForm.source_sheet}
-                                onChange={(event) =>
-                                  setLaborNormEntryForm((current) => ({ ...current, source_sheet: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={2}>
-                              <TextField
-                                label="Источник"
-                                value={laborNormEntryForm.source_file}
-                                onChange={(event) =>
-                                  setLaborNormEntryForm((current) => ({ ...current, source_file: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={2}>
-                              <TextField
-                                select
-                                label="Статус"
-                                value={laborNormEntryForm.status}
-                                onChange={(event) =>
-                                  setLaborNormEntryForm((current) => ({ ...current, status: event.target.value }))
-                                }
-                                fullWidth
-                              >
-                                <MenuItem value="preliminary">Предварительный</MenuItem>
-                                <MenuItem value="confirmed">Подтверждён</MenuItem>
-                                <MenuItem value="merged">Объединён</MenuItem>
-                                <MenuItem value="archived">Архив</MenuItem>
-                              </TextField>
-                            </Grid>
-                          </Grid>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <Button
-                              variant="contained"
-                              disabled={laborNormEntrySaving}
-                              onClick={() => {
-                                void handleSaveLaborNormEntry();
-                              }}
-                            >
-                              {laborNormEntrySaving
-                                ? "Сохранение..."
-                                : laborNormEntryForm.id
-                                  ? "Сохранить запись"
-                                  : "Создать запись"}
-                            </Button>
-                            <Button
-                              variant="text"
-                              disabled={laborNormEntrySaving}
-                              onClick={() => {
-                                resetLaborNormEntryEditor();
-                                setShowLaborNormEntryEditor(false);
-                              }}
-                            >
-                              Сбросить форму
-                            </Button>
-                          </Stack>
-                        </Stack>
-                      </Paper>
-                      ) : null}
-                      <Typography className="muted-copy">
-                        В каталоге {laborNormTotal} записей
-                        {laborNormSourceFiles.length > 0 ? ` · источники: ${laborNormSourceFiles.join(", ")}` : ""}
-                      </Typography>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
-                        <Button
-                          variant="outlined"
-                          disabled={laborNormLoading || laborNorms.length === 0}
-                          onClick={() => setShowLaborNormListDialog(true)}
-                        >
-                          Открыть список записей
-                        </Button>
-                        <Typography className="muted-copy">
-                          Полный список скрыт с основной страницы, чтобы не растягивать экран.
-                        </Typography>
-                      </Stack>
-                      {laborNormLoading ? (
-                        <Stack spacing={1} alignItems="center">
-                          <CircularProgress size={24} />
-                          <Typography className="muted-copy">Загрузка каталога...</Typography>
-                        </Stack>
-                      ) : laborNorms.length === 0 ? (
-                        <Typography className="muted-copy">По текущему фильтру записи не найдены.</Typography>
-                      ) : null}
-                      <Dialog
-                        open={showLaborNormListDialog}
-                        onClose={() => setShowLaborNormListDialog(false)}
-                        fullWidth
-                        maxWidth="lg"
-                      >
-                        <DialogTitle>Записи нормо-часов</DialogTitle>
-                        <DialogContent dividers>
-                          {laborNorms.length > 0 ? (
-                            <Stack spacing={1}>
-                              {laborNorms.map((item) => (
-                                <Paper className="repair-line" key={item.id} elevation={0}>
-                                  <Stack spacing={0.5}>
-                                    <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                      <Typography>{item.code} · {item.name_ru}</Typography>
-                                      <Typography>{formatHours(item.standard_hours) || "—"}</Typography>
-                                    </Stack>
-                                    <Typography className="muted-copy">
-                                      {item.catalog_name || item.scope}
-                                      {item.brand_family ? ` · ${item.brand_family}` : ""}
-                                      {item.category ? ` · ${item.category}` : " · Без категории"}
-                                      {item.name_ru_alt ? ` · доп. название: ${item.name_ru_alt}` : ""}
-                                      {` · статус ${formatStatus(item.status)}`}
-                                    </Typography>
-                                    <Typography className="muted-copy">
-                                      Источник: {item.source_file || "—"}
-                                      {item.source_sheet ? ` · лист ${item.source_sheet}` : ""}
-                                    </Typography>
-                                    <Stack direction="row" spacing={1} flexWrap="wrap">
-                                      <Button
-                                        size="small"
-                                        variant="outlined"
-                                        onClick={() => {
-                                          setShowLaborNormListDialog(false);
-                                          handleEditLaborNormItem(item);
-                                        }}
-                                      >
-                                        Редактировать
-                                      </Button>
-                                      {item.status !== "archived" ? (
-                                        <Button
-                                          size="small"
-                                          variant="text"
-                                          disabled={laborNormEntrySaving}
-                                          onClick={() => {
-                                            void handleArchiveLaborNormItem(item);
-                                          }}
-                                        >
-                                          В архив
-                                        </Button>
-                                      ) : null}
-                                    </Stack>
-                                  </Stack>
-                                </Paper>
-                              ))}
-                            </Stack>
-                          ) : (
-                            <Typography className="muted-copy">По текущему фильтру записи не найдены.</Typography>
-                          )}
-                        </DialogContent>
-                      </Dialog>
-                    </Stack>
-                  </Paper>
+                  <LaborNormsAdminPanel
+                    showLaborNormCatalogEditor={showLaborNormCatalogEditor}
+                    showLaborNormImport={showLaborNormImport}
+                    showLaborNormEntryEditor={showLaborNormEntryEditor}
+                    editingLaborNormCatalogId={editingLaborNormCatalogId}
+                    laborNormCatalogForm={laborNormCatalogForm}
+                    laborNormCatalogSaving={laborNormCatalogSaving}
+                    laborNormCatalogs={laborNormCatalogs}
+                    laborNormQuery={laborNormQuery}
+                    laborNormScope={laborNormScope}
+                    laborNormScopes={laborNormScopes}
+                    laborNormCategory={laborNormCategory}
+                    laborNormCategories={laborNormCategories}
+                    laborNormLoading={laborNormLoading}
+                    laborNormImportScope={laborNormImportScope}
+                    laborNormImportBrandFamily={laborNormImportBrandFamily}
+                    laborNormImportCatalogName={laborNormImportCatalogName}
+                    laborNormFile={laborNormFile}
+                    laborNormImportLoading={laborNormImportLoading}
+                    laborNormEntryForm={laborNormEntryForm}
+                    laborNormEntrySaving={laborNormEntrySaving}
+                    laborNormTotal={laborNormTotal}
+                    laborNormSourceFiles={laborNormSourceFiles}
+                    showLaborNormListDialog={showLaborNormListDialog}
+                    laborNorms={laborNorms}
+                    onToggleCatalogEditor={() => setShowLaborNormCatalogEditor((current) => !current)}
+                    onToggleImport={() => setShowLaborNormImport((current) => !current)}
+                    onToggleEntryEditor={() => setShowLaborNormEntryEditor((current) => !current)}
+                    onCatalogFormChange={(field, value) =>
+                      setLaborNormCatalogForm((current) => ({
+                        ...current,
+                        [field]: value,
+                      }))
+                    }
+                    onSaveCatalog={() => {
+                      void handleSaveLaborNormCatalog();
+                    }}
+                    onResetCatalogForm={() => {
+                      resetLaborNormCatalogEditor();
+                      setShowLaborNormCatalogEditor(false);
+                    }}
+                    onEditCatalog={handleEditLaborNormCatalog}
+                    onSelectCatalogScope={handleCatalogScopeSelected}
+                    onQueryChange={setLaborNormQuery}
+                    onScopeChange={setLaborNormScope}
+                    onCategoryChange={setLaborNormCategory}
+                    onSearch={() => {
+                      void handleLaborNormSearch();
+                    }}
+                    onResetFilters={() => {
+                      setLaborNormQuery("");
+                      setLaborNormScope("");
+                      setLaborNormCategory("");
+                      if (token) {
+                        void loadLaborNormCatalog(token, "", "", "");
+                      }
+                    }}
+                    onImportBrandFamilyChange={setLaborNormImportBrandFamily}
+                    onImportCatalogNameChange={setLaborNormImportCatalogName}
+                    onImportFileChange={setLaborNormFile}
+                    onImport={() => {
+                      void handleLaborNormImport();
+                    }}
+                    onEntryFormChange={(field, value) =>
+                      setLaborNormEntryForm((current) => ({
+                        ...current,
+                        [field]: value,
+                      }))
+                    }
+                    onSaveEntry={() => {
+                      void handleSaveLaborNormEntry();
+                    }}
+                    onResetEntryForm={() => {
+                      resetLaborNormEntryEditor();
+                      setShowLaborNormEntryEditor(false);
+                    }}
+                    onOpenListDialog={() => setShowLaborNormListDialog(true)}
+                    onCloseListDialog={() => setShowLaborNormListDialog(false)}
+                    onEditItem={handleEditLaborNormItem}
+                    onArchiveItem={(item) => {
+                      void handleArchiveLaborNormItem(item);
+                    }}
+                    formatCatalogCodeLabel={formatCatalogCodeLabel}
+                    formatStatus={formatStatus}
+                    formatHours={formatHours}
+                  />
                 ) : null}
 
                 {activeWorkspaceTab === "repair" ? (

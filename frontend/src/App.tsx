@@ -12372,6 +12372,7 @@ export default function App() {
                                           <Typography variant="subtitle1">{section.title}</Typography>
                                           {section.checks.map((check) => {
                                             const payloadDetails = buildCheckPayloadDetails(check);
+                                            const linkedRepairId = getCheckLinkedRepairId(check);
                                             return (
                                               <Paper className="repair-line" elevation={0} key={`report-check-${check.id}`}>
                                                 <Stack spacing={0.75}>
@@ -12401,6 +12402,19 @@ export default function App() {
                                                           {line}
                                                         </Typography>
                                                       ))}
+                                                    </Stack>
+                                                  ) : null}
+                                                  {linkedRepairId !== null ? (
+                                                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                                      <Button
+                                                        size="small"
+                                                        variant="text"
+                                                        onClick={() => {
+                                                          void openRepairByIds(null, linkedRepairId);
+                                                        }}
+                                                      >
+                                                        Открыть предыдущий ремонт
+                                                      </Button>
                                                     </Stack>
                                                   ) : null}
                                                 </Stack>

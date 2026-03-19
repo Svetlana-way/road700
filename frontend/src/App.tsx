@@ -30,6 +30,7 @@ import { DocumentsListPanel } from "./components/DocumentsListPanel";
 import { DocumentsUploadPanel } from "./components/DocumentsUploadPanel";
 import { EmployeesAdminPanel } from "./components/EmployeesAdminPanel";
 import { FleetPanel } from "./components/FleetPanel";
+import { FleetVehicleDetailPanel } from "./components/FleetVehicleDetailPanel";
 import { GlobalSearchPanel } from "./components/GlobalSearchPanel";
 import { HistoricalImportsAdminPanel } from "./components/HistoricalImportsAdminPanel";
 import { LaborNormsAdminPanel } from "./components/LaborNormsAdminPanel";
@@ -37,6 +38,11 @@ import { OcrLearningAdminPanel } from "./components/OcrLearningAdminPanel";
 import { OcrMatchersAdminPanel } from "./components/OcrMatchersAdminPanel";
 import { OcrRulesAdminPanel } from "./components/OcrRulesAdminPanel";
 import { RepairPanel } from "./components/RepairPanel";
+import { RepairEditSections } from "./components/RepairEditSections";
+import { RepairDocumentsSection } from "./components/RepairDocumentsSection";
+import { RepairOverviewReportPanel } from "./components/RepairOverviewReportPanel";
+import { RepairReadOnlySections } from "./components/RepairReadOnlySections";
+import { ReviewRequiredFieldsPanel } from "./components/ReviewRequiredFieldsPanel";
 import { ReviewRulesAdminPanel } from "./components/ReviewRulesAdminPanel";
 import { ReviewQueuePanel } from "./components/ReviewQueuePanel";
 import { ServicesAdminPanel } from "./components/ServicesAdminPanel";
@@ -5495,795 +5501,6 @@ export default function App() {
     }
   }
 
-  function renderRepairOverviewReport() {
-    if (!selectedRepair) {
-      return null;
-    }
-
-    const executiveReport = selectedRepair.executive_report;
-    const vehicleMatched =
-      !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
-      Boolean(selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id);
-    const serviceMatched = Boolean(selectedRepair.service?.name);
-    const reportAlertSeverity = selectedRepairAwaitingOcr
-      ? "info"
-      : selectedRepairUnresolvedChecks.length === 0
-        ? "success"
-        : selectedRepairHasBlockingFindings
-          ? "warning"
-          : "info";
-    const reportAlertText = selectedRepairAwaitingOcr
-      ? "Документ ещё находится в очереди OCR или перепроверки. Итоговый отчёт будет обновлён автоматически."
-      : selectedRepairUnresolvedChecks.length === 0
-        ? "По заказ-наряду открытых несоответствий не найдено."
-        : "В отчёте есть несоответствия. Ниже они сгруппированы по типам проверки.";
-    const conciseReportTitle = selectedRepairAwaitingOcr
-      ? "Документ обрабатывается"
-      : executiveReport.headline;
-    const overviewAttentionItems = reviewRequiredFieldComparisons.filter(
-      (item) => item.status === "missing" || item.status === "mismatch",
-    );
-    const moneyDelta =
-      selectedRepair.expected_total !== null
-        ? selectedRepair.grand_total - selectedRepair.expected_total
-        : null;
-    const moneyDeltaRatio =
-      selectedRepair.expected_total !== null && selectedRepair.expected_total > 0
-        ? (moneyDelta! / selectedRepair.expected_total) * 100
-        : null;
-    const conciseExecutiveSummary = selectedRepairAwaitingOcr
-      ? `Заказ-наряд ${selectedRepair.order_number || "без номера"} загружен. Документ еще проходит OCR, итог проверки появится автоматически после распознавания.`
-      : executiveReport.summary;
-    const conciseFacts = executiveReport.highlights.length > 0
-      ? executiveReport.highlights
-      : [
-          `Машина: ${vehicleMatched ? formatVehicle(selectedRepair.vehicle) : "не найдена в базе"}`,
-          `Сервис: ${serviceMatched ? selectedRepair.service?.name : "не найден в справочнике"}`,
-          `Проверка по базе, справочникам и истории: ${
-            selectedRepairAwaitingOcr
-              ? "ожидает завершения OCR"
-              : selectedRepairUnresolvedChecks.length === 0
-                ? "замечаний нет"
-                : `найдено ${selectedRepairUnresolvedChecks.length} несоответствий`
-          }`,
-          `Структура заказ-наряда: работ ${selectedRepair.works.length}, запчастей ${selectedRepair.parts.length}`,
-        ];
-    const conciseIssues = selectedRepairAwaitingOcr
-      ? ["Документ ещё проходит OCR или перепроверку."]
-      : executiveReport.findings.slice(0, 4).map((item) => item.title);
-
-    return (
-      <Paper className="repair-summary" elevation={0}>
-        <Stack spacing={2}>
-          <Stack
-            direction={{ xs: "column", md: "row" }}
-            spacing={1.5}
-            justifyContent="space-between"
-            alignItems={{ xs: "flex-start", md: "center" }}
-          >
-            <Box>
-              <Typography variant="h6">Итоговый отчёт по заказ-наряду</Typography>
-              <Typography className="muted-copy">
-                Сначала показываем простой итог. Полная расшифровка открывается по кнопке.
-              </Typography>
-            </Box>
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-              <Chip size="small" label={formatRepairStatus(selectedRepair.status)} />
-              <Chip
-                size="small"
-                color={executiveRiskColor(executiveReport.overall_risk)}
-                label={formatExecutiveRiskLabel(executiveReport.overall_risk)}
-              />
-              {selectedRepairDocument ? (
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  color={statusColor(selectedRepairDocument.status as DocumentStatus)}
-                  label={`Документ: ${formatDocumentStatusLabel(selectedRepairDocument.status)}`}
-                />
-              ) : null}
-              <Chip
-                size="small"
-                variant="outlined"
-                color={selectedRepairUnresolvedChecks.length > 0 ? "warning" : "success"}
-                label={
-                  selectedRepairUnresolvedChecks.length > 0
-                    ? `Несоответствий: ${selectedRepairUnresolvedChecks.length}`
-                    : "Несоответствий нет"
-                }
-              />
-            </Stack>
-          </Stack>
-
-          <Paper className="repair-line" elevation={0}>
-            <Stack spacing={1.25}>
-              <Typography variant="subtitle1">Короткий вывод для руководителя</Typography>
-              <Typography>{conciseExecutiveSummary}</Typography>
-              <Typography className="muted-copy">{conciseReportTitle}</Typography>
-              <Stack spacing={0.5}>
-                {conciseFacts.map((line) => (
-                  <Typography className="muted-copy" key={line}>
-                    {line}
-                  </Typography>
-                ))}
-              </Stack>
-              {conciseIssues.length > 0 ? (
-                <Stack spacing={0.5}>
-                  <Typography className="metric-label">Что требует внимания</Typography>
-                  {conciseIssues.map((line, index) => (
-                    <Typography className="muted-copy" key={`concise-issue-${index}`}>
-                      {line}
-                    </Typography>
-                  ))}
-                </Stack>
-              ) : null}
-              <Box>
-                <Button size="small" onClick={() => setShowRepairOverviewDetails((current) => !current)}>
-                  {showRepairOverviewDetails ? "Скрыть подробности" : "Подробнее"}
-                </Button>
-              </Box>
-            </Stack>
-          </Paper>
-
-          {showRepairOverviewDetails ? (
-            <>
-              <Alert severity={reportAlertSeverity}>
-                {reportAlertText}
-              </Alert>
-
-              <Paper className="repair-line" elevation={0}>
-                <Stack spacing={1.25}>
-                  <Stack
-                    direction={{ xs: "column", sm: "row" }}
-                    spacing={1}
-                    justifyContent="space-between"
-                    alignItems={{ xs: "flex-start", sm: "center" }}
-                  >
-                    <Box>
-                      <Typography variant="subtitle1">{executiveReport.headline}</Typography>
-                      <Typography className="muted-copy">{executiveReport.summary}</Typography>
-                    </Box>
-                    <Chip
-                      size="small"
-                      color={executiveRiskColor(executiveReport.overall_risk)}
-                      label={formatExecutiveRiskLabel(executiveReport.overall_risk)}
-                    />
-                  </Stack>
-                  {executiveReport.risk_matrix.length > 0 ? (
-                    <Stack spacing={1}>
-                      <Typography className="metric-label">Сводная оценка рисков</Typography>
-                      {executiveReport.risk_matrix.map((item) => (
-                        <Paper className="repair-line" elevation={0} key={`executive-risk-${item.zone}`}>
-                          <Stack
-                            direction={{ xs: "column", sm: "row" }}
-                            spacing={1}
-                            justifyContent="space-between"
-                            alignItems={{ xs: "flex-start", sm: "center" }}
-                          >
-                            <Box>
-                              <Typography>{item.zone}</Typography>
-                              <Typography className="muted-copy">{item.comment}</Typography>
-                            </Box>
-                            <Chip
-                              size="small"
-                              color={executiveRiskColor(item.level)}
-                              label={formatExecutiveRiskLabel(item.level)}
-                            />
-                          </Stack>
-                        </Paper>
-                      ))}
-                    </Stack>
-                  ) : null}
-                  {executiveReport.findings.length > 0 ? (
-                    <Stack spacing={1}>
-                      <Typography className="metric-label">Подозрительные моменты и риски</Typography>
-                      {executiveReport.findings.map((item, index) => (
-                        <Paper className="repair-line" elevation={0} key={`executive-finding-${index}`}>
-                          <Stack spacing={0.75}>
-                            <Stack
-                              direction={{ xs: "column", sm: "row" }}
-                              spacing={1}
-                              justifyContent="space-between"
-                              alignItems={{ xs: "flex-start", sm: "center" }}
-                            >
-                              <Typography>{item.title}</Typography>
-                              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                <Chip size="small" variant="outlined" label={item.category} />
-                                <Chip
-                                  size="small"
-                                  color={executiveRiskColor(item.severity)}
-                                  label={formatExecutiveRiskLabel(item.severity)}
-                                />
-                              </Stack>
-                            </Stack>
-                            <Typography className="muted-copy">{item.summary}</Typography>
-                            {item.rationale ? <Typography className="muted-copy">{item.rationale}</Typography> : null}
-                            {item.evidence.length > 0 ? (
-                              <Stack spacing={0.5}>
-                                {item.evidence.map((line, evidenceIndex) => (
-                                  <Typography className="muted-copy" key={`executive-evidence-${index}-${evidenceIndex}`}>
-                                    {line}
-                                  </Typography>
-                                ))}
-                              </Stack>
-                            ) : null}
-                            {item.recommendation ? (
-                              <Typography className="muted-copy">Рекомендация: {item.recommendation}</Typography>
-                            ) : null}
-                          </Stack>
-                        </Paper>
-                      ))}
-                    </Stack>
-                  ) : null}
-                  {executiveReport.recommendations.length > 0 ? (
-                    <Stack spacing={0.5}>
-                      <Typography className="metric-label">Что рекомендовано сделать</Typography>
-                      {executiveReport.recommendations.map((item, index) => (
-                        <Typography className="muted-copy" key={`executive-recommendation-${index}`}>
-                          {item}
-                        </Typography>
-                      ))}
-                    </Stack>
-                  ) : null}
-                </Stack>
-              </Paper>
-
-              <Grid container spacing={2}>
-                <Grid item xs={12} md={6}>
-                  <Paper className="repair-line" elevation={0}>
-                    <Stack spacing={1}>
-                      <Typography className="metric-label">Карточка заказ-наряда</Typography>
-                      <Grid container spacing={1.25}>
-                        <Grid item xs={12} sm={6}>
-                          <Typography className="metric-label">Номер</Typography>
-                          <Typography>{selectedRepair.order_number || "Не указан"}</Typography>
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
-                          <Typography className="metric-label">Дата ремонта</Typography>
-                          <Typography>{selectedRepair.repair_date || "—"}</Typography>
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
-                          <Typography className="metric-label">Техника</Typography>
-                          <Typography>{formatVehicle(selectedRepair.vehicle)}</Typography>
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
-                          <Typography className="metric-label">Сервис</Typography>
-                          <Typography>{selectedRepair.service?.name || "Не назначен"}</Typography>
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
-                          <Typography className="metric-label">Пробег</Typography>
-                          <Typography>{selectedRepair.mileage > 0 ? formatCompactNumber(selectedRepair.mileage) : "—"}</Typography>
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
-                          <Typography className="metric-label">OCR</Typography>
-                          <Typography>
-                            {selectedRepairDocument
-                              ? `${formatDocumentStatusLabel(selectedRepairDocument.status)} · ${formatConfidence(selectedRepairDocument.ocr_confidence)}`
-                              : "Документ не выбран"}
-                          </Typography>
-                        </Grid>
-                      </Grid>
-                    </Stack>
-                  </Paper>
-                </Grid>
-
-                <Grid item xs={12} md={6}>
-                  <Paper className="repair-line" elevation={0}>
-                    <Stack spacing={1}>
-                      <Typography className="metric-label">Суммы</Typography>
-                      <Grid container spacing={1.25}>
-                        <Grid item xs={6}>
-                          <Typography className="metric-label">Работы</Typography>
-                          <Typography>{formatMoney(selectedRepair.work_total) || "—"}</Typography>
-                        </Grid>
-                        <Grid item xs={6}>
-                          <Typography className="metric-label">Запчасти</Typography>
-                          <Typography>{formatMoney(selectedRepair.parts_total) || "—"}</Typography>
-                        </Grid>
-                        <Grid item xs={6}>
-                          <Typography className="metric-label">НДС</Typography>
-                          <Typography>{formatMoney(selectedRepair.vat_total) || "—"}</Typography>
-                        </Grid>
-                        <Grid item xs={6}>
-                          <Typography className="metric-label">Итого</Typography>
-                          <Typography>{formatMoney(selectedRepair.grand_total) || "—"}</Typography>
-                        </Grid>
-                        <Grid item xs={6}>
-                          <Typography className="metric-label">Работ</Typography>
-                          <Typography>{formatCompactNumber(selectedRepair.works.length)}</Typography>
-                        </Grid>
-                        <Grid item xs={6}>
-                          <Typography className="metric-label">Запчастей</Typography>
-                          <Typography>{formatCompactNumber(selectedRepair.parts.length)}</Typography>
-                        </Grid>
-                        {selectedRepair.expected_total !== null ? (
-                          <>
-                            <Grid item xs={6}>
-                              <Typography className="metric-label">Ожидаемая сумма</Typography>
-                              <Typography>{formatMoney(selectedRepair.expected_total) || "—"}</Typography>
-                            </Grid>
-                            <Grid item xs={6}>
-                              <Typography className="metric-label">Отклонение</Typography>
-                              <Typography>
-                                {moneyDelta !== null ? formatMoney(moneyDelta) : "—"}
-                                {moneyDeltaRatio !== null
-                                  ? ` · ${moneyDelta! >= 0 ? "+" : ""}${new Intl.NumberFormat("ru-RU", {
-                                      maximumFractionDigits: 1,
-                                    }).format(moneyDeltaRatio)}%`
-                                  : ""}
-                              </Typography>
-                            </Grid>
-                          </>
-                        ) : null}
-                      </Grid>
-                    </Stack>
-                  </Paper>
-                </Grid>
-              </Grid>
-
-              {selectedRepairDocument ? (
-                <Paper className="repair-line" elevation={0}>
-                  <Stack spacing={1}>
-                    <Stack
-                      direction={{ xs: "column", sm: "row" }}
-                      spacing={1}
-                      justifyContent="space-between"
-                      alignItems={{ xs: "flex-start", sm: "center" }}
-                    >
-                      <Typography className="metric-label">Короткая сверка OCR</Typography>
-                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                        <Chip
-                          size="small"
-                          variant="outlined"
-                          label={`OCR ${formatConfidence(selectedRepairDocument.ocr_confidence)}`}
-                        />
-                        <Chip
-                          size="small"
-                          color={selectedRepairComparisonAttentionCount > 0 ? "warning" : "success"}
-                          label={
-                            selectedRepairComparisonAttentionCount > 0
-                              ? `Требует сверки: ${selectedRepairComparisonAttentionCount}`
-                              : "Ключевые поля сверены"
-                          }
-                        />
-                        <Chip
-                          size="small"
-                          variant="outlined"
-                          label={`Строк: работ ${selectedRepairDocumentWorks.length}, запчастей ${selectedRepairDocumentParts.length}`}
-                        />
-                      </Stack>
-                    </Stack>
-                    {overviewAttentionItems.length > 0 ? (
-                      <Stack spacing={0.75}>
-                        {overviewAttentionItems.map((item) => (
-                          <Typography className="muted-copy" key={`overview-attention-${item.key}`}>
-                            {item.label}: в ремонте {item.currentDisplay} · OCR {item.ocrDisplay}
-                          </Typography>
-                        ))}
-                      </Stack>
-                    ) : (
-                      <Typography className="muted-copy">Ключевые поля OCR совпадают с подтверждёнными данными.</Typography>
-                    )}
-                    {selectedRepairDocumentManualReviewReasons.length > 0 ? (
-                      <Typography className="muted-copy">
-                        Ручная проверка OCR: {formatManualReviewReasons(selectedRepairDocumentManualReviewReasons)}.
-                      </Typography>
-                    ) : null}
-                  </Stack>
-                </Paper>
-              ) : null}
-
-              {selectedRepairReportSections.length > 0 ? (
-                <Stack spacing={1.5}>
-                  {selectedRepairReportSections.map((section) => (
-                    <Stack spacing={1} key={`report-section-${section.key}`}>
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Typography variant="subtitle1">{section.title}</Typography>
-                        <Chip size="small" variant="outlined" label={formatCompactNumber(section.checks.length)} />
-                      </Stack>
-                      {section.checks.map((check) => {
-                        const payloadDetails = buildCheckPayloadDetails(check);
-                        const linkedRepairId = getCheckLinkedRepairId(check);
-                        return (
-                          <Paper className="repair-line" elevation={0} key={`report-check-${check.id}`}>
-                            <Stack spacing={0.75}>
-                              <Stack
-                                direction={{ xs: "column", sm: "row" }}
-                                justifyContent="space-between"
-                                spacing={1}
-                                alignItems={{ xs: "flex-start", sm: "center" }}
-                              >
-                                <Typography>{check.title}</Typography>
-                                <Chip
-                                  size="small"
-                                  color={checkSeverityColor(check.severity)}
-                                  label={formatStatus(check.severity)}
-                                />
-                              </Stack>
-                              {check.details ? <Typography className="muted-copy">{check.details}</Typography> : null}
-                              {payloadDetails.length > 0 ? (
-                                <Stack spacing={0.5}>
-                                  {payloadDetails.slice(0, 3).map((line, index) => (
-                                    <Typography className="muted-copy" key={`report-check-payload-${check.id}-${index}`}>
-                                      {line}
-                                    </Typography>
-                                  ))}
-                                </Stack>
-                              ) : null}
-                              {linkedRepairId !== null ? (
-                                <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                  <Button
-                                    size="small"
-                                    variant="text"
-                                    onClick={() => {
-                                      void openRepairByIds(null, linkedRepairId);
-                                    }}
-                                  >
-                                    Открыть предыдущий ремонт
-                                  </Button>
-                                </Stack>
-                              ) : null}
-                            </Stack>
-                          </Paper>
-                        );
-                      })}
-                    </Stack>
-                  ))}
-                </Stack>
-              ) : null}
-            </>
-          ) : null}
-        </Stack>
-      </Paper>
-    );
-  }
-
-  function renderSelectedFleetVehicleDetail() {
-    if (selectedFleetVehicleLoading) {
-      return (
-        <Stack spacing={1} alignItems="center" className="repair-placeholder">
-          <CircularProgress size={24} />
-          <Typography className="muted-copy">Загрузка карточки техники...</Typography>
-        </Stack>
-      );
-    }
-
-    if (!selectedFleetVehicle) {
-      return (
-        <Stack spacing={1} alignItems="center" className="repair-placeholder">
-          <Typography className="muted-copy">
-            Выберите технику из списка, чтобы открыть карточку.
-          </Typography>
-        </Stack>
-      );
-    }
-
-    return (
-      <Stack spacing={1.5}>
-        <Paper className="repair-summary" elevation={0}>
-          <Stack spacing={1.5}>
-            <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-              <Box>
-                <Typography variant="h6">{formatVehicle(selectedFleetVehicle)}</Typography>
-                <Typography className="muted-copy">
-                  {selectedFleetVehicle.external_id ? `Внешний код: ${selectedFleetVehicle.external_id}` : "Внешний код не указан"}
-                </Typography>
-              </Box>
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap justifyContent="flex-end">
-                {user?.role === "admin" ? (
-                  selectedFleetVehicle.status === "archived" ? (
-                    <Button
-                      variant="outlined"
-                      disabled={vehicleSaving}
-                      onClick={() => {
-                        void handleUpdateVehicle({ status: "active" });
-                      }}
-                    >
-                      {vehicleSaving ? "Сохранение..." : "Вернуть из архива"}
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="outlined"
-                      color="warning"
-                      disabled={vehicleSaving}
-                      onClick={() => {
-                        void handleUpdateVehicle({ status: "archived" });
-                      }}
-                    >
-                      {vehicleSaving ? "Сохранение..." : "В архив"}
-                    </Button>
-                  )
-                ) : null}
-                <Button variant="outlined" onClick={() => void handleExportVehicle()} disabled={vehicleExportLoading}>
-                  {vehicleExportLoading ? "Экспорт..." : "Экспорт Excel"}
-                </Button>
-                <Chip size="small" variant="outlined" label={formatVehicleTypeLabel(selectedFleetVehicle.vehicle_type)} />
-                <Chip size="small" color={vehicleStatusColor(selectedFleetVehicle.status)} label={formatVehicleStatusLabel(selectedFleetVehicle.status)} />
-              </Stack>
-            </Stack>
-            <Grid container spacing={2}>
-              <Grid item xs={12} sm={6}>
-                <Typography className="metric-label">VIN</Typography>
-                <Typography>{selectedFleetVehicle.vin || "Не указан"}</Typography>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <Typography className="metric-label">Год</Typography>
-                <Typography>{selectedFleetVehicle.year || "Не указан"}</Typography>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <Typography className="metric-label">Водитель</Typography>
-                <Typography>{selectedFleetVehicle.current_driver_name || "Не указан"}</Typography>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <Typography className="metric-label">Механик</Typography>
-                <Typography>{selectedFleetVehicle.mechanic_name || "Не указан"}</Typography>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <Typography className="metric-label">Колонна</Typography>
-                <Typography>{selectedFleetVehicle.column_name || "Не указана"}</Typography>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <Typography className="metric-label">Обновлено</Typography>
-                <Typography>{formatDateTime(selectedFleetVehicle.updated_at)}</Typography>
-              </Grid>
-            </Grid>
-            {selectedFleetVehicle.comment ? (
-              <Box>
-                <Typography className="metric-label">Комментарий</Typography>
-                <Typography>{selectedFleetVehicle.comment}</Typography>
-              </Box>
-            ) : null}
-          </Stack>
-        </Paper>
-        <Paper className="repair-summary" elevation={0}>
-          <Stack spacing={1.5}>
-            <Typography variant="h6">История по технике</Typography>
-            <Grid container spacing={2}>
-              <Grid item xs={6} sm={3}>
-                <Typography className="metric-label">Ремонтов</Typography>
-                <Typography>{selectedFleetVehicle.history_summary.repairs_total}</Typography>
-              </Grid>
-              <Grid item xs={6} sm={3}>
-                <Typography className="metric-label">Документов</Typography>
-                <Typography>{selectedFleetVehicle.history_summary.documents_total}</Typography>
-              </Grid>
-              <Grid item xs={6} sm={3}>
-                <Typography className="metric-label">Подтверждено</Typography>
-                <Typography>{selectedFleetVehicle.history_summary.confirmed_repairs}</Typography>
-              </Grid>
-              <Grid item xs={6} sm={3}>
-                <Typography className="metric-label">Подозрительных</Typography>
-                <Typography>{selectedFleetVehicle.history_summary.suspicious_repairs}</Typography>
-              </Grid>
-              <Grid item xs={6} sm={6}>
-                <Typography className="metric-label">Последний ремонт</Typography>
-                <Typography>
-                  {selectedFleetVehicle.history_summary.last_repair_date
-                    ? formatDateValue(selectedFleetVehicle.history_summary.last_repair_date)
-                    : "Не найден"}
-                </Typography>
-              </Grid>
-              <Grid item xs={6} sm={6}>
-                <Typography className="metric-label">Последний пробег</Typography>
-                <Typography>
-                  {typeof selectedFleetVehicle.history_summary.last_mileage === "number"
-                    ? selectedFleetVehicle.history_summary.last_mileage
-                    : "Не указан"}
-                </Typography>
-              </Grid>
-            </Grid>
-          </Stack>
-        </Paper>
-        <Paper className="repair-summary" elevation={0}>
-          <Stack spacing={1.5}>
-            <Typography variant="h6">История из 2025 для ИИ</Typography>
-            <Grid container spacing={2}>
-              <Grid item xs={6} sm={4}>
-                <Typography className="metric-label">Исторических ремонтов</Typography>
-                <Typography>{selectedFleetVehicle.historical_history_summary.repairs_total}</Typography>
-              </Grid>
-              <Grid item xs={6} sm={4}>
-                <Typography className="metric-label">Сервисов</Typography>
-                <Typography>{selectedFleetVehicle.historical_history_summary.services_total}</Typography>
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                <Typography className="metric-label">Сумма по истории</Typography>
-                <Typography>{formatMoney(selectedFleetVehicle.historical_history_summary.total_spend)}</Typography>
-              </Grid>
-              <Grid item xs={6} sm={6}>
-                <Typography className="metric-label">Первый ремонт в истории</Typography>
-                <Typography>
-                  {selectedFleetVehicle.historical_history_summary.first_repair_date
-                    ? formatDateValue(selectedFleetVehicle.historical_history_summary.first_repair_date)
-                    : "Не найден"}
-                </Typography>
-              </Grid>
-              <Grid item xs={6} sm={6}>
-                <Typography className="metric-label">Последний ремонт в истории</Typography>
-                <Typography>
-                  {selectedFleetVehicle.historical_history_summary.last_repair_date
-                    ? formatDateValue(selectedFleetVehicle.historical_history_summary.last_repair_date)
-                    : "Не найден"}
-                </Typography>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <Typography className="metric-label">Последний исторический пробег</Typography>
-                <Typography>
-                  {typeof selectedFleetVehicle.historical_history_summary.last_mileage === "number"
-                    ? selectedFleetVehicle.historical_history_summary.last_mileage
-                    : "Не указан"}
-                </Typography>
-              </Grid>
-            </Grid>
-            {selectedFleetVehicle.historical_repair_history.length > 0 ? (
-              selectedFleetVehicle.historical_repair_history.map((repair) => (
-                <Paper className="repair-line" key={`vehicle-historical-repair-${repair.repair_id}`} elevation={0}>
-                  <Stack spacing={0.75}>
-                    <Stack
-                      direction={{ xs: "column", sm: "row" }}
-                      justifyContent="space-between"
-                      spacing={1}
-                      alignItems={{ xs: "flex-start", sm: "center" }}
-                    >
-                      <Typography>
-                        История #{repair.repair_id}
-                        {repair.order_number ? ` · ${repair.order_number}` : ""}
-                      </Typography>
-                      <Chip size="small" variant="outlined" label={formatMoney(repair.grand_total)} />
-                    </Stack>
-                    <Typography className="muted-copy">
-                      {[
-                        formatDateValue(repair.repair_date),
-                        `пробег ${repair.mileage}`,
-                        repair.service_name,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </Typography>
-                    {repair.employee_comment ? (
-                      <Typography className="muted-copy">{repair.employee_comment}</Typography>
-                    ) : null}
-                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={() => {
-                          void openRepairByIds(null, repair.repair_id);
-                        }}
-                      >
-                        Открыть исторический ремонт
-                      </Button>
-                    </Stack>
-                  </Stack>
-                </Paper>
-              ))
-            ) : (
-              <Typography className="muted-copy">
-                По этой технике история из `2025 для ИИ` не найдена.
-              </Typography>
-            )}
-          </Stack>
-        </Paper>
-        <Paper className="repair-summary" elevation={0}>
-          <Stack spacing={1.25}>
-            <Typography variant="h6">Текущие закрепления</Typography>
-            {selectedFleetVehicle.active_assignments.length > 0 ? (
-              selectedFleetVehicle.active_assignments.map((assignment) => (
-                <Paper className="repair-line" key={`vehicle-assignment-${assignment.id}`} elevation={0}>
-                  <Stack spacing={0.5}>
-                    <Stack
-                      direction={{ xs: "column", sm: "row" }}
-                      justifyContent="space-between"
-                      spacing={1}
-                      alignItems={{ xs: "flex-start", sm: "center" }}
-                    >
-                      <Typography>{assignment.user.full_name}</Typography>
-                      <Chip size="small" variant="outlined" label={formatUserRoleLabel(assignment.user.role)} />
-                    </Stack>
-                    <Typography className="muted-copy">{assignment.user.email}</Typography>
-                    <Typography className="muted-copy">
-                      С {formatDateValue(assignment.starts_at)}
-                      {assignment.ends_at ? ` по ${formatDateValue(assignment.ends_at)}` : " по настоящее время"}
-                    </Typography>
-                    {assignment.comment ? <Typography className="muted-copy">{assignment.comment}</Typography> : null}
-                  </Stack>
-                </Paper>
-              ))
-            ) : (
-              <Typography className="muted-copy">Сейчас техника ни за кем не закреплена.</Typography>
-            )}
-          </Stack>
-        </Paper>
-        <Paper className="repair-summary" elevation={0}>
-          <Stack spacing={1.25}>
-            <Typography variant="h6">Активные связки</Typography>
-            {selectedFleetVehicle.active_links.length > 0 ? (
-              selectedFleetVehicle.active_links.map((link) => {
-                const linkedVehicleId =
-                  link.left_vehicle_id === selectedFleetVehicle.id ? link.right_vehicle_id : link.left_vehicle_id;
-                const linkedVehicle =
-                  vehicles.find((item) => item.id === linkedVehicleId) ??
-                  fleetVehicles.find((item) => item.id === linkedVehicleId) ??
-                  null;
-
-                return (
-                  <Paper className="repair-line" key={`vehicle-link-${link.id}`} elevation={0}>
-                    <Stack spacing={0.5}>
-                      <Typography>
-                        {linkedVehicle ? formatVehicle(linkedVehicle) : `Техника #${linkedVehicleId}`}
-                      </Typography>
-                      <Typography className="muted-copy">
-                        С {formatDateValue(link.starts_at)}
-                        {link.ends_at ? ` по ${formatDateValue(link.ends_at)}` : " по настоящее время"}
-                      </Typography>
-                      {link.comment ? <Typography className="muted-copy">{link.comment}</Typography> : null}
-                    </Stack>
-                  </Paper>
-                );
-              })
-            ) : (
-              <Typography className="muted-copy">
-                Активные связки для этой единицы техники не найдены.
-              </Typography>
-            )}
-          </Stack>
-        </Paper>
-        <Paper className="repair-summary" elevation={0}>
-          <Stack spacing={1.25}>
-            <Typography variant="h6">История ремонтов</Typography>
-            {selectedFleetVehicle.repair_history.length > 0 ? (
-              selectedFleetVehicle.repair_history.map((repair) => (
-                <Paper className="repair-line" key={`vehicle-repair-${repair.repair_id}`} elevation={0}>
-                  <Stack spacing={0.75}>
-                    <Stack
-                      direction={{ xs: "column", sm: "row" }}
-                      justifyContent="space-between"
-                      spacing={1}
-                      alignItems={{ xs: "flex-start", sm: "center" }}
-                    >
-                      <Typography>
-                        Ремонт #{repair.repair_id}
-                        {repair.order_number ? ` · ${repair.order_number}` : ""}
-                      </Typography>
-                      <Stack direction="row" spacing={1}>
-                        <Chip size="small" variant="outlined" label={formatRepairStatus(repair.status)} />
-                        <Chip size="small" variant="outlined" label={`документов ${repair.documents_total}`} />
-                      </Stack>
-                    </Stack>
-                    <Typography className="muted-copy">
-                      {[
-                        formatDateValue(repair.repair_date),
-                        `пробег ${repair.mileage}`,
-                        repair.service_name,
-                        formatMoney(repair.grand_total),
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </Typography>
-                    <Typography className="muted-copy">Обновлено {formatDateTime(repair.updated_at)}</Typography>
-                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={() => {
-                          void openRepairByIds(null, repair.repair_id);
-                        }}
-                      >
-                        Открыть ремонт
-                      </Button>
-                    </Stack>
-                  </Stack>
-                </Paper>
-              ))
-            ) : (
-              <Typography className="muted-copy">По этой технике ремонтов пока нет.</Typography>
-            )}
-          </Stack>
-        </Paper>
-      </Stack>
-    );
-  }
-
   async function handleOpenRepair(document: DocumentItem) {
     await openRepairByIds(document.id, document.repair.id);
   }
@@ -9422,167 +8639,27 @@ export default function App() {
                                         </Stack>
                                       </Paper>
 
-                                      <Paper className="repair-line repair-review-split" elevation={0}>
-                                        <Stack spacing={1.25}>
-                                          <Box>
-                                            <Typography variant="subtitle1">Сверка обязательных полей</Typography>
-                                            <Typography className="muted-copy">
-                                              Перед подтверждением проверьте обязательные поля и при необходимости поправьте их прямо здесь.
-                                            </Typography>
-                                          </Box>
-                                          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                            <Chip
-                                              size="small"
-                                              color={canConfirmSelectedReview ? "success" : "warning"}
-                                              label={`Готово ${reviewReadyFieldsCount}/${reviewRequiredFieldComparisons.length}`}
-                                            />
-                                            <Button
-                                              size="small"
-                                              variant="outlined"
-                                              disabled={reviewFieldSaving}
-                                              onClick={() => {
-                                                setShowReviewFieldEditor((current) => !current);
-                                              }}
-                                            >
-                                              {showReviewFieldEditor ? "Скрыть правки" : "Править поля"}
-                                            </Button>
-                                            <Button
-                                              size="small"
-                                              variant="text"
-                                              disabled={reviewFieldSaving}
-                                              onClick={fillReviewFieldDraftFromOcr}
-                                            >
-                                              Заполнить из OCR
-                                            </Button>
-                                          </Stack>
-                                          {!canConfirmSelectedReview ? (
-                                            <Alert severity="warning">
-                                              Для подтверждения нужно заполнить: {reviewMissingRequiredFields.join(", ")}.
-                                            </Alert>
-                                          ) : null}
-                                          <Grid container spacing={1.25}>
-                                            {reviewRequiredFieldComparisons.map((item) => (
-                                              <Grid item xs={12} sm={6} key={item.key}>
-                                                <Paper className="repair-line" elevation={0}>
-                                                  <Stack spacing={0.75}>
-                                                    <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
-                                                      <Typography className="metric-label">{item.label}</Typography>
-                                                      <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap justifyContent="flex-end">
-                                                        <Chip
-                                                          size="small"
-                                                          color={getReviewComparisonColor(item.status)}
-                                                          label={getReviewComparisonLabel(item.status)}
-                                                        />
-                                                        <Chip
-                                                          size="small"
-                                                          variant="outlined"
-                                                          color={getConfidenceColor(item.confidenceValue)}
-                                                          label={formatConfidenceLabel(item.confidenceValue)}
-                                                        />
-                                                      </Stack>
-                                                    </Stack>
-                                                    <Typography>В ремонте: {item.currentDisplay}</Typography>
-                                                    <Typography className="muted-copy">OCR: {item.ocrDisplay}</Typography>
-                                                  </Stack>
-                                                </Paper>
-                                              </Grid>
-                                            ))}
-                                          </Grid>
-                                          {showReviewFieldEditor && reviewFieldDraft ? (
-                                            <Grid container spacing={1.5}>
-                                              <Grid item xs={12} sm={6}>
-                                                <TextField
-                                                  fullWidth
-                                                  label="Номер заказ-наряда"
-                                                  value={reviewFieldDraft.order_number}
-                                                  onChange={(event) => updateReviewFieldDraft("order_number", event.target.value)}
-                                                />
-                                              </Grid>
-                                              <Grid item xs={12} sm={6}>
-                                                <TextField
-                                                  type="date"
-                                                  fullWidth
-                                                  label="Дата ремонта"
-                                                  value={reviewFieldDraft.repair_date}
-                                                  onChange={(event) => updateReviewFieldDraft("repair_date", event.target.value)}
-                                                  InputLabelProps={{ shrink: true }}
-                                                />
-                                              </Grid>
-                                              <Grid item xs={12} sm={6}>
-                                                <TextField
-                                                  fullWidth
-                                                  label="Пробег"
-                                                  value={reviewFieldDraft.mileage}
-                                                  onChange={(event) => updateReviewFieldDraft("mileage", event.target.value)}
-                                                />
-                                              </Grid>
-                                              <Grid item xs={12} sm={6}>
-                                                <TextField
-                                                  fullWidth
-                                                  label="Итоговая сумма"
-                                                  value={reviewFieldDraft.grand_total}
-                                                  onChange={(event) => updateReviewFieldDraft("grand_total", event.target.value)}
-                                                />
-                                              </Grid>
-                                              <Grid item xs={12} sm={4}>
-                                                <TextField
-                                                  fullWidth
-                                                  label="Работы"
-                                                  value={reviewFieldDraft.work_total}
-                                                  onChange={(event) => updateReviewFieldDraft("work_total", event.target.value)}
-                                                />
-                                              </Grid>
-                                              <Grid item xs={12} sm={4}>
-                                                <TextField
-                                                  fullWidth
-                                                  label="Запчасти"
-                                                  value={reviewFieldDraft.parts_total}
-                                                  onChange={(event) => updateReviewFieldDraft("parts_total", event.target.value)}
-                                                />
-                                              </Grid>
-                                              <Grid item xs={12} sm={4}>
-                                                <TextField
-                                                  fullWidth
-                                                  label="НДС"
-                                                  value={reviewFieldDraft.vat_total}
-                                                  onChange={(event) => updateReviewFieldDraft("vat_total", event.target.value)}
-                                                />
-                                              </Grid>
-                                              <Grid item xs={12}>
-                                                <TextField
-                                                  fullWidth
-                                                  multiline
-                                                  minRows={2}
-                                                  label="Причина ремонта"
-                                                  value={reviewFieldDraft.reason}
-                                                  onChange={(event) => updateReviewFieldDraft("reason", event.target.value)}
-                                                />
-                                              </Grid>
-                                              <Grid item xs={12}>
-                                                <TextField
-                                                  fullWidth
-                                                  multiline
-                                                  minRows={2}
-                                                  label="Комментарий сотрудника"
-                                                  value={reviewFieldDraft.employee_comment}
-                                                  onChange={(event) => updateReviewFieldDraft("employee_comment", event.target.value)}
-                                                />
-                                              </Grid>
-                                              <Grid item xs={12}>
-                                                <Button
-                                                  variant="contained"
-                                                  disabled={reviewFieldSaving}
-                                                  onClick={() => {
-                                                    void handleSaveReviewFields();
-                                                  }}
-                                                >
-                                                  {reviewFieldSaving ? "Сохранение..." : "Сохранить поля проверки"}
-                                                </Button>
-                                              </Grid>
-                                            </Grid>
-                                          ) : null}
-                                        </Stack>
-                                      </Paper>
+                                      <ReviewRequiredFieldsPanel
+                                        canConfirmSelectedReview={canConfirmSelectedReview}
+                                        reviewReadyFieldsCount={reviewReadyFieldsCount}
+                                        reviewRequiredFieldComparisons={reviewRequiredFieldComparisons}
+                                        reviewFieldSaving={reviewFieldSaving}
+                                        showReviewFieldEditor={showReviewFieldEditor}
+                                        reviewFieldDraft={reviewFieldDraft}
+                                        reviewMissingRequiredFields={reviewMissingRequiredFields}
+                                        onToggleEditor={() => {
+                                          setShowReviewFieldEditor((current) => !current);
+                                        }}
+                                        onFillFromOcr={fillReviewFieldDraftFromOcr}
+                                        onDraftChange={updateReviewFieldDraft}
+                                        onSave={() => {
+                                          void handleSaveReviewFields();
+                                        }}
+                                        getReviewComparisonColor={getReviewComparisonColor}
+                                        getReviewComparisonLabel={getReviewComparisonLabel}
+                                        getConfidenceColor={getConfidenceColor}
+                                        formatConfidenceLabel={formatConfidenceLabel}
+                                      />
 
                                       <Paper className="repair-line repair-review-split" elevation={0}>
                                         <Stack spacing={1.25}>
@@ -9998,815 +9075,157 @@ export default function App() {
                         </Paper>
 
                         {isEditingRepair && repairDraft ? (
-                          <Stack spacing={2}>
-                            {activeRepairTab === "overview" ? (
-                              <Paper className="repair-summary" elevation={0}>
-                              <Grid container spacing={2}>
-                                <Grid item xs={12} sm={6}>
-                                  <TextField
-                                    label="Заказ-наряд"
-                                    value={repairDraft.order_number}
-                                    onChange={(event) => updateRepairDraftField("order_number", event.target.value)}
-                                    fullWidth
-                                  />
-                                </Grid>
-                                <Grid item xs={12} sm={6}>
-                                  <TextField
-                                    label="Сервис"
-                                    value={repairDraft.service_name}
-                                    onChange={(event) => updateRepairDraftField("service_name", event.target.value)}
-                                    inputProps={{ list: "known-services-list" }}
-                                    helperText={services.length > 0 ? "Выберите сервис из справочника, синхронизируемого из папки `Сервисы`." : undefined}
-                                    fullWidth
-                                  />
-                                  <datalist id="known-services-list">
-                                    {services.map((item) => (
-                                      <option key={`service-option-${item.id}`} value={item.name} />
-                                    ))}
-                                  </datalist>
-                                </Grid>
-                                <Grid item xs={12} sm={6}>
-                                  <TextField
-                                    type="date"
-                                    label="Дата ремонта"
-                                    value={repairDraft.repair_date}
-                                    onChange={(event) => updateRepairDraftField("repair_date", event.target.value)}
-                                    InputLabelProps={{ shrink: true }}
-                                    fullWidth
-                                  />
-                                </Grid>
-                                <Grid item xs={12} sm={6}>
-                                  <TextField
-                                    type="number"
-                                    label="Пробег"
-                                    value={repairDraft.mileage}
-                                    onChange={(event) => updateRepairDraftField("mileage", Number(event.target.value))}
-                                    fullWidth
-                                  />
-                                </Grid>
-                                <Grid item xs={6}>
-                                  <TextField
-                                    type="number"
-                                    label="Работы"
-                                    value={repairDraft.work_total}
-                                    onChange={(event) => updateRepairDraftField("work_total", Number(event.target.value))}
-                                    fullWidth
-                                  />
-                                </Grid>
-                                <Grid item xs={6}>
-                                  <TextField
-                                    type="number"
-                                    label="Запчасти"
-                                    value={repairDraft.parts_total}
-                                    onChange={(event) => updateRepairDraftField("parts_total", Number(event.target.value))}
-                                    fullWidth
-                                  />
-                                </Grid>
-                                <Grid item xs={6}>
-                                  <TextField
-                                    type="number"
-                                    label="НДС"
-                                    value={repairDraft.vat_total}
-                                    onChange={(event) => updateRepairDraftField("vat_total", Number(event.target.value))}
-                                    fullWidth
-                                  />
-                                </Grid>
-                                <Grid item xs={6}>
-                                  <TextField
-                                    type="number"
-                                    label="Итого"
-                                    value={repairDraft.grand_total}
-                                    onChange={(event) => updateRepairDraftField("grand_total", Number(event.target.value))}
-                                    fullWidth
-                                  />
-                                </Grid>
-                                <Grid item xs={12}>
-                                  <TextField
-                                    label="Причина ремонта"
-                                    value={repairDraft.reason}
-                                    onChange={(event) => updateRepairDraftField("reason", event.target.value)}
-                                    fullWidth
-                                    multiline
-                                    minRows={2}
-                                  />
-                                </Grid>
-                                <Grid item xs={12}>
-                                  <TextField
-                                    label="Комментарий сотрудника"
-                                    value={repairDraft.employee_comment}
-                                    onChange={(event) => updateRepairDraftField("employee_comment", event.target.value)}
-                                    fullWidth
-                                    multiline
-                                    minRows={2}
-                                  />
-                                </Grid>
-                              </Grid>
-                              </Paper>
-                            ) : null}
-
-                            {activeRepairTab === "works" ? (
-                              <Stack spacing={1}>
-                              <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                                <Typography variant="h6">Работы</Typography>
-                                <Button size="small" variant="text" onClick={addWorkDraft}>Добавить работу</Button>
-                              </Stack>
-                              {repairDraft.works.map((item, index) => (
-                                <Paper className="repair-line" key={`work-${index}`} elevation={0}>
-                                  <Grid container spacing={1.5}>
-                                    <Grid item xs={12}>
-                                      <TextField
-                                        label="Наименование работы"
-                                        value={item.work_name}
-                                        onChange={(event) => updateWorkDraft(index, "work_name", event.target.value)}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={6}>
-                                      <TextField
-                                        label="Код"
-                                        value={item.work_code}
-                                        onChange={(event) => updateWorkDraft(index, "work_code", event.target.value)}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={6}>
-                                      <TextField
-                                        type="number"
-                                        label="Кол-во"
-                                        value={item.quantity}
-                                        onChange={(event) => updateWorkDraft(index, "quantity", Number(event.target.value))}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={6}>
-                                      <TextField
-                                        type="number"
-                                        label="Нормо-часы"
-                                        value={item.standard_hours}
-                                        onChange={(event) => updateWorkDraft(index, "standard_hours", event.target.value === "" ? "" : Number(event.target.value))}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={6}>
-                                      <TextField
-                                        type="number"
-                                        label="Факт-часы"
-                                        value={item.actual_hours}
-                                        onChange={(event) => updateWorkDraft(index, "actual_hours", event.target.value === "" ? "" : Number(event.target.value))}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={6}>
-                                      <TextField
-                                        type="number"
-                                        label="Цена"
-                                        value={item.price}
-                                        onChange={(event) => updateWorkDraft(index, "price", Number(event.target.value))}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={6}>
-                                      <TextField
-                                        type="number"
-                                        label="Сумма"
-                                        value={item.line_total}
-                                        onChange={(event) => updateWorkDraft(index, "line_total", Number(event.target.value))}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={12}>
-                                      <Button size="small" color="error" onClick={() => removeWorkDraft(index)}>
-                                        Удалить работу
-                                      </Button>
-                                    </Grid>
-                                  </Grid>
-                                </Paper>
-                              ))}
-                              </Stack>
-                            ) : null}
-
-                            {activeRepairTab === "parts" ? (
-                              <Stack spacing={1}>
-                              <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                                <Typography variant="h6">Запчасти</Typography>
-                                <Button size="small" variant="text" onClick={addPartDraft}>Добавить запчасть</Button>
-                              </Stack>
-                              {repairDraft.parts.map((item, index) => (
-                                <Paper className="repair-line" key={`part-${index}`} elevation={0}>
-                                  <Grid container spacing={1.5}>
-                                    <Grid item xs={12}>
-                                      <TextField
-                                        label="Наименование запчасти"
-                                        value={item.part_name}
-                                        onChange={(event) => updatePartDraft(index, "part_name", event.target.value)}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={6}>
-                                      <TextField
-                                        label="Артикул"
-                                        value={item.article}
-                                        onChange={(event) => updatePartDraft(index, "article", event.target.value)}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={6}>
-                                      <TextField
-                                        label="Ед. изм."
-                                        value={item.unit_name}
-                                        onChange={(event) => updatePartDraft(index, "unit_name", event.target.value)}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={4}>
-                                      <TextField
-                                        type="number"
-                                        label="Кол-во"
-                                        value={item.quantity}
-                                        onChange={(event) => updatePartDraft(index, "quantity", Number(event.target.value))}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={4}>
-                                      <TextField
-                                        type="number"
-                                        label="Цена"
-                                        value={item.price}
-                                        onChange={(event) => updatePartDraft(index, "price", Number(event.target.value))}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={4}>
-                                      <TextField
-                                        type="number"
-                                        label="Сумма"
-                                        value={item.line_total}
-                                        onChange={(event) => updatePartDraft(index, "line_total", Number(event.target.value))}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={12}>
-                                      <Button size="small" color="error" onClick={() => removePartDraft(index)}>
-                                        Удалить запчасть
-                                      </Button>
-                                    </Grid>
-                                  </Grid>
-                                </Paper>
-                              ))}
-                              </Stack>
-                            ) : null}
-                          </Stack>
+                          <RepairEditSections
+                            activeRepairTab={activeRepairTab}
+                            repairDraft={repairDraft}
+                            services={services}
+                            onRepairFieldChange={updateRepairDraftField}
+                            onAddWorkDraft={addWorkDraft}
+                            onUpdateWorkDraft={updateWorkDraft}
+                            onRemoveWorkDraft={removeWorkDraft}
+                            onAddPartDraft={addPartDraft}
+                            onUpdatePartDraft={updatePartDraft}
+                            onRemovePartDraft={removePartDraft}
+                          />
                         ) : (
                           <>
                             {activeRepairTab === "overview" ? (
-                              renderRepairOverviewReport()
+                              <RepairOverviewReportPanel
+                                selectedRepair={selectedRepair}
+                                selectedRepairDocument={selectedRepairDocument}
+                                selectedRepairAwaitingOcr={selectedRepairAwaitingOcr}
+                                selectedRepairUnresolvedChecksCount={selectedRepairUnresolvedChecks.length}
+                                selectedRepairHasBlockingFindings={selectedRepairHasBlockingFindings}
+                                reviewRequiredFieldComparisons={reviewRequiredFieldComparisons}
+                                selectedRepairComparisonAttentionCount={selectedRepairComparisonAttentionCount}
+                                selectedRepairDocumentWorksCount={selectedRepairDocumentWorks.length}
+                                selectedRepairDocumentPartsCount={selectedRepairDocumentParts.length}
+                                selectedRepairDocumentManualReviewReasons={selectedRepairDocumentManualReviewReasons}
+                                selectedRepairReportSections={selectedRepairReportSections}
+                                showRepairOverviewDetails={showRepairOverviewDetails}
+                                onToggleShowDetails={() => setShowRepairOverviewDetails((current) => !current)}
+                                onOpenLinkedRepair={(repairId) => {
+                                  void openRepairByIds(null, repairId);
+                                }}
+                                isPlaceholderVehicle={isPlaceholderVehicle}
+                                formatVehicle={formatVehicle}
+                                formatRepairStatus={formatRepairStatus}
+                                executiveRiskColor={executiveRiskColor}
+                                formatExecutiveRiskLabel={formatExecutiveRiskLabel}
+                                statusColor={statusColor}
+                                formatDocumentStatusLabel={formatDocumentStatusLabel}
+                                formatCompactNumber={formatCompactNumber}
+                                formatMoney={formatMoney}
+                                formatConfidence={formatConfidence}
+                                formatManualReviewReasons={formatManualReviewReasons}
+                                buildCheckPayloadDetails={buildCheckPayloadDetails}
+                                getCheckLinkedRepairId={getCheckLinkedRepairId}
+                                checkSeverityColor={checkSeverityColor}
+                                formatStatus={formatStatus}
+                              />
                             ) : null}
 
                             {activeRepairTab === "documents" ? (
-                              <Stack spacing={1}>
-                              <Typography variant="h6">Документы ремонта</Typography>
-                              {selectedRepair.status !== "archived" ? (
-                                <Paper className="repair-line" elevation={0}>
-                                  <Stack spacing={1.5}>
-                                    <Typography className="muted-copy">
-                                      Добавьте повторный скан, корректирующий файл или дополнительный документ в текущий ремонт.
-                                    </Typography>
-                                    <TextField
-                                      select
-                                      label="Вид документа"
-                                      value={attachedDocumentKind}
-                                      onChange={(event) =>
-                                        setAttachedDocumentKind(event.target.value as DocumentKind)
-                                      }
-                                      fullWidth
-                                    >
-                                      {documentKindOptions.map((option) => (
-                                        <MenuItem key={option.value} value={option.value}>
-                                          {option.label}
-                                        </MenuItem>
-                                      ))}
-                                    </TextField>
-                                    <TextField
-                                      label="Примечание к новому документу"
-                                      value={attachedDocumentNotes}
-                                      onChange={(event) => setAttachedDocumentNotes(event.target.value)}
-                                      fullWidth
-                                      multiline
-                                      minRows={2}
-                                    />
-                                    <Stack
-                                      direction={{ xs: "column", sm: "row" }}
-                                      spacing={1}
-                                      justifyContent="space-between"
-                                      alignItems={{ xs: "flex-start", sm: "center" }}
-                                    >
-                                      <input
-                                        ref={attachedFileInputRef}
-                                        hidden
-                                        type="file"
-                                        accept=".pdf,image/*"
-                                        onClick={(event) => {
-                                          event.currentTarget.value = "";
-                                        }}
-                                        onChange={(event) =>
-                                          setAttachedDocumentFile(event.target.files?.[0] ?? null)
-                                        }
-                                      />
-                                      <Button variant="outlined" onClick={() => attachedFileInputRef.current?.click()}>
-                                        Выбрать файл
-                                      </Button>
-                                      <Typography className="muted-copy">
-                                        {attachedDocumentFile ? attachedDocumentFile.name : "Файл не выбран"}
-                                      </Typography>
-                                    </Stack>
-                                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                      <Button
-                                        variant="contained"
-                                        disabled={attachDocumentLoading || !attachedDocumentFile}
-                                        onClick={() => {
-                                          void handleAttachDocumentToRepair();
-                                        }}
-                                      >
-                                        {attachDocumentLoading ? "Загрузка..." : "Добавить документ"}
-                                      </Button>
-                                    </Stack>
-                                  </Stack>
-                                </Paper>
-                              ) : (
-                                <Alert severity="info">
-                                  Архивный ремонт доступен только для просмотра и экспорта.
-                                </Alert>
-                              )}
-                              {selectedRepair.documents.length > 0 ? (
-                                selectedRepair.documents.map((document) => (
-                                  <Paper className="repair-line" key={document.id} elevation={0}>
-                                    <Stack spacing={1}>
-                                      <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                                        <Typography>{document.original_filename}</Typography>
-                                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                          {document.is_primary ? <Chip size="small" label="основной" /> : null}
-                                          <Chip size="small" variant="outlined" label={formatDocumentKind(document.kind)} />
-                                          {document.latest_import_job ? (
-                                            <Chip
-                                              size="small"
-                                              color={importJobStatusColor(document.latest_import_job.status)}
-                                              label={`OCR: ${formatStatus(document.latest_import_job.status)}`}
-                                            />
-                                          ) : null}
-                                          <Chip
-                                            size="small"
-                                            color={statusColor(document.status as DocumentStatus)}
-                                            label={formatDocumentStatusLabel(document.status)}
-                                          />
-                                        </Stack>
-                                      </Stack>
-                                      <Typography className="muted-copy">
-                                        {formatDateTime(document.created_at)} · {formatSourceTypeLabel(document.source_type)} · OCR {formatConfidence(document.ocr_confidence)}
-                                      </Typography>
-                                      {document.latest_import_job ? (
-                                        <Typography className="muted-copy">
-                                          OCR-задача: {formatStatus(document.latest_import_job.status)}
-                                          {document.latest_import_job.attempts > 0 ? ` · попытка ${document.latest_import_job.attempts}` : ""}
-                                        </Typography>
-                                      ) : null}
-                                      {document.notes ? (
-                                        <Typography className="muted-copy">{document.notes}</Typography>
-                                      ) : null}
-                                      {document.latest_import_job?.error_message ? (
-                                        <Alert severity="warning">Ошибка OCR: {document.latest_import_job.error_message}</Alert>
-                                      ) : null}
-                                      <Stack direction="row" spacing={1} flexWrap="wrap">
-                                        <Button
-                                          size="small"
-                                          variant="outlined"
-                                          disabled={documentOpenLoadingId === document.id}
-                                          onClick={() => {
-                                            void handleOpenDocumentFile(document.id);
-                                          }}
-                                        >
-                                          {documentOpenLoadingId === document.id ? "Открытие..." : "Открыть файл"}
-                                        </Button>
-                                        {user?.role === "admin" ? (
-                                          <Button
-                                            size="small"
-                                            variant="text"
-                                            disabled={reprocessLoading || document.status === "archived" || selectedRepair.status === "archived"}
-                                            onClick={() => {
-                                              void handleReprocessDocumentById(document.id, selectedRepair.id);
-                                            }}
-                                          >
-                                            {reprocessLoading && selectedDocumentId === document.id ? "Повтор..." : "Повторить OCR"}
-                                          </Button>
-                                        ) : null}
-                                        {user?.role === "admin" &&
-                                        (document.kind === "order" || document.kind === "repeat_scan") &&
-                                        !document.is_primary &&
-                                        document.status !== "archived" &&
-                                        selectedRepair.status !== "archived" ? (
-                                          <>
-                                            <Button
-                                              size="small"
-                                              variant="text"
-                                              disabled={documentComparisonLoadingId === document.id}
-                                              onClick={() => {
-                                                void handleCompareWithPrimary(document.id);
-                                              }}
-                                            >
-                                              {documentComparisonLoadingId === document.id ? "Сравнение..." : "Сравнить с основным"}
-                                            </Button>
-                                            <Button
-                                              size="small"
-                                              variant="text"
-                                              disabled={primaryDocumentLoadingId === document.id}
-                                              onClick={() => {
-                                                void handleSetPrimaryDocument(document.id);
-                                              }}
-                                            >
-                                              {primaryDocumentLoadingId === document.id ? "Смена..." : "Сделать основным"}
-                                            </Button>
-                                          </>
-                                        ) : null}
-                                        {user?.role === "admin" &&
-                                        document.status !== "archived" &&
-                                        selectedRepair.status !== "archived" ? (
-                                          <Button
-                                            size="small"
-                                            variant="text"
-                                            disabled={documentArchiveLoadingId === document.id}
-                                            onClick={() => {
-                                              void handleArchiveDocument(document.id, selectedRepair.id);
-                                            }}
-                                          >
-                                            {documentArchiveLoadingId === document.id ? "Архивация..." : "В архив"}
-                                          </Button>
-                                        ) : null}
-                                      </Stack>
-                                      <Stack spacing={1}>
-                                        <Typography className="metric-label">
-                                          Версии обработки: {document.versions.length}
-                                        </Typography>
-                                        {document.versions.map((version) => (
-                                          <Box key={version.id}>
-                                            <Typography className="muted-copy">
-                                              v{version.version_number} · {formatDateTime(version.created_at)}
-                                              {version.change_summary ? ` · ${version.change_summary}` : ""}
-                                            </Typography>
-                                            {version.parsed_payload?.processor ? (
-                                              <Typography className="muted-copy">
-                                                Процессор: {String(version.parsed_payload.processor)}
-                                              </Typography>
-                                            ) : null}
-                                            {version.parsed_payload?.manual_review_reasons &&
-                                            Array.isArray(version.parsed_payload.manual_review_reasons) &&
-                                            version.parsed_payload.manual_review_reasons.length > 0 ? (
-                                              <Typography className="muted-copy">
-                                                Ручная проверка: {formatManualReviewReasons(version.parsed_payload.manual_review_reasons)}
-                                              </Typography>
-                                            ) : null}
-                                            {formatOcrProfileMeta(version.parsed_payload) ? (
-                                              <Typography className="muted-copy">
-                                                {formatOcrProfileMeta(version.parsed_payload)}
-                                              </Typography>
-                                            ) : null}
-                                            {formatLaborNormApplicability(version.parsed_payload) ? (
-                                              <Typography className="muted-copy">
-                                                {formatLaborNormApplicability(version.parsed_payload)}
-                                              </Typography>
-                                            ) : null}
-                                          </Box>
-                                        ))}
-                                      </Stack>
-                                    </Stack>
-                                  </Paper>
-                                ))
-                              ) : (
-                                <Typography className="muted-copy">Документы к ремонту пока не привязаны.</Typography>
-                              )}
-                              </Stack>
-                            ) : null}
-
-                            {activeRepairTab === "documents" && documentComparison ? (
-                              <Stack spacing={1}>
-                                <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-                                  <Typography variant="h6">Сравнение документов</Typography>
-                                  <Button
-                                    size="small"
-                                    variant="text"
-                                    onClick={() => {
-                                      setDocumentComparison(null);
-                                    }}
-                                  >
-                                    Закрыть
-                                  </Button>
-                                </Stack>
-                                <Paper className="repair-line" elevation={0}>
-                                  <Stack spacing={1.25}>
-                                    <Typography>
-                                      {documentComparison.left_document.original_filename} против {documentComparison.right_document.original_filename}
-                                    </Typography>
-                                    <Typography className="muted-copy">
-                                      Работы: {documentComparison.works_count_left} / {documentComparison.works_count_right}
-                                      {" · "}
-                                      Запчасти: {documentComparison.parts_count_left} / {documentComparison.parts_count_right}
-                                    </Typography>
-                                    {documentComparison.compared_fields.map((field) => (
-                                      <Box key={field.field_name}>
-                                        <Typography className="metric-label">{field.label}</Typography>
-                                        <Typography className="muted-copy">
-                                          {field.left_value || "—"} / {field.right_value || "—"}
-                                          {field.is_different ? " · отличается" : " · совпадает"}
-                                        </Typography>
-                                      </Box>
-                                    ))}
-                                    <TextField
-                                      label="Комментарий по сверке"
-                                      value={documentComparisonComment}
-                                      onChange={(event) => setDocumentComparisonComment(event.target.value)}
-                                      fullWidth
-                                      multiline
-                                      minRows={2}
-                                    />
-                                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                      <Button
-                                        variant="outlined"
-                                        disabled={documentComparisonReviewLoading}
-                                        onClick={() => {
-                                          void handleReviewDocumentComparison("keep_current_primary");
-                                        }}
-                                      >
-                                        {documentComparisonReviewLoading ? "Сохранение..." : "Оставить текущий основной"}
-                                      </Button>
-                                      <Button
-                                        variant="contained"
-                                        disabled={documentComparisonReviewLoading}
-                                        onClick={() => {
-                                          void handleReviewDocumentComparison("make_document_primary");
-                                        }}
-                                      >
-                                        Сделать сравниваемый основным
-                                      </Button>
-                                      <Button
-                                        variant="text"
-                                        disabled={documentComparisonReviewLoading}
-                                        onClick={() => {
-                                          void handleReviewDocumentComparison("mark_reviewed");
-                                        }}
-                                      >
-                                        Отметить как проверенное
-                                      </Button>
-                                    </Stack>
-                                  </Stack>
-                                </Paper>
-                              </Stack>
-                            ) : null}
-
-                            {activeRepairTab === "works" ? (
-                              <Stack spacing={1}>
-                              <Typography variant="h6">Работы</Typography>
-                              {selectedRepair.works.length > 0 ? (
-                                selectedRepair.works.map((item) => (
-                                  <Paper className="repair-line" key={item.id} elevation={0}>
-                                    <Stack spacing={0.75}>
-                                      <Stack direction="row" justifyContent="space-between" spacing={2}>
-                                        <Box>
-                                          <Typography>{item.work_name}</Typography>
-                                          <Typography className="muted-copy">
-                                            {item.work_code ? `${item.work_code} · ` : ""}
-                                            Кол-во {item.quantity}
-                                            {formatHours(item.standard_hours) ? ` · норма ${formatHours(item.standard_hours)}` : ""}
-                                            {formatHours(item.actual_hours) ? ` · факт ${formatHours(item.actual_hours)}` : ""}
-                                          </Typography>
-                                        </Box>
-                                        <Typography>{formatMoney(item.line_total) || "—"}</Typography>
-                                      </Stack>
-                                      {formatWorkLaborNormMeta(item) ? (
-                                        <Typography className="muted-copy">
-                                          {formatWorkLaborNormMeta(item)}
-                                        </Typography>
-                                      ) : null}
-                                    </Stack>
-                                  </Paper>
-                                ))
-                              ) : (
-                                <Typography className="muted-copy">Строки работ не распознаны.</Typography>
-                              )}
-                              </Stack>
-                            ) : null}
-
-                            {activeRepairTab === "parts" ? (
-                              <Stack spacing={1}>
-                              <Typography variant="h6">Запчасти</Typography>
-                              {selectedRepair.parts.length > 0 ? (
-                                selectedRepair.parts.map((item) => (
-                                  <Paper className="repair-line" key={item.id} elevation={0}>
-                                    <Stack direction="row" justifyContent="space-between" spacing={2}>
-                                      <Box>
-                                        <Typography>{item.part_name}</Typography>
-                                        <Typography className="muted-copy">
-                                          {item.article ? `${item.article} · ` : ""}
-                                          {item.quantity} {item.unit_name || "шт"}
-                                        </Typography>
-                                      </Box>
-                                      <Typography>{formatMoney(item.line_total) || "—"}</Typography>
-                                    </Stack>
-                                  </Paper>
-                                ))
-                              ) : (
-                                <Typography className="muted-copy">Строки запчастей не распознаны.</Typography>
-                              )}
-                              </Stack>
-                            ) : null}
-
-                            {activeRepairTab === "checks" ? (
-                              <Stack spacing={1}>
-                              <Typography variant="h6">Проверки</Typography>
-                              {selectedRepair.checks.length > 0 ? (
-                                selectedRepair.checks.map((check) => {
-                                  const payloadDetails = buildCheckPayloadDetails(check);
-                                  const linkedRepairId = getCheckLinkedRepairId(check);
-
-                                  return (
-                                    <Paper className="repair-line" key={check.id} elevation={0}>
-                                      <Stack spacing={1}>
-                                        <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                                          <Typography>{check.title}</Typography>
-                                          <Stack direction="row" spacing={1}>
-                                            <Chip
-                                              size="small"
-                                              color={checkSeverityColor(check.severity)}
-                                              label={formatStatus(check.severity)}
-                                            />
-                                            <Chip
-                                              size="small"
-                                              color={check.is_resolved ? "success" : "default"}
-                                              label={check.is_resolved ? "решено" : "открыто"}
-                                            />
-                                          </Stack>
-                                        </Stack>
-                                        {check.details ? (
-                                          <Typography className="muted-copy">{check.details}</Typography>
-                                        ) : null}
-                                        {payloadDetails.length > 0 ? (
-                                          <Stack spacing={0.5}>
-                                            {payloadDetails.map((line, index) => (
-                                              <Typography className="muted-copy" key={`check-payload-${check.id}-${index}`}>
-                                                {line}
-                                              </Typography>
-                                            ))}
-                                          </Stack>
-                                        ) : null}
-                                        {linkedRepairId !== null ? (
-                                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                            <Button
-                                              size="small"
-                                              variant="text"
-                                              onClick={() => {
-                                                void openRepairByIds(null, linkedRepairId);
-                                              }}
-                                            >
-                                              Открыть предыдущий ремонт
-                                            </Button>
-                                          </Stack>
-                                        ) : null}
-                                        {readCheckResolutionMeta(check)?.user_name ? (
-                                          <Typography className="muted-copy">
-                                            Последнее действие: {readCheckResolutionMeta(check)?.user_name}
-                                            {readCheckResolutionMeta(check)?.resolved_at
-                                              ? ` · ${formatDateTime(String(readCheckResolutionMeta(check)?.resolved_at))}`
-                                              : ""}
-                                            {readCheckResolutionMeta(check)?.comment
-                                              ? ` · ${String(readCheckResolutionMeta(check)?.comment)}`
-                                              : ""}
-                                          </Typography>
-                                        ) : null}
-                                        <TextField
-                                          label="Комментарий по проверке"
-                                          value={checkComments[check.id] || ""}
-                                          onChange={(event) =>
-                                            setCheckComments((current) => ({
-                                              ...current,
-                                              [check.id]: event.target.value,
-                                            }))
-                                          }
-                                          fullWidth
-                                          multiline
-                                          minRows={2}
-                                        />
-                                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                          <Button
-                                            size="small"
-                                            variant="contained"
-                                            disabled={checkActionLoadingId === check.id || check.is_resolved}
-                                            onClick={() => {
-                                              void handleCheckResolution(check.id, true);
-                                            }}
-                                          >
-                                            {checkActionLoadingId === check.id ? "Сохранение..." : "Закрыть проверку"}
-                                          </Button>
-                                          <Button
-                                            size="small"
-                                            variant="outlined"
-                                            disabled={checkActionLoadingId === check.id || !check.is_resolved}
-                                            onClick={() => {
-                                              void handleCheckResolution(check.id, false);
-                                            }}
-                                          >
-                                            Вернуть в работу
-                                          </Button>
-                                        </Stack>
-                                      </Stack>
-                                    </Paper>
-                                  );
-                                })
-                              ) : (
-                                <Typography className="muted-copy">Подозрительные проверки не найдены.</Typography>
-                              )}
-                              </Stack>
-                            ) : null}
-
-                            {activeRepairTab === "history" ? (
-                              <Stack spacing={1}>
-                              <Typography variant="h6">Журнал событий</Typography>
-                              <TextField
-                                label="Поиск по истории"
-                                value={historySearch}
-                                onChange={(event) => setHistorySearch(event.target.value)}
-                                fullWidth
+                              <RepairDocumentsSection
+                                userRole={user?.role}
+                                selectedRepair={selectedRepair}
+                                documentKindOptions={documentKindOptions}
+                                attachedDocumentKind={attachedDocumentKind}
+                                attachedDocumentNotes={attachedDocumentNotes}
+                                attachedDocumentFile={attachedDocumentFile}
+                                attachedFileInputRef={attachedFileInputRef}
+                                attachDocumentLoading={attachDocumentLoading}
+                                documentOpenLoadingId={documentOpenLoadingId}
+                                reprocessLoading={reprocessLoading}
+                                selectedDocumentId={selectedDocumentId}
+                                documentComparisonLoadingId={documentComparisonLoadingId}
+                                primaryDocumentLoadingId={primaryDocumentLoadingId}
+                                documentArchiveLoadingId={documentArchiveLoadingId}
+                                documentComparison={documentComparison}
+                                documentComparisonComment={documentComparisonComment}
+                                documentComparisonReviewLoading={documentComparisonReviewLoading}
+                                onAttachedDocumentKindChange={setAttachedDocumentKind}
+                                onAttachedDocumentNotesChange={setAttachedDocumentNotes}
+                                onAttachedDocumentFileChange={setAttachedDocumentFile}
+                                onOpenAttachedFilePicker={() => attachedFileInputRef.current?.click()}
+                                onAttachDocument={() => {
+                                  void handleAttachDocumentToRepair();
+                                }}
+                                onOpenDocumentFile={(documentId) => {
+                                  void handleOpenDocumentFile(documentId);
+                                }}
+                                onReprocessDocumentById={(documentId, repairId) => {
+                                  void handleReprocessDocumentById(documentId, repairId);
+                                }}
+                                onCompareWithPrimary={(documentId) => {
+                                  void handleCompareWithPrimary(documentId);
+                                }}
+                                onSetPrimaryDocument={(documentId) => {
+                                  void handleSetPrimaryDocument(documentId);
+                                }}
+                                onArchiveDocument={(documentId, repairId) => {
+                                  void handleArchiveDocument(documentId, repairId);
+                                }}
+                                onCloseDocumentComparison={() => {
+                                  setDocumentComparison(null);
+                                }}
+                                onDocumentComparisonCommentChange={setDocumentComparisonComment}
+                                onReviewDocumentComparison={(action) => {
+                                  void handleReviewDocumentComparison(action);
+                                }}
+                                formatDocumentKind={formatDocumentKind}
+                                importJobStatusColor={importJobStatusColor}
+                                formatStatus={formatStatus}
+                                statusColor={statusColor}
+                                formatDocumentStatusLabel={formatDocumentStatusLabel}
+                                formatDateTime={formatDateTime}
+                                formatSourceTypeLabel={formatSourceTypeLabel}
+                                formatConfidence={formatConfidence}
+                                formatManualReviewReasons={formatManualReviewReasons}
+                                formatOcrProfileMeta={formatOcrProfileMeta}
+                                formatLaborNormApplicability={formatLaborNormApplicability}
                               />
-                              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                {historyFilters.map((filter) => (
-                                  <Chip
-                                    key={filter.key}
-                                    label={filter.label}
-                                    color={historyFilter === filter.key ? "primary" : "default"}
-                                    variant={historyFilter === filter.key ? "filled" : "outlined"}
-                                    onClick={() => {
-                                      setHistoryFilter(filter.key);
-                                    }}
-                                  />
-                                ))}
-                              </Stack>
-                              <Typography className="muted-copy">
-                                Найдено событий: {filteredDocumentHistory.length + filteredRepairHistory.length}
-                              </Typography>
-                              </Stack>
                             ) : null}
 
-                            {activeRepairTab === "history" ? (
-                              <Stack spacing={1}>
-                              <Typography variant="h6">История по документам</Typography>
-                              {filteredDocumentHistory.length > 0 ? (
-                                filteredDocumentHistory.map((entry) => (
-                                  <Paper className="repair-line" key={`document-history-${entry.id}`} elevation={0}>
-                                    <Stack spacing={1}>
-                                      <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                                        <Typography>
-                                          {entry.user_name || "Система"} · {formatHistoryActionLabel(entry.action_type)}
-                                        </Typography>
-                                        <Typography className="muted-copy">{formatDateTime(entry.created_at)}</Typography>
-                                      </Stack>
-                                      <Typography className="muted-copy">
-                                        {entry.document_filename || "Документ"}
-                                        {entry.document_kind ? ` · ${formatDocumentKind(entry.document_kind)}` : ""}
-                                      </Typography>
-                                      {renderHistoryDetails(
-                                        `document-${entry.id}`,
-                                        buildDocumentHistoryDetails(entry),
-                                      )}
-                                    </Stack>
-                                  </Paper>
-                                ))
-                              ) : (
-                                <Typography className="muted-copy">По текущему фильтру событий по документам нет.</Typography>
-                              )}
-                              </Stack>
-                            ) : null}
-
-                            {activeRepairTab === "history" ? (
-                              <Stack spacing={1}>
-                              <Typography variant="h6">История изменений</Typography>
-                              {filteredRepairHistory.length > 0 ? (
-                                filteredRepairHistory.map((entry) => (
-                                  <Paper className="repair-line" key={entry.id} elevation={0}>
-                                    <Stack spacing={1}>
-                                      <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                                        <Typography>
-                                          {entry.user_name || "Система"} · {formatHistoryActionLabel(entry.action_type)}
-                                        </Typography>
-                                        <Typography className="muted-copy">{formatDateTime(entry.created_at)}</Typography>
-                                      </Stack>
-                                      {renderHistoryDetails(
-                                        `repair-${entry.id}`,
-                                        buildRepairHistoryDetails(entry),
-                                      )}
-                                    </Stack>
-                                  </Paper>
-                                ))
-                              ) : (
-                                <Typography className="muted-copy">По текущему фильтру событий по ремонту нет.</Typography>
-                              )}
-                              </Stack>
-                            ) : null}
+                            <RepairReadOnlySections
+                              activeRepairTab={activeRepairTab}
+                              selectedRepair={selectedRepair}
+                              filteredDocumentHistory={filteredDocumentHistory}
+                              filteredRepairHistory={filteredRepairHistory}
+                              historySearch={historySearch}
+                              historyFilter={historyFilter}
+                              historyFilters={historyFilters}
+                              checkComments={checkComments}
+                              checkActionLoadingId={checkActionLoadingId}
+                              onHistorySearchChange={setHistorySearch}
+                              onHistoryFilterChange={setHistoryFilter}
+                              onCheckCommentChange={(checkId, value) =>
+                                setCheckComments((current) => ({
+                                  ...current,
+                                  [checkId]: value,
+                                }))
+                              }
+                              onCheckResolution={(checkId, isResolved) => {
+                                void handleCheckResolution(checkId, isResolved);
+                              }}
+                              onOpenLinkedRepair={(repairId) => {
+                                void openRepairByIds(null, repairId);
+                              }}
+                              formatMoney={formatMoney}
+                              formatHours={formatHours}
+                              formatStatus={formatStatus}
+                              formatWorkLaborNormMeta={formatWorkLaborNormMeta}
+                              buildCheckPayloadDetails={buildCheckPayloadDetails}
+                              getCheckLinkedRepairId={getCheckLinkedRepairId}
+                              checkSeverityColor={checkSeverityColor}
+                              readCheckResolutionMeta={readCheckResolutionMeta}
+                              formatDateTime={formatDateTime}
+                              formatHistoryActionLabel={formatHistoryActionLabel}
+                              formatDocumentKind={formatDocumentKind}
+                              buildDocumentHistoryDetails={buildDocumentHistoryDetails}
+                              buildRepairHistoryDetails={buildRepairHistoryDetails}
+                              renderHistoryDetails={renderHistoryDetails}
+                            />
                           </>
                         )}
                       </Stack>
@@ -10893,7 +9312,35 @@ export default function App() {
                 {activeWorkspaceTab === "fleet" ? (
                   <FleetPanel
                     viewMode={fleetViewMode}
-                    detailContent={renderSelectedFleetVehicleDetail()}
+                    detailContent={
+                      <FleetVehicleDetailPanel
+                        selectedFleetVehicleLoading={selectedFleetVehicleLoading}
+                        selectedFleetVehicle={selectedFleetVehicle}
+                        userRole={user?.role}
+                        vehicleSaving={vehicleSaving}
+                        vehicleExportLoading={vehicleExportLoading}
+                        vehicles={vehicles}
+                        fleetVehicles={fleetVehicles}
+                        onUpdateVehicleStatus={(status) => {
+                          void handleUpdateVehicle({ status });
+                        }}
+                        onExportVehicle={() => {
+                          void handleExportVehicle();
+                        }}
+                        onOpenRepair={(repairId) => {
+                          void openRepairByIds(null, repairId);
+                        }}
+                        formatVehicle={formatVehicle}
+                        formatVehicleTypeLabel={formatVehicleTypeLabel}
+                        formatVehicleStatusLabel={formatVehicleStatusLabel}
+                        formatDateValue={formatDateValue}
+                        formatDateTime={formatDateTime}
+                        formatMoney={formatMoney}
+                        formatUserRoleLabel={formatUserRoleLabel}
+                        formatRepairStatus={formatRepairStatus}
+                        vehicleStatusColor={vehicleStatusColor}
+                      />
+                    }
                     fleetQuery={fleetQuery}
                     fleetVehicleTypeFilter={fleetVehicleTypeFilter}
                     fleetStatusFilter={fleetStatusFilter}

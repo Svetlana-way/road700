@@ -25,6 +25,7 @@ import {
 import { AuditLogPanel } from "./components/AuditLogPanel";
 import { FleetPanel } from "./components/FleetPanel";
 import { GlobalSearchPanel } from "./components/GlobalSearchPanel";
+import { RepairPanel } from "./components/RepairPanel";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
 
 type UserRole = "admin" | "employee";
@@ -12343,31 +12344,10 @@ export default function App() {
                 ) : null}
 
                 {activeWorkspaceTab === "repair" ? (
-                  <Box sx={{ width: "100%", maxWidth: 1120, mx: "auto" }}>
-                    <Stack spacing={2}>
-                      <Stack
-                        direction={{ xs: "column", sm: "row" }}
-                        spacing={1}
-                        justifyContent="space-between"
-                        alignItems={{ xs: "flex-start", sm: "center" }}
-                      >
-                        {repairHasReturnTarget ? (
-                          <Button variant="text" onClick={returnFromRepairPage}>
-                            {workspaceTabReturnLabels[repairReturnTabRef.current]}
-                          </Button>
-                        ) : <Box />}
-                        <Typography className="muted-copy">
-                          Отчёт открыт отдельной страницей и выведен по центру экрана.
-                        </Typography>
-                      </Stack>
-                      <Paper className="workspace-panel" elevation={0}>
-                      <Stack spacing={2}>
-                        <Box>
-                          <Typography variant="h5">Карточка ремонта</Typography>
-                          <Typography className="muted-copy">
-                            Сначала короткий вывод для руководителя, затем полная расшифровка проверки по кнопке и все рабочие детали ремонта.
-                          </Typography>
-                        </Box>
+                  <RepairPanel
+                    returnLabel={repairHasReturnTarget ? workspaceTabReturnLabels[repairReturnTabRef.current] : null}
+                    onReturn={repairHasReturnTarget ? returnFromRepairPage : null}
+                  >
                     {repairLoading ? (
                       <Stack spacing={2} alignItems="center" className="repair-placeholder">
                         <CircularProgress size={28} />
@@ -14196,10 +14176,7 @@ export default function App() {
                         </Typography>
                       </Stack>
                     )}
-                      </Stack>
-                      </Paper>
-                    </Stack>
-                  </Box>
+                  </RepairPanel>
                 ) : null}
 
                 {activeWorkspaceTab === "search" ? (

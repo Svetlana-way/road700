@@ -25,10 +25,12 @@ import {
 import { AuditLogPanel } from "./components/AuditLogPanel";
 import { DocumentsListPanel } from "./components/DocumentsListPanel";
 import { DocumentsUploadPanel } from "./components/DocumentsUploadPanel";
+import { EmployeesAdminPanel } from "./components/EmployeesAdminPanel";
 import { FleetPanel } from "./components/FleetPanel";
 import { GlobalSearchPanel } from "./components/GlobalSearchPanel";
 import { RepairPanel } from "./components/RepairPanel";
 import { ReviewQueuePanel } from "./components/ReviewQueuePanel";
+import { ServicesAdminPanel } from "./components/ServicesAdminPanel";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
 
 type UserRole = "admin" | "employee";
@@ -9095,636 +9097,125 @@ export default function App() {
                 ) : null}
 
                 {activeWorkspaceTab === "admin" && activeAdminTab === "employees" && user?.role === "admin" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                    <Stack spacing={2}>
-                      <Box>
-                        <Typography variant="h5">Сотрудники и доступ</Typography>
-                        <Typography className="muted-copy">
-                          Администратор создаёт учётные записи сотрудников и закрепляет за ними технику.
-                        </Typography>
-                      </Box>
-                      <Grid container spacing={1.5}>
-                        <Grid item xs={12} sm={8}>
-                          <TextField
-                            label="Поиск по имени, логину или почте"
-                            value={userSearch}
-                            onChange={(event) => setUserSearch(event.target.value)}
-                            fullWidth
-                          />
-                        </Grid>
-                        <Grid item xs={12} sm={4}>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <Button variant="outlined" onClick={() => void handleUserSearch()} disabled={userLoading}>
-                              {userLoading ? "Загрузка..." : "Обновить"}
-                            </Button>
-                            <Button
-                              variant="text"
-                              disabled={userLoading}
-                              onClick={() => {
-                                setUserSearch("");
-                                if (token) {
-                                  void loadUsers(token, "");
-                                }
-                              }}
-                            >
-                              Сбросить
-                            </Button>
-                          </Stack>
-                        </Grid>
-                      </Grid>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                        <Button
-                          variant={showUserEditor ? "outlined" : "contained"}
-                          onClick={() => setShowUserEditor((current) => !current)}
-                        >
-                          {showUserEditor ? "Скрыть форму сотрудника" : "Добавить сотрудника"}
-                        </Button>
-                      </Stack>
-                      {showUserEditor ? (
-                        <Paper className="repair-line" elevation={0}>
-                          <Stack spacing={1.25}>
-                            <Typography className="metric-label">Создание и редактирование пользователя</Typography>
-                            <Grid container spacing={1.5}>
-                              <Grid item xs={12} sm={4}>
-                                <TextField
-                                  label="ФИО"
-                                  value={userForm.full_name}
-                                  onChange={(event) =>
-                                    setUserForm((current) => ({ ...current, full_name: event.target.value }))
-                                  }
-                                  fullWidth
-                                />
-                              </Grid>
-                              <Grid item xs={12} sm={2}>
-                                <TextField
-                                  label="Логин"
-                                  value={userForm.login}
-                                  onChange={(event) =>
-                                    setUserForm((current) => ({ ...current, login: event.target.value }))
-                                  }
-                                  fullWidth
-                                />
-                              </Grid>
-                              <Grid item xs={12} sm={3}>
-                                <TextField
-                                  label="Почта"
-                                  value={userForm.email}
-                                  onChange={(event) =>
-                                    setUserForm((current) => ({ ...current, email: event.target.value }))
-                                  }
-                                  fullWidth
-                                />
-                              </Grid>
-                              <Grid item xs={12} sm={2}>
-                                <TextField
-                                  select
-                                  label="Роль"
-                                  value={userForm.role}
-                                  onChange={(event) =>
-                                    setUserForm((current) => ({ ...current, role: event.target.value as UserRole }))
-                                  }
-                                  fullWidth
-                                >
-                                  <MenuItem value="employee">Сотрудник</MenuItem>
-                                  <MenuItem value="admin">Админ</MenuItem>
-                                </TextField>
-                              </Grid>
-                              <Grid item xs={12} sm={2}>
-                                <TextField
-                                  select
-                                  label="Статус"
-                                  value={userForm.is_active}
-                                  onChange={(event) =>
-                                    setUserForm((current) => ({
-                                      ...current,
-                                      is_active: event.target.value as "true" | "false",
-                                    }))
-                                  }
-                                  fullWidth
-                                >
-                                  <MenuItem value="true">Активен</MenuItem>
-                                  <MenuItem value="false">Отключен</MenuItem>
-                                </TextField>
-                              </Grid>
-                              <Grid item xs={12} sm={4}>
-                                <TextField
-                                  label={userForm.id ? "Новый пароль, если нужно сменить" : "Пароль"}
-                                  type="password"
-                                  value={userForm.password}
-                                  onChange={(event) =>
-                                    setUserForm((current) => ({ ...current, password: event.target.value }))
-                                  }
-                                  fullWidth
-                                />
-                              </Grid>
-                            </Grid>
-                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                              <Button
-                                variant="contained"
-                                disabled={userSaving}
-                                onClick={() => {
-                                  void handleSaveUser();
-                                }}
-                              >
-                                {userSaving ? "Сохранение..." : userForm.id ? "Сохранить пользователя" : "Создать пользователя"}
-                              </Button>
-                              <Button
-                                variant="text"
-                                disabled={userSaving}
-                                onClick={() => {
-                                  resetUserEditor();
-                                  setShowUserEditor(false);
-                                }}
-                              >
-                                Сбросить форму
-                              </Button>
-                            </Stack>
-                          </Stack>
-                        </Paper>
-                      ) : null}
-                      <Typography className="muted-copy">Найдено пользователей: {usersTotal}</Typography>
-                      <Grid container spacing={2}>
-                        <Grid item xs={12} lg={5}>
-                          {userLoading ? (
-                            <Stack spacing={1} alignItems="center">
-                              <CircularProgress size={24} />
-                              <Typography className="muted-copy">Загрузка сотрудников...</Typography>
-                            </Stack>
-                          ) : usersList.length > 0 ? (
-                            <Stack spacing={1}>
-                              {usersList.map((item) => {
-                                const activeAssignments = item.assignments.filter((assignment) => isAssignmentActive(assignment)).length;
-                                return (
-                                  <Paper
-                                    className={`document-row${selectedManagedUserId === item.id ? " document-row-active" : ""}`}
-                                    key={`user-${item.id}`}
-                                    elevation={0}
-                                  >
-                                    <Stack spacing={0.75}>
-                                      <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                        <Typography>{item.full_name}</Typography>
-                                        <Stack direction="row" spacing={1}>
-                                          <Chip size="small" variant="outlined" label={formatUserRoleLabel(item.role)} />
-                                          <Chip
-                                            size="small"
-                                            color={item.is_active ? "success" : "default"}
-                                            label={item.is_active ? "Активен" : "Отключен"}
-                                          />
-                                        </Stack>
-                                      </Stack>
-                                      <Typography className="muted-copy">
-                                        {item.login} · {item.email}
-                                      </Typography>
-                                      <Typography className="muted-copy">
-                                        Активных назначений техники: {activeAssignments}
-                                      </Typography>
-                                      <Stack direction="row" spacing={1}>
-                                        <Button
-                                          size="small"
-                                          variant="outlined"
-                                          onClick={() => {
-                                            setSelectedManagedUserId(item.id);
-                                          }}
-                                        >
-                                          Открыть доступы
-                                        </Button>
-                                        <Button
-                                          size="small"
-                                          variant="text"
-                                          onClick={() => handleEditUser(item)}
-                                        >
-                                          Редактировать
-                                        </Button>
-                                      </Stack>
-                                    </Stack>
-                                  </Paper>
-                                );
-                              })}
-                            </Stack>
-                          ) : (
-                            <Typography className="muted-copy">Пользователи пока не заведены.</Typography>
-                          )}
-                        </Grid>
-                        <Grid item xs={12} lg={7}>
-                          {selectedManagedUser ? (
-                            <Stack spacing={1.5}>
-                              <Paper className="repair-line" elevation={0}>
-                                <Stack spacing={0.75}>
-                                  <Typography variant="h6">{selectedManagedUser.full_name}</Typography>
-                                  <Typography className="muted-copy">
-                                    {selectedManagedUser.login} · {selectedManagedUser.email}
-                                  </Typography>
-                                  <Typography className="muted-copy">
-                                    {formatUserRoleLabel(selectedManagedUser.role)} · {selectedManagedUser.is_active ? "активен" : "отключен"}
-                                  </Typography>
-                                </Stack>
-                              </Paper>
-                              <Paper className="repair-line" elevation={0}>
-                                <Stack spacing={1.25}>
-                                  <Typography className="metric-label">Сброс пароля сотрудника</Typography>
-                                  <Grid container spacing={1.5}>
-                                    <Grid item xs={12} sm={8}>
-                                      <TextField
-                                        label="Новый пароль для сотрудника"
-                                        type="password"
-                                        value={adminResetPasswordValue}
-                                        onChange={(event) => setAdminResetPasswordValue(event.target.value)}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={12} sm={4}>
-                                      <Button
-                                        fullWidth
-                                        variant="contained"
-                                        disabled={userSaving}
-                                        onClick={() => {
-                                          void handleAdminResetUserPassword();
-                                        }}
-                                      >
-                                        {userSaving ? "Сохранение..." : "Сбросить пароль"}
-                                      </Button>
-                                    </Grid>
-                                  </Grid>
-                                </Stack>
-                              </Paper>
-                              <Paper className="repair-line" elevation={0}>
-                                <Stack spacing={1.25}>
-                                  <Typography className="metric-label">Добавить технику в зону ответственности</Typography>
-                                  <Grid container spacing={1.5}>
-                                    <Grid item xs={12} sm={5}>
-                                      <TextField
-                                        label="Найти технику по госномеру, VIN, марке"
-                                        value={userVehicleSearch}
-                                        onChange={(event) => setUserVehicleSearch(event.target.value)}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={12} sm={3}>
-                                      <TextField
-                                        label="Дата начала"
-                                        type="date"
-                                        value={userAssignmentForm.starts_at}
-                                        onChange={(event) =>
-                                          setUserAssignmentForm((current) => ({ ...current, starts_at: event.target.value }))
-                                        }
-                                        InputLabelProps={{ shrink: true }}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={12} sm={3}>
-                                      <TextField
-                                        label="Дата окончания"
-                                        type="date"
-                                        value={userAssignmentForm.ends_at}
-                                        onChange={(event) =>
-                                          setUserAssignmentForm((current) => ({ ...current, ends_at: event.target.value }))
-                                        }
-                                        InputLabelProps={{ shrink: true }}
-                                        fullWidth
-                                      />
-                                    </Grid>
-                                    <Grid item xs={12} sm={2}>
-                                      <Button
-                                        fullWidth
-                                        variant="outlined"
-                                        disabled={userVehicleSearchLoading}
-                                        onClick={() => {
-                                          void handleSearchVehiclesForAssignment();
-                                        }}
-                                      >
-                                        {userVehicleSearchLoading ? "Поиск..." : "Найти"}
-                                      </Button>
-                                    </Grid>
-                                    <Grid item xs={12}>
-                                      <TextField
-                                        label="Комментарий к назначению"
-                                        value={userAssignmentForm.comment}
-                                        onChange={(event) =>
-                                          setUserAssignmentForm((current) => ({ ...current, comment: event.target.value }))
-                                        }
-                                        fullWidth
-                                        multiline
-                                        minRows={2}
-                                      />
-                                    </Grid>
-                                  </Grid>
-                                  {userVehicleSearchResults.length > 0 ? (
-                                    <Stack spacing={1}>
-                                      {userVehicleSearchResults.map((vehicle) => (
-                                        <Paper className="repair-line" key={`assign-vehicle-${vehicle.id}`} elevation={0}>
-                                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} justifyContent="space-between">
-                                            <Box>
-                                              <Typography>{formatVehicle(vehicle)}</Typography>
-                                              <Typography className="muted-copy">
-                                                {formatVehicleTypeLabel(vehicle.vehicle_type)} · {vehicle.vin || "VIN не указан"}
-                                              </Typography>
-                                            </Box>
-                                            <Button
-                                              size="small"
-                                              variant="contained"
-                                              disabled={userAssignmentSaving}
-                                              onClick={() => {
-                                                void handleCreateUserAssignment(vehicle.id);
-                                              }}
-                                            >
-                                              Закрепить
-                                            </Button>
-                                          </Stack>
-                                        </Paper>
-                                      ))}
-                                    </Stack>
-                                  ) : (
-                                    <Typography className="muted-copy">
-                                      Введите запрос и нажмите «Найти», чтобы подобрать технику для сотрудника.
-                                    </Typography>
-                                  )}
-                                </Stack>
-                              </Paper>
-                              <Paper className="repair-line" elevation={0}>
-                                <Stack spacing={1.25}>
-                                  <Typography className="metric-label">Текущие и прошлые назначения техники</Typography>
-                                  {selectedManagedUser.assignments.length > 0 ? (
-                                    <Stack spacing={1}>
-                                      {selectedManagedUser.assignments.map((assignment) => (
-                                        <Paper className="repair-line" key={`assignment-${assignment.id}`} elevation={0}>
-                                          <Stack spacing={0.75}>
-                                            <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                              <Typography>{formatVehicle(assignment.vehicle)}</Typography>
-                                              <Chip
-                                                size="small"
-                                                color={isAssignmentActive(assignment) ? "success" : "default"}
-                                                label={isAssignmentActive(assignment) ? "Активно" : "Закрыто"}
-                                              />
-                                            </Stack>
-                                            <Typography className="muted-copy">
-                                              {assignment.starts_at} {assignment.ends_at ? `— ${assignment.ends_at}` : "— без даты окончания"}
-                                            </Typography>
-                                            {assignment.comment ? (
-                                              <Typography className="muted-copy">{assignment.comment}</Typography>
-                                            ) : null}
-                                            {isAssignmentActive(assignment) ? (
-                                              <Stack direction="row" spacing={1}>
-                                                <Button
-                                                  size="small"
-                                                  variant="text"
-                                                  disabled={userAssignmentSaving}
-                                                  onClick={() => {
-                                                    void handleCloseUserAssignment(assignment);
-                                                  }}
-                                                >
-                                                  Закрыть доступ сегодня
-                                                </Button>
-                                              </Stack>
-                                            ) : null}
-                                          </Stack>
-                                        </Paper>
-                                      ))}
-                                    </Stack>
-                                  ) : (
-                                    <Typography className="muted-copy">За этим сотрудником техника ещё не закреплялась.</Typography>
-                                  )}
-                                </Stack>
-                              </Paper>
-                            </Stack>
-                          ) : (
-                            <Typography className="muted-copy">Выберите сотрудника слева, чтобы управлять доступом к технике.</Typography>
-                          )}
-                        </Grid>
-                      </Grid>
-                    </Stack>
-                  </Paper>
+                  <EmployeesAdminPanel
+                    userSearch={userSearch}
+                    userLoading={userLoading}
+                    showUserEditor={showUserEditor}
+                    userForm={userForm}
+                    userSaving={userSaving}
+                    usersTotal={usersTotal}
+                    usersList={usersList}
+                    selectedManagedUserId={selectedManagedUserId}
+                    selectedManagedUser={selectedManagedUser}
+                    adminResetPasswordValue={adminResetPasswordValue}
+                    userVehicleSearch={userVehicleSearch}
+                    userVehicleSearchLoading={userVehicleSearchLoading}
+                    userVehicleSearchResults={userVehicleSearchResults}
+                    userAssignmentForm={userAssignmentForm}
+                    userAssignmentSaving={userAssignmentSaving}
+                    onUserSearchChange={setUserSearch}
+                    onRefreshUsers={() => {
+                      void handleUserSearch();
+                    }}
+                    onResetUsersSearch={() => {
+                      setUserSearch("");
+                      if (token) {
+                        void loadUsers(token, "");
+                      }
+                    }}
+                    onToggleUserEditor={() => {
+                      setShowUserEditor((current) => !current);
+                    }}
+                    onUserFormChange={(field, value) => {
+                      setUserForm((current) => ({
+                        ...current,
+                        [field]: value,
+                      }));
+                    }}
+                    onSaveUser={() => {
+                      void handleSaveUser();
+                    }}
+                    onResetUserForm={() => {
+                      resetUserEditor();
+                      setShowUserEditor(false);
+                    }}
+                    onSelectUser={setSelectedManagedUserId}
+                    onEditUser={handleEditUser}
+                    onAdminResetPasswordValueChange={setAdminResetPasswordValue}
+                    onAdminResetUserPassword={() => {
+                      void handleAdminResetUserPassword();
+                    }}
+                    onUserVehicleSearchChange={setUserVehicleSearch}
+                    onUserAssignmentFormChange={(field, value) => {
+                      setUserAssignmentForm((current) => ({
+                        ...current,
+                        [field]: value,
+                      }));
+                    }}
+                    onSearchVehiclesForAssignment={() => {
+                      void handleSearchVehiclesForAssignment();
+                    }}
+                    onCreateUserAssignment={(vehicleId) => {
+                      void handleCreateUserAssignment(vehicleId);
+                    }}
+                    onCloseUserAssignment={(assignment) => {
+                      void handleCloseUserAssignment(assignment);
+                    }}
+                    formatUserRoleLabel={formatUserRoleLabel}
+                    formatVehicle={formatVehicle}
+                    formatVehicleTypeLabel={formatVehicleTypeLabel}
+                    isAssignmentActive={isAssignmentActive}
+                  />
                 ) : null}
 
                 {activeWorkspaceTab === "admin" && activeAdminTab === "services" && user?.role === "admin" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                    <Stack spacing={2}>
-                      <Box>
-                        <Typography variant="h5">Справочник сервисов</Typography>
-                        <Typography className="muted-copy">
-                          Каталог сервисов для OCR, ручной правки ремонтов и нормализации названий.
-                        </Typography>
-                      </Box>
-                      <Grid container spacing={1.5}>
-                        <Grid item xs={12} sm={5}>
-                          <TextField
-                            label="Поиск по названию, городу или контакту"
-                            value={serviceQuery}
-                            onChange={(event) => setServiceQuery(event.target.value)}
-                            fullWidth
-                          />
-                        </Grid>
-                        <Grid item xs={12} sm={4}>
-                          <TextField
-                            select
-                            label="Город"
-                            value={serviceCityFilter}
-                            onChange={(event) => setServiceCityFilter(event.target.value)}
-                            fullWidth
-                          >
-                            <MenuItem value="">Все города</MenuItem>
-                            {serviceCities.map((city) => (
-                              <MenuItem key={city} value={city}>
-                                {city}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        </Grid>
-                        <Grid item xs={12} sm={3}>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <Button variant="outlined" onClick={() => void handleServiceSearch()} disabled={serviceLoading}>
-                              {serviceLoading ? "Загрузка..." : "Обновить"}
-                            </Button>
-                            <Button
-                              variant="text"
-                              disabled={serviceLoading}
-                              onClick={() => {
-                                setServiceQuery("");
-                                setServiceCityFilter("");
-                                if (token) {
-                                  void loadServices(token, "", "");
-                                }
-                              }}
-                            >
-                              Сбросить
-                            </Button>
-                          </Stack>
-                        </Grid>
-                      </Grid>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                        <Button
-                          variant={showServiceEditor ? "outlined" : "contained"}
-                          onClick={() => setShowServiceEditor((current) => !current)}
-                        >
-                          {showServiceEditor ? "Скрыть карточку сервиса" : "Открыть форму редактирования"}
-                        </Button>
-                      </Stack>
-                      {showServiceEditor ? (
-                        <Paper className="repair-line" elevation={0}>
-                          <Stack spacing={1.25}>
-                            <Typography className="metric-label">
-                              Редактирование карточки сервиса
-                            </Typography>
-                            <Typography className="muted-copy">
-                              Сервисы из папки `Сервисы` синхронизируются автоматически. При необходимости можно добавить сервис вручную.
-                            </Typography>
-                            <Grid container spacing={1.5}>
-                              <Grid item xs={12} sm={4}>
-                                <TextField
-                                  label="Название"
-                                  value={serviceForm.name}
-                                  onChange={(event) =>
-                                    setServiceForm((current) => ({ ...current, name: event.target.value }))
-                                  }
-                                  fullWidth
-                                />
-                              </Grid>
-                              <Grid item xs={12} sm={3}>
-                                <TextField
-                                  label="Город"
-                                  value={serviceForm.city}
-                                  onChange={(event) =>
-                                    setServiceForm((current) => ({ ...current, city: event.target.value }))
-                                  }
-                                  fullWidth
-                                />
-                              </Grid>
-                              <Grid item xs={12} sm={3}>
-                                <TextField
-                                  label="Контакт"
-                                  value={serviceForm.contact}
-                                  onChange={(event) =>
-                                    setServiceForm((current) => ({ ...current, contact: event.target.value }))
-                                  }
-                                  fullWidth
-                                />
-                              </Grid>
-                              <Grid item xs={12} sm={2}>
-                                <TextField
-                                  select
-                                  label="Статус"
-                                  value={serviceForm.status}
-                                  onChange={(event) =>
-                                    setServiceForm((current) => ({
-                                      ...current,
-                                      status: event.target.value as ServiceStatus,
-                                    }))
-                                  }
-                                  fullWidth
-                                >
-                                  <MenuItem value="preliminary">Предварительный</MenuItem>
-                                  <MenuItem value="confirmed">Подтверждён</MenuItem>
-                                  <MenuItem value="archived">Архив</MenuItem>
-                                </TextField>
-                              </Grid>
-                              <Grid item xs={12}>
-                                <TextField
-                                  label="Комментарий"
-                                  value={serviceForm.comment}
-                                  onChange={(event) =>
-                                    setServiceForm((current) => ({ ...current, comment: event.target.value }))
-                                  }
-                                  fullWidth
-                                  multiline
-                                  minRows={2}
-                                />
-                              </Grid>
-                            </Grid>
-                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                              <Button
-                                variant="contained"
-                                disabled={serviceSaving}
-                                onClick={() => {
-                                  void handleSaveService();
-                                }}
-                              >
-                                {serviceSaving ? "Сохранение..." : serviceForm.id ? "Сохранить сервис" : "Создать сервис"}
-                              </Button>
-                              <Button
-                                variant="text"
-                                disabled={serviceSaving}
-                                onClick={() => {
-                                  resetServiceEditor();
-                                  setShowServiceEditor(false);
-                                }}
-                              >
-                                Сбросить форму
-                              </Button>
-                            </Stack>
-                          </Stack>
-                        </Paper>
-                      ) : null}
-                      <Typography className="muted-copy">
-                        В справочнике сервисов {services.length} записей по текущему фильтру.
-                      </Typography>
-                      {serviceLoading ? (
-                        <Stack spacing={1} alignItems="center">
-                          <CircularProgress size={24} />
-                          <Typography className="muted-copy">Загрузка сервисов...</Typography>
-                        </Stack>
-                      ) : services.length > 0 ? (
-                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
-                          <Button
-                            variant="outlined"
-                            onClick={() => setShowServiceListDialog(true)}
-                          >
-                            Открыть список сервисов
-                          </Button>
-                          <Typography className="muted-copy">
-                            Полный список сервисов скрыт с основной страницы.
-                          </Typography>
-                        </Stack>
-                      ) : (
-                        <Typography className="muted-copy">По текущему фильтру сервисы не найдены.</Typography>
-                      )}
-                      <Dialog
-                        open={showServiceListDialog}
-                        onClose={() => setShowServiceListDialog(false)}
-                        fullWidth
-                        maxWidth="lg"
-                      >
-                        <DialogTitle>Справочник сервисов</DialogTitle>
-                        <DialogContent dividers>
-                          {services.length > 0 ? (
-                            <Stack spacing={1}>
-                              {services.map((item) => (
-                                <Paper className="repair-line" key={`service-${item.id}`} elevation={0}>
-                                  <Stack spacing={0.5}>
-                                    <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                      <Typography>{item.name}</Typography>
-                                      <Chip
-                                        size="small"
-                                        color={item.status === "confirmed" ? "success" : item.status === "preliminary" ? "warning" : "default"}
-                                        label={formatStatus(item.status)}
-                                      />
-                                    </Stack>
-                                    <Typography className="muted-copy">
-                                      {item.city || "Без города"}
-                                      {item.contact ? ` · ${item.contact}` : ""}
-                                    </Typography>
-                                    {item.comment ? <Typography className="muted-copy">{item.comment}</Typography> : null}
-                                    <Stack direction="row" spacing={1}>
-                                      <Button
-                                        size="small"
-                                        variant="outlined"
-                                        onClick={() => {
-                                          setShowServiceListDialog(false);
-                                          handleEditService(item);
-                                        }}
-                                      >
-                                        Редактировать
-                                      </Button>
-                                    </Stack>
-                                  </Stack>
-                                </Paper>
-                              ))}
-                            </Stack>
-                          ) : (
-                            <Typography className="muted-copy">По текущему фильтру сервисы не найдены.</Typography>
-                          )}
-                        </DialogContent>
-                      </Dialog>
-                    </Stack>
-                  </Paper>
+                  <ServicesAdminPanel
+                    serviceQuery={serviceQuery}
+                    serviceCityFilter={serviceCityFilter}
+                    serviceCities={serviceCities}
+                    serviceLoading={serviceLoading}
+                    showServiceEditor={showServiceEditor}
+                    serviceForm={serviceForm}
+                    serviceSaving={serviceSaving}
+                    services={services}
+                    showServiceListDialog={showServiceListDialog}
+                    onServiceQueryChange={setServiceQuery}
+                    onServiceCityFilterChange={setServiceCityFilter}
+                    onRefresh={() => {
+                      void handleServiceSearch();
+                    }}
+                    onReset={() => {
+                      setServiceQuery("");
+                      setServiceCityFilter("");
+                      if (token) {
+                        void loadServices(token, "", "");
+                      }
+                    }}
+                    onToggleEditor={() => {
+                      setShowServiceEditor((current) => !current);
+                    }}
+                    onServiceFormChange={(field, value) => {
+                      setServiceForm((current) => ({
+                        ...current,
+                        [field]: value,
+                      }));
+                    }}
+                    onSaveService={() => {
+                      void handleSaveService();
+                    }}
+                    onResetEditor={() => {
+                      resetServiceEditor();
+                      setShowServiceEditor(false);
+                    }}
+                    onOpenListDialog={() => {
+                      setShowServiceListDialog(true);
+                    }}
+                    onCloseListDialog={() => {
+                      setShowServiceListDialog(false);
+                    }}
+                    onEditService={handleEditService}
+                    formatStatus={formatStatus}
+                  />
                 ) : null}
 
                 {activeWorkspaceTab === "admin" && activeAdminTab === "backups" && user?.role === "admin" ? (

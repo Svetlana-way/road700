@@ -1461,6 +1461,7 @@ const documentKindOptions: Array<{ value: DocumentKind; label: string }> = [
 const rootDocumentKindOptions = documentKindOptions.filter(
   (option) => option.value === "order" || option.value === "repeat_scan",
 );
+const VEHICLES_FULL_LIST_LIMIT = 2000;
 const HISTORY_DETAIL_PREVIEW_LIMIT = 220;
 const HISTORY_DETAIL_PREVIEW_LINES = 3;
 const historyActionLabels: Record<string, string> = {
@@ -4060,7 +4061,7 @@ export default function App() {
     setFleetLoading(true);
     try {
       const params = new URLSearchParams();
-      params.set("limit", "200");
+      params.set("limit", String(VEHICLES_FULL_LIST_LIMIT));
       if (query.trim()) {
         params.set("search", query.trim());
       }
@@ -4331,7 +4332,7 @@ export default function App() {
         apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
         apiRequest<DashboardDataQuality>("/dashboard/data-quality", { method: "GET" }, activeToken),
         apiRequest<DashboardDataQualityDetails>("/dashboard/data-quality/details?limit=8", { method: "GET" }, activeToken),
-        apiRequest<VehiclesResponse>("/vehicles?limit=200", { method: "GET" }, activeToken),
+        apiRequest<VehiclesResponse>(`/vehicles?limit=${VEHICLES_FULL_LIST_LIMIT}`, { method: "GET" }, activeToken),
         apiRequest<DocumentsResponse>("/documents?limit=8", { method: "GET" }, activeToken),
         apiRequest<ReviewQueueResponse>(
           `/review/queue?limit=6&category=${reviewCategory}`,
@@ -7768,7 +7769,7 @@ export default function App() {
                 <Tab label="Журнал" value="audit" />
                 {user?.role === "admin" ? <Tab label="Админка" value="admin" /> : null}
                 {user?.role === "admin" && showTechAdminTab ? <Tab label="Тех. админка" value="tech_admin" /> : null}
-                <Tab label={`Техника · ${vehicles.length}`} value="fleet" />
+                <Tab label={`Техника · ${summary?.vehicles_total ?? vehicles.length}`} value="fleet" />
               </Tabs>
               <Typography className="muted-copy">{workspaceTabDescriptions[activeWorkspaceTab]}</Typography>
             </Stack>

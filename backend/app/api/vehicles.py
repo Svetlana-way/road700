@@ -196,7 +196,7 @@ def build_vehicle_detail_payload(db: Session, vehicle: Vehicle) -> dict:
 
 @router.get("", response_model=VehicleListResponse)
 def list_vehicles(
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=2000),
     offset: int = Query(default=0, ge=0),
     vehicle_type: Optional[VehicleType] = Query(default=None),
     status_filter: Optional[VehicleStatus] = Query(default=None, alias="status"),

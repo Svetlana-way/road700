@@ -43,8 +43,10 @@ import { RepairDocumentsSection } from "./components/RepairDocumentsSection";
 import { RepairOverviewReportPanel } from "./components/RepairOverviewReportPanel";
 import { RepairReadOnlySections } from "./components/RepairReadOnlySections";
 import { ReviewExtractedDataPanel } from "./components/ReviewExtractedDataPanel";
+import { ReviewDocumentPreviewPanel } from "./components/ReviewDocumentPreviewPanel";
 import { ReviewRequiredFieldsPanel } from "./components/ReviewRequiredFieldsPanel";
 import { ReviewServicePanel } from "./components/ReviewServicePanel";
+import { ReviewVehicleLinkPanel } from "./components/ReviewVehicleLinkPanel";
 import { ReviewRulesAdminPanel } from "./components/ReviewRulesAdminPanel";
 import { ReviewQueuePanel } from "./components/ReviewQueuePanel";
 import { ServicesAdminPanel } from "./components/ServicesAdminPanel";
@@ -8307,166 +8309,52 @@ export default function App() {
                               {selectedRepairDocument ? (
                                 <Grid container spacing={2}>
                                   <Grid item xs={12} lg={6}>
-                                    <Paper className="repair-line repair-review-split" elevation={0}>
-                                      <Stack spacing={1.25} sx={{ height: "100%" }}>
-                                        <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
-                                          <Box>
-                                            <Typography variant="subtitle1">Документ</Typography>
-                                            <Typography className="muted-copy">{selectedRepairDocument.original_filename}</Typography>
-                                          </Box>
-                                          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap justifyContent="flex-end">
-                                            <Chip size="small" variant="outlined" label={formatDocumentKind(selectedRepairDocument.kind)} />
-                                            <Chip
-                                              size="small"
-                                              color={statusColor(selectedRepairDocument.status as DocumentStatus)}
-                                              label={formatDocumentStatusLabel(selectedRepairDocument.status)}
-                                            />
-                                          </Stack>
-                                        </Stack>
-                                        <Typography className="muted-copy">
-                                          {formatDateTime(selectedRepairDocument.created_at)} · {formatSourceTypeLabel(selectedRepairDocument.source_type)}
-                                          {" · "}OCR {formatConfidence(selectedRepairDocument.ocr_confidence)}
-                                        </Typography>
-                                        <Box className="repair-review-preview">
-                                          {reviewDocumentPreviewLoading ? (
-                                            <Stack spacing={1} alignItems="center" justifyContent="center" sx={{ minHeight: 320 }}>
-                                              <CircularProgress size={24} />
-                                              <Typography className="muted-copy">Загружаю превью документа...</Typography>
-                                            </Stack>
-                                          ) : reviewDocumentPreviewKind === "image" && reviewDocumentPreviewUrl ? (
-                                            <Box
-                                              component="img"
-                                              src={reviewDocumentPreviewUrl}
-                                              alt={selectedRepairDocument.original_filename}
-                                              sx={{
-                                                width: "100%",
-                                                maxHeight: 520,
-                                                objectFit: "contain",
-                                                display: "block",
-                                                borderRadius: 2,
-                                              }}
-                                            />
-                                          ) : reviewDocumentPreviewKind === "pdf" && reviewDocumentPreviewUrl ? (
-                                            <Box
-                                              component="iframe"
-                                              src={reviewDocumentPreviewUrl}
-                                              title={selectedRepairDocument.original_filename}
-                                              sx={{
-                                                width: "100%",
-                                                minHeight: { xs: 360, lg: 520 },
-                                                border: 0,
-                                                borderRadius: 2,
-                                                backgroundColor: "#fff",
-                                              }}
-                                            />
-                                          ) : (
-                                            <Stack spacing={1} alignItems="center" justifyContent="center" sx={{ minHeight: 320 }}>
-                                              <Typography className="muted-copy">
-                                                Для этого типа файла встроенное превью недоступно.
-                                              </Typography>
-                                            </Stack>
-                                          )}
-                                        </Box>
-                                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                          <Button
-                                            size="small"
-                                            variant="outlined"
-                                            disabled={documentOpenLoadingId === selectedRepairDocument.id}
-                                            onClick={() => {
-                                              void handleOpenDocumentFile(selectedRepairDocument.id);
-                                            }}
-                                          >
-                                            {documentOpenLoadingId === selectedRepairDocument.id ? "Открытие..." : "Открыть отдельно"}
-                                          </Button>
-                                          <Typography className="muted-copy">
-                                            Версий OCR: {selectedRepairDocument.versions.length}
-                                          </Typography>
-                                        </Stack>
-                                      </Stack>
-                                    </Paper>
+                                    <ReviewDocumentPreviewPanel
+                                      document={selectedRepairDocument}
+                                      reviewDocumentPreviewLoading={reviewDocumentPreviewLoading}
+                                      reviewDocumentPreviewKind={reviewDocumentPreviewKind}
+                                      reviewDocumentPreviewUrl={reviewDocumentPreviewUrl}
+                                      documentOpenLoadingId={documentOpenLoadingId}
+                                      onOpenDocument={(documentId) => {
+                                        void handleOpenDocumentFile(documentId);
+                                      }}
+                                      formatDocumentKind={formatDocumentKind}
+                                      statusColor={statusColor}
+                                      formatDocumentStatusLabel={formatDocumentStatusLabel}
+                                      formatDateTime={formatDateTime}
+                                      formatSourceTypeLabel={formatSourceTypeLabel}
+                                      formatConfidence={formatConfidence}
+                                    />
                                   </Grid>
                                   <Grid item xs={12} lg={6}>
                                     <Stack spacing={1.5}>
                                       {canLinkVehicleFromSelectedDocument ? (
-                                        <Paper className="repair-line repair-review-split" elevation={0}>
-                                          <Stack spacing={1.25}>
-                                            <Box>
-                                              <Typography variant="subtitle1">Привязка техники</Typography>
-                                              <Typography className="muted-copy">
-                                                Заказ-наряд пока висит на placeholder-технике. Найдите существующую карточку и перепривяжите ремонт прямо из review.
-                                              </Typography>
-                                            </Box>
-                                            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                              {selectedRepairDocumentExtractedFields?.plate_number ? (
-                                                <Chip
-                                                  size="small"
-                                                  variant="outlined"
-                                                  label={`OCR госномер: ${String(selectedRepairDocumentExtractedFields.plate_number)}`}
-                                                />
-                                              ) : null}
-                                              {selectedRepairDocumentExtractedFields?.vin ? (
-                                                <Chip
-                                                  size="small"
-                                                  variant="outlined"
-                                                  label={`OCR VIN: ${String(selectedRepairDocumentExtractedFields.vin)}`}
-                                                />
-                                              ) : null}
-                                            </Stack>
-                                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                              <TextField
-                                                fullWidth
-                                                label="Найти технику"
-                                                value={reviewVehicleSearch}
-                                                onChange={(event) => setReviewVehicleSearch(event.target.value)}
-                                                helperText="Поиск по госномеру, VIN, марке или модели."
-                                              />
-                                              <Button
-                                                variant="outlined"
-                                                disabled={reviewVehicleSearchLoading || reviewVehicleLinkingId !== null}
-                                                onClick={() => {
-                                                  void handleSearchReviewVehicles();
-                                                }}
-                                              >
-                                                {reviewVehicleSearchLoading ? "Поиск..." : "Найти"}
-                                              </Button>
-                                            </Stack>
-                                            {reviewVehicleSearchResults.length > 0 ? (
-                                              <Stack spacing={1}>
-                                                {reviewVehicleSearchResults.map((vehicle) => (
-                                                  <Paper className="repair-line" key={`review-vehicle-${vehicle.id}`} elevation={0}>
-                                                    <Stack
-                                                      direction={{ xs: "column", sm: "row" }}
-                                                      spacing={1}
-                                                      justifyContent="space-between"
-                                                      alignItems={{ xs: "flex-start", sm: "center" }}
-                                                    >
-                                                      <Box>
-                                                        <Typography>{formatVehicle(vehicle)}</Typography>
-                                                        <Typography className="muted-copy">
-                                                          {formatVehicleTypeLabel(vehicle.vehicle_type)} · {vehicle.vin || "VIN не указан"}
-                                                        </Typography>
-                                                      </Box>
-                                                      <Button
-                                                        size="small"
-                                                        variant="contained"
-                                                        disabled={reviewVehicleLinkingId !== null}
-                                                        onClick={() => {
-                                                          void handleLinkReviewVehicle(vehicle.id);
-                                                        }}
-                                                      >
-                                                        {reviewVehicleLinkingId === vehicle.id ? "Привязка..." : "Выбрать технику"}
-                                                      </Button>
-                                                    </Stack>
-                                                  </Paper>
-                                                ))}
-                                              </Stack>
-                                            ) : reviewVehicleSearch.trim() && !reviewVehicleSearchLoading ? (
-                                              <Typography className="muted-copy">
-                                                По этому запросу техника не найдена. {user?.role === "admin" ? "Ниже можно создать новую карточку техники." : ""}
-                                              </Typography>
-                                            ) : null}
-                                          </Stack>
-                                        </Paper>
+                                        <ReviewVehicleLinkPanel
+                                          plateNumber={
+                                            selectedRepairDocumentExtractedFields?.plate_number
+                                              ? String(selectedRepairDocumentExtractedFields.plate_number)
+                                              : null
+                                          }
+                                          vin={
+                                            selectedRepairDocumentExtractedFields?.vin
+                                              ? String(selectedRepairDocumentExtractedFields.vin)
+                                              : null
+                                          }
+                                          reviewVehicleSearch={reviewVehicleSearch}
+                                          reviewVehicleSearchLoading={reviewVehicleSearchLoading}
+                                          reviewVehicleLinkingId={reviewVehicleLinkingId}
+                                          reviewVehicleSearchResults={reviewVehicleSearchResults}
+                                          userRole={user?.role}
+                                          onSearchChange={setReviewVehicleSearch}
+                                          onSearch={() => {
+                                            void handleSearchReviewVehicles();
+                                          }}
+                                          onLinkVehicle={(vehicleId) => {
+                                            void handleLinkReviewVehicle(vehicleId);
+                                          }}
+                                          formatVehicle={formatVehicle}
+                                          formatVehicleTypeLabel={formatVehicleTypeLabel}
+                                        />
                                       ) : null}
 
                                       <ReviewServicePanel

@@ -99,6 +99,11 @@ checks: list[tuple[str, list[str]]] = [
         "frontend/src/App.tsx",
         [
             'uploaded: "В очереди OCR"',
+        ],
+    ),
+    (
+        "frontend/src/components/RepairOverviewReportPanel.tsx",
+        [
             "Итоговый отчёт по заказ-наряду",
             "Ниже они сгруппированы по типам проверки.",
         ],

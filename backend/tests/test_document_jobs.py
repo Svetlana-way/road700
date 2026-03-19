@@ -87,8 +87,7 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         token = response.json()["access_token"]
         return {"Authorization": f"Bearer {token}"}
 
-    def test_upload_creates_queued_job_and_retry_reuses_failed_job(self) -> None:
-        headers = self._get_auth_headers()
+    def _upload_order_document(self, headers: dict[str, str]) -> dict:
         response = self.client.post(
             "/api/documents/upload",
             headers=headers,
@@ -96,7 +95,11 @@ class DocumentJobsApiTestCase(unittest.TestCase):
             data={"kind": "order"},
         )
         self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
+        return response.json()
+
+    def test_upload_creates_queued_job_and_retry_reuses_failed_job(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
         document_id = payload["document"]["id"]
         job_id = payload["job_id"]
         self.assertIsNotNone(job_id)
@@ -125,6 +128,28 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         retried_job_response = self.client.get(f"/api/jobs/{job_id}", headers=headers)
         self.assertEqual(retried_job_response.status_code, 200, retried_job_response.text)
         self.assertEqual(retried_job_response.json()["status"], "retry")
+
+    def test_repair_detail_returns_executive_report_and_document_job_status(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        repair_id = payload["document"]["repair"]["id"]
+        document_id = payload["document"]["id"]
+        job_id = payload["job_id"]
+
+        response = self.client.get(f"/api/repairs/{repair_id}", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        repair_payload = response.json()
+
+        self.assertEqual(repair_payload["id"], repair_id)
+        self.assertIn("executive_report", repair_payload)
+        self.assertIsInstance(repair_payload["executive_report"]["headline"], str)
+        self.assertIsInstance(repair_payload["executive_report"]["summary"], str)
+        self.assertIsInstance(repair_payload["executive_report"]["status"], str)
+        self.assertGreaterEqual(len(repair_payload["documents"]), 1)
+
+        document_payload = next(item for item in repair_payload["documents"] if item["id"] == document_id)
+        self.assertEqual(document_payload["latest_import_job"]["id"], job_id)
+        self.assertEqual(document_payload["latest_import_job"]["status"], "queued")
 
     def _mark_job_failed(self, db: Session, job_id: int, document_id: int) -> None:
         job = db.get(ImportJob, job_id)

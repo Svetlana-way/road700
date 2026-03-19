@@ -22,6 +22,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { AuditLogPanel } from "./components/AuditLogPanel";
 import { GlobalSearchPanel } from "./components/GlobalSearchPanel";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
 
@@ -14230,159 +14231,44 @@ export default function App() {
                 ) : null}
 
                 {activeWorkspaceTab === "audit" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                    <Stack spacing={2}>
-                      <Box>
-                        <Typography variant="h5">Журнал действий</Typography>
-                        <Typography className="muted-copy">
-                          История изменений по ремонтам, документам, технике, импорту и пользовательским операциям.
-                        </Typography>
-                      </Box>
-                      <Grid container spacing={1.5}>
-                        <Grid item xs={12} md={3}>
-                          <TextField
-                            label="Поиск по сущности, ID или действию"
-                            value={auditSearchQuery}
-                            onChange={(event) => setAuditSearchQuery(event.target.value)}
-                            fullWidth
-                          />
-                        </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
-                          <TextField
-                            select
-                            label="Сущность"
-                            value={auditEntityTypeFilter}
-                            onChange={(event) => setAuditEntityTypeFilter(event.target.value)}
-                            fullWidth
-                          >
-                            <MenuItem value="">Все</MenuItem>
-                            {auditEntityTypes.map((value) => (
-                              <MenuItem key={`audit-entity-${value}`} value={value}>
-                                {formatAuditEntityLabel(value)}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
-                          <TextField
-                            select
-                            label="Действие"
-                            value={auditActionTypeFilter}
-                            onChange={(event) => setAuditActionTypeFilter(event.target.value)}
-                            fullWidth
-                          >
-                            <MenuItem value="">Все</MenuItem>
-                            {auditActionTypes.map((value) => (
-                              <MenuItem key={`audit-action-${value}`} value={value}>
-                                {formatHistoryActionLabel(value)}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        </Grid>
-                        {user?.role === "admin" ? (
-                          <Grid item xs={12} sm={6} md={3}>
-                            <TextField
-                              select
-                              label="Пользователь"
-                              value={auditUserIdFilter}
-                              onChange={(event) => setAuditUserIdFilter(event.target.value)}
-                              fullWidth
-                            >
-                              <MenuItem value="">Все</MenuItem>
-                              {usersList.map((item) => (
-                                <MenuItem key={`audit-user-${item.id}`} value={String(item.id)}>
-                                  {item.full_name}
-                                </MenuItem>
-                              ))}
-                            </TextField>
-                          </Grid>
-                        ) : null}
-                        <Grid item xs={12} sm={6} md={2}>
-                          <TextField
-                            label="От"
-                            type="date"
-                            value={auditDateFrom}
-                            onChange={(event) => setAuditDateFrom(event.target.value)}
-                            InputLabelProps={{ shrink: true }}
-                            fullWidth
-                          />
-                        </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
-                          <TextField
-                            label="До"
-                            type="date"
-                            value={auditDateTo}
-                            onChange={(event) => setAuditDateTo(event.target.value)}
-                            InputLabelProps={{ shrink: true }}
-                            fullWidth
-                          />
-                        </Grid>
-                      </Grid>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                        <Button
-                          variant="outlined"
-                          disabled={auditLogLoading}
-                          onClick={() => {
-                            if (token) {
-                              void loadAuditLog(token);
-                            }
-                          }}
-                        >
-                          {auditLogLoading ? "Загрузка..." : "Обновить журнал"}
-                        </Button>
-                        <Button
-                          variant="text"
-                          disabled={auditLogLoading}
-                          onClick={() => {
-                            setAuditSearchQuery("");
-                            setAuditEntityTypeFilter("");
-                            setAuditActionTypeFilter("");
-                            setAuditUserIdFilter("");
-                            setAuditDateFrom("");
-                            setAuditDateTo("");
-                          }}
-                        >
-                          Сбросить фильтр
-                        </Button>
-                      </Stack>
-                      <Typography className="muted-copy">Показано {auditLogItems.length} из {auditLogTotal}</Typography>
-
-                      {auditLogLoading ? (
-                        <Stack spacing={1} alignItems="center" className="repair-placeholder">
-                          <CircularProgress size={24} />
-                          <Typography className="muted-copy">Загрузка журнала действий...</Typography>
-                        </Stack>
-                      ) : auditLogItems.length > 0 ? (
-                        <Stack spacing={1}>
-                          {auditLogItems.map((entry) => (
-                            <Paper className="repair-line" key={`audit-log-${entry.id}`} elevation={0}>
-                              <Stack spacing={1}>
-                                <Stack
-                                  direction={{ xs: "column", sm: "row" }}
-                                  justifyContent="space-between"
-                                  spacing={1}
-                                  alignItems={{ xs: "flex-start", sm: "center" }}
-                                >
-                                  <Box>
-                                    <Typography>
-                                      {entry.user_name || "Система"} · {formatHistoryActionLabel(entry.action_type)}
-                                    </Typography>
-                                    <Typography className="muted-copy">
-                                      {formatAuditEntityLabel(entry.entity_type)} #{entry.entity_id}
-                                    </Typography>
-                                  </Box>
-                                  <Typography className="muted-copy">{formatDateTime(entry.created_at)}</Typography>
-                                </Stack>
-                                {renderHistoryDetails(`audit-${entry.id}`, buildAuditEntryDetails(entry))}
-                              </Stack>
-                            </Paper>
-                          ))}
-                        </Stack>
-                      ) : (
-                        <Typography className="muted-copy">По текущему фильтру событий нет.</Typography>
-                      )}
-                    </Stack>
-                  </Paper>
+                  <AuditLogPanel
+                    userRole={user?.role}
+                    auditSearchQuery={auditSearchQuery}
+                    auditEntityTypeFilter={auditEntityTypeFilter}
+                    auditActionTypeFilter={auditActionTypeFilter}
+                    auditUserIdFilter={auditUserIdFilter}
+                    auditDateFrom={auditDateFrom}
+                    auditDateTo={auditDateTo}
+                    auditEntityTypes={auditEntityTypes}
+                    auditActionTypes={auditActionTypes}
+                    users={usersList}
+                    auditLogLoading={auditLogLoading}
+                    auditLogItems={auditLogItems}
+                    auditLogTotal={auditLogTotal}
+                    onAuditSearchQueryChange={setAuditSearchQuery}
+                    onAuditEntityTypeFilterChange={setAuditEntityTypeFilter}
+                    onAuditActionTypeFilterChange={setAuditActionTypeFilter}
+                    onAuditUserIdFilterChange={setAuditUserIdFilter}
+                    onAuditDateFromChange={setAuditDateFrom}
+                    onAuditDateToChange={setAuditDateTo}
+                    onRefresh={() => {
+                      if (token) {
+                        void loadAuditLog(token);
+                      }
+                    }}
+                    onReset={() => {
+                      setAuditSearchQuery("");
+                      setAuditEntityTypeFilter("");
+                      setAuditActionTypeFilter("");
+                      setAuditUserIdFilter("");
+                      setAuditDateFrom("");
+                      setAuditDateTo("");
+                    }}
+                    formatAuditEntityLabel={formatAuditEntityLabel}
+                    formatHistoryActionLabel={formatHistoryActionLabel}
+                    formatDateTime={formatDateTime}
+                    renderEntryDetails={(entry) => renderHistoryDetails(`audit-${entry.id}`, buildAuditEntryDetails(entry))}
+                  />
                 ) : null}
 
                 {activeWorkspaceTab === "fleet" ? (

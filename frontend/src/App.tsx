@@ -1408,6 +1408,15 @@ const workspaceTabDescriptions: Record<WorkspaceTab, string> = {
   search: "Глобальный поиск по заказ-нарядам, ремонтам и карточкам техники.",
   audit: "Журнал действий по ремонтам, документам, технике и пользовательским операциям.",
 };
+const workspaceTabReturnLabels: Record<WorkspaceTab, string> = {
+  documents: "Назад к документам",
+  repair: "Назад к ремонту",
+  admin: "Назад в админку",
+  tech_admin: "Назад в тех. админку",
+  fleet: "Назад к технике",
+  search: "Назад к поиску",
+  audit: "Назад к журналу",
+};
 
 const adminTabDescriptions: Record<AdminTab, string> = {
   services: "Справочник сервисов для нормализации названий и ручной правки ремонтов.",
@@ -3336,6 +3345,9 @@ export default function App() {
   const [selectedFleetVehicleLoading, setSelectedFleetVehicleLoading] = useState(false);
   const [fleetViewMode, setFleetViewMode] = useState<"list" | "detail">("list");
   const fleetListScrollPositionRef = useRef(0);
+  const repairReturnTabRef = useRef<WorkspaceTab>("documents");
+  const repairScrollPositionRef = useRef(0);
+  const [repairHasReturnTarget, setRepairHasReturnTarget] = useState(false);
   const [vehicleSaving, setVehicleSaving] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
@@ -5002,12 +5014,26 @@ export default function App() {
   }
 
   async function openRepairByIds(documentId: number | null, repairId: number) {
+    if (activeWorkspaceTab !== "repair") {
+      repairReturnTabRef.current = activeWorkspaceTab;
+      repairScrollPositionRef.current = window.scrollY;
+      setRepairHasReturnTarget(true);
+    }
     setActiveWorkspaceTab("repair");
     setActiveRepairTab("overview");
+    window.scrollTo({ top: 0, behavior: "smooth" });
     if (!token) {
       return;
     }
     await loadRepairDetail(token, repairId, documentId, { resetTransientState: true });
+  }
+
+  function returnFromRepairPage() {
+    const nextTab = repairHasReturnTarget ? repairReturnTabRef.current : "documents";
+    setActiveWorkspaceTab(nextTab);
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: repairHasReturnTarget ? repairScrollPositionRef.current : 0, behavior: "auto" });
+    });
   }
 
   function openFleetVehicleById(vehicleId: number) {
@@ -11837,14 +11863,31 @@ export default function App() {
                 ) : null}
 
                 {activeWorkspaceTab === "repair" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                  <Stack spacing={2}>
-                    <Box>
-                      <Typography variant="h5">Карточка ремонта</Typography>
-                      <Typography className="muted-copy">
-                        Сначала короткий вывод для руководителя, затем полная расшифровка проверки по кнопке и все рабочие детали ремонта.
-                      </Typography>
-                    </Box>
+                  <Box sx={{ width: "100%", maxWidth: 1120, mx: "auto" }}>
+                    <Stack spacing={2}>
+                      <Stack
+                        direction={{ xs: "column", sm: "row" }}
+                        spacing={1}
+                        justifyContent="space-between"
+                        alignItems={{ xs: "flex-start", sm: "center" }}
+                      >
+                        {repairHasReturnTarget ? (
+                          <Button variant="text" onClick={returnFromRepairPage}>
+                            {workspaceTabReturnLabels[repairReturnTabRef.current]}
+                          </Button>
+                        ) : <Box />}
+                        <Typography className="muted-copy">
+                          Отчёт открыт отдельной страницей и выведен по центру экрана.
+                        </Typography>
+                      </Stack>
+                      <Paper className="workspace-panel" elevation={0}>
+                      <Stack spacing={2}>
+                        <Box>
+                          <Typography variant="h5">Карточка ремонта</Typography>
+                          <Typography className="muted-copy">
+                            Сначала короткий вывод для руководителя, затем полная расшифровка проверки по кнопке и все рабочие детали ремонта.
+                          </Typography>
+                        </Box>
                     {repairLoading ? (
                       <Stack spacing={2} alignItems="center" className="repair-placeholder">
                         <CircularProgress size={28} />
@@ -13657,8 +13700,10 @@ export default function App() {
                         </Typography>
                       </Stack>
                     )}
-                  </Stack>
-                  </Paper>
+                      </Stack>
+                      </Paper>
+                    </Stack>
+                  </Box>
                 ) : null}
 
                 {activeWorkspaceTab === "search" ? (

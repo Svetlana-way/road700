@@ -27,7 +27,7 @@ from app.schemas.repair import (
     RepairServiceUpdateRequest,
     RepairUpdateRequest,
 )
-from app.services.document_processing import replace_ocr_checks, resolve_service
+from app.services.document_processing import build_manual_review_check, replace_ocr_checks, resolve_service
 from app.services.exporting import append_rows, safe_filename
 
 
@@ -43,6 +43,25 @@ LEARNING_HEADER_FIELDS = (
     "vat_total",
     "grand_total",
 )
+MANUAL_REVIEW_REASON_LABELS = {
+    "mileage_missing": "Не удалось определить пробег",
+    "order_number_missing": "Не удалось определить номер заказ-наряда",
+    "repair_date_invalid": "Дата ремонта распознана с ошибкой",
+    "repair_date_missing": "Не удалось определить дату ремонта",
+    "service_name_missing": "Не удалось определить сервис",
+    "service_name_suspicious": "Название сервиса выглядит сомнительно",
+    "service_not_found": "Сервис не найден в справочнике",
+    "text_not_found": "Не удалось извлечь текст из документа",
+    "vehicle_missing": "Не удалось определить технику",
+    "vehicle_not_found": "Техника не найдена в базе",
+}
+CHECK_REPORT_SECTION_LABELS = {
+    "catalogs": "Справочники",
+    "labor_norms": "Нормо-часы",
+    "amounts": "Суммы и структура",
+    "history": "История и аномалии",
+    "ocr": "OCR и ручная проверка",
+}
 
 
 def build_repair_snapshot(repair: Repair) -> dict:
@@ -348,6 +367,155 @@ def stringify_learning_value(value: object) -> str | None:
     return str(value)
 
 
+def get_report_source_document(repair: Repair) -> Document | None:
+    return get_learning_source_document(repair)
+
+
+def get_report_source_payload(repair: Repair) -> dict:
+    source_document = get_report_source_document(repair)
+    latest_version = get_latest_document_version(source_document)
+    if latest_version is None or not isinstance(latest_version.parsed_payload, dict):
+        return {}
+    return latest_version.parsed_payload
+
+
+def get_check_report_section_key(check_type: str) -> str:
+    if "vehicle" in check_type or "service" in check_type:
+        return "catalogs"
+    if "standard_hours" in check_type:
+        return "labor_norms"
+    if "total" in check_type or "duplicate" in check_type or "expected_total" in check_type:
+        return "amounts"
+    if "repeat_repair" in check_type:
+        return "history"
+    return "ocr"
+
+
+def build_report_status_summary(repair: Repair) -> tuple[str, str]:
+    if any(document.status.value == "uploaded" for document in repair.documents):
+        return "В очереди OCR", "Документ ещё находится в обработке или перепроверке."
+
+    unresolved_checks = [item for item in repair.checks if not item.is_resolved]
+    if any(item.severity in {CheckSeverity.SUSPICIOUS, CheckSeverity.ERROR} for item in unresolved_checks):
+        return "Есть критичные несоответствия", "Перед подтверждением нужны ручная проверка и решение по предупреждениям."
+    if unresolved_checks:
+        return "Требует ручной проверки", "По заказ-наряду есть открытые предупреждения, которые нужно проверить."
+    return "Готов к следующему этапу", "Открытых несоответствий по заказ-наряду не найдено."
+
+
+def build_export_warning_rows(repair: Repair) -> list[tuple[object, ...]]:
+    rows: list[tuple[object, ...]] = []
+    report_payload = get_report_source_payload(repair)
+    extracted_fields = report_payload.get("extracted_fields") if isinstance(report_payload.get("extracted_fields"), dict) else {}
+    raw_reasons = report_payload.get("manual_review_reasons")
+    manual_review_reasons = [str(item) for item in raw_reasons] if isinstance(raw_reasons, list) else []
+    seen_reason_codes: set[str] = set()
+
+    for check in sorted(repair.checks, key=lambda item: (item.is_resolved, item.created_at, item.id)):
+        resolution = check.calculation_payload.get("resolution") if isinstance(check.calculation_payload, dict) else None
+        resolved_at = resolution.get("resolved_at") if isinstance(resolution, dict) else None
+        rows.append(
+            (
+                CHECK_REPORT_SECTION_LABELS[get_check_report_section_key(check.check_type)],
+                check.severity.value,
+                check.title,
+                check.details or "",
+                "check",
+                "Да" if check.is_resolved else "Нет",
+                resolved_at or "",
+            )
+        )
+        if check.check_type.startswith("ocr_"):
+            reason_code = check.check_type.removeprefix("ocr_")
+            seen_reason_codes.add(reason_code)
+
+    for reason in manual_review_reasons:
+        if reason in seen_reason_codes:
+            continue
+        manual_check = build_manual_review_check(reason, extracted_fields=extracted_fields)
+        rows.append(
+            (
+                CHECK_REPORT_SECTION_LABELS[get_check_report_section_key(str(manual_check["check_type"]))],
+                manual_check["severity"].value,
+                str(manual_check["title"]),
+                str(manual_check.get("details") or ""),
+                "manual_review_reason",
+                "Нет",
+                "",
+            )
+        )
+
+    return rows
+
+
+def update_service_manual_review_state(repair: Repair, service_name: str | None) -> None:
+    source_document = get_learning_source_document(repair)
+    latest_version = get_latest_document_version(source_document)
+    if latest_version is None or not isinstance(latest_version.parsed_payload, dict):
+        return
+
+    parsed_payload = dict(latest_version.parsed_payload)
+    raw_reasons = parsed_payload.get("manual_review_reasons")
+    manual_review_reasons = [str(item) for item in raw_reasons] if isinstance(raw_reasons, list) else []
+    manual_review_reasons = [
+        item for item in manual_review_reasons if item not in {"service_not_found", "service_name_missing"}
+    ]
+
+    extracted_fields_raw = parsed_payload.get("extracted_fields")
+    extracted_fields = dict(extracted_fields_raw) if isinstance(extracted_fields_raw, dict) else {}
+
+    if service_name:
+        extracted_fields["service_name"] = service_name
+    else:
+        extracted_fields.pop("service_name", None)
+        manual_review_reasons.append("service_name_missing")
+
+    parsed_payload["extracted_fields"] = extracted_fields
+    parsed_payload["manual_review_reasons"] = manual_review_reasons
+    latest_version.parsed_payload = parsed_payload
+
+
+def sync_service_checks(repair: Repair, service_name: str | None, current_user: User) -> None:
+    service_check_types = {"ocr_service_not_found", "ocr_service_missing"}
+    service_checks = [item for item in repair.checks if item.check_type in service_check_types]
+
+    for check in service_checks:
+        payload = dict(check.calculation_payload or {})
+        should_be_resolved = bool(service_name) or check.check_type == "ocr_service_not_found"
+        payload["resolution"] = {
+            "is_resolved": should_be_resolved,
+            "comment": (
+                "Сервис назначен вручную и предупреждение снято"
+                if service_name
+                else (
+                    "Сервис очищен, актуально предупреждение об отсутствии сервиса"
+                    if check.check_type == "ocr_service_not_found"
+                    else "Сервис очищен, предупреждение возвращено"
+                )
+            ),
+            "user_id": current_user.id,
+            "user_name": current_user.full_name,
+            "resolved_at": datetime.now(timezone.utc).isoformat(),
+        }
+        check.is_resolved = should_be_resolved
+        check.calculation_payload = payload
+
+    if service_name or any(item.check_type == "ocr_service_missing" for item in service_checks):
+        return
+
+    repair.checks.append(
+        RepairCheck(
+            repair_id=repair.id,
+            check_type="ocr_service_missing",
+            severity=CheckSeverity.WARNING,
+            title="Не удалось определить сервис",
+            details="Сервис у ремонта не назначен. Нужна ручная проверка.",
+            calculation_payload={"reason": "service_name_missing"},
+            is_resolved=False,
+        )
+    )
+
+
 def build_repair_learning_snapshot(repair: Repair) -> dict[str, str | None]:
     return {
         "order_number": stringify_learning_value(repair.order_number),
@@ -522,9 +690,17 @@ def export_repair(
     current_user: User = Depends(get_current_active_user),
 ) -> StreamingResponse:
     repair = load_repair_for_user(db, repair_id, current_user)
+    source_document = get_report_source_document(repair)
+    source_payload = get_report_source_payload(repair)
+    report_status, report_status_comment = build_report_status_summary(repair)
+    warning_rows = build_export_warning_rows(repair)
+    raw_reasons = source_payload.get("manual_review_reasons")
+    manual_review_reasons = [str(item) for item in raw_reasons] if isinstance(raw_reasons, list) else []
+    extracted_fields = source_payload.get("extracted_fields") if isinstance(source_payload.get("extracted_fields"), dict) else {}
+
     workbook = Workbook()
     summary_sheet = workbook.active
-    summary_sheet.title = "Ремонт"
+    summary_sheet.title = "Отчет"
     append_rows(
         summary_sheet,
         [
@@ -533,6 +709,8 @@ def export_repair(
             ("Номер заказ-наряда", repair.order_number or ""),
             ("Дата ремонта", repair.repair_date.isoformat()),
             ("Статус", repair.status.value),
+            ("Итоговый статус отчёта", report_status),
+            ("Комментарий к статусу", report_status_comment),
             ("Предварительный", "Да" if repair.is_preliminary else "Нет"),
             ("Частично распознан", "Да" if repair.is_partially_recognized else "Нет"),
             ("Госномер", repair.vehicle.plate_number or ""),
@@ -540,6 +718,7 @@ def export_repair(
             ("Марка", repair.vehicle.brand or ""),
             ("Модель", repair.vehicle.model or ""),
             ("Сервис", repair.service.name if repair.service is not None else ""),
+            ("Сервис по OCR", extracted_fields.get("service_name") if extracted_fields else ""),
             ("Пробег", repair.mileage),
             ("Причина ремонта", repair.reason or ""),
             ("Комментарий сотрудника", repair.employee_comment or ""),
@@ -547,9 +726,24 @@ def export_repair(
             ("Запчасти, руб", float(repair.parts_total)),
             ("НДС, руб", float(repair.vat_total)),
             ("Итого, руб", float(repair.grand_total)),
+            ("Ожидаемая стоимость, руб", float(repair.expected_total) if repair.expected_total is not None else ""),
+            ("Основной документ", source_document.original_filename if source_document is not None else ""),
+            ("Статус основного документа", source_document.status.value if source_document is not None else ""),
+            (
+                "Причины ручной проверки OCR",
+                ", ".join(MANUAL_REVIEW_REASON_LABELS.get(item, item) for item in manual_review_reasons),
+            ),
+            ("Открытых предупреждений", len([item for item in repair.checks if not item.is_resolved])),
             ("Создан", repair.created_at.isoformat()),
             ("Обновлен", repair.updated_at.isoformat()),
         ],
+    )
+
+    warnings_sheet = workbook.create_sheet("Несоответствия")
+    append_rows(
+        warnings_sheet,
+        [("Раздел", "Важность", "Заголовок", "Детали", "Источник", "Решено", "Дата решения")]
+        + warning_rows,
     )
 
     works_sheet = workbook.create_sheet("Работы")
@@ -735,6 +929,11 @@ def update_repair_service(
         repair.service_id = service.id
     else:
         repair.service_id = None
+
+    update_service_manual_review_state(repair, service_name)
+    sync_service_checks(repair, service_name, current_user)
+    repair.is_manually_completed = True
+    refresh_repair_status_after_check_updates(repair, current_user)
 
     db.flush()
     refreshed = load_repair_for_user(db, repair_id, current_user)

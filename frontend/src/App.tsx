@@ -3420,6 +3420,10 @@ export default function App() {
     (item) => item.severity === "suspicious" || item.severity === "error",
   );
   const selectedRepairReportSections = groupRepairChecksForReport(selectedRepairUnresolvedChecks);
+  const selectedRepairDocumentManualReviewReasons =
+    Array.isArray(selectedRepairDocumentPayload?.manual_review_reasons)
+      ? selectedRepairDocumentPayload.manual_review_reasons.filter((item): item is string => typeof item === "string")
+      : [];
   const repairVisualBars = buildRepairVisualBars(summary, dataQuality);
   const repairVisualMax = Math.max(...repairVisualBars.map((item) => item.value), 0);
   const qualityVisualBars = buildQualityVisualBars(dataQuality);
@@ -3594,6 +3598,9 @@ export default function App() {
   const reviewMissingRequiredFields = reviewRequiredFieldComparisons
     .filter((item) => item.status === "missing")
     .map((item) => item.label);
+  const selectedRepairComparisonAttentionCount = reviewRequiredFieldComparisons.filter(
+    (item) => item.status === "missing" || item.status === "mismatch",
+  ).length;
   const reviewReadyFieldsCount = reviewRequiredFieldComparisons.filter((item) => item.status !== "missing").length;
   const canConfirmSelectedReview = reviewMissingRequiredFields.length === 0;
   const uploadMissingRequirements = [
@@ -12252,6 +12259,95 @@ export default function App() {
                                       </>
                                     ) : null}
                                   </Grid>
+
+                                  <Divider />
+
+                                  {selectedRepairDocument ? (
+                                    <Stack spacing={1.5}>
+                                      <Box>
+                                        <Typography variant="subtitle1">Сверка OCR и подтверждённых полей</Typography>
+                                        <Typography className="muted-copy">
+                                          Сотрудник видит, что было распознано из документа и какие обязательные поля уже подтверждены в ремонте.
+                                        </Typography>
+                                      </Box>
+                                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                        <Chip
+                                          size="small"
+                                          variant="outlined"
+                                          label={`OCR ${formatConfidence(selectedRepairDocument.ocr_confidence)}`}
+                                        />
+                                        <Chip
+                                          size="small"
+                                          color={selectedRepairComparisonAttentionCount > 0 ? "warning" : "success"}
+                                          label={
+                                            selectedRepairComparisonAttentionCount > 0
+                                              ? `Требует сверки: ${selectedRepairComparisonAttentionCount}`
+                                              : "Обязательные поля сверены"
+                                          }
+                                        />
+                                        <Chip
+                                          size="small"
+                                          variant="outlined"
+                                          label={`Строк OCR: работ ${selectedRepairDocumentWorks.length}, запчастей ${selectedRepairDocumentParts.length}`}
+                                        />
+                                      </Stack>
+                                      {reviewRequiredFieldComparisons.length > 0 ? (
+                                        <Grid container spacing={1.25}>
+                                          {reviewRequiredFieldComparisons.map((item) => (
+                                            <Grid item xs={12} md={6} key={`overview-review-field-${item.key}`}>
+                                              <Paper className="repair-line" elevation={0}>
+                                                <Stack spacing={0.75}>
+                                                  <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
+                                                    <Typography className="metric-label">{item.label}</Typography>
+                                                    <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap justifyContent="flex-end">
+                                                      <Chip
+                                                        size="small"
+                                                        color={getReviewComparisonColor(item.status)}
+                                                        label={getReviewComparisonLabel(item.status)}
+                                                      />
+                                                      <Chip
+                                                        size="small"
+                                                        variant="outlined"
+                                                        color={getConfidenceColor(item.confidenceValue)}
+                                                        label={formatConfidenceLabel(item.confidenceValue)}
+                                                      />
+                                                    </Stack>
+                                                  </Stack>
+                                                  <Typography>В ремонте: {item.currentDisplay}</Typography>
+                                                  <Typography className="muted-copy">OCR: {item.ocrDisplay}</Typography>
+                                                </Stack>
+                                              </Paper>
+                                            </Grid>
+                                          ))}
+                                        </Grid>
+                                      ) : null}
+                                      {selectedRepairDocumentManualReviewReasons.length > 0 ? (
+                                        <Alert severity="warning">
+                                          OCR требует ручной проверки: {formatManualReviewReasons(selectedRepairDocumentManualReviewReasons)}.
+                                        </Alert>
+                                      ) : null}
+                                      {selectedRepairDocumentFieldSnapshots.length > 0 ? (
+                                        <Box className="ocr-lines-grid">
+                                          {selectedRepairDocumentFieldSnapshots.slice(0, 6).map((item) => (
+                                            <Paper className="ocr-line-card" key={`overview-ocr-field-${item.key}`} elevation={0}>
+                                              <Stack spacing={1}>
+                                                <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
+                                                  <Typography className="metric-label">{item.label}</Typography>
+                                                  <Chip
+                                                    size="small"
+                                                    variant="outlined"
+                                                    color={getConfidenceColor(item.confidenceValue)}
+                                                    label={formatConfidenceLabel(item.confidenceValue)}
+                                                  />
+                                                </Stack>
+                                                <Typography className="ocr-line-title">{item.value}</Typography>
+                                              </Stack>
+                                            </Paper>
+                                          ))}
+                                        </Box>
+                                      ) : null}
+                                    </Stack>
+                                  ) : null}
 
                                   <Divider />
 

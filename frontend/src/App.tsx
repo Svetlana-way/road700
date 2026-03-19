@@ -1400,8 +1400,8 @@ function buildAttentionVisualBars(details: DashboardDataQualityDetails | null): 
 }
 
 const workspaceTabDescriptions: Record<WorkspaceTab, string> = {
-  documents: "Загрузка, очередь OCR и последние заказ-наряды.",
-  repair: "Карточка выбранного ремонта, проверки, документы и история.",
+  documents: "Загрузка заказ-наряда, автоматическая проверка и короткий итог по результату.",
+  repair: "Короткий итог по заказ-наряду, полная расшифровка проверки и история ремонта.",
   admin: "Справочники и правила системы, доступные администратору.",
   tech_admin: "Отдельный экран для OCR-обучения и тонкой технической настройки.",
   fleet: "Быстрый обзор техники, доступной текущему пользователю.",
@@ -1425,7 +1425,7 @@ const techAdminTabDescriptions: Record<TechAdminTab, string> = {
 };
 
 const repairTabDescriptions: Record<RepairTab, string> = {
-  overview: "Основные суммы, реквизиты ремонта и действия администратора.",
+  overview: "Короткий итог для руководителя и полная расшифровка проверки по кнопке.",
   works: "Список работ, нормо-часы и ручное редактирование работ.",
   parts: "Список запчастей и ручное редактирование материалов.",
   documents: "Документы ремонта, версии OCR и сравнение файлов.",
@@ -8415,7 +8415,7 @@ export default function App() {
                   <Box>
                     <Typography variant="h5">Загрузка заказ-наряда</Typography>
                     <Typography className="muted-copy">
-                      После загрузки система создаёт черновик ремонта и ставит документ в очередь OCR.
+                      После загрузки система сама распознаёт документ, сопоставляет машину и сервис, сверяет данные по базе, справочникам и истории, а затем показывает короткий итог.
                     </Typography>
                   </Box>
 
@@ -8604,7 +8604,7 @@ export default function App() {
                             </Alert>
                           ) : selectedFile ? (
                             <Alert severity="info">
-                              Если машина или пробег не введены вручную, будет создан черновик для OCR и последующей проверки.
+                              После загрузки система создаст черновик ремонта, выполнит OCR, проверит машину, сервис, справочники и историю, а затем подготовит короткий итог по заказ-наряду.
                             </Alert>
                           ) : null}
                         </Paper>
@@ -8616,7 +8616,7 @@ export default function App() {
                           size="large"
                           disabled={uploadLoading || uploadMissingRequirements.length > 0}
                         >
-                          {uploadLoading ? "Загрузка..." : "Создать черновик ремонта"}
+                          {uploadLoading ? "Загрузка..." : "Загрузить и запустить проверку"}
                         </Button>
                       </Grid>
                       {lastUploadedDocument ? (
@@ -8630,9 +8630,9 @@ export default function App() {
                                 alignItems={{ xs: "flex-start", sm: "center" }}
                               >
                                 <Box>
-                                  <Typography variant="subtitle1">Документ загружен</Typography>
+                                  <Typography variant="subtitle1">Короткий итог по загрузке</Typography>
                                   <Typography className="muted-copy">
-                                    Черновик ремонта создан и поставлен в обработку.
+                                    Система приняла заказ-наряд и подготовила карточку ремонта для автоматической проверки.
                                   </Typography>
                                 </Box>
                                 <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -8648,54 +8648,36 @@ export default function App() {
                                   />
                                 </Stack>
                               </Stack>
+                              <Typography>{isDocumentAwaitingOcr(lastUploadedDocument.status)
+                                ? `Заказ-наряд ${lastUploadedDocument.repair.order_number || "без номера"} загружен. Сейчас идет распознавание и автоматическая сверка по машине, сервису, справочникам и истории.`
+                                : `Заказ-наряд ${lastUploadedDocument.repair.order_number || "без номера"} загружен и обработан. Карточка ремонта заполнена, можно открыть итог проверки.`}</Typography>
                               <Typography className="selected-file">{lastUploadedDocument.original_filename}</Typography>
-                              <Typography className="muted-copy">{formatVehicle(lastUploadedDocument.vehicle)}</Typography>
+                              <Typography className="muted-copy">
+                                Машина: {!isPlaceholderVehicle(lastUploadedDocument.vehicle.external_id)
+                                  ? formatVehicle(lastUploadedDocument.vehicle)
+                                  : "не определена автоматически"}
+                              </Typography>
+                              <Typography className="muted-copy">
+                                Сервис: {lastUploadedDocument.parsed_payload?.extracted_fields?.service_name
+                                  ? String(lastUploadedDocument.parsed_payload.extracted_fields.service_name)
+                                  : "будет уточнен после проверки"}
+                              </Typography>
                               <Typography className="muted-copy">
                                 Ремонт #{lastUploadedDocument.repair.id}
                                 {lastUploadedDocument.repair.order_number
                                   ? ` · ${lastUploadedDocument.repair.order_number}`
                                   : ""}
-                                {" · "}
-                                {lastUploadedDocument.repair.repair_date}
-                                {" · "}
-                                пробег {lastUploadedDocument.repair.mileage}
+                                {lastUploadedDocument.repair.repair_date ? ` · ${lastUploadedDocument.repair.repair_date}` : ""}
+                                {lastUploadedDocument.repair.mileage > 0 ? ` · пробег ${lastUploadedDocument.repair.mileage}` : ""}
                               </Typography>
                               <Typography className="muted-copy">
-                                Загружен {formatDateTime(lastUploadedDocument.created_at)}
+                                Статус: {isDocumentAwaitingOcr(lastUploadedDocument.status)
+                                  ? "идет автоматическая проверка"
+                                  : "автоматическая обработка выполнена"}
                                 {typeof lastUploadedDocument.ocr_confidence === "number"
                                   ? ` · OCR ${formatConfidence(lastUploadedDocument.ocr_confidence)}`
-                                  : " · OCR в очереди"}
+                                  : ""}
                               </Typography>
-                              {lastUploadedDocument.parsed_payload?.extracted_fields?.service_name ? (
-                                <Typography className="muted-copy">
-                                  OCR сервис: {lastUploadedDocument.parsed_payload.extracted_fields.service_name}
-                                </Typography>
-                              ) : null}
-                              {lastUploadedDocument.parsed_payload?.extracted_fields ? (
-                                <Typography className="muted-copy">
-                                  OCR:
-                                  {[
-                                    lastUploadedDocument.parsed_payload.extracted_fields.order_number
-                                      ? ` заказ-наряд ${String(lastUploadedDocument.parsed_payload.extracted_fields.order_number)}`
-                                      : null,
-                                    lastUploadedDocument.parsed_payload.extracted_fields.repair_date
-                                      ? ` дата ${String(lastUploadedDocument.parsed_payload.extracted_fields.repair_date)}`
-                                      : null,
-                                    lastUploadedDocument.parsed_payload.extracted_fields.mileage !== undefined &&
-                                    lastUploadedDocument.parsed_payload.extracted_fields.mileage !== null
-                                      ? ` пробег ${String(lastUploadedDocument.parsed_payload.extracted_fields.mileage)}`
-                                      : null,
-                                    lastUploadedDocument.parsed_payload.extracted_fields.plate_number
-                                      ? ` госномер ${String(lastUploadedDocument.parsed_payload.extracted_fields.plate_number)}`
-                                      : null,
-                                    lastUploadedDocument.parsed_payload.extracted_fields.vin
-                                      ? ` VIN ${String(lastUploadedDocument.parsed_payload.extracted_fields.vin)}`
-                                      : null,
-                                  ]
-                                    .filter(Boolean)
-                                    .join(" · ")}
-                                </Typography>
-                              ) : null}
                               <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                                 <Button
                                   variant="contained"
@@ -8706,7 +8688,7 @@ export default function App() {
                                     );
                                   }}
                                 >
-                                  Открыть ремонт
+                                  Открыть итог по заказ-наряду
                                 </Button>
                                 <Button
                                   variant="outlined"
@@ -11860,7 +11842,7 @@ export default function App() {
                     <Box>
                       <Typography variant="h5">Карточка ремонта</Typography>
                       <Typography className="muted-copy">
-                        Состав работ, материалов и проверки по выбранному документу.
+                        Сначала короткий вывод для руководителя, затем полная расшифровка проверки по кнопке и все рабочие детали ремонта.
                       </Typography>
                     </Box>
                     {repairLoading ? (

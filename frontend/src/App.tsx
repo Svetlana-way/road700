@@ -3333,6 +3333,8 @@ export default function App() {
   const [selectedFleetVehicleId, setSelectedFleetVehicleId] = useState<number | null>(null);
   const [selectedFleetVehicle, setSelectedFleetVehicle] = useState<VehicleDetail | null>(null);
   const [selectedFleetVehicleLoading, setSelectedFleetVehicleLoading] = useState(false);
+  const [fleetViewMode, setFleetViewMode] = useState<"list" | "detail">("list");
+  const fleetListScrollPositionRef = useRef(0);
   const [vehicleSaving, setVehicleSaving] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
@@ -4092,6 +4094,20 @@ export default function App() {
     }
   }
 
+  function openFleetVehicleCard(vehicleId: number) {
+    fleetListScrollPositionRef.current = window.scrollY;
+    setSelectedFleetVehicleId(vehicleId);
+    setFleetViewMode("detail");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function returnToFleetList() {
+    setFleetViewMode("list");
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: fleetListScrollPositionRef.current, behavior: "auto" });
+    });
+  }
+
   async function handleUpdateVehicle(payload: VehicleUpdatePayload) {
     if (!token || !selectedFleetVehicle) {
       return;
@@ -4508,6 +4524,7 @@ export default function App() {
       setFleetVehicleTypeFilter("");
       setSelectedFleetVehicleId(null);
       setSelectedFleetVehicle(null);
+      setFleetViewMode("list");
       setAuditLogItems([]);
       setAuditLogTotal(0);
       setAuditEntityTypes([]);
@@ -5057,6 +5074,352 @@ export default function App() {
     } finally {
       setVehicleExportLoading(false);
     }
+  }
+
+  function renderSelectedFleetVehicleDetail() {
+    if (selectedFleetVehicleLoading) {
+      return (
+        <Stack spacing={1} alignItems="center" className="repair-placeholder">
+          <CircularProgress size={24} />
+          <Typography className="muted-copy">Загрузка карточки техники...</Typography>
+        </Stack>
+      );
+    }
+
+    if (!selectedFleetVehicle) {
+      return (
+        <Stack spacing={1} alignItems="center" className="repair-placeholder">
+          <Typography className="muted-copy">
+            Выберите технику из списка, чтобы открыть карточку.
+          </Typography>
+        </Stack>
+      );
+    }
+
+    return (
+      <Stack spacing={1.5}>
+        <Paper className="repair-summary" elevation={0}>
+          <Stack spacing={1.5}>
+            <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+              <Box>
+                <Typography variant="h6">{formatVehicle(selectedFleetVehicle)}</Typography>
+                <Typography className="muted-copy">
+                  {selectedFleetVehicle.external_id ? `Внешний код: ${selectedFleetVehicle.external_id}` : "Внешний код не указан"}
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap justifyContent="flex-end">
+                {user?.role === "admin" ? (
+                  selectedFleetVehicle.status === "archived" ? (
+                    <Button
+                      variant="outlined"
+                      disabled={vehicleSaving}
+                      onClick={() => {
+                        void handleUpdateVehicle({ status: "active" });
+                      }}
+                    >
+                      {vehicleSaving ? "Сохранение..." : "Вернуть из архива"}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outlined"
+                      color="warning"
+                      disabled={vehicleSaving}
+                      onClick={() => {
+                        void handleUpdateVehicle({ status: "archived" });
+                      }}
+                    >
+                      {vehicleSaving ? "Сохранение..." : "В архив"}
+                    </Button>
+                  )
+                ) : null}
+                <Button variant="outlined" onClick={() => void handleExportVehicle()} disabled={vehicleExportLoading}>
+                  {vehicleExportLoading ? "Экспорт..." : "Экспорт Excel"}
+                </Button>
+                <Chip size="small" variant="outlined" label={formatVehicleTypeLabel(selectedFleetVehicle.vehicle_type)} />
+                <Chip size="small" color={vehicleStatusColor(selectedFleetVehicle.status)} label={formatVehicleStatusLabel(selectedFleetVehicle.status)} />
+              </Stack>
+            </Stack>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
+                <Typography className="metric-label">VIN</Typography>
+                <Typography>{selectedFleetVehicle.vin || "Не указан"}</Typography>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Typography className="metric-label">Год</Typography>
+                <Typography>{selectedFleetVehicle.year || "Не указан"}</Typography>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Typography className="metric-label">Водитель</Typography>
+                <Typography>{selectedFleetVehicle.current_driver_name || "Не указан"}</Typography>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Typography className="metric-label">Механик</Typography>
+                <Typography>{selectedFleetVehicle.mechanic_name || "Не указан"}</Typography>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Typography className="metric-label">Колонна</Typography>
+                <Typography>{selectedFleetVehicle.column_name || "Не указана"}</Typography>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Typography className="metric-label">Обновлено</Typography>
+                <Typography>{formatDateTime(selectedFleetVehicle.updated_at)}</Typography>
+              </Grid>
+            </Grid>
+            {selectedFleetVehicle.comment ? (
+              <Box>
+                <Typography className="metric-label">Комментарий</Typography>
+                <Typography>{selectedFleetVehicle.comment}</Typography>
+              </Box>
+            ) : null}
+          </Stack>
+        </Paper>
+        <Paper className="repair-summary" elevation={0}>
+          <Stack spacing={1.5}>
+            <Typography variant="h6">История по технике</Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={6} sm={3}>
+                <Typography className="metric-label">Ремонтов</Typography>
+                <Typography>{selectedFleetVehicle.history_summary.repairs_total}</Typography>
+              </Grid>
+              <Grid item xs={6} sm={3}>
+                <Typography className="metric-label">Документов</Typography>
+                <Typography>{selectedFleetVehicle.history_summary.documents_total}</Typography>
+              </Grid>
+              <Grid item xs={6} sm={3}>
+                <Typography className="metric-label">Подтверждено</Typography>
+                <Typography>{selectedFleetVehicle.history_summary.confirmed_repairs}</Typography>
+              </Grid>
+              <Grid item xs={6} sm={3}>
+                <Typography className="metric-label">Подозрительных</Typography>
+                <Typography>{selectedFleetVehicle.history_summary.suspicious_repairs}</Typography>
+              </Grid>
+              <Grid item xs={6} sm={6}>
+                <Typography className="metric-label">Последний ремонт</Typography>
+                <Typography>
+                  {selectedFleetVehicle.history_summary.last_repair_date
+                    ? formatDateValue(selectedFleetVehicle.history_summary.last_repair_date)
+                    : "Не найден"}
+                </Typography>
+              </Grid>
+              <Grid item xs={6} sm={6}>
+                <Typography className="metric-label">Последний пробег</Typography>
+                <Typography>
+                  {typeof selectedFleetVehicle.history_summary.last_mileage === "number"
+                    ? selectedFleetVehicle.history_summary.last_mileage
+                    : "Не указан"}
+                </Typography>
+              </Grid>
+            </Grid>
+          </Stack>
+        </Paper>
+        <Paper className="repair-summary" elevation={0}>
+          <Stack spacing={1.5}>
+            <Typography variant="h6">История из 2025 для ИИ</Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={6} sm={4}>
+                <Typography className="metric-label">Исторических ремонтов</Typography>
+                <Typography>{selectedFleetVehicle.historical_history_summary.repairs_total}</Typography>
+              </Grid>
+              <Grid item xs={6} sm={4}>
+                <Typography className="metric-label">Сервисов</Typography>
+                <Typography>{selectedFleetVehicle.historical_history_summary.services_total}</Typography>
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <Typography className="metric-label">Сумма по истории</Typography>
+                <Typography>{formatMoney(selectedFleetVehicle.historical_history_summary.total_spend)}</Typography>
+              </Grid>
+              <Grid item xs={6} sm={6}>
+                <Typography className="metric-label">Первый ремонт в истории</Typography>
+                <Typography>
+                  {selectedFleetVehicle.historical_history_summary.first_repair_date
+                    ? formatDateValue(selectedFleetVehicle.historical_history_summary.first_repair_date)
+                    : "Не найден"}
+                </Typography>
+              </Grid>
+              <Grid item xs={6} sm={6}>
+                <Typography className="metric-label">Последний ремонт в истории</Typography>
+                <Typography>
+                  {selectedFleetVehicle.historical_history_summary.last_repair_date
+                    ? formatDateValue(selectedFleetVehicle.historical_history_summary.last_repair_date)
+                    : "Не найден"}
+                </Typography>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Typography className="metric-label">Последний исторический пробег</Typography>
+                <Typography>
+                  {typeof selectedFleetVehicle.historical_history_summary.last_mileage === "number"
+                    ? selectedFleetVehicle.historical_history_summary.last_mileage
+                    : "Не указан"}
+                </Typography>
+              </Grid>
+            </Grid>
+            {selectedFleetVehicle.historical_repair_history.length > 0 ? (
+              selectedFleetVehicle.historical_repair_history.map((repair) => (
+                <Paper className="repair-line" key={`vehicle-historical-repair-${repair.repair_id}`} elevation={0}>
+                  <Stack spacing={0.75}>
+                    <Stack
+                      direction={{ xs: "column", sm: "row" }}
+                      justifyContent="space-between"
+                      spacing={1}
+                      alignItems={{ xs: "flex-start", sm: "center" }}
+                    >
+                      <Typography>
+                        История #{repair.repair_id}
+                        {repair.order_number ? ` · ${repair.order_number}` : ""}
+                      </Typography>
+                      <Chip size="small" variant="outlined" label={formatMoney(repair.grand_total)} />
+                    </Stack>
+                    <Typography className="muted-copy">
+                      {[
+                        formatDateValue(repair.repair_date),
+                        `пробег ${repair.mileage}`,
+                        repair.service_name,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </Typography>
+                    {repair.employee_comment ? (
+                      <Typography className="muted-copy">{repair.employee_comment}</Typography>
+                    ) : null}
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => {
+                          void openRepairByIds(null, repair.repair_id);
+                        }}
+                      >
+                        Открыть исторический ремонт
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </Paper>
+              ))
+            ) : (
+              <Typography className="muted-copy">
+                По этой технике история из `2025 для ИИ` не найдена.
+              </Typography>
+            )}
+          </Stack>
+        </Paper>
+        <Paper className="repair-summary" elevation={0}>
+          <Stack spacing={1.25}>
+            <Typography variant="h6">Текущие закрепления</Typography>
+            {selectedFleetVehicle.active_assignments.length > 0 ? (
+              selectedFleetVehicle.active_assignments.map((assignment) => (
+                <Paper className="repair-line" key={`vehicle-assignment-${assignment.id}`} elevation={0}>
+                  <Stack spacing={0.5}>
+                    <Stack
+                      direction={{ xs: "column", sm: "row" }}
+                      justifyContent="space-between"
+                      spacing={1}
+                      alignItems={{ xs: "flex-start", sm: "center" }}
+                    >
+                      <Typography>{assignment.user.full_name}</Typography>
+                      <Chip size="small" variant="outlined" label={formatUserRoleLabel(assignment.user.role)} />
+                    </Stack>
+                    <Typography className="muted-copy">{assignment.user.email}</Typography>
+                    <Typography className="muted-copy">
+                      С {formatDateValue(assignment.starts_at)}
+                      {assignment.ends_at ? ` по ${formatDateValue(assignment.ends_at)}` : " по настоящее время"}
+                    </Typography>
+                    {assignment.comment ? <Typography className="muted-copy">{assignment.comment}</Typography> : null}
+                  </Stack>
+                </Paper>
+              ))
+            ) : (
+              <Typography className="muted-copy">Сейчас техника ни за кем не закреплена.</Typography>
+            )}
+          </Stack>
+        </Paper>
+        <Paper className="repair-summary" elevation={0}>
+          <Stack spacing={1.25}>
+            <Typography variant="h6">Активные связки</Typography>
+            {selectedFleetVehicle.active_links.length > 0 ? (
+              selectedFleetVehicle.active_links.map((link) => {
+                const linkedVehicleId =
+                  link.left_vehicle_id === selectedFleetVehicle.id ? link.right_vehicle_id : link.left_vehicle_id;
+                const linkedVehicle =
+                  vehicles.find((item) => item.id === linkedVehicleId) ??
+                  fleetVehicles.find((item) => item.id === linkedVehicleId) ??
+                  null;
+
+                return (
+                  <Paper className="repair-line" key={`vehicle-link-${link.id}`} elevation={0}>
+                    <Stack spacing={0.5}>
+                      <Typography>
+                        {linkedVehicle ? formatVehicle(linkedVehicle) : `Техника #${linkedVehicleId}`}
+                      </Typography>
+                      <Typography className="muted-copy">
+                        С {formatDateValue(link.starts_at)}
+                        {link.ends_at ? ` по ${formatDateValue(link.ends_at)}` : " по настоящее время"}
+                      </Typography>
+                      {link.comment ? <Typography className="muted-copy">{link.comment}</Typography> : null}
+                    </Stack>
+                  </Paper>
+                );
+              })
+            ) : (
+              <Typography className="muted-copy">
+                Активные связки для этой единицы техники не найдены.
+              </Typography>
+            )}
+          </Stack>
+        </Paper>
+        <Paper className="repair-summary" elevation={0}>
+          <Stack spacing={1.25}>
+            <Typography variant="h6">История ремонтов</Typography>
+            {selectedFleetVehicle.repair_history.length > 0 ? (
+              selectedFleetVehicle.repair_history.map((repair) => (
+                <Paper className="repair-line" key={`vehicle-repair-${repair.repair_id}`} elevation={0}>
+                  <Stack spacing={0.75}>
+                    <Stack
+                      direction={{ xs: "column", sm: "row" }}
+                      justifyContent="space-between"
+                      spacing={1}
+                      alignItems={{ xs: "flex-start", sm: "center" }}
+                    >
+                      <Typography>
+                        Ремонт #{repair.repair_id}
+                        {repair.order_number ? ` · ${repair.order_number}` : ""}
+                      </Typography>
+                      <Stack direction="row" spacing={1}>
+                        <Chip size="small" variant="outlined" label={formatRepairStatus(repair.status)} />
+                        <Chip size="small" variant="outlined" label={`документов ${repair.documents_total}`} />
+                      </Stack>
+                    </Stack>
+                    <Typography className="muted-copy">
+                      {[
+                        formatDateValue(repair.repair_date),
+                        `пробег ${repair.mileage}`,
+                        repair.service_name,
+                        formatMoney(repair.grand_total),
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </Typography>
+                    <Typography className="muted-copy">Обновлено {formatDateTime(repair.updated_at)}</Typography>
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => {
+                          void openRepairByIds(null, repair.repair_id);
+                        }}
+                      >
+                        Открыть ремонт
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </Paper>
+              ))
+            ) : (
+              <Typography className="muted-copy">По этой технике ремонтов пока нет.</Typography>
+            )}
+          </Stack>
+        </Paper>
+      </Stack>
+    );
   }
 
   async function handleOpenRepair(document: DocumentItem) {
@@ -13655,477 +14018,155 @@ export default function App() {
                         Поиск по технике, фильтр по типу и просмотр активных связок по выбранной единице.
                       </Typography>
                     </Box>
-                    <Grid container spacing={2}>
-                      <Grid item xs={12} md={5}>
-                        <Stack spacing={1.5}>
-                          <Grid container spacing={1.5}>
-                            <Grid item xs={12} md={4}>
-                              <TextField
-                                label="Поиск по VIN, госномеру, бренду или модели"
-                                value={fleetQuery}
-                                onChange={(event) => setFleetQuery(event.target.value)}
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} md={4}>
-                              <TextField
-                                select
-                                label="Тип техники"
-                                value={fleetVehicleTypeFilter}
-                                onChange={(event) => setFleetVehicleTypeFilter(event.target.value as "" | VehicleType)}
-                                fullWidth
-                              >
-                                <MenuItem value="">Все</MenuItem>
-                                <MenuItem value="truck">Грузовики</MenuItem>
-                                <MenuItem value="trailer">Прицепы</MenuItem>
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} md={4}>
-                              <TextField
-                                select
-                                label="Статус"
-                                value={fleetStatusFilter}
-                                onChange={(event) => setFleetStatusFilter(event.target.value as "" | VehicleStatus)}
-                                fullWidth
-                              >
-                                <MenuItem value="">Все</MenuItem>
-                                <MenuItem value="active">В работе</MenuItem>
-                                <MenuItem value="in_repair">В ремонте</MenuItem>
-                                <MenuItem value="waiting_repair">Ожидает ремонта</MenuItem>
-                                <MenuItem value="inactive">Не используется</MenuItem>
-                                <MenuItem value="decommissioned">Списан</MenuItem>
-                                <MenuItem value="archived">Архив</MenuItem>
-                              </TextField>
-                            </Grid>
-                          </Grid>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <Button
-                              variant="outlined"
-                              disabled={fleetLoading}
-                              onClick={() => {
-                                if (token) {
-                                  void loadFleetVehicles(token);
-                                }
-                              }}
-                            >
-                              {fleetLoading ? "Загрузка..." : "Обновить список"}
-                            </Button>
-                            <Button
-                              variant="text"
-                              disabled={fleetLoading}
-                              onClick={() => {
-                                setFleetQuery("");
-                                setFleetVehicleTypeFilter("");
-                                setFleetStatusFilter("");
-                                if (token) {
-                                  void loadFleetVehicles(token, "", "", "");
-                                }
-                              }}
-                            >
-                              Сбросить фильтр
-                            </Button>
-                          </Stack>
+                    {fleetViewMode === "detail" ? (
+                      <Stack spacing={2}>
+                        <Stack
+                          direction={{ xs: "column", sm: "row" }}
+                          spacing={1}
+                          justifyContent="space-between"
+                          alignItems={{ xs: "flex-start", sm: "center" }}
+                        >
+                          <Button variant="text" onClick={returnToFleetList}>
+                            Назад к списку
+                          </Button>
                           <Typography className="muted-copy">
-                            Найдено {fleetVehicles.length} из {fleetVehiclesTotal}
+                            Возврат сохранит фильтры и позицию списка.
                           </Typography>
-                          {fleetLoading ? (
-                            <Stack spacing={1} alignItems="center" className="repair-placeholder">
-                              <CircularProgress size={24} />
-                              <Typography className="muted-copy">Загрузка списка техники...</Typography>
-                            </Stack>
-                          ) : fleetVehicles.length > 0 ? (
-                            <Stack spacing={1}>
-                              {fleetVehicles.map((vehicle) => (
-                                <Paper
-                                  key={`fleet-${vehicle.id}`}
-                                  className={`document-row${selectedFleetVehicleId === vehicle.id ? " document-row-active" : ""}`}
-                                  elevation={0}
-                                >
-                                  <Stack spacing={1}>
-                                    <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                                      <Box>
-                                        <Typography>{formatVehicle(vehicle)}</Typography>
-                                        <Typography className="muted-copy">
-                                          {vehicle.vin || "VIN не указан"}
-                                        </Typography>
-                                      </Box>
-                                      <Stack direction="row" spacing={1}>
-                                        <Chip size="small" variant="outlined" label={formatVehicleTypeLabel(vehicle.vehicle_type)} />
-                                        <Chip size="small" color={vehicleStatusColor(vehicle.status)} label={formatVehicleStatusLabel(vehicle.status)} />
-                                      </Stack>
-                                    </Stack>
-                                    <Typography className="muted-copy">
-                                      Водитель: {vehicle.current_driver_name || "не указан"}
-                                      {vehicle.mechanic_name ? ` · механик: ${vehicle.mechanic_name}` : ""}
-                                    </Typography>
-                                    <Typography className="muted-copy">
-                                      История 2025:{" "}
-                                      {vehicle.historical_repairs_total > 0
-                                        ? `${vehicle.historical_repairs_total} ремонтов${
-                                            vehicle.historical_last_repair_date
-                                              ? ` · последний ${formatDateValue(vehicle.historical_last_repair_date)}`
-                                              : ""
-                                          }`
-                                        : "не найдена"}
-                                    </Typography>
-                                    <Stack direction="row" spacing={1}>
-                                      <Button
-                                        size="small"
-                                        variant="outlined"
-                                        onClick={() => {
-                                          setSelectedFleetVehicleId(vehicle.id);
-                                        }}
-                                      >
-                                        Открыть карточку
-                                      </Button>
-                                    </Stack>
-                                  </Stack>
-                                </Paper>
-                              ))}
-                            </Stack>
-                          ) : (
-                            <Typography className="muted-copy">По текущему фильтру техника не найдена.</Typography>
-                          )}
                         </Stack>
-                      </Grid>
-                      <Grid item xs={12} md={7}>
-                        {selectedFleetVehicleLoading ? (
+                        {renderSelectedFleetVehicleDetail()}
+                      </Stack>
+                    ) : (
+                      <Stack spacing={1.5}>
+                        <Grid container spacing={1.5}>
+                          <Grid item xs={12} md={4}>
+                            <TextField
+                              label="Поиск по VIN, госномеру, бренду или модели"
+                              value={fleetQuery}
+                              onChange={(event) => setFleetQuery(event.target.value)}
+                              fullWidth
+                            />
+                          </Grid>
+                          <Grid item xs={12} md={4}>
+                            <TextField
+                              select
+                              label="Тип техники"
+                              value={fleetVehicleTypeFilter}
+                              onChange={(event) => setFleetVehicleTypeFilter(event.target.value as "" | VehicleType)}
+                              fullWidth
+                            >
+                              <MenuItem value="">Все</MenuItem>
+                              <MenuItem value="truck">Грузовики</MenuItem>
+                              <MenuItem value="trailer">Прицепы</MenuItem>
+                            </TextField>
+                          </Grid>
+                          <Grid item xs={12} md={4}>
+                            <TextField
+                              select
+                              label="Статус"
+                              value={fleetStatusFilter}
+                              onChange={(event) => setFleetStatusFilter(event.target.value as "" | VehicleStatus)}
+                              fullWidth
+                            >
+                              <MenuItem value="">Все</MenuItem>
+                              <MenuItem value="active">В работе</MenuItem>
+                              <MenuItem value="in_repair">В ремонте</MenuItem>
+                              <MenuItem value="waiting_repair">Ожидает ремонта</MenuItem>
+                              <MenuItem value="inactive">Не используется</MenuItem>
+                              <MenuItem value="decommissioned">Списан</MenuItem>
+                              <MenuItem value="archived">Архив</MenuItem>
+                            </TextField>
+                          </Grid>
+                        </Grid>
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                          <Button
+                            variant="outlined"
+                            disabled={fleetLoading}
+                            onClick={() => {
+                              if (token) {
+                                void loadFleetVehicles(token);
+                              }
+                            }}
+                          >
+                            {fleetLoading ? "Загрузка..." : "Обновить список"}
+                          </Button>
+                          <Button
+                            variant="text"
+                            disabled={fleetLoading}
+                            onClick={() => {
+                              setFleetQuery("");
+                              setFleetVehicleTypeFilter("");
+                              setFleetStatusFilter("");
+                              if (token) {
+                                void loadFleetVehicles(token, "", "", "");
+                              }
+                            }}
+                          >
+                            Сбросить фильтр
+                          </Button>
+                        </Stack>
+                        <Typography className="muted-copy">
+                          Найдено {fleetVehicles.length} из {fleetVehiclesTotal}
+                        </Typography>
+                        {fleetLoading ? (
                           <Stack spacing={1} alignItems="center" className="repair-placeholder">
                             <CircularProgress size={24} />
-                            <Typography className="muted-copy">Загрузка карточки техники...</Typography>
+                            <Typography className="muted-copy">Загрузка списка техники...</Typography>
                           </Stack>
-                        ) : selectedFleetVehicle ? (
-                          <Stack spacing={1.5}>
-                            <Paper className="repair-summary" elevation={0}>
-                              <Stack spacing={1.5}>
-                                <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                                  <Box>
-                                    <Typography variant="h6">{formatVehicle(selectedFleetVehicle)}</Typography>
-                                    <Typography className="muted-copy">
-                                      {selectedFleetVehicle.external_id ? `Внешний код: ${selectedFleetVehicle.external_id}` : "Внешний код не указан"}
-                                    </Typography>
-                                  </Box>
-                                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap justifyContent="flex-end">
-                                    {user?.role === "admin" ? (
-                                      selectedFleetVehicle.status === "archived" ? (
-                                        <Button
-                                          variant="outlined"
-                                          disabled={vehicleSaving}
-                                          onClick={() => {
-                                            void handleUpdateVehicle({ status: "active" });
-                                          }}
-                                        >
-                                          {vehicleSaving ? "Сохранение..." : "Вернуть из архива"}
-                                        </Button>
-                                      ) : (
-                                        <Button
-                                          variant="outlined"
-                                          color="warning"
-                                          disabled={vehicleSaving}
-                                          onClick={() => {
-                                            void handleUpdateVehicle({ status: "archived" });
-                                          }}
-                                        >
-                                          {vehicleSaving ? "Сохранение..." : "В архив"}
-                                        </Button>
-                                      )
-                                    ) : null}
-                                    <Button variant="outlined" onClick={() => void handleExportVehicle()} disabled={vehicleExportLoading}>
-                                      {vehicleExportLoading ? "Экспорт..." : "Экспорт Excel"}
+                        ) : fleetVehicles.length > 0 ? (
+                          <Stack spacing={1}>
+                            {fleetVehicles.map((vehicle) => (
+                              <Paper
+                                key={`fleet-${vehicle.id}`}
+                                className={`document-row${selectedFleetVehicleId === vehicle.id ? " document-row-active" : ""}`}
+                                elevation={0}
+                              >
+                                <Stack spacing={1}>
+                                  <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                                    <Box>
+                                      <Typography>{formatVehicle(vehicle)}</Typography>
+                                      <Typography className="muted-copy">
+                                        {vehicle.vin || "VIN не указан"}
+                                      </Typography>
+                                    </Box>
+                                    <Stack direction="row" spacing={1}>
+                                      <Chip size="small" variant="outlined" label={formatVehicleTypeLabel(vehicle.vehicle_type)} />
+                                      <Chip size="small" color={vehicleStatusColor(vehicle.status)} label={formatVehicleStatusLabel(vehicle.status)} />
+                                    </Stack>
+                                  </Stack>
+                                  <Typography className="muted-copy">
+                                    Водитель: {vehicle.current_driver_name || "не указан"}
+                                    {vehicle.mechanic_name ? ` · механик: ${vehicle.mechanic_name}` : ""}
+                                  </Typography>
+                                  <Typography className="muted-copy">
+                                    История 2025:{" "}
+                                    {vehicle.historical_repairs_total > 0
+                                      ? `${vehicle.historical_repairs_total} ремонтов${
+                                          vehicle.historical_last_repair_date
+                                            ? ` · последний ${formatDateValue(vehicle.historical_last_repair_date)}`
+                                            : ""
+                                        }`
+                                      : "не найдена"}
+                                  </Typography>
+                                  <Stack direction="row" spacing={1}>
+                                    <Button
+                                      size="small"
+                                      variant="outlined"
+                                      onClick={() => {
+                                        openFleetVehicleCard(vehicle.id);
+                                      }}
+                                    >
+                                      Открыть карточку
                                     </Button>
-                                    <Chip size="small" variant="outlined" label={formatVehicleTypeLabel(selectedFleetVehicle.vehicle_type)} />
-                                    <Chip size="small" color={vehicleStatusColor(selectedFleetVehicle.status)} label={formatVehicleStatusLabel(selectedFleetVehicle.status)} />
                                   </Stack>
                                 </Stack>
-                                <Grid container spacing={2}>
-                                  <Grid item xs={12} sm={6}>
-                                    <Typography className="metric-label">VIN</Typography>
-                                    <Typography>{selectedFleetVehicle.vin || "Не указан"}</Typography>
-                                  </Grid>
-                                  <Grid item xs={12} sm={6}>
-                                    <Typography className="metric-label">Год</Typography>
-                                    <Typography>{selectedFleetVehicle.year || "Не указан"}</Typography>
-                                  </Grid>
-                                  <Grid item xs={12} sm={6}>
-                                    <Typography className="metric-label">Водитель</Typography>
-                                    <Typography>{selectedFleetVehicle.current_driver_name || "Не указан"}</Typography>
-                                  </Grid>
-                                  <Grid item xs={12} sm={6}>
-                                    <Typography className="metric-label">Механик</Typography>
-                                    <Typography>{selectedFleetVehicle.mechanic_name || "Не указан"}</Typography>
-                                  </Grid>
-                                  <Grid item xs={12} sm={6}>
-                                    <Typography className="metric-label">Колонна</Typography>
-                                    <Typography>{selectedFleetVehicle.column_name || "Не указана"}</Typography>
-                                  </Grid>
-                                  <Grid item xs={12} sm={6}>
-                                    <Typography className="metric-label">Обновлено</Typography>
-                                    <Typography>{formatDateTime(selectedFleetVehicle.updated_at)}</Typography>
-                                  </Grid>
-                                </Grid>
-                                {selectedFleetVehicle.comment ? (
-                                  <Box>
-                                    <Typography className="metric-label">Комментарий</Typography>
-                                    <Typography>{selectedFleetVehicle.comment}</Typography>
-                                  </Box>
-                                ) : null}
-                              </Stack>
-                            </Paper>
-                            <Paper className="repair-summary" elevation={0}>
-                              <Stack spacing={1.5}>
-                                <Typography variant="h6">История по технике</Typography>
-                                <Grid container spacing={2}>
-                                  <Grid item xs={6} sm={3}>
-                                    <Typography className="metric-label">Ремонтов</Typography>
-                                    <Typography>{selectedFleetVehicle.history_summary.repairs_total}</Typography>
-                                  </Grid>
-                                  <Grid item xs={6} sm={3}>
-                                    <Typography className="metric-label">Документов</Typography>
-                                    <Typography>{selectedFleetVehicle.history_summary.documents_total}</Typography>
-                                  </Grid>
-                                  <Grid item xs={6} sm={3}>
-                                    <Typography className="metric-label">Подтверждено</Typography>
-                                    <Typography>{selectedFleetVehicle.history_summary.confirmed_repairs}</Typography>
-                                  </Grid>
-                                  <Grid item xs={6} sm={3}>
-                                    <Typography className="metric-label">Подозрительных</Typography>
-                                    <Typography>{selectedFleetVehicle.history_summary.suspicious_repairs}</Typography>
-                                  </Grid>
-                                  <Grid item xs={6} sm={6}>
-                                    <Typography className="metric-label">Последний ремонт</Typography>
-                                    <Typography>
-                                      {selectedFleetVehicle.history_summary.last_repair_date
-                                        ? formatDateValue(selectedFleetVehicle.history_summary.last_repair_date)
-                                        : "Не найден"}
-                                    </Typography>
-                                  </Grid>
-                                  <Grid item xs={6} sm={6}>
-                                    <Typography className="metric-label">Последний пробег</Typography>
-                                    <Typography>
-                                      {typeof selectedFleetVehicle.history_summary.last_mileage === "number"
-                                        ? selectedFleetVehicle.history_summary.last_mileage
-                                        : "Не указан"}
-                                    </Typography>
-                                  </Grid>
-                                </Grid>
-                              </Stack>
-                            </Paper>
-                            <Paper className="repair-summary" elevation={0}>
-                              <Stack spacing={1.5}>
-                                <Typography variant="h6">История из 2025 для ИИ</Typography>
-                                <Grid container spacing={2}>
-                                  <Grid item xs={6} sm={4}>
-                                    <Typography className="metric-label">Исторических ремонтов</Typography>
-                                    <Typography>{selectedFleetVehicle.historical_history_summary.repairs_total}</Typography>
-                                  </Grid>
-                                  <Grid item xs={6} sm={4}>
-                                    <Typography className="metric-label">Сервисов</Typography>
-                                    <Typography>{selectedFleetVehicle.historical_history_summary.services_total}</Typography>
-                                  </Grid>
-                                  <Grid item xs={12} sm={4}>
-                                    <Typography className="metric-label">Сумма по истории</Typography>
-                                    <Typography>{formatMoney(selectedFleetVehicle.historical_history_summary.total_spend)}</Typography>
-                                  </Grid>
-                                  <Grid item xs={6} sm={6}>
-                                    <Typography className="metric-label">Первый ремонт в истории</Typography>
-                                    <Typography>
-                                      {selectedFleetVehicle.historical_history_summary.first_repair_date
-                                        ? formatDateValue(selectedFleetVehicle.historical_history_summary.first_repair_date)
-                                        : "Не найден"}
-                                    </Typography>
-                                  </Grid>
-                                  <Grid item xs={6} sm={6}>
-                                    <Typography className="metric-label">Последний ремонт в истории</Typography>
-                                    <Typography>
-                                      {selectedFleetVehicle.historical_history_summary.last_repair_date
-                                        ? formatDateValue(selectedFleetVehicle.historical_history_summary.last_repair_date)
-                                        : "Не найден"}
-                                    </Typography>
-                                  </Grid>
-                                  <Grid item xs={12} sm={6}>
-                                    <Typography className="metric-label">Последний исторический пробег</Typography>
-                                    <Typography>
-                                      {typeof selectedFleetVehicle.historical_history_summary.last_mileage === "number"
-                                        ? selectedFleetVehicle.historical_history_summary.last_mileage
-                                        : "Не указан"}
-                                    </Typography>
-                                  </Grid>
-                                </Grid>
-                                {selectedFleetVehicle.historical_repair_history.length > 0 ? (
-                                  selectedFleetVehicle.historical_repair_history.map((repair) => (
-                                    <Paper className="repair-line" key={`vehicle-historical-repair-${repair.repair_id}`} elevation={0}>
-                                      <Stack spacing={0.75}>
-                                        <Stack
-                                          direction={{ xs: "column", sm: "row" }}
-                                          justifyContent="space-between"
-                                          spacing={1}
-                                          alignItems={{ xs: "flex-start", sm: "center" }}
-                                        >
-                                          <Typography>
-                                            История #{repair.repair_id}
-                                            {repair.order_number ? ` · ${repair.order_number}` : ""}
-                                          </Typography>
-                                          <Chip size="small" variant="outlined" label={formatMoney(repair.grand_total)} />
-                                        </Stack>
-                                        <Typography className="muted-copy">
-                                          {[
-                                            formatDateValue(repair.repair_date),
-                                            `пробег ${repair.mileage}`,
-                                            repair.service_name,
-                                          ]
-                                            .filter(Boolean)
-                                            .join(" · ")}
-                                        </Typography>
-                                        {repair.employee_comment ? (
-                                          <Typography className="muted-copy">{repair.employee_comment}</Typography>
-                                        ) : null}
-                                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                          <Button
-                                            size="small"
-                                            variant="outlined"
-                                            onClick={() => {
-                                              void openRepairByIds(null, repair.repair_id);
-                                            }}
-                                          >
-                                            Открыть исторический ремонт
-                                          </Button>
-                                        </Stack>
-                                      </Stack>
-                                    </Paper>
-                                  ))
-                                ) : (
-                                  <Typography className="muted-copy">
-                                    По этой технике история из `2025 для ИИ` не найдена.
-                                  </Typography>
-                                )}
-                              </Stack>
-                            </Paper>
-                            <Paper className="repair-summary" elevation={0}>
-                              <Stack spacing={1.25}>
-                                <Typography variant="h6">Текущие закрепления</Typography>
-                                {selectedFleetVehicle.active_assignments.length > 0 ? (
-                                  selectedFleetVehicle.active_assignments.map((assignment) => (
-                                    <Paper className="repair-line" key={`vehicle-assignment-${assignment.id}`} elevation={0}>
-                                      <Stack spacing={0.5}>
-                                        <Stack
-                                          direction={{ xs: "column", sm: "row" }}
-                                          justifyContent="space-between"
-                                          spacing={1}
-                                          alignItems={{ xs: "flex-start", sm: "center" }}
-                                        >
-                                          <Typography>{assignment.user.full_name}</Typography>
-                                          <Chip size="small" variant="outlined" label={formatUserRoleLabel(assignment.user.role)} />
-                                        </Stack>
-                                        <Typography className="muted-copy">{assignment.user.email}</Typography>
-                                        <Typography className="muted-copy">
-                                          С {formatDateValue(assignment.starts_at)}
-                                          {assignment.ends_at ? ` по ${formatDateValue(assignment.ends_at)}` : " по настоящее время"}
-                                        </Typography>
-                                        {assignment.comment ? <Typography className="muted-copy">{assignment.comment}</Typography> : null}
-                                      </Stack>
-                                    </Paper>
-                                  ))
-                                ) : (
-                                  <Typography className="muted-copy">Сейчас техника ни за кем не закреплена.</Typography>
-                                )}
-                              </Stack>
-                            </Paper>
-                            <Paper className="repair-summary" elevation={0}>
-                              <Stack spacing={1.25}>
-                                <Typography variant="h6">Активные связки</Typography>
-                                {selectedFleetVehicle.active_links.length > 0 ? (
-                                  selectedFleetVehicle.active_links.map((link) => {
-                                    const linkedVehicleId =
-                                      link.left_vehicle_id === selectedFleetVehicle.id ? link.right_vehicle_id : link.left_vehicle_id;
-                                    const linkedVehicle =
-                                      vehicles.find((item) => item.id === linkedVehicleId) ??
-                                      fleetVehicles.find((item) => item.id === linkedVehicleId) ??
-                                      null;
-
-                                    return (
-                                      <Paper className="repair-line" key={`vehicle-link-${link.id}`} elevation={0}>
-                                        <Stack spacing={0.5}>
-                                          <Typography>
-                                            {linkedVehicle ? formatVehicle(linkedVehicle) : `Техника #${linkedVehicleId}`}
-                                          </Typography>
-                                          <Typography className="muted-copy">
-                                            С {formatDateValue(link.starts_at)}
-                                            {link.ends_at ? ` по ${formatDateValue(link.ends_at)}` : " по настоящее время"}
-                                          </Typography>
-                                          {link.comment ? <Typography className="muted-copy">{link.comment}</Typography> : null}
-                                        </Stack>
-                                      </Paper>
-                                    );
-                                  })
-                                ) : (
-                                  <Typography className="muted-copy">
-                                    Активные связки для этой единицы техники не найдены.
-                                  </Typography>
-                                )}
-                              </Stack>
-                            </Paper>
-                            <Paper className="repair-summary" elevation={0}>
-                              <Stack spacing={1.25}>
-                                <Typography variant="h6">История ремонтов</Typography>
-                                {selectedFleetVehicle.repair_history.length > 0 ? (
-                                  selectedFleetVehicle.repair_history.map((repair) => (
-                                    <Paper className="repair-line" key={`vehicle-repair-${repair.repair_id}`} elevation={0}>
-                                      <Stack spacing={0.75}>
-                                        <Stack
-                                          direction={{ xs: "column", sm: "row" }}
-                                          justifyContent="space-between"
-                                          spacing={1}
-                                          alignItems={{ xs: "flex-start", sm: "center" }}
-                                        >
-                                          <Typography>
-                                            Ремонт #{repair.repair_id}
-                                            {repair.order_number ? ` · ${repair.order_number}` : ""}
-                                          </Typography>
-                                          <Stack direction="row" spacing={1}>
-                                            <Chip size="small" variant="outlined" label={formatRepairStatus(repair.status)} />
-                                            <Chip size="small" variant="outlined" label={`документов ${repair.documents_total}`} />
-                                          </Stack>
-                                        </Stack>
-                                        <Typography className="muted-copy">
-                                          {[
-                                            formatDateValue(repair.repair_date),
-                                            `пробег ${repair.mileage}`,
-                                            repair.service_name,
-                                            formatMoney(repair.grand_total),
-                                          ]
-                                            .filter(Boolean)
-                                            .join(" · ")}
-                                        </Typography>
-                                        <Typography className="muted-copy">Обновлено {formatDateTime(repair.updated_at)}</Typography>
-                                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                          <Button
-                                            size="small"
-                                            variant="outlined"
-                                            onClick={() => {
-                                              void openRepairByIds(null, repair.repair_id);
-                                            }}
-                                          >
-                                            Открыть ремонт
-                                          </Button>
-                                        </Stack>
-                                      </Stack>
-                                    </Paper>
-                                  ))
-                                ) : (
-                                  <Typography className="muted-copy">По этой технике ремонтов пока нет.</Typography>
-                                )}
-                              </Stack>
-                            </Paper>
+                              </Paper>
+                            ))}
                           </Stack>
                         ) : (
-                          <Stack spacing={1} alignItems="center" className="repair-placeholder">
-                            <Typography className="muted-copy">
-                              Выберите технику из списка, чтобы открыть карточку.
-                            </Typography>
-                          </Stack>
+                          <Typography className="muted-copy">По текущему фильтру техника не найдена.</Typography>
                         )}
-                      </Grid>
-                    </Grid>
+                      </Stack>
+                    )}
                   </Stack>
                   </Paper>
                 ) : null}

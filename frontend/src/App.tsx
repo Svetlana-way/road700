@@ -1488,6 +1488,137 @@ const repairTabDescriptions: Record<RepairTab, string> = {
   history: "История изменений ремонта и документов.",
 };
 
+type AppRoute =
+  | { workspace: "documents" }
+  | { workspace: "search" }
+  | { workspace: "audit" }
+  | { workspace: "admin"; adminTab: AdminTab }
+  | { workspace: "tech_admin"; techAdminTab: TechAdminTab }
+  | { workspace: "fleet"; vehicleId: number | null }
+  | { workspace: "repair"; repairId: number | null; repairTab: RepairTab; documentId: number | null };
+
+function normalizeAdminTab(value: string | null): AdminTab {
+  if (value === "employees" || value === "control" || value === "labor_norms" || value === "imports" || value === "backups") {
+    return value;
+  }
+  return "services";
+}
+
+function normalizeTechAdminTab(value: string | null): TechAdminTab {
+  if (value === "matchers" || value === "rules") {
+    return value;
+  }
+  return "learning";
+}
+
+function normalizeRepairTab(value: string | null): RepairTab {
+  if (value === "works" || value === "parts" || value === "documents" || value === "checks" || value === "history") {
+    return value;
+  }
+  return "overview";
+}
+
+function parsePositiveId(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function readAppRoute(location: Location): AppRoute {
+  const pathSegments = location.pathname.split("/").filter(Boolean);
+  const searchParams = new URLSearchParams(location.search);
+
+  if (pathSegments[0] === "search") {
+    return { workspace: "search" };
+  }
+  if (pathSegments[0] === "audit") {
+    return { workspace: "audit" };
+  }
+  if (pathSegments[0] === "admin") {
+    return { workspace: "admin", adminTab: normalizeAdminTab(pathSegments[1] ?? null) };
+  }
+  if (pathSegments[0] === "tech-admin") {
+    return { workspace: "tech_admin", techAdminTab: normalizeTechAdminTab(pathSegments[1] ?? null) };
+  }
+  if (pathSegments[0] === "fleet") {
+    return { workspace: "fleet", vehicleId: parsePositiveId(pathSegments[1]) };
+  }
+  if (pathSegments[0] === "repair") {
+    return {
+      workspace: "repair",
+      repairId: null,
+      repairTab: normalizeRepairTab(searchParams.get("tab")),
+      documentId: parsePositiveId(searchParams.get("document")),
+    };
+  }
+  if (pathSegments[0] === "repairs") {
+    return {
+      workspace: "repair",
+      repairId: parsePositiveId(pathSegments[1]),
+      repairTab: normalizeRepairTab(searchParams.get("tab")),
+      documentId: parsePositiveId(searchParams.get("document")),
+    };
+  }
+  if (pathSegments[0] === "documents") {
+    return { workspace: "documents" };
+  }
+
+  return { workspace: "documents" };
+}
+
+function buildAppRouteUrl(route: AppRoute): string {
+  if (route.workspace === "documents") {
+    return "/documents";
+  }
+  if (route.workspace === "search") {
+    return "/search";
+  }
+  if (route.workspace === "audit") {
+    return "/audit";
+  }
+  if (route.workspace === "admin") {
+    return `/admin/${route.adminTab}`;
+  }
+  if (route.workspace === "tech_admin") {
+    return `/tech-admin/${route.techAdminTab}`;
+  }
+  if (route.workspace === "fleet") {
+    return route.vehicleId ? `/fleet/${route.vehicleId}` : "/fleet";
+  }
+
+  const params = new URLSearchParams();
+  if (route.repairTab !== "overview") {
+    params.set("tab", route.repairTab);
+  }
+  if (route.documentId !== null) {
+    params.set("document", String(route.documentId));
+  }
+  const query = params.toString();
+  const path = route.repairId ? `/repairs/${route.repairId}` : "/repair";
+  return query ? `${path}?${query}` : path;
+}
+
+function areAppRoutesEqual(left: AppRoute, right: AppRoute) {
+  if (left.workspace !== right.workspace) {
+    return false;
+  }
+  if (left.workspace === "admin" && right.workspace === "admin") {
+    return left.adminTab === right.adminTab;
+  }
+  if (left.workspace === "tech_admin" && right.workspace === "tech_admin") {
+    return left.techAdminTab === right.techAdminTab;
+  }
+  if (left.workspace === "fleet" && right.workspace === "fleet") {
+    return left.vehicleId === right.vehicleId;
+  }
+  if (left.workspace === "repair" && right.workspace === "repair") {
+    return left.repairId === right.repairId && left.repairTab === right.repairTab && left.documentId === right.documentId;
+  }
+  return true;
+}
+
 const reviewQueueFilters: Array<{ key: ReviewQueueCategory; label: string }> = [
   { key: "all", label: "Все" },
   { key: "suspicious", label: "Подозрительные" },
@@ -3407,6 +3538,7 @@ async function apiRequest<T>(path: string, init: RequestInit = {}, token?: strin
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_STORAGE_KEY) || "");
+  const [routeSnapshot, setRouteSnapshot] = useState<AppRoute>(() => readAppRoute(window.location));
   const [user, setUser] = useState<User | null>(null);
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("documents");
   const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>("services");
@@ -3441,6 +3573,7 @@ export default function App() {
   const [fleetViewMode, setFleetViewMode] = useState<"list" | "detail">("list");
   const fleetListScrollPositionRef = useRef(0);
   const repairReturnTabRef = useRef<WorkspaceTab>("documents");
+  const repairReturnRouteRef = useRef<AppRoute>({ workspace: "documents" });
   const repairScrollPositionRef = useRef(0);
   const [repairHasReturnTarget, setRepairHasReturnTarget] = useState(false);
   const [vehicleSaving, setVehicleSaving] = useState(false);
@@ -3914,6 +4047,80 @@ export default function App() {
       })
     : [];
 
+  function buildRouteFromState(targetWorkspaceTab: WorkspaceTab = activeWorkspaceTab): AppRoute {
+    if (targetWorkspaceTab === "admin") {
+      return { workspace: "admin", adminTab: activeAdminTab };
+    }
+    if (targetWorkspaceTab === "tech_admin") {
+      return { workspace: "tech_admin", techAdminTab: activeTechAdminTab };
+    }
+    if (targetWorkspaceTab === "fleet") {
+      return { workspace: "fleet", vehicleId: fleetViewMode === "detail" ? selectedFleetVehicleId : null };
+    }
+    if (targetWorkspaceTab === "repair") {
+      return {
+        workspace: "repair",
+        repairId: selectedRepair?.id ?? null,
+        repairTab: activeRepairTab,
+        documentId: selectedDocumentId,
+      };
+    }
+    if (targetWorkspaceTab === "search") {
+      return { workspace: "search" };
+    }
+    if (targetWorkspaceTab === "audit") {
+      return { workspace: "audit" };
+    }
+    return { workspace: "documents" };
+  }
+
+  function updateBrowserRoute(route: AppRoute, mode: "push" | "replace" = "replace") {
+    const nextUrl = buildAppRouteUrl(route);
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    if (currentUrl !== nextUrl) {
+      if (mode === "push") {
+        window.history.pushState({}, "", nextUrl);
+      } else {
+        window.history.replaceState({}, "", nextUrl);
+      }
+    }
+    setRouteSnapshot((current) => (areAppRoutesEqual(current, route) ? current : route));
+  }
+
+  function handleWorkspaceTabChange(value: WorkspaceTab) {
+    if (value === activeWorkspaceTab) {
+      return;
+    }
+    setActiveWorkspaceTab(value);
+    updateBrowserRoute(buildRouteFromState(value), "push");
+  }
+
+  function handleAdminTabChange(value: AdminTab) {
+    setActiveAdminTab(value);
+    if (activeWorkspaceTab === "admin") {
+      updateBrowserRoute({ workspace: "admin", adminTab: value });
+    }
+  }
+
+  function handleTechAdminTabChange(value: TechAdminTab) {
+    setActiveTechAdminTab(value);
+    if (activeWorkspaceTab === "tech_admin") {
+      updateBrowserRoute({ workspace: "tech_admin", techAdminTab: value });
+    }
+  }
+
+  function handleRepairTabChange(value: RepairTab) {
+    setActiveRepairTab(value);
+    if (activeWorkspaceTab === "repair") {
+      updateBrowserRoute({
+        workspace: "repair",
+        repairId: selectedRepair?.id ?? null,
+        repairTab: value,
+        documentId: selectedDocumentId,
+      });
+    }
+  }
+
   useEffect(() => {
     if (user?.role === "admin") {
       return;
@@ -3925,6 +4132,118 @@ export default function App() {
       setShowTechAdminTab(false);
     }
   }, [activeWorkspaceTab, showTechAdminTab, user?.role]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setRouteSnapshot(readAppRoute(window.location));
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (routeSnapshot.workspace === "documents") {
+      if (activeWorkspaceTab !== "documents") {
+        setActiveWorkspaceTab("documents");
+      }
+      return;
+    }
+
+    if (routeSnapshot.workspace === "search") {
+      if (activeWorkspaceTab !== "search") {
+        setActiveWorkspaceTab("search");
+      }
+      return;
+    }
+
+    if (routeSnapshot.workspace === "audit") {
+      if (activeWorkspaceTab !== "audit") {
+        setActiveWorkspaceTab("audit");
+      }
+      return;
+    }
+
+    if (routeSnapshot.workspace === "admin") {
+      if (user?.role !== "admin") {
+        updateBrowserRoute({ workspace: "documents" });
+        return;
+      }
+      if (activeWorkspaceTab !== "admin") {
+        setActiveWorkspaceTab("admin");
+      }
+      if (activeAdminTab !== routeSnapshot.adminTab) {
+        setActiveAdminTab(routeSnapshot.adminTab);
+      }
+      return;
+    }
+
+    if (routeSnapshot.workspace === "tech_admin") {
+      if (user?.role !== "admin") {
+        updateBrowserRoute({ workspace: "documents" });
+        return;
+      }
+      if (!showTechAdminTab) {
+        setShowTechAdminTab(true);
+      }
+      if (activeWorkspaceTab !== "tech_admin") {
+        setActiveWorkspaceTab("tech_admin");
+      }
+      if (activeTechAdminTab !== routeSnapshot.techAdminTab) {
+        setActiveTechAdminTab(routeSnapshot.techAdminTab);
+      }
+      return;
+    }
+
+    if (routeSnapshot.workspace === "fleet") {
+      if (activeWorkspaceTab !== "fleet") {
+        setActiveWorkspaceTab("fleet");
+      }
+      if (routeSnapshot.vehicleId !== null && selectedFleetVehicleId !== routeSnapshot.vehicleId) {
+        setSelectedFleetVehicleId(routeSnapshot.vehicleId);
+      }
+      if (fleetViewMode !== (routeSnapshot.vehicleId !== null ? "detail" : "list")) {
+        setFleetViewMode(routeSnapshot.vehicleId !== null ? "detail" : "list");
+      }
+      return;
+    }
+
+    if (activeWorkspaceTab !== "repair") {
+      setActiveWorkspaceTab("repair");
+    }
+    if (activeRepairTab !== routeSnapshot.repairTab) {
+      setActiveRepairTab(routeSnapshot.repairTab);
+    }
+    if (routeSnapshot.documentId !== null && selectedDocumentId !== routeSnapshot.documentId) {
+      setSelectedDocumentId(routeSnapshot.documentId);
+    }
+    if (!token || routeSnapshot.repairId === null) {
+      return;
+    }
+    const repairMatches = selectedRepair?.id === routeSnapshot.repairId;
+    const documentMatches = routeSnapshot.documentId === null || selectedDocumentId === routeSnapshot.documentId;
+    if (!repairMatches || !documentMatches) {
+      void loadRepairDetail(token, routeSnapshot.repairId, routeSnapshot.documentId, {
+        silent: repairMatches,
+        resetTransientState: !repairMatches,
+      });
+    }
+  }, [
+    activeAdminTab,
+    activeRepairTab,
+    activeTechAdminTab,
+    activeWorkspaceTab,
+    fleetViewMode,
+    selectedDocumentId,
+    selectedFleetVehicleId,
+    selectedRepair?.id,
+    showTechAdminTab,
+    token,
+    routeSnapshot,
+    user?.role,
+  ]);
 
   function buildLaborNormQueryString(
     query: string = laborNormQuery,
@@ -4207,11 +4526,13 @@ export default function App() {
     fleetListScrollPositionRef.current = window.scrollY;
     setSelectedFleetVehicleId(vehicleId);
     setFleetViewMode("detail");
+    updateBrowserRoute({ workspace: "fleet", vehicleId }, "push");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function returnToFleetList() {
     setFleetViewMode("list");
+    updateBrowserRoute({ workspace: "fleet", vehicleId: null }, "push");
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: fleetListScrollPositionRef.current, behavior: "auto" });
     });
@@ -5127,11 +5448,13 @@ export default function App() {
   async function openRepairByIds(documentId: number | null, repairId: number) {
     if (activeWorkspaceTab !== "repair") {
       repairReturnTabRef.current = activeWorkspaceTab;
+      repairReturnRouteRef.current = buildRouteFromState(activeWorkspaceTab);
       repairScrollPositionRef.current = window.scrollY;
       setRepairHasReturnTarget(true);
     }
     setActiveWorkspaceTab("repair");
     setActiveRepairTab("overview");
+    updateBrowserRoute({ workspace: "repair", repairId, repairTab: "overview", documentId }, "push");
     window.scrollTo({ top: 0, behavior: "smooth" });
     if (!token) {
       return;
@@ -5141,7 +5464,9 @@ export default function App() {
 
   function returnFromRepairPage() {
     const nextTab = repairHasReturnTarget ? repairReturnTabRef.current : "documents";
+    const nextRoute = repairHasReturnTarget ? repairReturnRouteRef.current : ({ workspace: "documents" } as const);
     setActiveWorkspaceTab(nextTab);
+    updateBrowserRoute(nextRoute, "push");
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: repairHasReturnTarget ? repairScrollPositionRef.current : 0, behavior: "auto" });
     });
@@ -5150,6 +5475,8 @@ export default function App() {
   function openFleetVehicleById(vehicleId: number) {
     setActiveWorkspaceTab("fleet");
     setSelectedFleetVehicleId(vehicleId);
+    setFleetViewMode("detail");
+    updateBrowserRoute({ workspace: "fleet", vehicleId }, "push");
   }
 
   async function openQualityRepair(documentId: number | null, repairId: number | null) {
@@ -5162,6 +5489,7 @@ export default function App() {
   async function openQualityService(name: string) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("services");
+    updateBrowserRoute({ workspace: "admin", adminTab: "services" }, "push");
     setServiceQuery(name);
     if (!token) {
       return;
@@ -6540,17 +6868,20 @@ export default function App() {
     setShowTechAdminTab(true);
     setActiveWorkspaceTab("tech_admin");
     setActiveTechAdminTab(tab);
+    updateBrowserRoute({ workspace: "tech_admin", techAdminTab: tab }, "push");
   }
 
   function closeTechAdmin() {
     setShowTechAdminTab(false);
     setActiveTechAdminTab("learning");
     setActiveWorkspaceTab("admin");
+    updateBrowserRoute({ workspace: "admin", adminTab: activeAdminTab }, "push");
   }
 
   function handleEditReviewRule(item: ReviewRuleItem) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("control");
+    updateBrowserRoute({ workspace: "admin", adminTab: "control" }, "push");
     setShowReviewRuleEditor(true);
     setReviewRuleForm(createReviewRuleFormFromItem(item));
   }
@@ -6834,6 +7165,7 @@ export default function App() {
   function handleEditService(item: ServiceItem) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("services");
+    updateBrowserRoute({ workspace: "admin", adminTab: "services" }, "push");
     setShowServiceEditor(true);
     setServiceForm(createServiceFormFromItem(item));
   }
@@ -7254,6 +7586,7 @@ export default function App() {
   function handleEditLaborNormCatalog(item: LaborNormCatalogConfigItem) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("labor_norms");
+    updateBrowserRoute({ workspace: "admin", adminTab: "labor_norms" }, "push");
     setShowLaborNormCatalogEditor(true);
     setEditingLaborNormCatalogId(item.id);
     setLaborNormCatalogForm(createCatalogFormFromItem(item));
@@ -7267,6 +7600,7 @@ export default function App() {
   function handleCatalogScopeSelected(scope: string) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("labor_norms");
+    updateBrowserRoute({ workspace: "admin", adminTab: "labor_norms" }, "push");
     setShowLaborNormImport(true);
     setLaborNormImportScope(scope);
     const selectedCatalog = laborNormCatalogs.find((item) => item.scope === scope);
@@ -7349,6 +7683,7 @@ export default function App() {
   function handleEditLaborNormItem(item: LaborNormCatalogItem) {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("labor_norms");
+    updateBrowserRoute({ workspace: "admin", adminTab: "labor_norms" }, "push");
     setShowLaborNormEntryEditor(true);
     setLaborNormEntryForm(createLaborNormEntryFormFromItem(item));
   }
@@ -8061,7 +8396,7 @@ export default function App() {
             <Stack spacing={1.5}>
               <Tabs
                 value={activeWorkspaceTab}
-                onChange={(_event, value: WorkspaceTab) => setActiveWorkspaceTab(value)}
+                onChange={(_event, value: WorkspaceTab) => handleWorkspaceTabChange(value)}
                 variant="scrollable"
                 scrollButtons="auto"
                 allowScrollButtonsMobile
@@ -8977,7 +9312,7 @@ export default function App() {
                       </Stack>
                       <Tabs
                         value={activeAdminTab}
-                        onChange={(_event, value: AdminTab) => setActiveAdminTab(value)}
+                        onChange={(_event, value: AdminTab) => handleAdminTabChange(value)}
                         variant="scrollable"
                         scrollButtons="auto"
                         allowScrollButtonsMobile
@@ -9014,7 +9349,7 @@ export default function App() {
                       </Stack>
                       <Tabs
                         value={activeTechAdminTab}
-                        onChange={(_event, value: TechAdminTab) => setActiveTechAdminTab(value)}
+                        onChange={(_event, value: TechAdminTab) => handleTechAdminTabChange(value)}
                         variant="scrollable"
                         scrollButtons="auto"
                         allowScrollButtonsMobile
@@ -13105,7 +13440,7 @@ export default function App() {
                           <Stack spacing={1.25}>
                             <Tabs
                               value={activeRepairTab}
-                              onChange={(_event, value: RepairTab) => setActiveRepairTab(value)}
+                              onChange={(_event, value: RepairTab) => handleRepairTabChange(value)}
                               variant="scrollable"
                               scrollButtons="auto"
                               allowScrollButtonsMobile

@@ -42,11 +42,7 @@ import { RepairEditSections } from "./components/RepairEditSections";
 import { RepairDocumentsSection } from "./components/RepairDocumentsSection";
 import { RepairOverviewReportPanel } from "./components/RepairOverviewReportPanel";
 import { RepairReadOnlySections } from "./components/RepairReadOnlySections";
-import { ReviewExtractedDataPanel } from "./components/ReviewExtractedDataPanel";
-import { ReviewDocumentPreviewPanel } from "./components/ReviewDocumentPreviewPanel";
-import { ReviewRequiredFieldsPanel } from "./components/ReviewRequiredFieldsPanel";
-import { ReviewServicePanel } from "./components/ReviewServicePanel";
-import { ReviewVehicleLinkPanel } from "./components/ReviewVehicleLinkPanel";
+import { ReviewDecisionPanel } from "./components/ReviewDecisionPanel";
 import { ReviewRulesAdminPanel } from "./components/ReviewRulesAdminPanel";
 import { ReviewQueuePanel } from "./components/ReviewQueuePanel";
 import { ServicesAdminPanel } from "./components/ServicesAdminPanel";
@@ -8287,360 +8283,126 @@ export default function App() {
                           )}
                         </Stack>
 
-                        {selectedReviewItem && !isEditingRepair ? (
-                          <Paper className="repair-summary" elevation={0}>
-                            <Stack spacing={1.5}>
-                              <Box>
-                                <Typography variant="h6">Решение по проверке</Typography>
-                                <Typography className="muted-copy">
-                                  {user?.role === "admin"
-                                    ? selectedRepair.status === "employee_confirmed"
-                                      ? "Сотрудник уже подготовил ремонт. Здесь выполняется финальное подтверждение администратора."
-                                      : "Администратор может сразу финально подтвердить ремонт или вернуть его в ручную проверку."
-                                    : "Сотрудник подтверждает ремонт по своей технике. После этого запись остаётся предварительной и ждёт финального подтверждения администратора."}
-                                </Typography>
-                              </Box>
-                              <Typography className="muted-copy">
-                                Текущие причины: {selectedReviewItem.issue_titles.slice(0, 4).join(", ")}
-                                {selectedReviewItem.issue_titles.length > 4
-                                  ? ` и ещё ${selectedReviewItem.issue_titles.length - 4}`
-                                  : ""}
-                              </Typography>
-                              {selectedRepairDocument ? (
-                                <Grid container spacing={2}>
-                                  <Grid item xs={12} lg={6}>
-                                    <ReviewDocumentPreviewPanel
-                                      document={selectedRepairDocument}
-                                      reviewDocumentPreviewLoading={reviewDocumentPreviewLoading}
-                                      reviewDocumentPreviewKind={reviewDocumentPreviewKind}
-                                      reviewDocumentPreviewUrl={reviewDocumentPreviewUrl}
-                                      documentOpenLoadingId={documentOpenLoadingId}
-                                      onOpenDocument={(documentId) => {
-                                        void handleOpenDocumentFile(documentId);
-                                      }}
-                                      formatDocumentKind={formatDocumentKind}
-                                      statusColor={statusColor}
-                                      formatDocumentStatusLabel={formatDocumentStatusLabel}
-                                      formatDateTime={formatDateTime}
-                                      formatSourceTypeLabel={formatSourceTypeLabel}
-                                      formatConfidence={formatConfidence}
-                                    />
-                                  </Grid>
-                                  <Grid item xs={12} lg={6}>
-                                    <Stack spacing={1.5}>
-                                      {canLinkVehicleFromSelectedDocument ? (
-                                        <ReviewVehicleLinkPanel
-                                          plateNumber={
-                                            selectedRepairDocumentExtractedFields?.plate_number
-                                              ? String(selectedRepairDocumentExtractedFields.plate_number)
-                                              : null
-                                          }
-                                          vin={
-                                            selectedRepairDocumentExtractedFields?.vin
-                                              ? String(selectedRepairDocumentExtractedFields.vin)
-                                              : null
-                                          }
-                                          reviewVehicleSearch={reviewVehicleSearch}
-                                          reviewVehicleSearchLoading={reviewVehicleSearchLoading}
-                                          reviewVehicleLinkingId={reviewVehicleLinkingId}
-                                          reviewVehicleSearchResults={reviewVehicleSearchResults}
-                                          userRole={user?.role}
-                                          onSearchChange={setReviewVehicleSearch}
-                                          onSearch={() => {
-                                            void handleSearchReviewVehicles();
-                                          }}
-                                          onLinkVehicle={(vehicleId) => {
-                                            void handleLinkReviewVehicle(vehicleId);
-                                          }}
-                                          formatVehicle={formatVehicle}
-                                          formatVehicleTypeLabel={formatVehicleTypeLabel}
-                                        />
-                                      ) : null}
-
-                                      <ReviewServicePanel
-                                        currentServiceName={selectedRepair.service?.name || null}
-                                        ocrServiceName={selectedRepairDocumentOcrServiceName}
-                                        reviewServiceName={reviewServiceName}
-                                        services={services}
-                                        reviewServiceAssigning={reviewServiceAssigning}
-                                        reviewServiceSaving={reviewServiceSaving}
-                                        reviewFieldSaving={reviewFieldSaving}
-                                        reviewVehicleLinking={reviewVehicleLinkingId !== null}
-                                        showReviewServiceEditor={showReviewServiceEditor}
-                                        reviewServiceForm={reviewServiceForm}
-                                        userRole={user?.role}
-                                        onServiceNameChange={setReviewServiceName}
-                                        onAssign={() => {
-                                          void handleAssignReviewService();
-                                        }}
-                                        onToggleCreate={() => {
-                                          setShowReviewServiceEditor((current) => !current);
-                                          setReviewServiceForm((current) => ({
-                                            ...current,
-                                            name: current.name || reviewServiceName || selectedRepairDocumentOcrServiceName,
-                                          }));
-                                        }}
-                                        onClear={() => {
-                                          setReviewServiceName("");
-                                          void assignReviewService("");
-                                        }}
-                                        onFormChange={(field, value) => {
-                                          setReviewServiceForm((current) => ({
-                                            ...current,
-                                            [field]: value,
-                                          }));
-                                        }}
-                                        onCreate={() => {
-                                          void handleCreateReviewService();
-                                        }}
-                                      />
-
-                                      <ReviewRequiredFieldsPanel
-                                        canConfirmSelectedReview={canConfirmSelectedReview}
-                                        reviewReadyFieldsCount={reviewReadyFieldsCount}
-                                        reviewRequiredFieldComparisons={reviewRequiredFieldComparisons}
-                                        reviewFieldSaving={reviewFieldSaving}
-                                        showReviewFieldEditor={showReviewFieldEditor}
-                                        reviewFieldDraft={reviewFieldDraft}
-                                        reviewMissingRequiredFields={reviewMissingRequiredFields}
-                                        onToggleEditor={() => {
-                                          setShowReviewFieldEditor((current) => !current);
-                                        }}
-                                        onFillFromOcr={fillReviewFieldDraftFromOcr}
-                                        onDraftChange={updateReviewFieldDraft}
-                                        onSave={() => {
-                                          void handleSaveReviewFields();
-                                        }}
-                                        getReviewComparisonColor={getReviewComparisonColor}
-                                        getReviewComparisonLabel={getReviewComparisonLabel}
-                                        getConfidenceColor={getConfidenceColor}
-                                        formatConfidenceLabel={formatConfidenceLabel}
-                                      />
-
-                                      <ReviewExtractedDataPanel
-                                        selectedRepairDocumentFieldSnapshots={selectedRepairDocumentFieldSnapshots}
-                                        selectedRepairDocumentExtractedFields={selectedRepairDocumentExtractedFields}
-                                        selectedRepairDocumentOcrServiceName={selectedRepairDocumentOcrServiceName}
-                                        selectedRepairDocumentPayload={selectedRepairDocumentPayload}
-                                        selectedRepairDocumentWorks={selectedRepairDocumentWorks}
-                                        selectedRepairDocumentParts={selectedRepairDocumentParts}
-                                        getConfidenceColor={getConfidenceColor}
-                                        formatConfidenceLabel={formatConfidenceLabel}
-                                        formatMoney={formatMoney}
-                                        formatCompactNumber={formatCompactNumber}
-                                        formatHours={formatHours}
-                                        formatManualReviewReasons={formatManualReviewReasons}
-                                        formatOcrProfileMeta={formatOcrProfileMeta}
-                                        formatLaborNormApplicability={formatLaborNormApplicability}
-                                        readStringValue={readStringValue}
-                                        readNumberValue={readNumberValue}
-                                        formatOcrLineUnit={formatOcrLineUnit}
-                                      />
-                                    </Stack>
-                                  </Grid>
-                                </Grid>
-                              ) : null}
-                              <TextField
-                                label={user?.role === "admin" ? "Комментарий администратора" : "Комментарий сотрудника"}
-                                value={reviewActionComment}
-                                onChange={(event) => setReviewActionComment(event.target.value)}
-                                fullWidth
-                                multiline
-                                minRows={2}
-                              />
-                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                {user?.role === "admin" ? (
-                                  <Button
-                                    variant="contained"
-                                    disabled={
-                                      reviewActionLoading ||
-                                      reviewServiceAssigning ||
-                                      reviewServiceSaving ||
-                                      reviewFieldSaving ||
-                                      reviewVehicleLinkingId !== null ||
-                                      !canConfirmSelectedReview
-                                    }
-                                    onClick={() => {
-                                      void handleReviewAction("confirm");
-                                    }}
-                                  >
-                                    {reviewActionLoading ? "Сохранение..." : "Подтвердить админом"}
-                                  </Button>
-                                ) : (
-                                  <Button
-                                    variant="contained"
-                                    disabled={
-                                      reviewActionLoading ||
-                                      reviewServiceAssigning ||
-                                      reviewServiceSaving ||
-                                      reviewFieldSaving ||
-                                      reviewVehicleLinkingId !== null ||
-                                      !canConfirmSelectedReview
-                                    }
-                                    onClick={() => {
-                                      void handleReviewAction("employee_confirm");
-                                    }}
-                                  >
-                                    {reviewActionLoading ? "Сохранение..." : "Подтвердить сотрудником"}
-                                  </Button>
-                                )}
-                                <Button
-                                  variant="outlined"
-                                  disabled={reviewActionLoading || reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving || reviewVehicleLinkingId !== null}
-                                  onClick={() => {
-                                    void handleReviewAction("send_to_review");
-                                  }}
-                                >
-                                  Вернуть в ручную проверку
-                                </Button>
-                              </Stack>
-                            </Stack>
-                          </Paper>
-                        ) : null}
-
-                        {canCreateVehicleFromSelectedDocument && !isEditingRepair ? (
-                          <Paper className="repair-summary" elevation={0}>
-                            <Stack spacing={1.5}>
-                              <Box>
-                                <Typography variant="h6">Создать карточку техники</Typography>
-                                <Typography className="muted-copy">
-                                  Для непривязанного заказ-наряда можно сразу завести технику и перепривязать ремонт.
-                                </Typography>
-                              </Box>
-                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} flexWrap="wrap">
-                                <Chip
-                                  size="small"
-                                  variant="outlined"
-                                  label={`Тип: ${formatVehicleTypeLabel(documentVehicleForm.vehicle_type)}`}
-                                />
-                                {selectedRepairDocumentExtractedFields?.plate_number ? (
-                                  <Chip
-                                    size="small"
-                                    variant="outlined"
-                                    label={`OCR госномер: ${String(selectedRepairDocumentExtractedFields.plate_number)}`}
-                                  />
-                                ) : null}
-                                {selectedRepairDocumentExtractedFields?.vin ? (
-                                  <Chip
-                                    size="small"
-                                    variant="outlined"
-                                    label={`OCR VIN: ${String(selectedRepairDocumentExtractedFields.vin)}`}
-                                  />
-                                ) : null}
-                              </Stack>
-                              <Grid container spacing={1.5}>
-                                <Grid item xs={12} sm={4}>
-                                  <TextField
-                                    select
-                                    fullWidth
-                                    label="Тип техники"
-                                    value={documentVehicleForm.vehicle_type}
-                                    onChange={(event) =>
-                                      setDocumentVehicleForm((current) => ({
-                                        ...current,
-                                        vehicle_type: event.target.value as VehicleType,
-                                      }))
-                                    }
-                                  >
-                                    <MenuItem value="truck">Грузовик</MenuItem>
-                                    <MenuItem value="trailer">Прицеп</MenuItem>
-                                  </TextField>
-                                </Grid>
-                                <Grid item xs={12} sm={4}>
-                                  <TextField
-                                    fullWidth
-                                    label="Госномер"
-                                    value={documentVehicleForm.plate_number}
-                                    onChange={(event) =>
-                                      setDocumentVehicleForm((current) => ({
-                                        ...current,
-                                        plate_number: event.target.value,
-                                      }))
-                                    }
-                                  />
-                                </Grid>
-                                <Grid item xs={12} sm={4}>
-                                  <TextField
-                                    fullWidth
-                                    label="VIN"
-                                    value={documentVehicleForm.vin}
-                                    onChange={(event) =>
-                                      setDocumentVehicleForm((current) => ({
-                                        ...current,
-                                        vin: event.target.value,
-                                      }))
-                                    }
-                                  />
-                                </Grid>
-                                <Grid item xs={12} sm={4}>
-                                  <TextField
-                                    fullWidth
-                                    label="Марка"
-                                    value={documentVehicleForm.brand}
-                                    onChange={(event) =>
-                                      setDocumentVehicleForm((current) => ({
-                                        ...current,
-                                        brand: event.target.value,
-                                      }))
-                                    }
-                                  />
-                                </Grid>
-                                <Grid item xs={12} sm={4}>
-                                  <TextField
-                                    fullWidth
-                                    label="Модель"
-                                    value={documentVehicleForm.model}
-                                    onChange={(event) =>
-                                      setDocumentVehicleForm((current) => ({
-                                        ...current,
-                                        model: event.target.value,
-                                      }))
-                                    }
-                                  />
-                                </Grid>
-                                <Grid item xs={12} sm={4}>
-                                  <TextField
-                                    fullWidth
-                                    label="Год"
-                                    value={documentVehicleForm.year}
-                                    onChange={(event) =>
-                                      setDocumentVehicleForm((current) => ({
-                                        ...current,
-                                        year: event.target.value.replace(/[^\d]/g, "").slice(0, 4),
-                                      }))
-                                    }
-                                  />
-                                </Grid>
-                                <Grid item xs={12}>
-                                  <TextField
-                                    fullWidth
-                                    multiline
-                                    minRows={2}
-                                    label="Комментарий"
-                                    value={documentVehicleForm.comment}
-                                    onChange={(event) =>
-                                      setDocumentVehicleForm((current) => ({
-                                        ...current,
-                                        comment: event.target.value,
-                                      }))
-                                    }
-                                  />
-                                </Grid>
-                              </Grid>
-                              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                <Button
-                                  variant="contained"
-                                  disabled={documentVehicleSaving}
-                                  onClick={() => {
-                                    void handleCreateVehicleFromDocument();
-                                  }}
-                                >
-                                  {documentVehicleSaving ? "Создание..." : "Создать и привязать"}
-                                </Button>
-                              </Stack>
-                            </Stack>
-                          </Paper>
-                        ) : null}
+                        <ReviewDecisionPanel
+                          userRole={user?.role}
+                          selectedRepairStatus={selectedRepair.status}
+                          selectedReviewItem={selectedReviewItem}
+                          selectedRepair={selectedRepair}
+                          selectedRepairDocument={selectedRepairDocument}
+                          reviewDocumentPreviewLoading={reviewDocumentPreviewLoading}
+                          reviewDocumentPreviewKind={reviewDocumentPreviewKind}
+                          reviewDocumentPreviewUrl={reviewDocumentPreviewUrl}
+                          documentOpenLoadingId={documentOpenLoadingId}
+                          canLinkVehicleFromSelectedDocument={canLinkVehicleFromSelectedDocument}
+                          selectedRepairDocumentExtractedFields={selectedRepairDocumentExtractedFields}
+                          reviewVehicleSearch={reviewVehicleSearch}
+                          reviewVehicleSearchLoading={reviewVehicleSearchLoading}
+                          reviewVehicleLinkingId={reviewVehicleLinkingId}
+                          reviewVehicleSearchResults={reviewVehicleSearchResults}
+                          selectedRepairDocumentOcrServiceName={selectedRepairDocumentOcrServiceName}
+                          reviewServiceName={reviewServiceName}
+                          services={services}
+                          reviewServiceAssigning={reviewServiceAssigning}
+                          reviewServiceSaving={reviewServiceSaving}
+                          reviewFieldSaving={reviewFieldSaving}
+                          showReviewServiceEditor={showReviewServiceEditor}
+                          reviewServiceForm={reviewServiceForm}
+                          canConfirmSelectedReview={canConfirmSelectedReview}
+                          reviewReadyFieldsCount={reviewReadyFieldsCount}
+                          reviewRequiredFieldComparisons={reviewRequiredFieldComparisons}
+                          showReviewFieldEditor={showReviewFieldEditor}
+                          reviewFieldDraft={reviewFieldDraft}
+                          reviewMissingRequiredFields={reviewMissingRequiredFields}
+                          selectedRepairDocumentFieldSnapshots={selectedRepairDocumentFieldSnapshots}
+                          selectedRepairDocumentPayload={selectedRepairDocumentPayload}
+                          selectedRepairDocumentWorks={selectedRepairDocumentWorks}
+                          selectedRepairDocumentParts={selectedRepairDocumentParts}
+                          reviewActionComment={reviewActionComment}
+                          reviewActionLoading={reviewActionLoading}
+                          canCreateVehicleFromSelectedDocument={canCreateVehicleFromSelectedDocument}
+                          isEditingRepair={isEditingRepair}
+                          documentVehicleForm={documentVehicleForm}
+                          documentVehicleSaving={documentVehicleSaving}
+                          onOpenDocumentFile={(documentId) => {
+                            void handleOpenDocumentFile(documentId);
+                          }}
+                          onSearchVehicleChange={setReviewVehicleSearch}
+                          onSearchVehicles={() => {
+                            void handleSearchReviewVehicles();
+                          }}
+                          onLinkVehicle={(vehicleId) => {
+                            void handleLinkReviewVehicle(vehicleId);
+                          }}
+                          onServiceNameChange={setReviewServiceName}
+                          onToggleServiceCreate={() => {
+                            setShowReviewServiceEditor((current) => !current);
+                            setReviewServiceForm((current) => ({
+                              ...current,
+                              name: current.name || reviewServiceName || selectedRepairDocumentOcrServiceName,
+                            }));
+                          }}
+                          onClearService={() => {
+                            setReviewServiceName("");
+                            void assignReviewService("");
+                          }}
+                          onServiceFormChange={(field, value) => {
+                            setReviewServiceForm((current) => ({
+                              ...current,
+                              [field]: value,
+                            }));
+                          }}
+                          onAssignService={() => {
+                            void handleAssignReviewService();
+                          }}
+                          onCreateService={() => {
+                            void handleCreateReviewService();
+                          }}
+                          onToggleFieldEditor={() => {
+                            setShowReviewFieldEditor((current) => !current);
+                          }}
+                          onFillFieldsFromOcr={fillReviewFieldDraftFromOcr}
+                          onReviewFieldDraftChange={updateReviewFieldDraft}
+                          onSaveReviewFields={() => {
+                            void handleSaveReviewFields();
+                          }}
+                          onReviewActionCommentChange={setReviewActionComment}
+                          onConfirm={() => {
+                            void handleReviewAction(user?.role === "admin" ? "confirm" : "employee_confirm");
+                          }}
+                          onSendToReview={() => {
+                            void handleReviewAction("send_to_review");
+                          }}
+                          onDocumentVehicleFormChange={(field, value) => {
+                            setDocumentVehicleForm((current) => ({
+                              ...current,
+                              [field]: value,
+                            }));
+                          }}
+                          onCreateVehicle={() => {
+                            void handleCreateVehicleFromDocument();
+                          }}
+                          getReviewComparisonColor={getReviewComparisonColor}
+                          getReviewComparisonLabel={getReviewComparisonLabel}
+                          getConfidenceColor={getConfidenceColor}
+                          formatConfidenceLabel={formatConfidenceLabel}
+                          formatMoney={formatMoney}
+                          formatCompactNumber={formatCompactNumber}
+                          formatHours={formatHours}
+                          formatManualReviewReasons={formatManualReviewReasons}
+                          formatOcrProfileMeta={formatOcrProfileMeta}
+                          formatLaborNormApplicability={formatLaborNormApplicability}
+                          readStringValue={readStringValue}
+                          readNumberValue={readNumberValue}
+                          formatOcrLineUnit={formatOcrLineUnit}
+                          formatDocumentKind={formatDocumentKind}
+                          statusColor={statusColor}
+                          formatDocumentStatusLabel={formatDocumentStatusLabel}
+                          formatDateTime={formatDateTime}
+                          formatSourceTypeLabel={formatSourceTypeLabel}
+                          formatConfidence={formatConfidence}
+                          formatVehicle={formatVehicle}
+                          formatVehicleTypeLabel={formatVehicleTypeLabel}
+                        />
 
                         <Paper className="repair-summary" elevation={0}>
                           <Stack spacing={1.25}>

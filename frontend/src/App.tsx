@@ -23,12 +23,14 @@ import {
   Typography,
 } from "@mui/material";
 import { AuditLogPanel } from "./components/AuditLogPanel";
+import { BackupsAdminPanel } from "./components/BackupsAdminPanel";
 import { DocumentsListPanel } from "./components/DocumentsListPanel";
 import { DocumentsUploadPanel } from "./components/DocumentsUploadPanel";
 import { EmployeesAdminPanel } from "./components/EmployeesAdminPanel";
 import { FleetPanel } from "./components/FleetPanel";
 import { GlobalSearchPanel } from "./components/GlobalSearchPanel";
 import { RepairPanel } from "./components/RepairPanel";
+import { ReviewRulesAdminPanel } from "./components/ReviewRulesAdminPanel";
 import { ReviewQueuePanel } from "./components/ReviewQueuePanel";
 import { ServicesAdminPanel } from "./components/ServicesAdminPanel";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
@@ -9219,381 +9221,70 @@ export default function App() {
                 ) : null}
 
                 {activeWorkspaceTab === "admin" && activeAdminTab === "backups" && user?.role === "admin" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                    <Stack spacing={2}>
-                      <Box>
-                        <Typography variant="h5">Резервные копии</Typography>
-                        <Typography className="muted-copy">
-                          Полный backup включает базу данных и все файлы из `storage`. Для восстановления введите точный код копии.
-                        </Typography>
-                      </Box>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                        <Button
-                          variant="contained"
-                          disabled={backupActionLoading}
-                          onClick={() => {
-                            void handleCreateBackup();
-                          }}
-                        >
-                          {backupActionLoading ? "Выполнение..." : "Создать резервную копию"}
-                        </Button>
-                        <Button
-                          variant="outlined"
-                          disabled={backupsLoading || backupActionLoading}
-                          onClick={() => {
-                            if (token) {
-                              void loadBackups(token);
-                            }
-                          }}
-                        >
-                          {backupsLoading ? "Обновление..." : "Обновить список"}
-                        </Button>
-                      </Stack>
-                      {backupsLoading ? (
-                        <Stack spacing={1} alignItems="center">
-                          <CircularProgress size={24} />
-                          <Typography className="muted-copy">Загрузка резервных копий...</Typography>
-                        </Stack>
-                      ) : backups.length > 0 ? (
-                        <Stack spacing={1}>
-                          {backups.map((item) => (
-                            <Paper className="repair-line" key={item.backup_id} elevation={0}>
-                              <Stack spacing={1}>
-                                <Stack
-                                  direction={{ xs: "column", sm: "row" }}
-                                  spacing={1}
-                                  justifyContent="space-between"
-                                  alignItems={{ xs: "flex-start", sm: "center" }}
-                                >
-                                  <Box>
-                                    <Typography>{item.filename}</Typography>
-                                    <Typography className="muted-copy">
-                                      Код: {item.backup_id}
-                                    </Typography>
-                                  </Box>
-                                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                    <Chip size="small" variant="outlined" label={formatStatus(item.backup_type)} />
-                                    <Chip size="small" variant="outlined" label={formatStatus(item.source)} />
-                                    <Chip
-                                      size="small"
-                                      color={item.status === "ready" ? "success" : "warning"}
-                                      label={formatStatus(item.status)}
-                                    />
-                                  </Stack>
-                                </Stack>
-                                <Typography className="muted-copy">
-                                  {formatDateTime(item.created_at)} · {formatFileSize(item.size_bytes)} · таблиц {item.tables_total} · файлов {item.storage_files_total}
-                                </Typography>
-                                <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                                  <Button
-                                    size="small"
-                                    variant="outlined"
-                                    disabled={backupActionLoading || item.status !== "ready"}
-                                    onClick={() => {
-                                      void handleDownloadBackup(item);
-                                    }}
-                                  >
-                                    Скачать
-                                  </Button>
-                                  <Button
-                                    size="small"
-                                    variant="text"
-                                    color="warning"
-                                    disabled={backupActionLoading || item.status !== "ready"}
-                                    onClick={() => {
-                                      openBackupRestoreDialog(item);
-                                    }}
-                                  >
-                                    Восстановить
-                                  </Button>
-                                </Stack>
-                              </Stack>
-                            </Paper>
-                          ))}
-                        </Stack>
-                      ) : (
-                        <Alert severity="info">
-                          Резервные копии пока не создавались.
-                        </Alert>
-                      )}
-                      <Dialog
-                        open={backupRestoreDialogOpen}
-                        onClose={closeBackupRestoreDialog}
-                        fullWidth
-                        maxWidth="sm"
-                      >
-                        <DialogTitle>Подтверждение восстановления</DialogTitle>
-                        <DialogContent dividers>
-                          <Stack spacing={1.5}>
-                            <Alert severity="warning">
-                              Восстановление перезапишет текущую базу и файлы `storage`.
-                            </Alert>
-                            <Typography>
-                              Для подтверждения введите код копии:
-                              {" "}
-                              <strong>{backupRestoreTarget?.backup_id || "—"}</strong>
-                            </Typography>
-                            <TextField
-                              fullWidth
-                              label="Код резервной копии"
-                              value={backupRestoreConfirmValue}
-                              onChange={(event) => setBackupRestoreConfirmValue(event.target.value)}
-                            />
-                          </Stack>
-                        </DialogContent>
-                        <DialogActions>
-                          <Button onClick={closeBackupRestoreDialog} disabled={backupActionLoading}>
-                            Отмена
-                          </Button>
-                          <Button
-                            color="warning"
-                            variant="contained"
-                            disabled={backupActionLoading || backupRestoreConfirmValue.trim() !== (backupRestoreTarget?.backup_id || "")}
-                            onClick={() => {
-                              void handleRestoreBackup();
-                            }}
-                          >
-                            {backupActionLoading ? "Восстановление..." : "Восстановить"}
-                          </Button>
-                        </DialogActions>
-                      </Dialog>
-                    </Stack>
-                  </Paper>
+                  <BackupsAdminPanel
+                    backupActionLoading={backupActionLoading}
+                    backupsLoading={backupsLoading}
+                    backups={backups}
+                    backupRestoreDialogOpen={backupRestoreDialogOpen}
+                    backupRestoreTarget={backupRestoreTarget}
+                    backupRestoreConfirmValue={backupRestoreConfirmValue}
+                    onCreateBackup={() => {
+                      void handleCreateBackup();
+                    }}
+                    onRefresh={() => {
+                      if (token) {
+                        void loadBackups(token);
+                      }
+                    }}
+                    onDownloadBackup={(item) => {
+                      void handleDownloadBackup(item);
+                    }}
+                    onOpenRestoreDialog={openBackupRestoreDialog}
+                    onCloseRestoreDialog={closeBackupRestoreDialog}
+                    onBackupRestoreConfirmValueChange={setBackupRestoreConfirmValue}
+                    onRestoreBackup={() => {
+                      void handleRestoreBackup();
+                    }}
+                    formatStatus={formatStatus}
+                    formatDateTime={formatDateTime}
+                    formatFileSize={formatFileSize}
+                  />
                 ) : null}
 
                 {activeWorkspaceTab === "admin" && activeAdminTab === "control" && user?.role === "admin" ? (
-                  <Paper className="workspace-panel" elevation={0}>
-                    <Stack spacing={2}>
-                      <Box>
-                        <Typography variant="h5">Правила OCR и очереди проверки</Typography>
-                        <Typography className="muted-copy">
-                          Настройка причин ручной проверки, весов приоритета и группы приоритета без участия разработчика.
-                        </Typography>
-                      </Box>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                        <Button
-                          variant={showReviewRuleEditor ? "outlined" : "contained"}
-                          onClick={() => setShowReviewRuleEditor((current) => !current)}
-                        >
-                          {showReviewRuleEditor ? "Скрыть форму правила" : "Добавить правило"}
-                        </Button>
-                      </Stack>
-                      {showReviewRuleEditor ? (
-                        <Paper className="repair-line" elevation={0}>
-                          <Stack spacing={1.25}>
-                            <Typography className="metric-label">
-                              Создание и редактирование правила
-                            </Typography>
-                            <Grid container spacing={1.5}>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                select
-                                label="Тип правила"
-                                value={reviewRuleForm.rule_type}
-                                onChange={(event) =>
-                                  setReviewRuleForm((current) => ({ ...current, rule_type: event.target.value }))
-                                }
-                                fullWidth
-                                disabled={reviewRuleForm.id !== null}
-                              >
-                                {["manual_review_reason", "document_status", "repair_status", "check_severity", "signal"]
-                                  .filter((item, index, array) => array.indexOf(item) === index)
-                                  .map((item) => (
-                                    <MenuItem key={item} value={item}>
-                                      {formatReviewRuleTypeLabel(item)}
-                                    </MenuItem>
-                                  ))}
-                                {reviewRuleTypes
-                                  .filter((item) => !["manual_review_reason", "document_status", "repair_status", "check_severity", "signal"].includes(item))
-                                  .map((item) => (
-                                    <MenuItem key={item} value={item}>
-                                      {formatReviewRuleTypeLabel(item)}
-                                    </MenuItem>
-                                  ))}
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Код"
-                                value={reviewRuleForm.code}
-                                onChange={(event) =>
-                                  setReviewRuleForm((current) => ({ ...current, code: event.target.value }))
-                                }
-                                fullWidth
-                                disabled={reviewRuleForm.id !== null}
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={4}>
-                              <TextField
-                                label="Название"
-                                value={reviewRuleForm.title}
-                                onChange={(event) =>
-                                  setReviewRuleForm((current) => ({ ...current, title: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={2}>
-                              <TextField
-                                label="Вес"
-                                type="number"
-                                value={reviewRuleForm.weight}
-                                onChange={(event) =>
-                                  setReviewRuleForm((current) => ({ ...current, weight: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                select
-                                label="Группа приоритета"
-                                value={reviewRuleForm.bucket_override}
-                                onChange={(event) =>
-                                  setReviewRuleForm((current) => ({ ...current, bucket_override: event.target.value }))
-                                }
-                                fullWidth
-                              >
-                                <MenuItem value="">Без переопределения</MenuItem>
-                                <MenuItem value="review">Обычный</MenuItem>
-                                <MenuItem value="critical">Критичный</MenuItem>
-                                <MenuItem value="suspicious">Подозрительный</MenuItem>
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                select
-                                label="Активность"
-                                value={reviewRuleForm.is_active}
-                                onChange={(event) =>
-                                  setReviewRuleForm((current) => ({
-                                    ...current,
-                                    is_active: event.target.value as "true" | "false",
-                                  }))
-                                }
-                                fullWidth
-                              >
-                                <MenuItem value="true">Активно</MenuItem>
-                                <MenuItem value="false">Отключено</MenuItem>
-                              </TextField>
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Порядок"
-                                type="number"
-                                value={reviewRuleForm.sort_order}
-                                onChange={(event) =>
-                                  setReviewRuleForm((current) => ({ ...current, sort_order: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                            <Grid item xs={12} sm={3}>
-                              <TextField
-                                label="Примечание"
-                                value={reviewRuleForm.notes}
-                                onChange={(event) =>
-                                  setReviewRuleForm((current) => ({ ...current, notes: event.target.value }))
-                                }
-                                fullWidth
-                              />
-                            </Grid>
-                          </Grid>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                            <Button
-                              variant="contained"
-                              disabled={reviewRuleSaving}
-                              onClick={() => {
-                                void handleSaveReviewRule();
-                              }}
-                            >
-                              {reviewRuleSaving ? "Сохранение..." : reviewRuleForm.id ? "Сохранить правило" : "Создать правило"}
-                            </Button>
-                            <Button
-                              variant="text"
-                              disabled={reviewRuleSaving}
-                              onClick={() => {
-                                resetReviewRuleEditor();
-                                setShowReviewRuleEditor(false);
-                              }}
-                            >
-                              Сбросить форму
-                            </Button>
-                          </Stack>
-                          </Stack>
-                        </Paper>
-                      ) : null}
-                      <Typography className="muted-copy">
-                        В справочнике правил {reviewRules.length} записей.
-                      </Typography>
-                      {reviewRules.length > 0 ? (
-                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
-                          <Button
-                            variant="outlined"
-                            onClick={() => setShowReviewRuleListDialog(true)}
-                          >
-                            Открыть список правил
-                          </Button>
-                          <Typography className="muted-copy">
-                            Полный список правил скрыт с основной страницы.
-                          </Typography>
-                        </Stack>
-                      ) : (
-                        <Typography className="muted-copy">Правила пока не загружены.</Typography>
-                      )}
-                      <Dialog
-                        open={showReviewRuleListDialog}
-                        onClose={() => setShowReviewRuleListDialog(false)}
-                        fullWidth
-                        maxWidth="lg"
-                      >
-                        <DialogTitle>Правила OCR и очереди проверки</DialogTitle>
-                        <DialogContent dividers>
-                          {reviewRules.length > 0 ? (
-                            <Stack spacing={1}>
-                              {reviewRules.map((item) => (
-                                <Paper className="repair-line" key={`review-rule-${item.id}`} elevation={0}>
-                                  <Stack spacing={0.5}>
-                                    <Stack direction="row" justifyContent="space-between" spacing={1}>
-                                      <Typography>{item.title}</Typography>
-                                      <Stack direction="row" spacing={1}>
-                                        <Chip
-                                          size="small"
-                                          color={item.is_active ? "success" : "default"}
-                                          label={item.is_active ? "Активно" : "Отключено"}
-                                        />
-                                        <Chip size="small" variant="outlined" label={`${formatReviewRuleTypeLabel(item.rule_type)}: ${item.code}`} />
-                                      </Stack>
-                                    </Stack>
-                                    <Typography className="muted-copy">
-                                      Вес {item.weight}
-                                      {item.bucket_override ? ` · группа ${formatReviewBucketLabel(item.bucket_override)}` : ""}
-                                      {` · порядок ${item.sort_order}`}
-                                    </Typography>
-                                    {item.notes ? <Typography className="muted-copy">{item.notes}</Typography> : null}
-                                    <Stack direction="row" spacing={1}>
-                                      <Button
-                                        size="small"
-                                        variant="outlined"
-                                        onClick={() => {
-                                          setShowReviewRuleListDialog(false);
-                                          handleEditReviewRule(item);
-                                        }}
-                                      >
-                                        Редактировать
-                                      </Button>
-                                    </Stack>
-                                  </Stack>
-                                </Paper>
-                              ))}
-                            </Stack>
-                          ) : (
-                            <Typography className="muted-copy">Правила пока не загружены.</Typography>
-                          )}
-                        </DialogContent>
-                      </Dialog>
-                    </Stack>
-                  </Paper>
+                  <ReviewRulesAdminPanel
+                    showReviewRuleEditor={showReviewRuleEditor}
+                    reviewRuleForm={reviewRuleForm}
+                    reviewRuleSaving={reviewRuleSaving}
+                    reviewRules={reviewRules}
+                    reviewRuleTypes={reviewRuleTypes}
+                    showReviewRuleListDialog={showReviewRuleListDialog}
+                    onToggleEditor={() => {
+                      setShowReviewRuleEditor((current) => !current);
+                    }}
+                    onReviewRuleFormChange={(field, value) => {
+                      setReviewRuleForm((current) => ({
+                        ...current,
+                        [field]: value,
+                      }));
+                    }}
+                    onSaveReviewRule={() => {
+                      void handleSaveReviewRule();
+                    }}
+                    onResetReviewRuleEditor={() => {
+                      resetReviewRuleEditor();
+                      setShowReviewRuleEditor(false);
+                    }}
+                    onOpenListDialog={() => {
+                      setShowReviewRuleListDialog(true);
+                    }}
+                    onCloseListDialog={() => {
+                      setShowReviewRuleListDialog(false);
+                    }}
+                    onEditReviewRule={handleEditReviewRule}
+                    formatReviewRuleTypeLabel={formatReviewRuleTypeLabel}
+                    formatReviewBucketLabel={formatReviewBucketLabel}
+                  />
                 ) : null}
 
                 {activeWorkspaceTab === "tech_admin" && activeTechAdminTab === "learning" && user?.role === "admin" ? (

@@ -4,6 +4,12 @@ import { AuthLandingView } from "./components/AuthLandingView";
 import { HistoryDetailsPreview } from "./components/HistoryDetailsPreview";
 import { WorkspaceMainView } from "./components/WorkspaceMainView";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
+import {
+  buildAuditEntryDetails,
+  buildDocumentHistoryDetails,
+  buildRepairHistoryDetails,
+  type HistoryDetailFormatters,
+} from "./shared/historyDetails";
 
 type UserRole = "admin" | "employee";
 type VehicleType = "truck" | "trailer";
@@ -1749,96 +1755,6 @@ function formatJsonPretty(value: unknown) {
   }
 }
 
-function buildAuditEntryDetails(entry: AuditLogItem) {
-  const documentFields = [
-    "document_id",
-    "repair_id",
-    "original_filename",
-    "kind",
-    "status",
-    "is_primary",
-    "notes",
-    "review_queue_priority",
-    "document_status",
-    "repair_status",
-    "source_document_id",
-  ];
-  const repairFields = [
-    "order_number",
-    "repair_date",
-    "mileage",
-    "reason",
-    "employee_comment",
-    "service_name",
-    "work_total",
-    "parts_total",
-    "vat_total",
-    "grand_total",
-    "status",
-    "repair_status",
-    "document_status",
-    "review_queue_priority",
-    "is_preliminary",
-    "is_partially_recognized",
-    "source_document_id",
-  ];
-  const vehicleFields = ["plate_number", "vin", "brand", "model", "status", "comment"];
-  const userFields = ["full_name", "login", "email", "role", "is_active", "vehicle_id", "starts_at", "ends_at", "comment"];
-  const genericFields = [
-    "document_id",
-    "repair_id",
-    "original_filename",
-    "source_filename",
-    "status",
-    "comment",
-    "notes",
-  ];
-
-  let context: "repair" | "document" | "generic" = "generic";
-  let fields = genericFields;
-  if (entry.entity_type === "repair") {
-    context = "repair";
-    fields = repairFields;
-  } else if (entry.entity_type === "document") {
-    context = "document";
-    fields = documentFields;
-  } else if (entry.entity_type === "vehicle") {
-    fields = vehicleFields;
-  } else if (entry.entity_type === "user") {
-    fields = userFields;
-  }
-
-  const lines = collectChangedFieldLines(entry.old_value, entry.new_value, fields, context);
-  if (lines.length > 0) {
-    return lines;
-  }
-
-  const snapshotLines: string[] = [];
-  const appendSnapshot = (title: string, value: Record<string, unknown> | null) => {
-    if (!value || Object.keys(value).length === 0) {
-      return;
-    }
-    const pieces = fields
-      .filter((fieldName) => value[fieldName] !== undefined && value[fieldName] !== null && value[fieldName] !== "")
-      .map((fieldName) => {
-        const scalar = formatHistoryScalar(fieldName, value[fieldName], context);
-        return `${formatHistoryFieldLabel(fieldName, context)}: ${scalar}`;
-      });
-    if (pieces.length > 0) {
-      snapshotLines.push(`${title}: ${pieces.join(" · ")}`);
-      return;
-    }
-    snapshotLines.push(`${title}: ${formatJsonPretty(value)}`);
-  };
-
-  appendSnapshot("Было", entry.old_value);
-  appendSnapshot("Стало", entry.new_value);
-  if (snapshotLines.length > 0) {
-    return snapshotLines;
-  }
-  return ["Подробные изменения не записаны."];
-}
-
 function formatMoney(value?: number | null) {
   if (typeof value !== "number") {
     return null;
@@ -2652,18 +2568,6 @@ function formatHistoryActionLabel(actionType: string) {
   return historyActionLabels[actionType] || formatStatus(actionType);
 }
 
-function formatComparisonActionLabel(action: string | null | undefined) {
-  if (!action) {
-    return "Результат не указан";
-  }
-  const labels: Record<string, string> = {
-    keep_current_primary: "Оставлен текущий основной документ",
-    make_document_primary: "Сравниваемый документ назначен основным",
-    mark_reviewed: "Сверка отмечена как проверенная",
-  };
-  return labels[action] || formatStatus(action);
-}
-
 function formatDateValue(value: string) {
   const normalizedValue = value.length === 10 ? `${value}T00:00:00` : value;
   const parsed = new Date(normalizedValue);
@@ -2674,297 +2578,6 @@ function formatDateValue(value: string) {
     "ru-RU",
     value.length === 10 ? { dateStyle: "short" } : { dateStyle: "short", timeStyle: "short" },
   ).format(parsed);
-}
-
-function safeJsonStringify(value: unknown) {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function areHistoryValuesEqual(left: unknown, right: unknown) {
-  if (left === right) {
-    return true;
-  }
-  return safeJsonStringify(left) === safeJsonStringify(right);
-}
-
-function formatHistoryFieldLabel(fieldName: string, context: "repair" | "document" | "generic" = "generic") {
-  if (fieldName === "status") {
-    if (context === "document") {
-      return "Статус документа";
-    }
-    if (context === "repair") {
-      return "Статус ремонта";
-    }
-    return "Статус";
-  }
-
-  const labels: Record<string, string> = {
-    document_id: "Документ",
-    repair_id: "Ремонт",
-    vehicle_id: "Техника",
-    order_number: "Номер заказ-наряда",
-    repair_date: "Дата ремонта",
-    mileage: "Пробег",
-    reason: "Причина обращения",
-    employee_comment: "Комментарий сотрудника",
-    service_name: "Сервис",
-    work_total: "Сумма работ",
-    parts_total: "Сумма запчастей",
-    vat_total: "НДС",
-    grand_total: "Итоговая сумма",
-    repair_status: "Статус ремонта",
-    document_status: "Статус документа",
-    review_queue_priority: "Приоритет очереди",
-    source_document_id: "Основной документ",
-    is_preliminary: "Черновик",
-    is_partially_recognized: "Частичное распознавание",
-    is_primary: "Основной документ",
-    kind: "Тип документа",
-    document_kind: "Тип документа",
-    original_filename: "Файл",
-    source_filename: "Файл-источник",
-    full_name: "ФИО",
-    login: "Логин",
-    email: "E-mail",
-    role: "Роль",
-    is_active: "Активен",
-    starts_at: "Дата начала",
-    ends_at: "Дата окончания",
-    comment: "Комментарий",
-    plate_number: "Госномер",
-    brand: "Марка",
-    model: "Модель",
-    notes: "Комментарий",
-  };
-
-  return labels[fieldName] || formatStatus(fieldName);
-}
-
-function formatHistoryScalar(
-  fieldName: string,
-  value: unknown,
-  context: "repair" | "document" | "generic" = "generic",
-) {
-  if (value === null || value === undefined || value === "") {
-    return "—";
-  }
-  if (typeof value === "boolean") {
-    return value ? "Да" : "Нет";
-  }
-  if (typeof value === "number") {
-    if (
-      fieldName === "work_total" ||
-      fieldName === "parts_total" ||
-      fieldName === "vat_total" ||
-      fieldName === "grand_total"
-    ) {
-      return formatMoney(value) || "—";
-    }
-    return new Intl.NumberFormat("ru-RU").format(value);
-  }
-  if (typeof value === "string") {
-    if (fieldName === "repair_date") {
-      return formatDateValue(value);
-    }
-    if (fieldName === "role") {
-      return value === "admin" ? "Администратор" : value === "employee" ? "Сотрудник" : value;
-    }
-    if (fieldName === "status" && context === "generic") {
-      return formatStatus(value);
-    }
-    if (fieldName === "status" || fieldName === "repair_status") {
-      return formatRepairStatus(value);
-    }
-    if (fieldName === "document_status") {
-      return formatDocumentStatusLabel(value);
-    }
-    if (fieldName === "kind" || fieldName === "document_kind") {
-      return formatDocumentKind(value as DocumentKind);
-    }
-    if (fieldName.endsWith("_at")) {
-      return formatDateValue(value);
-    }
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return `${value.length}`;
-  }
-  if (typeof value === "object") {
-    if (fieldName === "status" && context === "document") {
-      return formatDocumentStatusLabel(String((value as Record<string, unknown>).status || ""));
-    }
-    return safeJsonStringify(value);
-  }
-  return String(value);
-}
-
-function collectChangedFieldLines(
-  oldValue: Record<string, unknown> | null,
-  newValue: Record<string, unknown> | null,
-  fieldNames: string[],
-  context: "repair" | "document" | "generic" = "generic",
-) {
-  const lines: string[] = [];
-  fieldNames.forEach((fieldName) => {
-    const previous = oldValue?.[fieldName];
-    const next = newValue?.[fieldName];
-    if (areHistoryValuesEqual(previous, next)) {
-      return;
-    }
-    lines.push(
-      `${formatHistoryFieldLabel(fieldName, context)}: ${formatHistoryScalar(fieldName, previous, context)} -> ${formatHistoryScalar(fieldName, next, context)}`,
-    );
-  });
-  return lines;
-}
-
-function summarizeChecks(value: unknown) {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-  const unresolved = value.filter((item) => {
-    if (!item || typeof item !== "object") {
-      return false;
-    }
-    return !Boolean((item as Record<string, unknown>).is_resolved);
-  }).length;
-  return `${unresolved} открыто из ${value.length}`;
-}
-
-function buildCollectionCountLine(label: string, previous: unknown, next: unknown) {
-  if (!Array.isArray(previous) || !Array.isArray(next)) {
-    return null;
-  }
-  if (previous.length === next.length) {
-    return null;
-  }
-  return `${label}: ${previous.length} -> ${next.length}`;
-}
-
-function buildCheckSummaryLine(previous: unknown, next: unknown) {
-  const previousSummary = summarizeChecks(previous);
-  const nextSummary = summarizeChecks(next);
-  if (!previousSummary || !nextSummary || previousSummary === nextSummary) {
-    return null;
-  }
-  return `Открытые проверки: ${previousSummary} -> ${nextSummary}`;
-}
-
-function buildHistoryFallbackLine(
-  oldValue: Record<string, unknown> | null,
-  newValue: Record<string, unknown> | null,
-) {
-  if (!oldValue && !newValue) {
-    return "Изменение зафиксировано без дополнительных данных.";
-  }
-  return `Снимок изменения: ${safeJsonStringify({ before: oldValue, after: newValue })}`;
-}
-
-function buildRepairHistoryDetails(entry: RepairHistoryEntry) {
-  const lines = [
-    ...collectChangedFieldLines(
-      entry.old_value,
-      entry.new_value,
-      [
-        "order_number",
-        "repair_date",
-        "mileage",
-        "service_name",
-        "grand_total",
-        "status",
-        "repair_status",
-        "document_status",
-        "review_queue_priority",
-        "is_preliminary",
-        "is_partially_recognized",
-      ],
-      "repair",
-    ),
-  ];
-
-  const worksLine = buildCollectionCountLine("Работы", entry.old_value?.works, entry.new_value?.works);
-  if (worksLine) {
-    lines.push(worksLine);
-  }
-  const partsLine = buildCollectionCountLine("Запчасти", entry.old_value?.parts, entry.new_value?.parts);
-  if (partsLine) {
-    lines.push(partsLine);
-  }
-  const documentsLine = buildCollectionCountLine("Документы", entry.old_value?.documents, entry.new_value?.documents);
-  if (documentsLine) {
-    lines.push(documentsLine);
-  }
-  const checksLine =
-    buildCheckSummaryLine(entry.old_value?.checks, entry.new_value?.checks) ||
-    buildCheckSummaryLine(entry.old_value?.unresolved_checks, entry.new_value?.unresolved_checks);
-  if (checksLine) {
-    lines.push(checksLine);
-  }
-
-  const sourceDocumentChange = collectChangedFieldLines(
-    entry.old_value,
-    entry.new_value,
-    ["source_document_id"],
-    "repair",
-  );
-  if (sourceDocumentChange.length > 0) {
-    lines.push(...sourceDocumentChange);
-  }
-
-  const reviewMeta = readComparisonReviewMeta(entry.new_value);
-  if (reviewMeta) {
-    lines.push(`Результат сверки: ${formatComparisonActionLabel(String(reviewMeta.action || ""))}`);
-    if (reviewMeta.comment) {
-      lines.push(`Комментарий: ${String(reviewMeta.comment)}`);
-    }
-    if (reviewMeta.compared_document_id || reviewMeta.with_document_id) {
-      lines.push(
-        `Документы: ${String(reviewMeta.compared_document_id || "—")} и ${String(reviewMeta.with_document_id || "—")}`,
-      );
-    }
-  }
-
-  if (lines.length === 0) {
-    lines.push(buildHistoryFallbackLine(entry.old_value, entry.new_value));
-  }
-  return lines;
-}
-
-function buildDocumentHistoryDetails(entry: RepairDocumentHistoryEntry) {
-  const lines = [
-    ...collectChangedFieldLines(
-      entry.old_value,
-      entry.new_value,
-      ["status", "document_status", "repair_status", "review_queue_priority", "is_primary", "kind", "notes"],
-      "document",
-    ),
-    ...collectChangedFieldLines(entry.old_value, entry.new_value, ["source_document_id"], "document"),
-  ];
-
-  const reviewMeta = readComparisonReviewMeta(entry.new_value);
-  if (reviewMeta) {
-    lines.push(`Результат сверки: ${formatComparisonActionLabel(String(reviewMeta.action || ""))}`);
-    if (reviewMeta.comment) {
-      lines.push(`Комментарий: ${String(reviewMeta.comment)}`);
-    }
-    if (reviewMeta.compared_document_id || reviewMeta.with_document_id) {
-      lines.push(
-        `Документы: ${String(reviewMeta.compared_document_id || "—")} и ${String(reviewMeta.with_document_id || "—")}`,
-      );
-    }
-  }
-
-  if (lines.length === 0 && entry.new_value) {
-    lines.push(buildHistoryFallbackLine(entry.old_value, entry.new_value));
-  }
-  if (lines.length === 0) {
-    lines.push("Событие зафиксировано без дополнительных деталей.");
-  }
-  return lines;
 }
 
 function matchesTextSearch(parts: Array<string | null | undefined>, search: string) {
@@ -3424,6 +3037,17 @@ function readComparisonReviewMeta(value: Record<string, unknown> | null): Record
   }
   return review as Record<string, unknown>;
 }
+
+const historyDetailFormatters: HistoryDetailFormatters = {
+  formatStatus,
+  formatRepairStatus,
+  formatDocumentStatusLabel,
+  formatDocumentKind,
+  formatMoney,
+  formatDateValue,
+  formatJsonPretty,
+  readComparisonReviewMeta,
+};
 
 function getDocumentPreviewKind(mimeType: string | null | undefined): "pdf" | "image" | null {
   if (!mimeType) {
@@ -8169,8 +7793,10 @@ export default function App() {
                           formatDateTime,
                           formatHistoryActionLabel,
                           formatDocumentKind,
-                          buildDocumentHistoryDetails,
-                          buildRepairHistoryDetails,
+                          buildDocumentHistoryDetails: (entry) =>
+                            buildDocumentHistoryDetails(entry, historyDetailFormatters),
+                          buildRepairHistoryDetails: (entry) =>
+                            buildRepairHistoryDetails(entry, historyDetailFormatters),
                           renderHistoryDetails: (_entryKey, lines) => <HistoryDetailsPreview lines={lines} />,
                         },
                       }
@@ -8244,7 +7870,8 @@ export default function App() {
                 formatAuditEntityLabel,
                 formatHistoryActionLabel,
                 formatDateTime,
-                renderEntryDetails: (entry) => <HistoryDetailsPreview lines={buildAuditEntryDetails(entry)} />,
+                renderEntryDetails: (entry) =>
+                  <HistoryDetailsPreview lines={buildAuditEntryDetails(entry, historyDetailFormatters)} />,
               },
               fleetProps: {
                 viewMode: fleetViewMode,

@@ -5,6 +5,21 @@ import { HistoryDetailsPreview } from "./components/HistoryDetailsPreview";
 import { WorkspaceMainView } from "./components/WorkspaceMainView";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
 import {
+  createVehicleFormFromPayload,
+  formatQualityVehicle,
+  formatVehicle,
+  getLatestRepairDocumentConfidenceMap,
+  getLatestRepairDocumentPayload,
+  getPayloadExtractedFields,
+  getPayloadExtractedItems,
+  inferVehicleTypeFromIdentifiers,
+  isAssignmentActive,
+  isPlaceholderVehicle,
+  matchesTextSearch,
+  parseOrderNumberFromFilename,
+  parseRepairDateFromFilename,
+} from "./shared/fleetDocumentHelpers";
+import {
   buildAttentionVisualBars,
   buildDashboardVisualBarWidth,
   buildQualityVisualBars,
@@ -1298,8 +1313,6 @@ type UploadFormState = {
   notes: string;
 };
 
-const PLACEHOLDER_EXTERNAL_ID = "__batch_import_placeholder__";
-
 const emptyUploadForm = (): UploadFormState => ({
   vehicleId: "",
   documentKind: "order",
@@ -1310,31 +1323,6 @@ const emptyUploadForm = (): UploadFormState => ({
   employeeComment: "",
   notes: "",
 });
-
-function parseRepairDateFromFilename(filename: string): string | null {
-  const normalized = filename.trim();
-  const dayFirstMatch = normalized.match(/(\d{2})[.\-_](\d{2})[.\-_](\d{4})/);
-  if (dayFirstMatch) {
-    return `${dayFirstMatch[3]}-${dayFirstMatch[2]}-${dayFirstMatch[1]}`;
-  }
-  const isoMatch = normalized.match(/(\d{4})[.\-_](\d{2})[.\-_](\d{2})/);
-  if (isoMatch) {
-    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
-  }
-  return null;
-}
-
-function parseOrderNumberFromFilename(filename: string): string | null {
-  const directNumberMatch = filename.match(/№\s*([A-Za-zА-Яа-я0-9\-\/]+)/u);
-  if (directNumberMatch?.[1]) {
-    return directNumberMatch[1].trim();
-  }
-  const orderMatch = filename.match(/(?:заказ[\s_-]*наряд|зн)[^\w]{0,3}([A-Za-zА-Яа-я0-9\-\/]+)/iu);
-  if (orderMatch?.[1]) {
-    return orderMatch[1].trim();
-  }
-  return null;
-}
 
 const summaryCards: Array<{ key: keyof DashboardSummary; label: string }> = [
   { key: "vehicles_total", label: "Техника в доступе" },
@@ -1426,228 +1414,7 @@ const rootDocumentKindOptions = documentKindOptions.filter(
   (option) => option.value === "order" || option.value === "repeat_scan",
 );
 const VEHICLES_FULL_LIST_LIMIT = 2000;
-const historyActionLabels: Record<string, string> = {
-  manual_update: "Ручное редактирование ремонта",
-  repair_archived: "Ремонт отправлен в архив",
-  repair_deleted: "Заказ-наряд удалён",
-  service_assignment: "Назначение сервиса",
-  review_field_update: "Обновление полей проверки",
-  check_resolution_update: "Изменение статуса проверки",
-  review_employee_confirm: "Подтверждение сотрудником",
-  review_confirm: "Подтверждение администратором",
-  review_send_to_review: "Возврат в ручную проверку",
-  primary_document_changed: "Смена основного документа",
-  set_primary: "Документ назначен основным",
-  document_uploaded: "Загрузка нового документа",
-  document_attached: "Прикрепление документа к ремонту",
-  document_archived: "Документ отправлен в архив",
-  document_status_updated: "Изменение статуса документа",
-  document_comparison_reviewed: "Результат сверки документов",
-  repair_vehicle_relinked: "Перепривязка ремонта к технике",
-  document_vehicle_linked: "Привязка документа к технике",
-  vehicle_created_from_document: "Карточка техники создана из документа",
-  comparison_keep_current_primary: "Сверка: оставлен текущий основной документ",
-  comparison_make_document_primary: "Сверка: выбран новый основной документ",
-  comparison_mark_reviewed: "Сверка отмечена как проверенная",
-  historical_import_created: "Исторический ремонт загружен",
-  user_created: "Пользователь создан",
-  user_updated: "Пользователь обновлён",
-  user_password_reset: "Пароль пользователя сброшен администратором",
-  user_password_changed: "Пользователь сменил пароль",
-  user_password_recovery_requested: "Запрошено восстановление пароля",
-  user_password_recovered: "Пароль восстановлен",
-  user_assignment_created: "Назначение техники пользователю",
-  user_assignment_updated: "Изменение назначения техники пользователю",
-  vehicle_updated: "Карточка техники обновлена",
-  backup_created: "Резервная копия создана",
-  backup_restored: "Резервная копия восстановлена",
-  import_conflict_resolved: "Конфликт импорта обработан",
-};
-const auditEntityLabels: Record<string, string> = {
-  repair: "Ремонт",
-  document: "Документ",
-  vehicle: "Техника",
-  user: "Пользователь",
-  system: "Система",
-  import_conflict: "Конфликт импорта",
-};
-const repairStatusLabels: Record<string, string> = {
-  draft: "Черновик",
-  in_review: "На проверке",
-  employee_confirmed: "Подтверждено сотрудником",
-  suspicious: "Подозрительный ремонт",
-  ocr_error: "Ошибка OCR",
-  confirmed: "Подтверждено",
-  archived: "Архив",
-};
-const documentStatusLabels: Record<string, string> = {
-  uploaded: "В очереди OCR",
-  recognized: "Распознан",
-  partially_recognized: "Распознан частично",
-  needs_review: "Требует ручной проверки",
-  confirmed: "Подтвержден",
-  ocr_error: "Ошибка OCR",
-  archived: "Архив",
-};
-const genericStatusLabels: Record<string, string> = {
-  queued: "В очереди",
-  retry: "Повторная очередь",
-  processing: "Обрабатывается",
-  preliminary: "Предварительный",
-  confirmed: "Подтверждено",
-  archived: "Архив",
-  merged: "Объединён",
-  uploaded: "В очереди OCR",
-  recognized: "Распознан",
-  partially_recognized: "Распознан частично",
-  needs_review: "Требует ручной проверки",
-  ocr_error: "Ошибка OCR",
-  draft: "Черновик",
-  in_review: "На проверке",
-  employee_confirmed: "Подтверждено сотрудником",
-  suspicious: "Подозрительный",
-  review: "Обычный",
-  critical: "Критичный",
-  normal: "Норма",
-  warning: "Предупреждение",
-  error: "Ошибка",
-  ready: "Готова",
-  missing: "Файл отсутствует",
-  manual: "Вручную",
-  full: "Полная",
-};
-const manualReviewReasonLabels: Record<string, string> = {
-  mileage_missing: "не удалось определить пробег",
-  order_number_missing: "не удалось определить номер заказ-наряда",
-  repair_date_invalid: "дата ремонта распознана с ошибкой",
-  repair_date_missing: "не удалось определить дату ремонта",
-  service_name_missing: "не удалось определить сервис",
-  service_name_suspicious: "название сервиса выглядит сомнительно",
-  service_not_found: "сервис не найден в справочнике",
-  text_not_found: "не удалось извлечь текст из документа",
-  vehicle_missing: "не удалось определить технику",
-  vehicle_not_found: "техника не найдена в базе",
-};
 
-function formatVehicle(vehicle: VehiclePreview) {
-  const parts = [vehicle.plate_number, vehicle.brand, vehicle.model].filter(Boolean);
-  return parts.join(" • ") || `#${vehicle.id}`;
-}
-
-function formatQualityVehicle(vehicle: { plate_number: string | null; brand: string | null; model: string | null }) {
-  const parts = [vehicle.plate_number, vehicle.brand, vehicle.model].filter(Boolean);
-  return parts.join(" • ") || "Техника не определена";
-}
-
-function normalizeIdentifier(value: string | null | undefined) {
-  if (!value) {
-    return "";
-  }
-  return value
-    .replace(/[Оо]/g, "O")
-    .replace(/[Аа]/g, "A")
-    .replace(/[Вв]/g, "B")
-    .replace(/[Ее]/g, "E")
-    .replace(/[Кк]/g, "K")
-    .replace(/[Мм]/g, "M")
-    .replace(/[Нн]/g, "H")
-    .replace(/[Рр]/g, "P")
-    .replace(/[Сс]/g, "C")
-    .replace(/[Тт]/g, "T")
-    .replace(/[Уу]/g, "Y")
-    .replace(/[Хх]/g, "X")
-    .toUpperCase()
-    .replace(/[^A-Z0-9А-Я]/g, "");
-}
-
-function inferVehicleTypeFromIdentifiers(plateNumber: string | null | undefined): VehicleType {
-  const normalizedPlate = normalizeIdentifier(plateNumber);
-  if (/^[A-ZА-Я]{2}\d{4}\d{2,3}$/.test(normalizedPlate)) {
-    return "trailer";
-  }
-  return "truck";
-}
-
-function isPlaceholderVehicle(externalId: string | null | undefined) {
-  return externalId === PLACEHOLDER_EXTERNAL_ID;
-}
-
-function getLatestRepairDocumentPayload(
-  repair: RepairDetail | null,
-  documentId: number | null,
-): Record<string, unknown> | null {
-  if (!repair || documentId === null) {
-    return null;
-  }
-  const selectedDocument = repair.documents.find((item) => item.id === documentId);
-  const latestVersion = selectedDocument?.versions?.[0];
-  if (!latestVersion?.parsed_payload || typeof latestVersion.parsed_payload !== "object") {
-    return null;
-  }
-  return latestVersion.parsed_payload;
-}
-
-function getLatestRepairDocumentConfidenceMap(
-  repair: RepairDetail | null,
-  documentId: number | null,
-): Record<string, unknown> | null {
-  if (!repair || documentId === null) {
-    return null;
-  }
-  const selectedDocument = repair.documents.find((item) => item.id === documentId);
-  const latestVersion = selectedDocument?.versions?.[0];
-  if (!latestVersion?.field_confidence_map || typeof latestVersion.field_confidence_map !== "object") {
-    return null;
-  }
-  return latestVersion.field_confidence_map;
-}
-
-function getPayloadExtractedFields(payload: Record<string, unknown> | null | undefined) {
-  const rawValue = payload?.extracted_fields;
-  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
-    return null;
-  }
-  return rawValue as Record<string, unknown>;
-}
-
-function getPayloadExtractedItems(payload: Record<string, unknown> | null | undefined) {
-  const rawValue = payload?.extracted_items;
-  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
-    return null;
-  }
-  return rawValue as {
-    works?: Array<Record<string, unknown>>;
-    parts?: Array<Record<string, unknown>>;
-  };
-}
-
-function createVehicleFormFromPayload(payload: Record<string, unknown> | null | undefined): DocumentVehicleFormState {
-  const extractedFields = getPayloadExtractedFields(payload);
-  const plateNumber =
-    typeof extractedFields?.plate_number === "string" ? extractedFields.plate_number.trim() : "";
-  const vin = typeof extractedFields?.vin === "string" ? extractedFields.vin.trim() : "";
-  return {
-    vehicle_type: inferVehicleTypeFromIdentifiers(plateNumber),
-    plate_number: plateNumber,
-    vin,
-    brand: "",
-    model: "",
-    year: "",
-    comment: "",
-  };
-}
-
-function isAssignmentActive(assignment: UserAssignment) {
-  const today = new Date().toISOString().slice(0, 10);
-  return assignment.starts_at <= today && (!assignment.ends_at || assignment.ends_at >= today);
-}
-function matchesTextSearch(parts: Array<string | null | undefined>, search: string) {
-  const normalizedSearch = search.trim().toLowerCase();
-  if (!normalizedSearch) {
-    return true;
-  }
-  return parts.some((part) => part?.toLowerCase().includes(normalizedSearch));
-}
 
 const historyDetailFormatters: HistoryDetailFormatters = {
   formatStatus,

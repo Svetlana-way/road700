@@ -5,6 +5,12 @@ import { HistoryDetailsPreview } from "./components/HistoryDetailsPreview";
 import { WorkspaceMainView } from "./components/WorkspaceMainView";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
 import {
+  buildAttentionVisualBars,
+  buildDashboardVisualBarWidth,
+  buildQualityVisualBars,
+  buildRepairVisualBars,
+} from "./shared/dashboardVisuals";
+import {
   areAppRoutesEqual,
   buildAppRouteUrl,
   readAppRoute,
@@ -20,6 +26,17 @@ import {
   buildRepairHistoryDetails,
   type HistoryDetailFormatters,
 } from "./shared/historyDetails";
+import {
+  buildCheckPayloadDetails,
+  formatOcrLineUnit,
+  formatWorkLaborNormMeta,
+  getCheckLinkedRepairId,
+  groupRepairChecksForReport,
+  readCheckResolutionMeta,
+  readComparisonReviewMeta,
+  readNumberValue,
+  readStringValue,
+} from "./shared/repairReportHelpers";
 import {
   checkSeverityColor,
   documentHasActiveImportJob,
@@ -64,6 +81,26 @@ import {
   statusColor,
   vehicleStatusColor,
 } from "./shared/displayFormatters";
+import {
+  createCatalogFormFromItem,
+  createEmptyCatalogForm,
+  createEmptyDocumentVehicleForm,
+  createEmptyLaborNormEntryForm,
+  createEmptyOcrProfileMatcherForm,
+  createEmptyOcrRuleForm,
+  createEmptyReviewRuleForm,
+  createEmptyServiceForm,
+  createEmptyUserAssignmentForm,
+  createEmptyUserForm,
+  createLaborNormEntryFormFromItem,
+  createOcrProfileMatcherFormFromItem,
+  createOcrRuleFormFromItem,
+  createReviewRuleFormFromItem,
+  createServiceFormFromItem,
+  createUserFormFromItem,
+  joinEditorLines,
+  splitEditorLines,
+} from "./shared/formStateFactories";
 import {
   createRepairDraft,
   createReviewRepairFieldsDraft,
@@ -274,15 +311,6 @@ type UserAssignment = {
     brand: string | null;
     model: string | null;
   };
-};
-
-type DashboardVisualTone = "blue" | "amber" | "red" | "green";
-
-type DashboardVisualBar = {
-  label: string;
-  value: number;
-  hint?: string;
-  tone: DashboardVisualTone;
 };
 
 type UserItem = User & {
@@ -1195,36 +1223,8 @@ type RepairDetail = {
   };
 };
 
-type RepairReportSectionKey = "catalogs" | "labor_norms" | "amounts" | "history" | "ocr";
-type RepairReportSection = {
-  key: RepairReportSectionKey;
-  title: string;
-  checks: RepairDetail["checks"];
-};
-
 type RepairHistoryEntry = RepairDetail["history"][number];
 type RepairDocumentHistoryEntry = RepairDetail["document_history"][number];
-
-type CheckResolutionMeta = {
-  is_resolved?: boolean;
-  comment?: string | null;
-  user_id?: number;
-  user_name?: string | null;
-  resolved_at?: string | null;
-};
-
-type WorkLaborNormMeta = {
-  applicable: boolean | null;
-  applicabilityReason: string | null;
-  scope: string | null;
-  catalogName: string | null;
-  code: string | null;
-  name: string | null;
-  category: string | null;
-  matchedBy: string | null;
-  matchScore: number | null;
-  standardHours: number | null;
-};
 
 type EditableWorkDraft = {
   work_code: string;
@@ -1353,133 +1353,6 @@ const qualityCards: Array<{ key: keyof DashboardDataQuality; label: string }> = 
   { key: "parts_preliminary", label: "Неподтверждённые материалы" },
   { key: "import_conflicts_pending", label: "Конфликты импорта" },
 ];
-
-function buildDashboardVisualBarWidth(value: number, maxValue: number) {
-  if (value <= 0 || maxValue <= 0) {
-    return "0%";
-  }
-  const ratio = (value / maxValue) * 100;
-  return `${Math.max(8, Math.min(100, ratio))}%`;
-}
-
-function buildRepairVisualBars(
-  summary: DashboardSummary | null,
-  dataQuality: DashboardDataQuality | null,
-): DashboardVisualBar[] {
-  if (!summary) {
-    return [];
-  }
-
-  const confirmedRepairs = Math.max(
-    0,
-    summary.repairs_total - summary.repairs_draft - (dataQuality?.repairs_suspicious || 0),
-  );
-
-  const items: DashboardVisualBar[] = [
-    {
-      label: "Подтверждено",
-      value: confirmedRepairs,
-      hint: "Ремонты без открытой подозрительности",
-      tone: "green",
-    },
-    {
-      label: "Черновики",
-      value: summary.repairs_draft,
-      hint: "Ещё не подтверждены",
-      tone: "amber",
-    },
-    {
-      label: "Подозрительные",
-      value: dataQuality?.repairs_suspicious || 0,
-      hint: "Требуют проверки",
-      tone: "red",
-    },
-    {
-      label: "Документы в очереди",
-      value: summary.documents_review_queue,
-      hint: "Ожидают OCR или ручной разбор",
-      tone: "blue",
-    },
-  ];
-
-  return items.filter((item) => item.value > 0);
-}
-
-function buildQualityVisualBars(dataQuality: DashboardDataQuality | null): DashboardVisualBar[] {
-  if (!dataQuality) {
-    return [];
-  }
-
-  const items: DashboardVisualBar[] = [
-    {
-      label: "Низкая уверенность OCR",
-      value: dataQuality.documents_low_confidence,
-      hint: "Ниже рабочего порога",
-      tone: "amber",
-    },
-    {
-      label: "Документы на проверке",
-      value: dataQuality.documents_needs_review,
-      hint: "Нужен ручной разбор",
-      tone: "blue",
-    },
-    {
-      label: "Ошибки OCR",
-      value: dataQuality.documents_ocr_error,
-      hint: "Распознавание не удалось",
-      tone: "red",
-    },
-    {
-      label: "Конфликты импорта",
-      value: dataQuality.import_conflicts_pending,
-      hint: "История ждёт сверки",
-      tone: "amber",
-    },
-  ];
-
-  return items.filter((item) => item.value > 0);
-}
-
-function buildAttentionVisualBars(details: DashboardDataQualityDetails | null): DashboardVisualBar[] {
-  if (!details) {
-    return [];
-  }
-
-  const items: DashboardVisualBar[] = [
-    {
-      label: "Документы",
-      value: details.counts.documents,
-      hint: "Проблемные файлы",
-      tone: "blue",
-    },
-    {
-      label: "Сервисы",
-      value: details.counts.services,
-      hint: "Неподтверждённые контрагенты",
-      tone: "amber",
-    },
-    {
-      label: "Работы",
-      value: details.counts.works,
-      hint: "Строки без нормализации",
-      tone: "amber",
-    },
-    {
-      label: "Материалы",
-      value: details.counts.parts,
-      hint: "Строки без подтверждения",
-      tone: "amber",
-    },
-    {
-      label: "Конфликты",
-      value: details.counts.conflicts,
-      hint: "Не разобран импорт",
-      tone: "red",
-    },
-  ];
-
-  return items.filter((item) => item.value > 0);
-}
 
 const workspaceTabDescriptions: Record<WorkspaceTab, string> = {
   documents: "Загрузка заказ-наряда, автоматическая проверка и короткий итог по результату.",
@@ -1656,350 +1529,6 @@ const manualReviewReasonLabels: Record<string, string> = {
   vehicle_not_found: "техника не найдена в базе",
 };
 
-function readStringValue(item: Record<string, unknown>, ...keys: string[]) {
-  for (const key of keys) {
-    const value = item[key];
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
-  }
-  return null;
-}
-
-function readNumberValue(item: Record<string, unknown>, ...keys: string[]) {
-  for (const key of keys) {
-    const value = item[key];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
-  }
-  return null;
-}
-
-function formatOcrLineUnit(value: string | null | undefined) {
-  if (!value) {
-    return null;
-  }
-  const normalizedValue = value.trim();
-  return normalizedValue || null;
-}
-
-function splitEditorLines(value: string) {
-  return value
-    .split(/\r?\n|,/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function joinEditorLines(values: string[] | null | undefined) {
-  return (values || []).join("\n");
-}
-
-function createEmptyCatalogForm(): LaborNormCatalogFormState {
-  return {
-    scope: "",
-    catalog_name: "",
-    brand_family: "",
-    vehicle_type: "",
-    year_from: "",
-    year_to: "",
-    brand_keywords: "",
-    model_keywords: "",
-    vin_prefixes: "",
-    priority: "100",
-    auto_match_enabled: "true",
-    status: "confirmed",
-    notes: "",
-  };
-}
-
-function createCatalogFormFromItem(item: LaborNormCatalogConfigItem): LaborNormCatalogFormState {
-  return {
-    scope: item.scope,
-    catalog_name: item.catalog_name,
-    brand_family: item.brand_family || "",
-    vehicle_type: item.vehicle_type || "",
-    year_from: item.year_from !== null ? String(item.year_from) : "",
-    year_to: item.year_to !== null ? String(item.year_to) : "",
-    brand_keywords: joinEditorLines(item.brand_keywords),
-    model_keywords: joinEditorLines(item.model_keywords),
-    vin_prefixes: joinEditorLines(item.vin_prefixes),
-    priority: String(item.priority),
-    auto_match_enabled: item.auto_match_enabled ? "true" : "false",
-    status: item.status,
-    notes: item.notes || "",
-  };
-}
-
-function createEmptyLaborNormEntryForm(scope = ""): LaborNormEntryFormState {
-  return {
-    id: null,
-    scope,
-    code: "",
-    category: "",
-    name_ru: "",
-    name_ru_alt: "",
-    name_cn: "",
-    name_en: "",
-    standard_hours: "",
-    source_sheet: "",
-    source_file: "",
-    status: "confirmed",
-  };
-}
-
-function createEmptyServiceForm(): ServiceFormState {
-  return {
-    id: null,
-    name: "",
-    city: "",
-    contact: "",
-    comment: "",
-    status: "confirmed",
-  };
-}
-
-function createEmptyUserForm(): UserFormState {
-  return {
-    id: null,
-    full_name: "",
-    login: "",
-    email: "",
-    role: "employee",
-    is_active: "true",
-    password: "",
-  };
-}
-
-function createUserFormFromItem(item: UserItem): UserFormState {
-  return {
-    id: item.id,
-    full_name: item.full_name,
-    login: item.login,
-    email: item.email,
-    role: item.role,
-    is_active: item.is_active ? "true" : "false",
-    password: "",
-  };
-}
-
-function createEmptyUserAssignmentForm(): UserAssignmentFormState {
-  return {
-    starts_at: new Date().toISOString().slice(0, 10),
-    ends_at: "",
-    comment: "",
-  };
-}
-
-function createEmptyDocumentVehicleForm(): DocumentVehicleFormState {
-  return {
-    vehicle_type: "truck",
-    plate_number: "",
-    vin: "",
-    brand: "",
-    model: "",
-    year: "",
-    comment: "",
-  };
-}
-
-function createServiceFormFromItem(item: ServiceItem): ServiceFormState {
-  return {
-    id: item.id,
-    name: item.name,
-    city: item.city || "",
-    contact: item.contact || "",
-    comment: item.comment || "",
-    status: item.status,
-  };
-}
-
-function createEmptyReviewRuleForm(): ReviewRuleFormState {
-  return {
-    id: null,
-    rule_type: "manual_review_reason",
-    code: "",
-    title: "",
-    weight: "0",
-    bucket_override: "",
-    is_active: "true",
-    sort_order: "100",
-    notes: "",
-  };
-}
-
-function createReviewRuleFormFromItem(item: ReviewRuleItem): ReviewRuleFormState {
-  return {
-    id: item.id,
-    rule_type: item.rule_type,
-    code: item.code,
-    title: item.title,
-    weight: String(item.weight),
-    bucket_override: item.bucket_override || "",
-    is_active: item.is_active ? "true" : "false",
-    sort_order: String(item.sort_order),
-    notes: item.notes || "",
-  };
-}
-
-function createEmptyOcrRuleForm(): OcrRuleFormState {
-  return {
-    id: null,
-    profile_scope: "default",
-    target_field: "order_number",
-    pattern: "",
-    value_parser: "raw",
-    confidence: "0.6",
-    priority: "100",
-    is_active: "true",
-    notes: "",
-  };
-}
-
-function createOcrRuleFormFromItem(item: OcrRuleItem): OcrRuleFormState {
-  return {
-    id: item.id,
-    profile_scope: item.profile_scope,
-    target_field: item.target_field,
-    pattern: item.pattern,
-    value_parser: item.value_parser,
-    confidence: String(item.confidence),
-    priority: String(item.priority),
-    is_active: item.is_active ? "true" : "false",
-    notes: item.notes || "",
-  };
-}
-
-function createEmptyOcrProfileMatcherForm(): OcrProfileMatcherFormState {
-  return {
-    id: null,
-    profile_scope: "default",
-    title: "",
-    source_type: "",
-    filename_pattern: "",
-    text_pattern: "",
-    service_name_pattern: "",
-    priority: "100",
-    is_active: "true",
-    notes: "",
-  };
-}
-
-function createOcrProfileMatcherFormFromItem(item: OcrProfileMatcherItem): OcrProfileMatcherFormState {
-  return {
-    id: item.id,
-    profile_scope: item.profile_scope,
-    title: item.title,
-    source_type: item.source_type || "",
-    filename_pattern: item.filename_pattern || "",
-    text_pattern: item.text_pattern || "",
-    service_name_pattern: item.service_name_pattern || "",
-    priority: String(item.priority),
-    is_active: item.is_active ? "true" : "false",
-    notes: item.notes || "",
-  };
-}
-
-function createLaborNormEntryFormFromItem(item: LaborNormCatalogItem): LaborNormEntryFormState {
-  return {
-    id: item.id,
-    scope: item.scope,
-    code: item.code,
-    category: item.category || "",
-    name_ru: item.name_ru,
-    name_ru_alt: item.name_ru_alt || "",
-    name_cn: item.name_cn || "",
-    name_en: item.name_en || "",
-    standard_hours: String(item.standard_hours),
-    source_sheet: item.source_sheet || "",
-    source_file: item.source_file || "",
-    status: item.status,
-  };
-}
-
-function formatMatchMethod(value: string | null | undefined) {
-  if (!value) {
-    return null;
-  }
-  const labels: Record<string, string> = {
-    code: "по коду",
-    normalized_name: "по нормализованному названию",
-    name_contains: "по частичному совпадению",
-    name_tokens: "по токенам названия",
-  };
-  return labels[value] || value;
-}
-
-function readWorkLaborNormMeta(referencePayload: Record<string, unknown> | null | undefined): WorkLaborNormMeta | null {
-  if (!referencePayload) {
-    return null;
-  }
-  return {
-    applicable:
-      typeof referencePayload.labor_norm_applicable === "boolean"
-        ? referencePayload.labor_norm_applicable
-        : null,
-    applicabilityReason:
-      typeof referencePayload.labor_norm_applicability_reason === "string"
-        ? referencePayload.labor_norm_applicability_reason
-        : null,
-    scope:
-      typeof referencePayload.labor_norm_scope === "string" ? referencePayload.labor_norm_scope : null,
-    catalogName:
-      typeof referencePayload.labor_norm_catalog_name === "string"
-        ? referencePayload.labor_norm_catalog_name
-        : null,
-    code:
-      typeof referencePayload.labor_norm_code === "string" ? referencePayload.labor_norm_code : null,
-    name:
-      typeof referencePayload.labor_norm_name === "string" ? referencePayload.labor_norm_name : null,
-    category:
-      typeof referencePayload.labor_norm_category === "string"
-        ? referencePayload.labor_norm_category
-        : null,
-    matchedBy:
-      typeof referencePayload.labor_norm_matched_by === "string"
-        ? referencePayload.labor_norm_matched_by
-        : null,
-    matchScore:
-      typeof referencePayload.labor_norm_match_score === "number"
-        ? referencePayload.labor_norm_match_score
-        : null,
-    standardHours:
-      typeof referencePayload.labor_norm_standard_hours === "number"
-        ? referencePayload.labor_norm_standard_hours
-        : null,
-  };
-}
-
-function formatWorkLaborNormMeta(item: RepairDetail["works"][number]) {
-  const meta = readWorkLaborNormMeta(item.reference_payload);
-  if (!meta) {
-    return null;
-  }
-
-  if (meta.code && meta.name) {
-    const scoreSuffix =
-      typeof meta.matchScore === "number" ? ` · уверенность ${Math.round(meta.matchScore * 100)}%` : "";
-    const methodSuffix = formatMatchMethod(meta.matchedBy) ? ` · ${formatMatchMethod(meta.matchedBy)}` : "";
-    const hoursSuffix = formatHours(meta.standardHours) ? ` · справочник ${formatHours(meta.standardHours)}` : "";
-    const categorySuffix = meta.category ? ` · ${meta.category}` : "";
-    const catalogSuffix = meta.catalogName ? ` · ${meta.catalogName}` : meta.scope ? ` · ${meta.scope}` : "";
-    return `Матчинг: ${meta.code} · ${meta.name}${categorySuffix}${catalogSuffix}${hoursSuffix}${methodSuffix}${scoreSuffix}`;
-  }
-
-  if (meta.applicable === false) {
-    const scopeSuffix = meta.catalogName ? ` · ${meta.catalogName}` : meta.scope ? ` · ${meta.scope}` : "";
-    return `Матчинг: справочник не применён${scopeSuffix}${meta.applicabilityReason ? ` · ${meta.applicabilityReason}` : ""}`;
-  }
-
-  if (meta.applicable === true) {
-    return "Матчинг: справочник применим, но совпадение не найдено";
-  }
-
-  return null;
-}
-
 function formatVehicle(vehicle: VehiclePreview) {
   const parts = [vehicle.plate_number, vehicle.brand, vehicle.model].filter(Boolean);
   return parts.join(" • ") || `#${vehicle.id}`;
@@ -2118,232 +1647,6 @@ function matchesTextSearch(parts: Array<string | null | undefined>, search: stri
     return true;
   }
   return parts.some((part) => part?.toLowerCase().includes(normalizedSearch));
-}
-
-function readCheckResolutionMeta(check: RepairDetail["checks"][number]): CheckResolutionMeta | null {
-  const resolution = check.calculation_payload?.resolution;
-  if (!resolution || typeof resolution !== "object") {
-    return null;
-  }
-  return resolution as CheckResolutionMeta;
-}
-
-function getRepairCheckReportSectionKey(checkType: string): RepairReportSectionKey {
-  if (checkType.includes("vehicle") || checkType.includes("service")) {
-    return "catalogs";
-  }
-  if (checkType.includes("standard_hours")) {
-    return "labor_norms";
-  }
-  if (checkType.includes("work_reference")) {
-    return "history";
-  }
-  if (
-    checkType.includes("total")
-    || checkType.includes("duplicate")
-    || checkType.includes("expected_total")
-  ) {
-    return "amounts";
-  }
-  if (checkType.includes("repeat_repair")) {
-    return "history";
-  }
-  return "ocr";
-}
-
-function groupRepairChecksForReport(checks: RepairDetail["checks"]): RepairReportSection[] {
-  const sectionTitles: Record<RepairReportSectionKey, string> = {
-    catalogs: "Справочники",
-    labor_norms: "Нормо-часы",
-    amounts: "Суммы и структура",
-    history: "История и аномалии",
-    ocr: "OCR и ручная проверка",
-  };
-  const sectionOrder: RepairReportSectionKey[] = ["catalogs", "labor_norms", "amounts", "history", "ocr"];
-  const grouped = new Map<RepairReportSectionKey, RepairDetail["checks"]>();
-
-  for (const check of checks) {
-    const key = getRepairCheckReportSectionKey(check.check_type);
-    const existing = grouped.get(key) ?? [];
-    grouped.set(key, [...existing, check]);
-  }
-
-  return sectionOrder
-    .filter((key) => (grouped.get(key)?.length ?? 0) > 0)
-    .map((key) => ({
-      key,
-      title: sectionTitles[key],
-      checks: grouped.get(key) ?? [],
-    }));
-}
-
-function buildCheckPayloadDetails(check: RepairDetail["checks"][number]) {
-  const payload = check.calculation_payload;
-  if (!payload) {
-    return [];
-  }
-
-  const lines: string[] = [];
-  const workName = readStringValue(payload, "work_name");
-  const partName = readStringValue(payload, "part_name");
-
-  if (check.check_type === "ocr_expected_total_exceeded") {
-    const actualTotal = readNumberValue(payload, "actual_total");
-    const expectedTotal = readNumberValue(payload, "expected_total");
-    const actualWorkTotal = readNumberValue(payload, "actual_work_total");
-    const expectedWorkTotal = readNumberValue(payload, "expected_work_total");
-    const lineBreakdown = Array.isArray(payload.line_breakdown) ? payload.line_breakdown.length : 0;
-    if (actualTotal !== null || expectedTotal !== null) {
-      lines.push(`Факт: ${formatMoney(actualTotal) || "—"} · ожидалось: ${formatMoney(expectedTotal) || "—"}`);
-    }
-    if (actualWorkTotal !== null || expectedWorkTotal !== null) {
-      lines.push(`Работы: ${formatMoney(actualWorkTotal) || "—"} · по модели: ${formatMoney(expectedWorkTotal) || "—"}`);
-    }
-    if (lineBreakdown > 0) {
-      lines.push(`В расчёте учтено строк работ: ${lineBreakdown}`);
-    }
-  }
-
-  if (check.check_type === "ocr_repeat_repair_detected") {
-    const previousRepairId = readNumberValue(payload, "previous_repair_id");
-    const previousRepairDate = readStringValue(payload, "previous_repair_date");
-    const previousOrderNumber = readStringValue(payload, "previous_order_number");
-    const daysSincePrevious = readNumberValue(payload, "days_since_previous");
-    if (workName) {
-      lines.push(`Работа: ${workName}`);
-    }
-    lines.push(
-      `Предыдущий ремонт: #${previousRepairId !== null ? String(previousRepairId) : "—"}`
-      + `${previousOrderNumber ? ` · заказ-наряд ${previousOrderNumber}` : ""}`
-      + `${previousRepairDate ? ` · ${previousRepairDate}` : ""}`
-      + `${daysSincePrevious !== null ? ` · ${formatCompactNumber(daysSincePrevious)} дн. назад` : ""}`,
-    );
-  }
-
-  if (check.check_type === "ocr_duplicate_work_lines" || check.check_type === "ocr_duplicate_part_lines") {
-    const duplicateCount = readNumberValue(payload, "duplicate_count");
-    const quantity = readNumberValue(payload, "quantity");
-    const price = readNumberValue(payload, "price");
-    const lineTotal = readNumberValue(payload, "line_total");
-    if (workName || partName) {
-      lines.push(`${workName || partName}`);
-    }
-    lines.push(
-      `Совпадающих строк: ${duplicateCount !== null ? formatCompactNumber(duplicateCount) : "—"}`
-      + `${quantity !== null ? ` · кол-во ${formatCompactNumber(quantity)}` : ""}`
-      + `${price !== null ? ` · цена ${formatMoney(price)}` : ""}`
-      + `${lineTotal !== null ? ` · сумма ${formatMoney(lineTotal)}` : ""}`,
-    );
-  }
-
-  if (check.check_type === "ocr_document_standard_hours_exceeded") {
-    const documentHours = readNumberValue(payload, "document_standard_hours");
-    const catalogHours = readNumberValue(payload, "catalog_standard_hours");
-    if (workName) {
-      lines.push(`Работа: ${workName}`);
-    }
-    lines.push(`Норма в документе: ${formatHours(documentHours) || "—"} · справочник: ${formatHours(catalogHours) || "—"}`);
-  }
-
-  if (check.check_type === "ocr_standard_hours_exceeded") {
-    const actualHours = readNumberValue(payload, "actual_hours");
-    const standardHours = readNumberValue(payload, "standard_hours");
-    if (workName) {
-      lines.push(`Работа: ${workName}`);
-    }
-    lines.push(`Факт: ${formatHours(actualHours) || "—"} · норма: ${formatHours(standardHours) || "—"}`);
-  }
-
-  if (check.check_type === "ocr_work_lines_total_mismatch" || check.check_type === "ocr_part_lines_total_mismatch") {
-    const linesTotal = readNumberValue(payload, "lines_total");
-    const headerTotal = readNumberValue(payload, "header_total");
-    lines.push(`По строкам: ${formatMoney(linesTotal) || "—"} · в шапке: ${formatMoney(headerTotal) || "—"}`);
-  }
-
-  if (check.check_type === "ocr_total_mismatch") {
-    const calculatedTotal = readNumberValue(payload, "calculated_total");
-    const grandTotal = readNumberValue(payload, "grand_total");
-    const workTotal = readNumberValue(payload, "work_total");
-    const partsTotal = readNumberValue(payload, "parts_total");
-    const vatTotal = readNumberValue(payload, "vat_total");
-    lines.push(`Сумма строк: ${formatMoney(calculatedTotal) || "—"} · итог документа: ${formatMoney(grandTotal) || "—"}`);
-    lines.push(
-      `Работы ${formatMoney(workTotal) || "—"} · запчасти ${formatMoney(partsTotal) || "—"} · НДС ${formatMoney(vatTotal) || "—"}`,
-    );
-  }
-
-  if (check.check_type === "ocr_work_reference_missing") {
-    const comparisonSourceLabel = readStringValue(payload, "comparison_source_label");
-    const repairMileage = readNumberValue(payload, "repair_mileage");
-    if (workName) {
-      lines.push(`Работа: ${workName}`);
-    }
-    lines.push(
-      `${comparisonSourceLabel || "История"}: недостаточно данных`
-      + `${repairMileage !== null ? ` · текущий пробег ${formatCompactNumber(repairMileage)} км` : ""}`,
-    );
-  }
-
-  if (check.check_type === "ocr_work_reference_price_deviation") {
-    const currentPrice = readNumberValue(payload, "current_price");
-    const medianPrice = readNumberValue(payload, "median_price");
-    const sampleLines = readNumberValue(payload, "sample_lines");
-    const allSampleLines = readNumberValue(payload, "all_sample_lines");
-    const historicalSampleLines = readNumberValue(payload, "historical_sample_lines");
-    const operationalSampleLines = readNumberValue(payload, "operational_sample_lines");
-    const comparisonSourceLabel = readStringValue(payload, "comparison_source_label");
-    if (workName) {
-      lines.push(`Работа: ${workName}`);
-    }
-    lines.push(
-      `Цена: ${formatMoney(currentPrice) || "—"} · медиана: ${formatMoney(medianPrice) || "—"}`
-      + `${comparisonSourceLabel ? ` · ${comparisonSourceLabel}` : ""}`,
-    );
-    lines.push(
-      `Выборка: ${sampleLines !== null ? formatCompactNumber(sampleLines) : "—"} строк`
-      + `${allSampleLines !== null ? ` из ${formatCompactNumber(allSampleLines)}` : ""}`
-      + `${historicalSampleLines !== null ? ` · архив ${formatCompactNumber(historicalSampleLines)}` : ""}`
-      + `${operationalSampleLines !== null ? ` · новые ${formatCompactNumber(operationalSampleLines)}` : ""}`,
-    );
-  }
-
-  if (check.check_type === "ocr_work_reference_mileage_outlier") {
-    const repairMileage = readNumberValue(payload, "repair_mileage");
-    const medianMileage = readNumberValue(payload, "median_mileage");
-    const minMileage = readNumberValue(payload, "min_mileage");
-    const maxMileage = readNumberValue(payload, "max_mileage");
-    const sampleLines = readNumberValue(payload, "sample_lines");
-    const comparisonSourceLabel = readStringValue(payload, "comparison_source_label");
-    if (workName) {
-      lines.push(`Работа: ${workName}`);
-    }
-    lines.push(
-      `Пробег сейчас: ${repairMileage !== null ? `${formatCompactNumber(repairMileage)} км` : "—"}`
-      + `${medianMileage !== null ? ` · медиана ${formatCompactNumber(medianMileage)} км` : ""}`,
-    );
-    lines.push(
-      `Диапазон: ${minMileage !== null ? formatCompactNumber(minMileage) : "—"}-${maxMileage !== null ? formatCompactNumber(maxMileage) : "—"} км`
-      + `${comparisonSourceLabel ? ` · ${comparisonSourceLabel}` : ""}`
-      + `${sampleLines !== null ? ` · выборка ${formatCompactNumber(sampleLines)}` : ""}`,
-    );
-  }
-
-  return lines;
-}
-
-function getCheckLinkedRepairId(check: RepairDetail["checks"][number]) {
-  if (check.check_type !== "ocr_repeat_repair_detected") {
-    return null;
-  }
-  return readNumberValue(check.calculation_payload || {}, "previous_repair_id");
-}
-
-function readComparisonReviewMeta(value: Record<string, unknown> | null): Record<string, unknown> | null {
-  const review = value?.comparison_review;
-  if (!review || typeof review !== "object") {
-    return null;
-  }
-  return review as Record<string, unknown>;
 }
 
 const historyDetailFormatters: HistoryDetailFormatters = {

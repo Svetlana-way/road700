@@ -1,23 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  Alert,
   Box,
   Button,
-  Card,
-  CardContent,
-  Chip,
-  CircularProgress,
-  Container,
-  Divider,
-  Grid,
   MenuItem,
-  Paper,
   Stack,
-  Tab,
-  Tabs,
-  TextField,
   Typography,
 } from "@mui/material";
+import { AuthLandingView } from "./components/AuthLandingView";
 import { WorkspaceMainView } from "./components/WorkspaceMainView";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
 
@@ -7256,177 +7245,44 @@ export default function App() {
 
   if (!token) {
     return (
-      <Box className="app-shell">
-        <Container maxWidth="md">
-          <Paper className="hero-panel" elevation={0}>
-            <Stack spacing={3}>
-              <Box>
-                <Chip label="Road700" color="primary" />
-                <Typography variant="h2" component="h1" className="hero-title">
-                  Контроль заказ-нарядов и ремонтов техники
-                </Typography>
-                <Typography className="hero-copy">
-                  Вход в MVP-панель: загрузка PDF и фото, создание черновика ремонта,
-                  контроль очереди проверки и история по технике.
-                </Typography>
-              </Box>
-
-              {!showPasswordRecoveryRequest ? (
-                <Box component="form" onSubmit={handleLogin} className="login-form">
-                  <Stack spacing={2}>
-                    <TextField
-                      label="Логин"
-                      value={loginValue}
-                      onChange={(event) => setLoginValue(event.target.value)}
-                      required
-                      fullWidth
-                    />
-                    <TextField
-                      label="Пароль"
-                      type="password"
-                      value={passwordValue}
-                      onChange={(event) => setPasswordValue(event.target.value)}
-                      required
-                      fullWidth
-                    />
-                    {errorMessage ? <Alert severity="error">{errorMessage}</Alert> : null}
-                    {successMessage ? <Alert severity="success">{successMessage}</Alert> : null}
-                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                      <Button type="submit" variant="contained" size="large" disabled={loginLoading}>
-                        {loginLoading ? "Вход..." : "Войти в систему"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="text"
-                        onClick={() => {
-                          setShowPasswordRecoveryRequest(true);
-                          setErrorMessage("");
-                          setSuccessMessage("");
-                        }}
-                      >
-                        Забыли пароль?
-                      </Button>
-                    </Stack>
-                  </Stack>
-                </Box>
-              ) : (
-                <Paper className="repair-line" elevation={0}>
-                  <Stack spacing={2}>
-                    <Box>
-                      <Typography variant="h6">Восстановление пароля</Typography>
-                      <Typography className="muted-copy">
-                        Сначала запросите ссылку по почте, затем установите новый пароль по токену из письма.
-                      </Typography>
-                    </Box>
-                    <Grid container spacing={1.5}>
-                      <Grid item xs={12} md={6}>
-                        <TextField
-                          label="Почта пользователя"
-                          value={recoveryEmailValue}
-                          onChange={(event) => setRecoveryEmailValue(event.target.value)}
-                          fullWidth
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={6}>
-                        <Button
-                          variant="outlined"
-                          disabled={passwordRecoveryLoading}
-                          onClick={() => {
-                            void handleRequestPasswordRecovery();
-                          }}
-                        >
-                          {passwordRecoveryLoading ? "Отправка..." : "Запросить восстановление"}
-                        </Button>
-                      </Grid>
-                      <Grid item xs={12}>
-                        <Divider />
-                      </Grid>
-                      <Grid item xs={12} md={6}>
-                        <TextField
-                          label="Токен восстановления"
-                          value={recoveryTokenValue}
-                          onChange={(event) => setRecoveryTokenValue(event.target.value)}
-                          fullWidth
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={6}>
-                        <TextField
-                          label="Новый пароль"
-                          type="password"
-                          value={recoveryNewPasswordValue}
-                          onChange={(event) => setRecoveryNewPasswordValue(event.target.value)}
-                          fullWidth
-                        />
-                      </Grid>
-                    </Grid>
-                    {errorMessage ? <Alert severity="error">{errorMessage}</Alert> : null}
-                    {successMessage ? <Alert severity="success">{successMessage}</Alert> : null}
-                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                      <Button
-                        variant="contained"
-                        disabled={passwordRecoveryLoading}
-                        onClick={() => {
-                          void handleConfirmPasswordRecovery();
-                        }}
-                      >
-                        {passwordRecoveryLoading ? "Сохранение..." : "Установить новый пароль"}
-                      </Button>
-                      <Button
-                        variant="text"
-                        disabled={passwordRecoveryLoading}
-                        onClick={() => {
-                          setShowPasswordRecoveryRequest(false);
-                          setErrorMessage("");
-                          setSuccessMessage("");
-                          setRecoveryNewPasswordValue("");
-                          if (!window.location.search.includes("reset_token=")) {
-                            setRecoveryTokenValue("");
-                          }
-                        }}
-                      >
-                        Вернуться ко входу
-                      </Button>
-                    </Stack>
-                  </Stack>
-                </Paper>
-              )}
-
-              <Grid container spacing={2}>
-                <Grid item xs={12} md={4}>
-                  <Card className="feature-card" elevation={0}>
-                    <CardContent>
-                      <Typography variant="h6">Документы</Typography>
-                      <Typography className="muted-copy">
-                        Приём PDF, сканов и фото с привязкой к ремонту и технике.
-                      </Typography>
-                    </CardContent>
-                  </Card>
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <Card className="feature-card" elevation={0}>
-                    <CardContent>
-                      <Typography variant="h6">Контроль</Typography>
-                      <Typography className="muted-copy">
-                        Очередь проверки, статусы, черновики ремонта и ручная верификация.
-                      </Typography>
-                    </CardContent>
-                  </Card>
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <Card className="feature-card" elevation={0}>
-                    <CardContent>
-                      <Typography variant="h6">История</Typography>
-                      <Typography className="muted-copy">
-                        Вся техника, связи грузовик-прицеп и история документов в одном месте.
-                      </Typography>
-                    </CardContent>
-                  </Card>
-                </Grid>
-              </Grid>
-            </Stack>
-          </Paper>
-        </Container>
-      </Box>
+      <AuthLandingView
+        showPasswordRecoveryRequest={showPasswordRecoveryRequest}
+        loginValue={loginValue}
+        passwordValue={passwordValue}
+        loginLoading={loginLoading}
+        recoveryEmailValue={recoveryEmailValue}
+        recoveryTokenValue={recoveryTokenValue}
+        recoveryNewPasswordValue={recoveryNewPasswordValue}
+        passwordRecoveryLoading={passwordRecoveryLoading}
+        errorMessage={errorMessage}
+        successMessage={successMessage}
+        onLoginSubmit={handleLogin}
+        onLoginValueChange={setLoginValue}
+        onPasswordValueChange={setPasswordValue}
+        onOpenPasswordRecovery={() => {
+          setShowPasswordRecoveryRequest(true);
+          setErrorMessage("");
+          setSuccessMessage("");
+        }}
+        onRecoveryEmailValueChange={setRecoveryEmailValue}
+        onRequestPasswordRecovery={() => {
+          void handleRequestPasswordRecovery();
+        }}
+        onRecoveryTokenValueChange={setRecoveryTokenValue}
+        onRecoveryNewPasswordValueChange={setRecoveryNewPasswordValue}
+        onConfirmPasswordRecovery={() => {
+          void handleConfirmPasswordRecovery();
+        }}
+        onBackToLogin={() => {
+          setShowPasswordRecoveryRequest(false);
+          setErrorMessage("");
+          setSuccessMessage("");
+          setRecoveryNewPasswordValue("");
+          if (!window.location.search.includes("reset_token=")) {
+            setRecoveryTokenValue("");
+          }
+        }}
+      />
     );
   }
 

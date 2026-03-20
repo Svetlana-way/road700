@@ -22,23 +22,15 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { AdminWorkspacePanel } from "./components/AdminWorkspacePanel";
 import { AuditLogPanel } from "./components/AuditLogPanel";
-import { BackupsAdminPanel } from "./components/BackupsAdminPanel";
 import { DataQualityOverviewPanel } from "./components/DataQualityOverviewPanel";
 import { DocumentsListPanel } from "./components/DocumentsListPanel";
 import { DocumentsUploadPanel } from "./components/DocumentsUploadPanel";
-import { EmployeesAdminPanel } from "./components/EmployeesAdminPanel";
 import { HistoricalImportsAdminPanel } from "./components/HistoricalImportsAdminPanel";
 import { LaborNormsAdminPanel } from "./components/LaborNormsAdminPanel";
-import { OcrLearningAdminPanel } from "./components/OcrLearningAdminPanel";
-import { OcrMatchersAdminPanel } from "./components/OcrMatchersAdminPanel";
-import { OcrRulesAdminPanel } from "./components/OcrRulesAdminPanel";
 import { RepairWorkspacePanel } from "./components/RepairWorkspacePanel";
-import { ReviewRulesAdminPanel } from "./components/ReviewRulesAdminPanel";
 import { ReviewQueuePanel } from "./components/ReviewQueuePanel";
-import { ServicesAdminPanel } from "./components/ServicesAdminPanel";
-import { TechAdminWorkspacePanel } from "./components/TechAdminWorkspacePanel";
+import { WorkspaceAdminPanels } from "./components/WorkspaceAdminPanels";
 import { WorkspaceOperationsPanels } from "./components/WorkspaceOperationsPanels";
 import { WorkspaceChromePanels } from "./components/WorkspaceChromePanels";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
@@ -7652,23 +7644,6 @@ export default function App() {
 
             <Grid item xs={12} md={activeWorkspaceTab === "documents" ? 5 : 12}>
               <Stack spacing={3}>
-                {activeWorkspaceTab === "admin" && user?.role === "admin" ? (
-                  <AdminWorkspacePanel
-                    activeAdminTab={activeAdminTab}
-                    description={adminTabDescriptions[activeAdminTab]}
-                    onAdminTabChange={handleAdminTabChange}
-                    onOpenTechAdmin={openTechAdmin}
-                  />
-                ) : null}
-                {activeWorkspaceTab === "tech_admin" && user?.role === "admin" ? (
-                  <TechAdminWorkspacePanel
-                    activeTechAdminTab={activeTechAdminTab}
-                    description={techAdminTabDescriptions[activeTechAdminTab]}
-                    isPasswordRecoveryEmailConfigured={Boolean(systemStatus?.password_recovery_email_configured)}
-                    onTechAdminTabChange={handleTechAdminTabChange}
-                    onCloseTechAdmin={closeTechAdmin}
-                  />
-                ) : null}
                 {activeWorkspaceTab === "documents" ? (
                   <ReviewQueuePanel
                     reviewQueueFilters={reviewQueueFilters}
@@ -7739,342 +7714,335 @@ export default function App() {
                   />
                 ) : null}
 
-                {activeWorkspaceTab === "admin" && activeAdminTab === "employees" && user?.role === "admin" ? (
-                  <EmployeesAdminPanel
-                    userSearch={userSearch}
-                    userLoading={userLoading}
-                    showUserEditor={showUserEditor}
-                    userForm={userForm}
-                    userSaving={userSaving}
-                    usersTotal={usersTotal}
-                    usersList={usersList}
-                    selectedManagedUserId={selectedManagedUserId}
-                    selectedManagedUser={selectedManagedUser}
-                    adminResetPasswordValue={adminResetPasswordValue}
-                    userVehicleSearch={userVehicleSearch}
-                    userVehicleSearchLoading={userVehicleSearchLoading}
-                    userVehicleSearchResults={userVehicleSearchResults}
-                    userAssignmentForm={userAssignmentForm}
-                    userAssignmentSaving={userAssignmentSaving}
-                    onUserSearchChange={setUserSearch}
-                    onRefreshUsers={() => {
+                <WorkspaceAdminPanels
+                  activeWorkspaceTab={activeWorkspaceTab}
+                  activeAdminTab={activeAdminTab}
+                  activeTechAdminTab={activeTechAdminTab}
+                  userRole={user?.role}
+                  adminWorkspaceProps={{
+                    activeAdminTab,
+                    description: adminTabDescriptions[activeAdminTab],
+                    onAdminTabChange: handleAdminTabChange,
+                    onOpenTechAdmin: openTechAdmin,
+                  }}
+                  techAdminWorkspaceProps={{
+                    activeTechAdminTab,
+                    description: techAdminTabDescriptions[activeTechAdminTab],
+                    isPasswordRecoveryEmailConfigured: Boolean(systemStatus?.password_recovery_email_configured),
+                    onTechAdminTabChange: handleTechAdminTabChange,
+                    onCloseTechAdmin: closeTechAdmin,
+                  }}
+                  employeesProps={{
+                    userSearch,
+                    userLoading,
+                    showUserEditor,
+                    userForm,
+                    userSaving,
+                    usersTotal,
+                    usersList,
+                    selectedManagedUserId,
+                    selectedManagedUser,
+                    adminResetPasswordValue,
+                    userVehicleSearch,
+                    userVehicleSearchLoading,
+                    userVehicleSearchResults,
+                    userAssignmentForm,
+                    userAssignmentSaving,
+                    onUserSearchChange: setUserSearch,
+                    onRefreshUsers: () => {
                       void handleUserSearch();
-                    }}
-                    onResetUsersSearch={() => {
+                    },
+                    onResetUsersSearch: () => {
                       setUserSearch("");
                       if (token) {
                         void loadUsers(token, "");
                       }
-                    }}
-                    onToggleUserEditor={() => {
+                    },
+                    onToggleUserEditor: () => {
                       setShowUserEditor((current) => !current);
-                    }}
-                    onUserFormChange={(field, value) => {
+                    },
+                    onUserFormChange: (field, value) => {
                       setUserForm((current) => ({
                         ...current,
                         [field]: value,
                       }));
-                    }}
-                    onSaveUser={() => {
+                    },
+                    onSaveUser: () => {
                       void handleSaveUser();
-                    }}
-                    onResetUserForm={() => {
+                    },
+                    onResetUserForm: () => {
                       resetUserEditor();
                       setShowUserEditor(false);
-                    }}
-                    onSelectUser={setSelectedManagedUserId}
-                    onEditUser={handleEditUser}
-                    onAdminResetPasswordValueChange={setAdminResetPasswordValue}
-                    onAdminResetUserPassword={() => {
+                    },
+                    onSelectUser: setSelectedManagedUserId,
+                    onEditUser: handleEditUser,
+                    onAdminResetPasswordValueChange: setAdminResetPasswordValue,
+                    onAdminResetUserPassword: () => {
                       void handleAdminResetUserPassword();
-                    }}
-                    onUserVehicleSearchChange={setUserVehicleSearch}
-                    onUserAssignmentFormChange={(field, value) => {
+                    },
+                    onUserVehicleSearchChange: setUserVehicleSearch,
+                    onUserAssignmentFormChange: (field, value) => {
                       setUserAssignmentForm((current) => ({
                         ...current,
                         [field]: value,
                       }));
-                    }}
-                    onSearchVehiclesForAssignment={() => {
+                    },
+                    onSearchVehiclesForAssignment: () => {
                       void handleSearchVehiclesForAssignment();
-                    }}
-                    onCreateUserAssignment={(vehicleId) => {
+                    },
+                    onCreateUserAssignment: (vehicleId) => {
                       void handleCreateUserAssignment(vehicleId);
-                    }}
-                    onCloseUserAssignment={(assignment) => {
+                    },
+                    onCloseUserAssignment: (assignment) => {
                       void handleCloseUserAssignment(assignment);
-                    }}
-                    formatUserRoleLabel={formatUserRoleLabel}
-                    formatVehicle={formatVehicle}
-                    formatVehicleTypeLabel={formatVehicleTypeLabel}
-                    isAssignmentActive={isAssignmentActive}
-                  />
-                ) : null}
-
-                {activeWorkspaceTab === "admin" && activeAdminTab === "services" && user?.role === "admin" ? (
-                  <ServicesAdminPanel
-                    serviceQuery={serviceQuery}
-                    serviceCityFilter={serviceCityFilter}
-                    serviceCities={serviceCities}
-                    serviceLoading={serviceLoading}
-                    showServiceEditor={showServiceEditor}
-                    serviceForm={serviceForm}
-                    serviceSaving={serviceSaving}
-                    services={services}
-                    showServiceListDialog={showServiceListDialog}
-                    onServiceQueryChange={setServiceQuery}
-                    onServiceCityFilterChange={setServiceCityFilter}
-                    onRefresh={() => {
+                    },
+                    formatUserRoleLabel,
+                    formatVehicle,
+                    formatVehicleTypeLabel,
+                    isAssignmentActive,
+                  }}
+                  servicesProps={{
+                    serviceQuery,
+                    serviceCityFilter,
+                    serviceCities,
+                    serviceLoading,
+                    showServiceEditor,
+                    serviceForm,
+                    serviceSaving,
+                    services,
+                    showServiceListDialog,
+                    onServiceQueryChange: setServiceQuery,
+                    onServiceCityFilterChange: setServiceCityFilter,
+                    onRefresh: () => {
                       void handleServiceSearch();
-                    }}
-                    onReset={() => {
+                    },
+                    onReset: () => {
                       setServiceQuery("");
                       setServiceCityFilter("");
                       if (token) {
                         void loadServices(token, "", "");
                       }
-                    }}
-                    onToggleEditor={() => {
+                    },
+                    onToggleEditor: () => {
                       setShowServiceEditor((current) => !current);
-                    }}
-                    onServiceFormChange={(field, value) => {
+                    },
+                    onServiceFormChange: (field, value) => {
                       setServiceForm((current) => ({
                         ...current,
                         [field]: value,
                       }));
-                    }}
-                    onSaveService={() => {
+                    },
+                    onSaveService: () => {
                       void handleSaveService();
-                    }}
-                    onResetEditor={() => {
+                    },
+                    onResetEditor: () => {
                       resetServiceEditor();
                       setShowServiceEditor(false);
-                    }}
-                    onOpenListDialog={() => {
+                    },
+                    onOpenListDialog: () => {
                       setShowServiceListDialog(true);
-                    }}
-                    onCloseListDialog={() => {
+                    },
+                    onCloseListDialog: () => {
                       setShowServiceListDialog(false);
-                    }}
-                    onEditService={handleEditService}
-                    formatStatus={formatStatus}
-                  />
-                ) : null}
-
-                {activeWorkspaceTab === "admin" && activeAdminTab === "backups" && user?.role === "admin" ? (
-                  <BackupsAdminPanel
-                    backupActionLoading={backupActionLoading}
-                    backupsLoading={backupsLoading}
-                    backups={backups}
-                    backupRestoreDialogOpen={backupRestoreDialogOpen}
-                    backupRestoreTarget={backupRestoreTarget}
-                    backupRestoreConfirmValue={backupRestoreConfirmValue}
-                    onCreateBackup={() => {
+                    },
+                    onEditService: handleEditService,
+                    formatStatus,
+                  }}
+                  backupsProps={{
+                    backupActionLoading,
+                    backupsLoading,
+                    backups,
+                    backupRestoreDialogOpen,
+                    backupRestoreTarget,
+                    backupRestoreConfirmValue,
+                    onCreateBackup: () => {
                       void handleCreateBackup();
-                    }}
-                    onRefresh={() => {
+                    },
+                    onRefresh: () => {
                       if (token) {
                         void loadBackups(token);
                       }
-                    }}
-                    onDownloadBackup={(item) => {
+                    },
+                    onDownloadBackup: (item) => {
                       void handleDownloadBackup(item);
-                    }}
-                    onOpenRestoreDialog={openBackupRestoreDialog}
-                    onCloseRestoreDialog={closeBackupRestoreDialog}
-                    onBackupRestoreConfirmValueChange={setBackupRestoreConfirmValue}
-                    onRestoreBackup={() => {
+                    },
+                    onOpenRestoreDialog: openBackupRestoreDialog,
+                    onCloseRestoreDialog: closeBackupRestoreDialog,
+                    onBackupRestoreConfirmValueChange: setBackupRestoreConfirmValue,
+                    onRestoreBackup: () => {
                       void handleRestoreBackup();
-                    }}
-                    formatStatus={formatStatus}
-                    formatDateTime={formatDateTime}
-                    formatFileSize={formatFileSize}
-                  />
-                ) : null}
-
-                {activeWorkspaceTab === "admin" && activeAdminTab === "control" && user?.role === "admin" ? (
-                  <ReviewRulesAdminPanel
-                    showReviewRuleEditor={showReviewRuleEditor}
-                    reviewRuleForm={reviewRuleForm}
-                    reviewRuleSaving={reviewRuleSaving}
-                    reviewRules={reviewRules}
-                    reviewRuleTypes={reviewRuleTypes}
-                    showReviewRuleListDialog={showReviewRuleListDialog}
-                    onToggleEditor={() => {
+                    },
+                    formatStatus,
+                    formatDateTime,
+                    formatFileSize,
+                  }}
+                  reviewRulesProps={{
+                    showReviewRuleEditor,
+                    reviewRuleForm,
+                    reviewRuleSaving,
+                    reviewRules,
+                    reviewRuleTypes,
+                    showReviewRuleListDialog,
+                    onToggleEditor: () => {
                       setShowReviewRuleEditor((current) => !current);
-                    }}
-                    onReviewRuleFormChange={(field, value) => {
+                    },
+                    onReviewRuleFormChange: (field, value) => {
                       setReviewRuleForm((current) => ({
                         ...current,
                         [field]: value,
                       }));
-                    }}
-                    onSaveReviewRule={() => {
+                    },
+                    onSaveReviewRule: () => {
                       void handleSaveReviewRule();
-                    }}
-                    onResetReviewRuleEditor={() => {
+                    },
+                    onResetReviewRuleEditor: () => {
                       resetReviewRuleEditor();
                       setShowReviewRuleEditor(false);
-                    }}
-                    onOpenListDialog={() => {
+                    },
+                    onOpenListDialog: () => {
                       setShowReviewRuleListDialog(true);
-                    }}
-                    onCloseListDialog={() => {
+                    },
+                    onCloseListDialog: () => {
                       setShowReviewRuleListDialog(false);
-                    }}
-                    onEditReviewRule={handleEditReviewRule}
-                    formatReviewRuleTypeLabel={formatReviewRuleTypeLabel}
-                    formatReviewBucketLabel={formatReviewBucketLabel}
-                  />
-                ) : null}
-
-                {activeWorkspaceTab === "tech_admin" && activeTechAdminTab === "learning" && user?.role === "admin" ? (
-                  <OcrLearningAdminPanel
-                    ocrLearningStatusFilter={ocrLearningStatusFilter}
-                    ocrLearningTargetFieldFilter={ocrLearningTargetFieldFilter}
-                    ocrLearningProfileScopeFilter={ocrLearningProfileScopeFilter}
-                    ocrLearningStatuses={ocrLearningStatuses}
-                    ocrLearningTargetFields={ocrLearningTargetFields}
-                    ocrLearningProfileScopes={ocrLearningProfileScopes}
-                    ocrLearningLoading={ocrLearningLoading}
-                    ocrLearningSummaries={ocrLearningSummaries}
-                    ocrLearningSignals={ocrLearningSignals}
-                    showOcrLearningListDialog={showOcrLearningListDialog}
-                    ocrLearningDraftId={ocrLearningDraftId}
-                    ocrLearningUpdateId={ocrLearningUpdateId}
-                    onOcrLearningStatusFilterChange={setOcrLearningStatusFilter}
-                    onOcrLearningTargetFieldFilterChange={setOcrLearningTargetFieldFilter}
-                    onOcrLearningProfileScopeFilterChange={setOcrLearningProfileScopeFilter}
-                    onRefresh={() => {
+                    },
+                    onEditReviewRule: handleEditReviewRule,
+                    formatReviewRuleTypeLabel,
+                    formatReviewBucketLabel,
+                  }}
+                  ocrLearningProps={{
+                    ocrLearningStatusFilter,
+                    ocrLearningTargetFieldFilter,
+                    ocrLearningProfileScopeFilter,
+                    ocrLearningStatuses,
+                    ocrLearningTargetFields,
+                    ocrLearningProfileScopes,
+                    ocrLearningLoading,
+                    ocrLearningSummaries,
+                    ocrLearningSignals,
+                    showOcrLearningListDialog,
+                    ocrLearningDraftId,
+                    ocrLearningUpdateId,
+                    onOcrLearningStatusFilterChange: setOcrLearningStatusFilter,
+                    onOcrLearningTargetFieldFilterChange: setOcrLearningTargetFieldFilter,
+                    onOcrLearningProfileScopeFilterChange: setOcrLearningProfileScopeFilter,
+                    onRefresh: () => {
                       if (token) {
                         void loadOcrLearningSignals(token);
                       }
-                    }}
-                    onReset={() => {
+                    },
+                    onReset: () => {
                       setOcrLearningStatusFilter("");
                       setOcrLearningTargetFieldFilter("");
                       setOcrLearningProfileScopeFilter("");
                       if (token) {
                         void loadOcrLearningSignals(token, "", "", "");
                       }
-                    }}
-                    onOpenListDialog={() => {
+                    },
+                    onOpenListDialog: () => {
                       setShowOcrLearningListDialog(true);
-                    }}
-                    onCloseListDialog={() => {
+                    },
+                    onCloseListDialog: () => {
                       setShowOcrLearningListDialog(false);
-                    }}
-                    onLoadDraft={(signalId, draftType) => {
+                    },
+                    onLoadDraft: (signalId, draftType) => {
                       void handleLoadOcrLearningDraft(signalId, draftType);
-                    }}
-                    onUpdateSignalStatus={(signalId, nextStatus) => {
+                    },
+                    onUpdateSignalStatus: (signalId, nextStatus) => {
                       void handleUpdateOcrLearningSignal(signalId, nextStatus);
-                    }}
-                    formatOcrLearningStatusLabel={formatOcrLearningStatusLabel}
-                    formatOcrProfileName={formatOcrProfileName}
-                    formatOcrFieldLabel={formatOcrFieldLabel}
-                    formatOcrSignalTypeLabel={formatOcrSignalTypeLabel}
-                  />
-                ) : null}
-
-                {activeWorkspaceTab === "tech_admin" &&
-                activeTechAdminTab === "matchers" &&
-                user?.role === "admin" ? (
-                  <OcrMatchersAdminPanel
-                    ocrProfileMatcherProfileFilter={ocrProfileMatcherProfileFilter}
-                    ocrProfileMatcherProfiles={ocrProfileMatcherProfiles}
-                    ocrProfileMatchers={ocrProfileMatchers}
-                    ocrProfileMatcherForm={ocrProfileMatcherForm}
-                    ocrProfileMatcherSaving={ocrProfileMatcherSaving}
-                    onProfileFilterChange={setOcrProfileMatcherProfileFilter}
-                    onRefresh={() => {
+                    },
+                    formatOcrLearningStatusLabel,
+                    formatOcrProfileName,
+                    formatOcrFieldLabel,
+                    formatOcrSignalTypeLabel,
+                  }}
+                  ocrMatchersProps={{
+                    ocrProfileMatcherProfileFilter,
+                    ocrProfileMatcherProfiles,
+                    ocrProfileMatchers,
+                    ocrProfileMatcherForm,
+                    ocrProfileMatcherSaving,
+                    onProfileFilterChange: setOcrProfileMatcherProfileFilter,
+                    onRefresh: () => {
                       if (token) {
                         void loadOcrProfileMatchers(token, ocrProfileMatcherProfileFilter);
                       }
-                    }}
-                    onResetFilter={() => {
+                    },
+                    onResetFilter: () => {
                       setOcrProfileMatcherProfileFilter("");
                       if (token) {
                         void loadOcrProfileMatchers(token, "");
                       }
-                    }}
-                    onFormChange={(field, value) => {
+                    },
+                    onFormChange: (field, value) => {
                       setOcrProfileMatcherForm((current) => ({
                         ...current,
                         [field]: value,
                       }));
-                    }}
-                    onSave={() => {
+                    },
+                    onSave: () => {
                       void handleSaveOcrProfileMatcher();
-                    }}
-                    onResetForm={resetOcrProfileMatcherEditor}
-                    onEdit={handleEditOcrProfileMatcher}
-                    formatOcrProfileName={formatOcrProfileName}
-                    formatSourceTypeLabel={formatSourceTypeLabel}
-                  />
-                ) : null}
-
-                {activeWorkspaceTab === "tech_admin" &&
-                activeTechAdminTab === "rules" &&
-                user?.role === "admin" ? (
-                  <OcrRulesAdminPanel
-                    ocrRuleProfileFilter={ocrRuleProfileFilter}
-                    ocrRuleProfiles={ocrRuleProfiles}
-                    ocrRuleTargetFields={ocrRuleTargetFields}
-                    ocrRules={ocrRules}
-                    ocrRuleForm={ocrRuleForm}
-                    ocrRuleSaving={ocrRuleSaving}
-                    onProfileFilterChange={setOcrRuleProfileFilter}
-                    onRefresh={() => {
+                    },
+                    onResetForm: resetOcrProfileMatcherEditor,
+                    onEdit: handleEditOcrProfileMatcher,
+                    formatOcrProfileName,
+                    formatSourceTypeLabel,
+                  }}
+                  ocrRulesProps={{
+                    ocrRuleProfileFilter,
+                    ocrRuleProfiles,
+                    ocrRuleTargetFields,
+                    ocrRules,
+                    ocrRuleForm,
+                    ocrRuleSaving,
+                    onProfileFilterChange: setOcrRuleProfileFilter,
+                    onRefresh: () => {
                       if (token) {
                         void loadOcrRules(token, ocrRuleProfileFilter);
                       }
-                    }}
-                    onResetFilter={() => {
+                    },
+                    onResetFilter: () => {
                       setOcrRuleProfileFilter("");
                       if (token) {
                         void loadOcrRules(token, "");
                       }
-                    }}
-                    onFormChange={(field, value) => {
+                    },
+                    onFormChange: (field, value) => {
                       setOcrRuleForm((current) => ({
                         ...current,
                         [field]: value,
                       }));
-                    }}
-                    onSave={() => {
+                    },
+                    onSave: () => {
                       void handleSaveOcrRule();
-                    }}
-                    onResetForm={resetOcrRuleEditor}
-                    onEdit={handleEditOcrRule}
-                    formatOcrProfileName={formatOcrProfileName}
-                    formatOcrFieldLabel={formatOcrFieldLabel}
-                    formatValueParserLabel={formatValueParserLabel}
-                  />
-                ) : null}
-
-                {activeWorkspaceTab === "admin" && activeAdminTab === "imports" && user?.role === "admin" ? (
-                  <HistoricalImportsAdminPanel
-                    historicalImportLoading={historicalImportLoading}
-                    historicalImportFile={historicalImportFile}
-                    historicalImportLimit={historicalImportLimit}
-                    historicalImportResult={historicalImportResult}
-                    historicalImportJobs={historicalImportJobs}
-                    historicalImportJobsLoading={historicalImportJobsLoading}
-                    historicalWorkReference={historicalWorkReference}
-                    historicalWorkReferenceLoading={historicalWorkReferenceLoading}
-                    historicalWorkReferenceTotal={historicalWorkReferenceTotal}
-                    historicalWorkReferenceQuery={historicalWorkReferenceQuery}
-                    historicalWorkReferenceMinSamples={historicalWorkReferenceMinSamples}
-                    importConflicts={importConflicts}
-                    importConflictsLoading={importConflictsLoading}
-                    canRefreshJournal={!(historicalImportJobsLoading || historicalWorkReferenceLoading || importConflictsLoading) && !!token}
-                    onHistoricalImportFileChange={setHistoricalImportFile}
-                    onHistoricalImportLimitChange={setHistoricalImportLimit}
-                    onStartHistoricalImport={() => {
+                    },
+                    onResetForm: resetOcrRuleEditor,
+                    onEdit: handleEditOcrRule,
+                    formatOcrProfileName,
+                    formatOcrFieldLabel,
+                    formatValueParserLabel,
+                  }}
+                  historicalImportsProps={{
+                    historicalImportLoading,
+                    historicalImportFile,
+                    historicalImportLimit,
+                    historicalImportResult,
+                    historicalImportJobs,
+                    historicalImportJobsLoading,
+                    historicalWorkReference,
+                    historicalWorkReferenceLoading,
+                    historicalWorkReferenceTotal,
+                    historicalWorkReferenceQuery,
+                    historicalWorkReferenceMinSamples,
+                    importConflicts,
+                    importConflictsLoading,
+                    canRefreshJournal:
+                      !(historicalImportJobsLoading || historicalWorkReferenceLoading || importConflictsLoading) && !!token,
+                    onHistoricalImportFileChange: setHistoricalImportFile,
+                    onHistoricalImportLimitChange: setHistoricalImportLimit,
+                    onStartHistoricalImport: () => {
                       void handleHistoricalRepairImport();
-                    }}
-                    onRefreshJournal={() => {
+                    },
+                    onRefreshJournal: () => {
                       if (token) {
                         void Promise.all([
                           loadHistoricalImportJobs(token),
@@ -8082,117 +8050,112 @@ export default function App() {
                           loadImportConflicts(token),
                         ]);
                       }
-                    }}
-                    onOpenImportedRepair={(repairId) => {
+                    },
+                    onOpenImportedRepair: (repairId) => {
                       void openRepairByIds(null, repairId);
-                    }}
-                    onHistoricalWorkReferenceQueryChange={setHistoricalWorkReferenceQuery}
-                    onHistoricalWorkReferenceMinSamplesChange={setHistoricalWorkReferenceMinSamples}
-                    onRefreshHistoricalWorkReference={() => {
+                    },
+                    onHistoricalWorkReferenceQueryChange: setHistoricalWorkReferenceQuery,
+                    onHistoricalWorkReferenceMinSamplesChange: setHistoricalWorkReferenceMinSamples,
+                    onRefreshHistoricalWorkReference: () => {
                       if (token) {
                         void loadHistoricalWorkReference(token);
                       }
-                    }}
-                    onOpenImportConflict={(conflictId) => {
+                    },
+                    onOpenImportConflict: (conflictId) => {
                       void openImportConflict(conflictId);
-                    }}
-                    formatStatus={formatStatus}
-                    formatMoney={formatMoney}
-                    formatCompactNumber={formatCompactNumber}
-                    formatHours={formatHours}
-                    formatDateValue={formatDateValue}
-                    formatDateTime={formatDateTime}
-                  />
-                ) : null}
-
-                {activeWorkspaceTab === "admin" && activeAdminTab === "labor_norms" && user?.role === "admin" ? (
-                  <LaborNormsAdminPanel
-                    showLaborNormCatalogEditor={showLaborNormCatalogEditor}
-                    showLaborNormImport={showLaborNormImport}
-                    showLaborNormEntryEditor={showLaborNormEntryEditor}
-                    editingLaborNormCatalogId={editingLaborNormCatalogId}
-                    laborNormCatalogForm={laborNormCatalogForm}
-                    laborNormCatalogSaving={laborNormCatalogSaving}
-                    laborNormCatalogs={laborNormCatalogs}
-                    laborNormQuery={laborNormQuery}
-                    laborNormScope={laborNormScope}
-                    laborNormScopes={laborNormScopes}
-                    laborNormCategory={laborNormCategory}
-                    laborNormCategories={laborNormCategories}
-                    laborNormLoading={laborNormLoading}
-                    laborNormImportScope={laborNormImportScope}
-                    laborNormImportBrandFamily={laborNormImportBrandFamily}
-                    laborNormImportCatalogName={laborNormImportCatalogName}
-                    laborNormFile={laborNormFile}
-                    laborNormImportLoading={laborNormImportLoading}
-                    laborNormEntryForm={laborNormEntryForm}
-                    laborNormEntrySaving={laborNormEntrySaving}
-                    laborNormTotal={laborNormTotal}
-                    laborNormSourceFiles={laborNormSourceFiles}
-                    showLaborNormListDialog={showLaborNormListDialog}
-                    laborNorms={laborNorms}
-                    onToggleCatalogEditor={() => setShowLaborNormCatalogEditor((current) => !current)}
-                    onToggleImport={() => setShowLaborNormImport((current) => !current)}
-                    onToggleEntryEditor={() => setShowLaborNormEntryEditor((current) => !current)}
-                    onCatalogFormChange={(field, value) =>
+                    },
+                    formatStatus,
+                    formatMoney,
+                    formatCompactNumber,
+                    formatHours,
+                    formatDateValue,
+                    formatDateTime,
+                  }}
+                  laborNormsProps={{
+                    showLaborNormCatalogEditor,
+                    showLaborNormImport,
+                    showLaborNormEntryEditor,
+                    editingLaborNormCatalogId,
+                    laborNormCatalogForm,
+                    laborNormCatalogSaving,
+                    laborNormCatalogs,
+                    laborNormQuery,
+                    laborNormScope,
+                    laborNormScopes,
+                    laborNormCategory,
+                    laborNormCategories,
+                    laborNormLoading,
+                    laborNormImportScope,
+                    laborNormImportBrandFamily,
+                    laborNormImportCatalogName,
+                    laborNormFile,
+                    laborNormImportLoading,
+                    laborNormEntryForm,
+                    laborNormEntrySaving,
+                    laborNormTotal,
+                    laborNormSourceFiles,
+                    showLaborNormListDialog,
+                    laborNorms,
+                    onToggleCatalogEditor: () => setShowLaborNormCatalogEditor((current) => !current),
+                    onToggleImport: () => setShowLaborNormImport((current) => !current),
+                    onToggleEntryEditor: () => setShowLaborNormEntryEditor((current) => !current),
+                    onCatalogFormChange: (field, value) =>
                       setLaborNormCatalogForm((current) => ({
                         ...current,
                         [field]: value,
-                      }))
-                    }
-                    onSaveCatalog={() => {
+                      })),
+                    onSaveCatalog: () => {
                       void handleSaveLaborNormCatalog();
-                    }}
-                    onResetCatalogForm={() => {
+                    },
+                    onResetCatalogForm: () => {
                       resetLaborNormCatalogEditor();
                       setShowLaborNormCatalogEditor(false);
-                    }}
-                    onEditCatalog={handleEditLaborNormCatalog}
-                    onSelectCatalogScope={handleCatalogScopeSelected}
-                    onQueryChange={setLaborNormQuery}
-                    onScopeChange={setLaborNormScope}
-                    onCategoryChange={setLaborNormCategory}
-                    onSearch={() => {
+                    },
+                    onEditCatalog: handleEditLaborNormCatalog,
+                    onSelectCatalogScope: handleCatalogScopeSelected,
+                    onQueryChange: setLaborNormQuery,
+                    onScopeChange: setLaborNormScope,
+                    onCategoryChange: setLaborNormCategory,
+                    onSearch: () => {
                       void handleLaborNormSearch();
-                    }}
-                    onResetFilters={() => {
+                    },
+                    onResetFilters: () => {
                       setLaborNormQuery("");
                       setLaborNormScope("");
                       setLaborNormCategory("");
                       if (token) {
                         void loadLaborNormCatalog(token, "", "", "");
                       }
-                    }}
-                    onImportBrandFamilyChange={setLaborNormImportBrandFamily}
-                    onImportCatalogNameChange={setLaborNormImportCatalogName}
-                    onImportFileChange={setLaborNormFile}
-                    onImport={() => {
+                    },
+                    onImportBrandFamilyChange: setLaborNormImportBrandFamily,
+                    onImportCatalogNameChange: setLaborNormImportCatalogName,
+                    onImportFileChange: setLaborNormFile,
+                    onImport: () => {
                       void handleLaborNormImport();
-                    }}
-                    onEntryFormChange={(field, value) =>
+                    },
+                    onEntryFormChange: (field, value) =>
                       setLaborNormEntryForm((current) => ({
                         ...current,
                         [field]: value,
-                      }))
-                    }
-                    onSaveEntry={() => {
+                      })),
+                    onSaveEntry: () => {
                       void handleSaveLaborNormEntry();
-                    }}
-                    onResetEntryForm={() => {
+                    },
+                    onResetEntryForm: () => {
                       resetLaborNormEntryEditor();
                       setShowLaborNormEntryEditor(false);
-                    }}
-                    onOpenListDialog={() => setShowLaborNormListDialog(true)}
-                    onCloseListDialog={() => setShowLaborNormListDialog(false)}
-                    onEditItem={handleEditLaborNormItem}
-                    onArchiveItem={(item) => {
+                    },
+                    onOpenListDialog: () => setShowLaborNormListDialog(true),
+                    onCloseListDialog: () => setShowLaborNormListDialog(false),
+                    onEditItem: handleEditLaborNormItem,
+                    onArchiveItem: (item) => {
                       void handleArchiveLaborNormItem(item);
-                    }}
-                    formatCatalogCodeLabel={formatCatalogCodeLabel}
-                    formatStatus={formatStatus}
-                    formatHours={formatHours}
-                  />
-                ) : null}
+                    },
+                    formatCatalogCodeLabel,
+                    formatStatus,
+                    formatHours,
+                  }}
+                />
 
                 {activeWorkspaceTab === "repair" ? (
                   <RepairWorkspacePanel

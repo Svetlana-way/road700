@@ -37,12 +37,7 @@ import { LaborNormsAdminPanel } from "./components/LaborNormsAdminPanel";
 import { OcrLearningAdminPanel } from "./components/OcrLearningAdminPanel";
 import { OcrMatchersAdminPanel } from "./components/OcrMatchersAdminPanel";
 import { OcrRulesAdminPanel } from "./components/OcrRulesAdminPanel";
-import { RepairPanel } from "./components/RepairPanel";
-import { RepairEditSections } from "./components/RepairEditSections";
-import { RepairDocumentsSection } from "./components/RepairDocumentsSection";
-import { RepairOverviewReportPanel } from "./components/RepairOverviewReportPanel";
-import { RepairReadOnlySections } from "./components/RepairReadOnlySections";
-import { ReviewDecisionPanel } from "./components/ReviewDecisionPanel";
+import { RepairWorkspacePanel } from "./components/RepairWorkspacePanel";
 import { ReviewRulesAdminPanel } from "./components/ReviewRulesAdminPanel";
 import { ReviewQueuePanel } from "./components/ReviewQueuePanel";
 import { ServicesAdminPanel } from "./components/ServicesAdminPanel";
@@ -8202,400 +8197,317 @@ export default function App() {
                 ) : null}
 
                 {activeWorkspaceTab === "repair" ? (
-                  <RepairPanel
+                  <RepairWorkspacePanel
                     returnLabel={repairHasReturnTarget ? workspaceTabReturnLabels[repairReturnTabRef.current] : null}
                     onReturn={repairHasReturnTarget ? returnFromRepairPage : null}
-                  >
-                    {repairLoading ? (
-                      <Stack spacing={2} alignItems="center" className="repair-placeholder">
-                        <CircularProgress size={28} />
-                        <Typography className="muted-copy">Загрузка карточки ремонта...</Typography>
-                      </Stack>
-                    ) : selectedRepair ? (
-                      <Stack spacing={2}>
-                        <Stack
-                          direction={{ xs: "column", sm: "row" }}
-                          spacing={1}
-                          justifyContent="space-between"
-                          alignItems={{ xs: "flex-start", sm: "center" }}
-                        >
-                          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-                            <Chip size="small" label={formatRepairStatus(selectedRepair.status)} />
-                            {selectedReviewItem ? (
-                              <Chip
-                                size="small"
-                                color={reviewPriorityColor(selectedReviewItem.priority_bucket)}
-                                label={formatReviewPriority(selectedReviewItem.priority_bucket)}
-                              />
-                            ) : null}
-                          </Stack>
-                          {user?.role === "admin" ? (
-                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                              {isEditingRepair ? (
-                                <>
-                                  <Button variant="outlined" onClick={handleCancelRepairEdit} disabled={saveRepairLoading}>
-                                    Отмена
-                                  </Button>
-                                  <Button variant="contained" onClick={() => void handleSaveRepair()} disabled={saveRepairLoading || !repairDraft}>
-                                    {saveRepairLoading ? "Сохранение..." : "Сохранить"}
-                                  </Button>
-                                </>
-                              ) : (
-                                <>
-                                  <Button variant="outlined" onClick={() => void handleExportRepair()} disabled={repairExportLoading}>
-                                    {repairExportLoading ? "Экспорт..." : "Экспорт Excel"}
-                                  </Button>
-                                  {selectedRepair.status !== "archived" ? (
-                                    <>
-                                      <Button variant="outlined" onClick={handleStartRepairEdit}>
-                                        Редактировать
-                                      </Button>
-                                      <Button
-                                        variant="text"
-                                        disabled={repairArchiveLoading}
-                                        onClick={() => {
-                                          void handleArchiveRepair();
-                                        }}
-                                      >
-                                        {repairArchiveLoading ? "Архивация..." : "В архив"}
-                                      </Button>
-                                    </>
-                                  ) : null}
-                                  <Button
-                                    variant="text"
-                                    color="error"
-                                    disabled={repairDeleteLoading}
-                                    onClick={() => {
-                                      void handleDeleteRepair(selectedRepair.id);
-                                    }}
-                                  >
-                                    {repairDeleteLoading ? "Удаление..." : "Удалить"}
-                                  </Button>
-                                </>
-                              )}
-                            </Stack>
-                          ) : (
-                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                              <Button variant="outlined" onClick={() => void handleExportRepair()} disabled={repairExportLoading}>
-                                {repairExportLoading ? "Экспорт..." : "Экспорт Excel"}
-                              </Button>
-                            </Stack>
-                          )}
-                        </Stack>
-
-                        <ReviewDecisionPanel
-                          userRole={user?.role}
-                          selectedRepairStatus={selectedRepair.status}
-                          selectedReviewItem={selectedReviewItem}
-                          selectedRepair={selectedRepair}
-                          selectedRepairDocument={selectedRepairDocument}
-                          reviewDocumentPreviewLoading={reviewDocumentPreviewLoading}
-                          reviewDocumentPreviewKind={reviewDocumentPreviewKind}
-                          reviewDocumentPreviewUrl={reviewDocumentPreviewUrl}
-                          documentOpenLoadingId={documentOpenLoadingId}
-                          canLinkVehicleFromSelectedDocument={canLinkVehicleFromSelectedDocument}
-                          selectedRepairDocumentExtractedFields={selectedRepairDocumentExtractedFields}
-                          reviewVehicleSearch={reviewVehicleSearch}
-                          reviewVehicleSearchLoading={reviewVehicleSearchLoading}
-                          reviewVehicleLinkingId={reviewVehicleLinkingId}
-                          reviewVehicleSearchResults={reviewVehicleSearchResults}
-                          selectedRepairDocumentOcrServiceName={selectedRepairDocumentOcrServiceName}
-                          reviewServiceName={reviewServiceName}
-                          services={services}
-                          reviewServiceAssigning={reviewServiceAssigning}
-                          reviewServiceSaving={reviewServiceSaving}
-                          reviewFieldSaving={reviewFieldSaving}
-                          showReviewServiceEditor={showReviewServiceEditor}
-                          reviewServiceForm={reviewServiceForm}
-                          canConfirmSelectedReview={canConfirmSelectedReview}
-                          reviewReadyFieldsCount={reviewReadyFieldsCount}
-                          reviewRequiredFieldComparisons={reviewRequiredFieldComparisons}
-                          showReviewFieldEditor={showReviewFieldEditor}
-                          reviewFieldDraft={reviewFieldDraft}
-                          reviewMissingRequiredFields={reviewMissingRequiredFields}
-                          selectedRepairDocumentFieldSnapshots={selectedRepairDocumentFieldSnapshots}
-                          selectedRepairDocumentPayload={selectedRepairDocumentPayload}
-                          selectedRepairDocumentWorks={selectedRepairDocumentWorks}
-                          selectedRepairDocumentParts={selectedRepairDocumentParts}
-                          reviewActionComment={reviewActionComment}
-                          reviewActionLoading={reviewActionLoading}
-                          canCreateVehicleFromSelectedDocument={canCreateVehicleFromSelectedDocument}
-                          isEditingRepair={isEditingRepair}
-                          documentVehicleForm={documentVehicleForm}
-                          documentVehicleSaving={documentVehicleSaving}
-                          onOpenDocumentFile={(documentId) => {
-                            void handleOpenDocumentFile(documentId);
-                          }}
-                          onSearchVehicleChange={setReviewVehicleSearch}
-                          onSearchVehicles={() => {
-                            void handleSearchReviewVehicles();
-                          }}
-                          onLinkVehicle={(vehicleId) => {
-                            void handleLinkReviewVehicle(vehicleId);
-                          }}
-                          onServiceNameChange={setReviewServiceName}
-                          onToggleServiceCreate={() => {
-                            setShowReviewServiceEditor((current) => !current);
-                            setReviewServiceForm((current) => ({
-                              ...current,
-                              name: current.name || reviewServiceName || selectedRepairDocumentOcrServiceName,
-                            }));
-                          }}
-                          onClearService={() => {
-                            setReviewServiceName("");
-                            void assignReviewService("");
-                          }}
-                          onServiceFormChange={(field, value) => {
-                            setReviewServiceForm((current) => ({
-                              ...current,
-                              [field]: value,
-                            }));
-                          }}
-                          onAssignService={() => {
-                            void handleAssignReviewService();
-                          }}
-                          onCreateService={() => {
-                            void handleCreateReviewService();
-                          }}
-                          onToggleFieldEditor={() => {
-                            setShowReviewFieldEditor((current) => !current);
-                          }}
-                          onFillFieldsFromOcr={fillReviewFieldDraftFromOcr}
-                          onReviewFieldDraftChange={updateReviewFieldDraft}
-                          onSaveReviewFields={() => {
-                            void handleSaveReviewFields();
-                          }}
-                          onReviewActionCommentChange={setReviewActionComment}
-                          onConfirm={() => {
-                            void handleReviewAction(user?.role === "admin" ? "confirm" : "employee_confirm");
-                          }}
-                          onSendToReview={() => {
-                            void handleReviewAction("send_to_review");
-                          }}
-                          onDocumentVehicleFormChange={(field, value) => {
-                            setDocumentVehicleForm((current) => ({
-                              ...current,
-                              [field]: value,
-                            }));
-                          }}
-                          onCreateVehicle={() => {
-                            void handleCreateVehicleFromDocument();
-                          }}
-                          getReviewComparisonColor={getReviewComparisonColor}
-                          getReviewComparisonLabel={getReviewComparisonLabel}
-                          getConfidenceColor={getConfidenceColor}
-                          formatConfidenceLabel={formatConfidenceLabel}
-                          formatMoney={formatMoney}
-                          formatCompactNumber={formatCompactNumber}
-                          formatHours={formatHours}
-                          formatManualReviewReasons={formatManualReviewReasons}
-                          formatOcrProfileMeta={formatOcrProfileMeta}
-                          formatLaborNormApplicability={formatLaborNormApplicability}
-                          readStringValue={readStringValue}
-                          readNumberValue={readNumberValue}
-                          formatOcrLineUnit={formatOcrLineUnit}
-                          formatDocumentKind={formatDocumentKind}
-                          statusColor={statusColor}
-                          formatDocumentStatusLabel={formatDocumentStatusLabel}
-                          formatDateTime={formatDateTime}
-                          formatSourceTypeLabel={formatSourceTypeLabel}
-                          formatConfidence={formatConfidence}
-                          formatVehicle={formatVehicle}
-                          formatVehicleTypeLabel={formatVehicleTypeLabel}
-                        />
-
-                        <Paper className="repair-summary" elevation={0}>
-                          <Stack spacing={1.25}>
-                            <Tabs
-                              value={activeRepairTab}
-                              onChange={(_event, value: RepairTab) => handleRepairTabChange(value)}
-                              variant="scrollable"
-                              scrollButtons="auto"
-                              allowScrollButtonsMobile
-                            >
-                              <Tab label="Итоги" value="overview" />
-                              <Tab label={`Работы · ${selectedRepair.works.length}`} value="works" />
-                              <Tab label={`Запчасти · ${selectedRepair.parts.length}`} value="parts" />
-                              {!isEditingRepair ? (
-                                <Tab label={`Документы · ${selectedRepair.documents.length}`} value="documents" />
-                              ) : null}
-                              {!isEditingRepair ? (
-                                <Tab label={`Проверки · ${selectedRepair.checks.length}`} value="checks" />
-                              ) : null}
-                              {!isEditingRepair ? (
-                                <Tab
-                                  label={`История · ${filteredDocumentHistory.length + filteredRepairHistory.length}`}
-                                  value="history"
-                                />
-                              ) : null}
-                            </Tabs>
-                            <Typography className="muted-copy">{repairTabDescriptions[activeRepairTab]}</Typography>
-                          </Stack>
-                        </Paper>
-
-                        {isEditingRepair && repairDraft ? (
-                          <RepairEditSections
-                            activeRepairTab={activeRepairTab}
-                            repairDraft={repairDraft}
-                            services={services}
-                            onRepairFieldChange={updateRepairDraftField}
-                            onAddWorkDraft={addWorkDraft}
-                            onUpdateWorkDraft={updateWorkDraft}
-                            onRemoveWorkDraft={removeWorkDraft}
-                            onAddPartDraft={addPartDraft}
-                            onUpdatePartDraft={updatePartDraft}
-                            onRemovePartDraft={removePartDraft}
-                          />
-                        ) : (
-                          <>
-                            {activeRepairTab === "overview" ? (
-                              <RepairOverviewReportPanel
-                                selectedRepair={selectedRepair}
-                                selectedRepairDocument={selectedRepairDocument}
-                                selectedRepairAwaitingOcr={selectedRepairAwaitingOcr}
-                                selectedRepairUnresolvedChecksCount={selectedRepairUnresolvedChecks.length}
-                                selectedRepairHasBlockingFindings={selectedRepairHasBlockingFindings}
-                                reviewRequiredFieldComparisons={reviewRequiredFieldComparisons}
-                                selectedRepairComparisonAttentionCount={selectedRepairComparisonAttentionCount}
-                                selectedRepairDocumentWorksCount={selectedRepairDocumentWorks.length}
-                                selectedRepairDocumentPartsCount={selectedRepairDocumentParts.length}
-                                selectedRepairDocumentManualReviewReasons={selectedRepairDocumentManualReviewReasons}
-                                selectedRepairReportSections={selectedRepairReportSections}
-                                showRepairOverviewDetails={showRepairOverviewDetails}
-                                onToggleShowDetails={() => setShowRepairOverviewDetails((current) => !current)}
-                                onOpenLinkedRepair={(repairId) => {
-                                  void openRepairByIds(null, repairId);
-                                }}
-                                isPlaceholderVehicle={isPlaceholderVehicle}
-                                formatVehicle={formatVehicle}
-                                formatRepairStatus={formatRepairStatus}
-                                executiveRiskColor={executiveRiskColor}
-                                formatExecutiveRiskLabel={formatExecutiveRiskLabel}
-                                statusColor={statusColor}
-                                formatDocumentStatusLabel={formatDocumentStatusLabel}
-                                formatCompactNumber={formatCompactNumber}
-                                formatMoney={formatMoney}
-                                formatConfidence={formatConfidence}
-                                formatManualReviewReasons={formatManualReviewReasons}
-                                buildCheckPayloadDetails={buildCheckPayloadDetails}
-                                getCheckLinkedRepairId={getCheckLinkedRepairId}
-                                checkSeverityColor={checkSeverityColor}
-                                formatStatus={formatStatus}
-                              />
-                            ) : null}
-
-                            {activeRepairTab === "documents" ? (
-                              <RepairDocumentsSection
-                                userRole={user?.role}
-                                selectedRepair={selectedRepair}
-                                documentKindOptions={documentKindOptions}
-                                attachedDocumentKind={attachedDocumentKind}
-                                attachedDocumentNotes={attachedDocumentNotes}
-                                attachedDocumentFile={attachedDocumentFile}
-                                attachedFileInputRef={attachedFileInputRef}
-                                attachDocumentLoading={attachDocumentLoading}
-                                documentOpenLoadingId={documentOpenLoadingId}
-                                reprocessLoading={reprocessLoading}
-                                selectedDocumentId={selectedDocumentId}
-                                documentComparisonLoadingId={documentComparisonLoadingId}
-                                primaryDocumentLoadingId={primaryDocumentLoadingId}
-                                documentArchiveLoadingId={documentArchiveLoadingId}
-                                documentComparison={documentComparison}
-                                documentComparisonComment={documentComparisonComment}
-                                documentComparisonReviewLoading={documentComparisonReviewLoading}
-                                onAttachedDocumentKindChange={setAttachedDocumentKind}
-                                onAttachedDocumentNotesChange={setAttachedDocumentNotes}
-                                onAttachedDocumentFileChange={setAttachedDocumentFile}
-                                onOpenAttachedFilePicker={() => attachedFileInputRef.current?.click()}
-                                onAttachDocument={() => {
-                                  void handleAttachDocumentToRepair();
-                                }}
-                                onOpenDocumentFile={(documentId) => {
-                                  void handleOpenDocumentFile(documentId);
-                                }}
-                                onReprocessDocumentById={(documentId, repairId) => {
-                                  void handleReprocessDocumentById(documentId, repairId);
-                                }}
-                                onCompareWithPrimary={(documentId) => {
-                                  void handleCompareWithPrimary(documentId);
-                                }}
-                                onSetPrimaryDocument={(documentId) => {
-                                  void handleSetPrimaryDocument(documentId);
-                                }}
-                                onArchiveDocument={(documentId, repairId) => {
-                                  void handleArchiveDocument(documentId, repairId);
-                                }}
-                                onCloseDocumentComparison={() => {
-                                  setDocumentComparison(null);
-                                }}
-                                onDocumentComparisonCommentChange={setDocumentComparisonComment}
-                                onReviewDocumentComparison={(action) => {
-                                  void handleReviewDocumentComparison(action);
-                                }}
-                                formatDocumentKind={formatDocumentKind}
-                                importJobStatusColor={importJobStatusColor}
-                                formatStatus={formatStatus}
-                                statusColor={statusColor}
-                                formatDocumentStatusLabel={formatDocumentStatusLabel}
-                                formatDateTime={formatDateTime}
-                                formatSourceTypeLabel={formatSourceTypeLabel}
-                                formatConfidence={formatConfidence}
-                                formatManualReviewReasons={formatManualReviewReasons}
-                                formatOcrProfileMeta={formatOcrProfileMeta}
-                                formatLaborNormApplicability={formatLaborNormApplicability}
-                              />
-                            ) : null}
-
-                            <RepairReadOnlySections
-                              activeRepairTab={activeRepairTab}
-                              selectedRepair={selectedRepair}
-                              filteredDocumentHistory={filteredDocumentHistory}
-                              filteredRepairHistory={filteredRepairHistory}
-                              historySearch={historySearch}
-                              historyFilter={historyFilter}
-                              historyFilters={historyFilters}
-                              checkComments={checkComments}
-                              checkActionLoadingId={checkActionLoadingId}
-                              onHistorySearchChange={setHistorySearch}
-                              onHistoryFilterChange={setHistoryFilter}
-                              onCheckCommentChange={(checkId, value) =>
-                                setCheckComments((current) => ({
+                    contentProps={{
+                      userRole: user?.role,
+                      repairLoading,
+                      selectedRepair,
+                      selectedReviewItem,
+                      isEditingRepair,
+                      saveRepairLoading,
+                      hasRepairDraft: Boolean(repairDraft),
+                      repairExportLoading,
+                      repairArchiveLoading,
+                      repairDeleteLoading,
+                      onCancelEdit: handleCancelRepairEdit,
+                      onSaveRepair: () => {
+                        void handleSaveRepair();
+                      },
+                      onExportRepair: () => {
+                        void handleExportRepair();
+                      },
+                      onStartEdit: handleStartRepairEdit,
+                      onArchiveRepair: () => {
+                        void handleArchiveRepair();
+                      },
+                      onDeleteRepair: (repairId) => {
+                        void handleDeleteRepair(repairId);
+                      },
+                      reviewDecisionProps:
+                        selectedRepair
+                          ? {
+                              userRole: user?.role,
+                              selectedRepairStatus: selectedRepair.status,
+                              selectedReviewItem,
+                              selectedRepair,
+                              selectedRepairDocument,
+                              reviewDocumentPreviewLoading,
+                              reviewDocumentPreviewKind,
+                              reviewDocumentPreviewUrl,
+                              documentOpenLoadingId,
+                              canLinkVehicleFromSelectedDocument,
+                              selectedRepairDocumentExtractedFields,
+                              reviewVehicleSearch,
+                              reviewVehicleSearchLoading,
+                              reviewVehicleLinkingId,
+                              reviewVehicleSearchResults,
+                              selectedRepairDocumentOcrServiceName,
+                              reviewServiceName,
+                              services,
+                              reviewServiceAssigning,
+                              reviewServiceSaving,
+                              reviewFieldSaving,
+                              showReviewServiceEditor,
+                              reviewServiceForm,
+                              canConfirmSelectedReview,
+                              reviewReadyFieldsCount,
+                              reviewRequiredFieldComparisons,
+                              showReviewFieldEditor,
+                              reviewFieldDraft,
+                              reviewMissingRequiredFields,
+                              selectedRepairDocumentFieldSnapshots,
+                              selectedRepairDocumentPayload,
+                              selectedRepairDocumentWorks,
+                              selectedRepairDocumentParts,
+                              reviewActionComment,
+                              reviewActionLoading,
+                              canCreateVehicleFromSelectedDocument,
+                              isEditingRepair,
+                              documentVehicleForm,
+                              documentVehicleSaving,
+                              onOpenDocumentFile: (documentId) => {
+                                void handleOpenDocumentFile(documentId);
+                              },
+                              onSearchVehicleChange: setReviewVehicleSearch,
+                              onSearchVehicles: () => {
+                                void handleSearchReviewVehicles();
+                              },
+                              onLinkVehicle: (vehicleId) => {
+                                void handleLinkReviewVehicle(vehicleId);
+                              },
+                              onServiceNameChange: setReviewServiceName,
+                              onToggleServiceCreate: () => {
+                                setShowReviewServiceEditor((current) => !current);
+                                setReviewServiceForm((current) => ({
                                   ...current,
-                                  [checkId]: value,
-                                }))
-                              }
-                              onCheckResolution={(checkId, isResolved) => {
-                                void handleCheckResolution(checkId, isResolved);
-                              }}
-                              onOpenLinkedRepair={(repairId) => {
-                                void openRepairByIds(null, repairId);
-                              }}
-                              formatMoney={formatMoney}
-                              formatHours={formatHours}
-                              formatStatus={formatStatus}
-                              formatWorkLaborNormMeta={formatWorkLaborNormMeta}
-                              buildCheckPayloadDetails={buildCheckPayloadDetails}
-                              getCheckLinkedRepairId={getCheckLinkedRepairId}
-                              checkSeverityColor={checkSeverityColor}
-                              readCheckResolutionMeta={readCheckResolutionMeta}
-                              formatDateTime={formatDateTime}
-                              formatHistoryActionLabel={formatHistoryActionLabel}
-                              formatDocumentKind={formatDocumentKind}
-                              buildDocumentHistoryDetails={buildDocumentHistoryDetails}
-                              buildRepairHistoryDetails={buildRepairHistoryDetails}
-                              renderHistoryDetails={renderHistoryDetails}
-                            />
-                          </>
-                        )}
-                      </Stack>
-                    ) : (
-                      <Stack spacing={2} alignItems="center" className="repair-placeholder">
-                        <Typography className="muted-copy">
-                          Выберите документ, чтобы открыть карточку ремонта.
-                        </Typography>
-                      </Stack>
-                    )}
-                  </RepairPanel>
+                                  name: current.name || reviewServiceName || selectedRepairDocumentOcrServiceName,
+                                }));
+                              },
+                              onClearService: () => {
+                                setReviewServiceName("");
+                                void assignReviewService("");
+                              },
+                              onServiceFormChange: (field, value) => {
+                                setReviewServiceForm((current) => ({
+                                  ...current,
+                                  [field]: value,
+                                }));
+                              },
+                              onAssignService: () => {
+                                void handleAssignReviewService();
+                              },
+                              onCreateService: () => {
+                                void handleCreateReviewService();
+                              },
+                              onToggleFieldEditor: () => {
+                                setShowReviewFieldEditor((current) => !current);
+                              },
+                              onFillFieldsFromOcr: fillReviewFieldDraftFromOcr,
+                              onReviewFieldDraftChange: updateReviewFieldDraft,
+                              onSaveReviewFields: () => {
+                                void handleSaveReviewFields();
+                              },
+                              onReviewActionCommentChange: setReviewActionComment,
+                              onConfirm: () => {
+                                void handleReviewAction(user?.role === "admin" ? "confirm" : "employee_confirm");
+                              },
+                              onSendToReview: () => {
+                                void handleReviewAction("send_to_review");
+                              },
+                              onDocumentVehicleFormChange: (field, value) => {
+                                setDocumentVehicleForm((current) => ({
+                                  ...current,
+                                  [field]: value,
+                                }));
+                              },
+                              onCreateVehicle: () => {
+                                void handleCreateVehicleFromDocument();
+                              },
+                              getReviewComparisonColor,
+                              getReviewComparisonLabel,
+                              getConfidenceColor,
+                              formatConfidenceLabel,
+                              formatMoney,
+                              formatCompactNumber,
+                              formatHours,
+                              formatManualReviewReasons,
+                              formatOcrProfileMeta,
+                              formatLaborNormApplicability,
+                              readStringValue,
+                              readNumberValue,
+                              formatOcrLineUnit,
+                              formatDocumentKind,
+                              statusColor,
+                              formatDocumentStatusLabel,
+                              formatDateTime,
+                              formatSourceTypeLabel,
+                              formatConfidence,
+                              formatVehicle,
+                              formatVehicleTypeLabel,
+                            }
+                          : null,
+                      repairTabsProps:
+                        selectedRepair
+                          ? {
+                              activeRepairTab,
+                              repairTabDescriptions,
+                              isEditingRepair,
+                              selectedRepair,
+                              onRepairTabChange: handleRepairTabChange,
+                              editProps:
+                                isEditingRepair && repairDraft
+                                  ? {
+                                      activeRepairTab,
+                                      repairDraft,
+                                      services,
+                                      onRepairFieldChange: updateRepairDraftField,
+                                      onAddWorkDraft: addWorkDraft,
+                                      onUpdateWorkDraft: updateWorkDraft,
+                                      onRemoveWorkDraft: removeWorkDraft,
+                                      onAddPartDraft: addPartDraft,
+                                      onUpdatePartDraft: updatePartDraft,
+                                      onRemovePartDraft: removePartDraft,
+                                    }
+                                  : null,
+                              overviewProps: {
+                                selectedRepair,
+                                selectedRepairDocument,
+                                selectedRepairAwaitingOcr,
+                                selectedRepairUnresolvedChecksCount: selectedRepairUnresolvedChecks.length,
+                                selectedRepairHasBlockingFindings,
+                                reviewRequiredFieldComparisons,
+                                selectedRepairComparisonAttentionCount,
+                                selectedRepairDocumentWorksCount: selectedRepairDocumentWorks.length,
+                                selectedRepairDocumentPartsCount: selectedRepairDocumentParts.length,
+                                selectedRepairDocumentManualReviewReasons,
+                                selectedRepairReportSections,
+                                showRepairOverviewDetails,
+                                onToggleShowDetails: () => setShowRepairOverviewDetails((current) => !current),
+                                onOpenLinkedRepair: (repairId) => {
+                                  void openRepairByIds(null, repairId);
+                                },
+                                isPlaceholderVehicle,
+                                formatVehicle,
+                                formatRepairStatus,
+                                executiveRiskColor,
+                                formatExecutiveRiskLabel,
+                                statusColor,
+                                formatDocumentStatusLabel,
+                                formatCompactNumber,
+                                formatMoney,
+                                formatConfidence,
+                                formatManualReviewReasons,
+                                buildCheckPayloadDetails,
+                                getCheckLinkedRepairId,
+                                checkSeverityColor,
+                                formatStatus,
+                              },
+                              documentsProps: {
+                                userRole: user?.role,
+                                selectedRepair,
+                                documentKindOptions,
+                                attachedDocumentKind,
+                                attachedDocumentNotes,
+                                attachedDocumentFile,
+                                attachedFileInputRef,
+                                attachDocumentLoading,
+                                documentOpenLoadingId,
+                                reprocessLoading,
+                                selectedDocumentId,
+                                documentComparisonLoadingId,
+                                primaryDocumentLoadingId,
+                                documentArchiveLoadingId,
+                                documentComparison,
+                                documentComparisonComment,
+                                documentComparisonReviewLoading,
+                                onAttachedDocumentKindChange: setAttachedDocumentKind,
+                                onAttachedDocumentNotesChange: setAttachedDocumentNotes,
+                                onAttachedDocumentFileChange: setAttachedDocumentFile,
+                                onOpenAttachedFilePicker: () => attachedFileInputRef.current?.click(),
+                                onAttachDocument: () => {
+                                  void handleAttachDocumentToRepair();
+                                },
+                                onOpenDocumentFile: (documentId) => {
+                                  void handleOpenDocumentFile(documentId);
+                                },
+                                onReprocessDocumentById: (documentId, repairId) => {
+                                  void handleReprocessDocumentById(documentId, repairId);
+                                },
+                                onCompareWithPrimary: (documentId) => {
+                                  void handleCompareWithPrimary(documentId);
+                                },
+                                onSetPrimaryDocument: (documentId) => {
+                                  void handleSetPrimaryDocument(documentId);
+                                },
+                                onArchiveDocument: (documentId, repairId) => {
+                                  void handleArchiveDocument(documentId, repairId);
+                                },
+                                onCloseDocumentComparison: () => {
+                                  setDocumentComparison(null);
+                                },
+                                onDocumentComparisonCommentChange: setDocumentComparisonComment,
+                                onReviewDocumentComparison: (action) => {
+                                  void handleReviewDocumentComparison(action);
+                                },
+                                formatDocumentKind,
+                                importJobStatusColor,
+                                formatStatus,
+                                statusColor,
+                                formatDocumentStatusLabel,
+                                formatDateTime,
+                                formatSourceTypeLabel,
+                                formatConfidence,
+                                formatManualReviewReasons,
+                                formatOcrProfileMeta,
+                                formatLaborNormApplicability,
+                              },
+                              readOnlyProps: {
+                                activeRepairTab,
+                                selectedRepair,
+                                filteredDocumentHistory,
+                                filteredRepairHistory,
+                                historySearch,
+                                historyFilter,
+                                historyFilters,
+                                checkComments,
+                                checkActionLoadingId,
+                                onHistorySearchChange: setHistorySearch,
+                                onHistoryFilterChange: setHistoryFilter,
+                                onCheckCommentChange: (checkId, value) =>
+                                  setCheckComments((current) => ({
+                                    ...current,
+                                    [checkId]: value,
+                                  })),
+                                onCheckResolution: (checkId, isResolved) => {
+                                  void handleCheckResolution(checkId, isResolved);
+                                },
+                                onOpenLinkedRepair: (repairId) => {
+                                  void openRepairByIds(null, repairId);
+                                },
+                                formatMoney,
+                                formatHours,
+                                formatStatus,
+                                formatWorkLaborNormMeta,
+                                buildCheckPayloadDetails,
+                                getCheckLinkedRepairId,
+                                checkSeverityColor,
+                                readCheckResolutionMeta,
+                                formatDateTime,
+                                formatHistoryActionLabel,
+                                formatDocumentKind,
+                                buildDocumentHistoryDetails,
+                                buildRepairHistoryDetails,
+                                renderHistoryDetails,
+                              },
+                            }
+                          : null,
+                      formatRepairStatus,
+                      reviewPriorityColor,
+                      formatReviewPriority,
+                    }}
+                  />
                 ) : null}
 
                 {activeWorkspaceTab === "search" ? (

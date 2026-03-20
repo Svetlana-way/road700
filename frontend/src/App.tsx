@@ -24,14 +24,7 @@ import {
 } from "@mui/material";
 import { AuditLogPanel } from "./components/AuditLogPanel";
 import { DataQualityOverviewPanel } from "./components/DataQualityOverviewPanel";
-import { DocumentsListPanel } from "./components/DocumentsListPanel";
-import { DocumentsUploadPanel } from "./components/DocumentsUploadPanel";
-import { HistoricalImportsAdminPanel } from "./components/HistoricalImportsAdminPanel";
-import { LaborNormsAdminPanel } from "./components/LaborNormsAdminPanel";
-import { RepairWorkspacePanel } from "./components/RepairWorkspacePanel";
-import { ReviewQueuePanel } from "./components/ReviewQueuePanel";
-import { WorkspaceAdminPanels } from "./components/WorkspaceAdminPanels";
-import { WorkspaceOperationsPanels } from "./components/WorkspaceOperationsPanels";
+import { WorkspaceContentPanels } from "./components/WorkspaceContentPanels";
 import { WorkspaceChromePanels } from "./components/WorkspaceChromePanels";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
 
@@ -7608,999 +7601,986 @@ export default function App() {
             </DialogActions>
           </Dialog>
 
-          <Grid container spacing={3}>
-            {activeWorkspaceTab === "documents" ? (
-              <DocumentsUploadPanel
-                uploadForm={uploadForm}
-                vehicles={vehicles}
-                rootDocumentKindOptions={rootDocumentKindOptions}
-                selectedFile={selectedFile}
-                uploadMissingRequirements={uploadMissingRequirements}
-                uploadLoading={uploadLoading}
-                lastUploadedDocument={lastUploadedDocument}
-                uploadFileInputRef={uploadFileInputRef}
-                onSubmit={handleUpload}
-                onUploadFieldChange={handleUploadFieldChange}
-                onFileSelect={handleUploadFileSelect}
-                onOpenFilePicker={() => uploadFileInputRef.current?.click()}
-                onOpenUploadedRepair={(documentId, repairId) => {
+          <WorkspaceContentPanels
+            activeWorkspaceTab={activeWorkspaceTab}
+            documentsProps={{
+              active: activeWorkspaceTab === "documents",
+              uploadProps: {
+                uploadForm,
+                vehicles,
+                rootDocumentKindOptions,
+                selectedFile,
+                uploadMissingRequirements,
+                uploadLoading,
+                lastUploadedDocument,
+                uploadFileInputRef,
+                onSubmit: handleUpload,
+                onUploadFieldChange: handleUploadFieldChange,
+                onFileSelect: handleUploadFileSelect,
+                onOpenFilePicker: () => uploadFileInputRef.current?.click(),
+                onOpenUploadedRepair: (documentId, repairId) => {
                   void openRepairByIds(documentId, repairId);
-                }}
-                onHideUploadedResult={() => {
+                },
+                onHideUploadedResult: () => {
                   setLastUploadedDocument(null);
-                }}
-                formatVehicle={formatVehicle}
-                formatDocumentKind={formatDocumentKind}
-                importJobStatusColor={importJobStatusColor}
-                formatStatus={formatStatus}
-                statusColor={statusColor}
-                formatDocumentStatusLabel={formatDocumentStatusLabel}
-                isDocumentAwaitingOcr={isDocumentAwaitingOcr}
-                documentHasActiveImportJob={documentHasActiveImportJob}
-                isPlaceholderVehicle={isPlaceholderVehicle}
-                formatConfidence={formatConfidence}
-              />
-            ) : null}
-
-            <Grid item xs={12} md={activeWorkspaceTab === "documents" ? 5 : 12}>
-              <Stack spacing={3}>
-                {activeWorkspaceTab === "documents" ? (
-                  <ReviewQueuePanel
-                    reviewQueueFilters={reviewQueueFilters}
-                    reviewQueueCounts={reviewQueueCounts}
-                    selectedReviewCategory={selectedReviewCategory}
-                    reviewQueue={reviewQueue}
-                    userRole={user?.role}
-                    reprocessLoading={reprocessLoading}
-                    selectedDocumentId={selectedDocumentId}
-                    onSelectCategory={setSelectedReviewCategory}
-                    onOpenReviewQueueItem={(item) => {
-                      void handleOpenReviewQueueItem(item);
-                    }}
-                    onReprocessDocumentById={(documentId, repairId) => {
-                      void handleReprocessDocumentById(documentId, repairId);
-                    }}
-                    formatDocumentKind={formatDocumentKind}
-                    reviewPriorityColor={reviewPriorityColor}
-                    formatReviewPriority={formatReviewPriority}
-                    statusColor={statusColor}
-                    formatDocumentStatusLabel={formatDocumentStatusLabel}
-                    formatVehicle={formatVehicle}
-                    formatConfidence={formatConfidence}
-                    formatMoney={formatMoney}
-                  />
-                ) : null}
-
-                {activeWorkspaceTab === "documents" ? (
-                  <DocumentsListPanel
-                    userRole={user?.role}
-                    documents={documents}
-                    selectedDocumentId={selectedDocumentId}
-                    batchReprocessLimit={batchReprocessLimit}
-                    batchReprocessStatusFilter={batchReprocessStatusFilter}
-                    batchReprocessPrimaryOnly={batchReprocessPrimaryOnly}
-                    batchReprocessLoading={batchReprocessLoading}
-                    reprocessLoading={reprocessLoading}
-                    repairDeleteLoading={repairDeleteLoading}
-                    documentArchiveLoadingId={documentArchiveLoadingId}
-                    onBatchReprocessLimitChange={setBatchReprocessLimit}
-                    onBatchReprocessStatusFilterChange={setBatchReprocessStatusFilter}
-                    onBatchReprocessPrimaryOnlyChange={setBatchReprocessPrimaryOnly}
-                    onBatchReprocess={() => {
-                      void handleBatchReprocessDocuments();
-                    }}
-                    onOpenRepair={(document) => {
-                      void handleOpenRepair(document);
-                    }}
-                    onReprocessDocument={(document) => {
-                      void handleReprocessDocument(document);
-                    }}
-                    onDeleteRepair={(repairId) => {
-                      void handleDeleteRepair(repairId);
-                    }}
-                    onArchiveDocument={(documentId, repairId) => {
-                      void handleArchiveDocument(documentId, repairId);
-                    }}
-                    formatDocumentKind={formatDocumentKind}
-                    importJobStatusColor={importJobStatusColor}
-                    formatStatus={formatStatus}
-                    statusColor={statusColor}
-                    formatDocumentStatusLabel={formatDocumentStatusLabel}
-                    formatVehicle={formatVehicle}
-                    formatMoney={formatMoney}
-                    formatManualReviewReasons={formatManualReviewReasons}
-                    formatOcrProfileMeta={formatOcrProfileMeta}
-                    formatLaborNormApplicability={formatLaborNormApplicability}
-                  />
-                ) : null}
-
-                <WorkspaceAdminPanels
-                  activeWorkspaceTab={activeWorkspaceTab}
-                  activeAdminTab={activeAdminTab}
-                  activeTechAdminTab={activeTechAdminTab}
-                  userRole={user?.role}
-                  adminWorkspaceProps={{
-                    activeAdminTab,
-                    description: adminTabDescriptions[activeAdminTab],
-                    onAdminTabChange: handleAdminTabChange,
-                    onOpenTechAdmin: openTechAdmin,
-                  }}
-                  techAdminWorkspaceProps={{
-                    activeTechAdminTab,
-                    description: techAdminTabDescriptions[activeTechAdminTab],
-                    isPasswordRecoveryEmailConfigured: Boolean(systemStatus?.password_recovery_email_configured),
-                    onTechAdminTabChange: handleTechAdminTabChange,
-                    onCloseTechAdmin: closeTechAdmin,
-                  }}
-                  employeesProps={{
-                    userSearch,
-                    userLoading,
-                    showUserEditor,
-                    userForm,
-                    userSaving,
-                    usersTotal,
-                    usersList,
-                    selectedManagedUserId,
-                    selectedManagedUser,
-                    adminResetPasswordValue,
-                    userVehicleSearch,
-                    userVehicleSearchLoading,
-                    userVehicleSearchResults,
-                    userAssignmentForm,
-                    userAssignmentSaving,
-                    onUserSearchChange: setUserSearch,
-                    onRefreshUsers: () => {
-                      void handleUserSearch();
-                    },
-                    onResetUsersSearch: () => {
-                      setUserSearch("");
-                      if (token) {
-                        void loadUsers(token, "");
+                },
+                formatVehicle,
+                formatDocumentKind,
+                importJobStatusColor,
+                formatStatus,
+                statusColor,
+                formatDocumentStatusLabel,
+                isDocumentAwaitingOcr,
+                documentHasActiveImportJob,
+                isPlaceholderVehicle,
+                formatConfidence,
+              },
+              reviewQueueProps: {
+                reviewQueueFilters,
+                reviewQueueCounts,
+                selectedReviewCategory,
+                reviewQueue,
+                userRole: user?.role,
+                reprocessLoading,
+                selectedDocumentId,
+                onSelectCategory: setSelectedReviewCategory,
+                onOpenReviewQueueItem: (item) => {
+                  void handleOpenReviewQueueItem(item);
+                },
+                onReprocessDocumentById: (documentId, repairId) => {
+                  void handleReprocessDocumentById(documentId, repairId);
+                },
+                formatDocumentKind,
+                reviewPriorityColor,
+                formatReviewPriority,
+                statusColor,
+                formatDocumentStatusLabel,
+                formatVehicle,
+                formatConfidence,
+                formatMoney,
+              },
+              documentsListProps: {
+                userRole: user?.role,
+                documents,
+                selectedDocumentId,
+                batchReprocessLimit,
+                batchReprocessStatusFilter,
+                batchReprocessPrimaryOnly,
+                batchReprocessLoading,
+                reprocessLoading,
+                repairDeleteLoading,
+                documentArchiveLoadingId,
+                onBatchReprocessLimitChange: setBatchReprocessLimit,
+                onBatchReprocessStatusFilterChange: setBatchReprocessStatusFilter,
+                onBatchReprocessPrimaryOnlyChange: setBatchReprocessPrimaryOnly,
+                onBatchReprocess: () => {
+                  void handleBatchReprocessDocuments();
+                },
+                onOpenRepair: (document) => {
+                  void handleOpenRepair(document);
+                },
+                onReprocessDocument: (document) => {
+                  void handleReprocessDocument(document);
+                },
+                onDeleteRepair: (repairId) => {
+                  void handleDeleteRepair(repairId);
+                },
+                onArchiveDocument: (documentId, repairId) => {
+                  void handleArchiveDocument(documentId, repairId);
+                },
+                formatDocumentKind,
+                importJobStatusColor,
+                formatStatus,
+                statusColor,
+                formatDocumentStatusLabel,
+                formatVehicle,
+                formatMoney,
+                formatManualReviewReasons,
+                formatOcrProfileMeta,
+                formatLaborNormApplicability,
+              },
+            }}
+            adminProps={{
+              activeWorkspaceTab,
+              activeAdminTab,
+              activeTechAdminTab,
+              userRole: user?.role,
+              adminWorkspaceProps: {
+                activeAdminTab,
+                description: adminTabDescriptions[activeAdminTab],
+                onAdminTabChange: handleAdminTabChange,
+                onOpenTechAdmin: openTechAdmin,
+              },
+              techAdminWorkspaceProps: {
+                activeTechAdminTab,
+                description: techAdminTabDescriptions[activeTechAdminTab],
+                isPasswordRecoveryEmailConfigured: Boolean(systemStatus?.password_recovery_email_configured),
+                onTechAdminTabChange: handleTechAdminTabChange,
+                onCloseTechAdmin: closeTechAdmin,
+              },
+              employeesProps: {
+                userSearch,
+                userLoading,
+                showUserEditor,
+                userForm,
+                userSaving,
+                usersTotal,
+                usersList,
+                selectedManagedUserId,
+                selectedManagedUser,
+                adminResetPasswordValue,
+                userVehicleSearch,
+                userVehicleSearchLoading,
+                userVehicleSearchResults,
+                userAssignmentForm,
+                userAssignmentSaving,
+                onUserSearchChange: setUserSearch,
+                onRefreshUsers: () => {
+                  void handleUserSearch();
+                },
+                onResetUsersSearch: () => {
+                  setUserSearch("");
+                  if (token) {
+                    void loadUsers(token, "");
+                  }
+                },
+                onToggleUserEditor: () => {
+                  setShowUserEditor((current) => !current);
+                },
+                onUserFormChange: (field, value) => {
+                  setUserForm((current) => ({
+                    ...current,
+                    [field]: value,
+                  }));
+                },
+                onSaveUser: () => {
+                  void handleSaveUser();
+                },
+                onResetUserForm: () => {
+                  resetUserEditor();
+                  setShowUserEditor(false);
+                },
+                onSelectUser: setSelectedManagedUserId,
+                onEditUser: handleEditUser,
+                onAdminResetPasswordValueChange: setAdminResetPasswordValue,
+                onAdminResetUserPassword: () => {
+                  void handleAdminResetUserPassword();
+                },
+                onUserVehicleSearchChange: setUserVehicleSearch,
+                onUserAssignmentFormChange: (field, value) => {
+                  setUserAssignmentForm((current) => ({
+                    ...current,
+                    [field]: value,
+                  }));
+                },
+                onSearchVehiclesForAssignment: () => {
+                  void handleSearchVehiclesForAssignment();
+                },
+                onCreateUserAssignment: (vehicleId) => {
+                  void handleCreateUserAssignment(vehicleId);
+                },
+                onCloseUserAssignment: (assignment) => {
+                  void handleCloseUserAssignment(assignment);
+                },
+                formatUserRoleLabel,
+                formatVehicle,
+                formatVehicleTypeLabel,
+                isAssignmentActive,
+              },
+              servicesProps: {
+                serviceQuery,
+                serviceCityFilter,
+                serviceCities,
+                serviceLoading,
+                showServiceEditor,
+                serviceForm,
+                serviceSaving,
+                services,
+                showServiceListDialog,
+                onServiceQueryChange: setServiceQuery,
+                onServiceCityFilterChange: setServiceCityFilter,
+                onRefresh: () => {
+                  void handleServiceSearch();
+                },
+                onReset: () => {
+                  setServiceQuery("");
+                  setServiceCityFilter("");
+                  if (token) {
+                    void loadServices(token, "", "");
+                  }
+                },
+                onToggleEditor: () => {
+                  setShowServiceEditor((current) => !current);
+                },
+                onServiceFormChange: (field, value) => {
+                  setServiceForm((current) => ({
+                    ...current,
+                    [field]: value,
+                  }));
+                },
+                onSaveService: () => {
+                  void handleSaveService();
+                },
+                onResetEditor: () => {
+                  resetServiceEditor();
+                  setShowServiceEditor(false);
+                },
+                onOpenListDialog: () => {
+                  setShowServiceListDialog(true);
+                },
+                onCloseListDialog: () => {
+                  setShowServiceListDialog(false);
+                },
+                onEditService: handleEditService,
+                formatStatus,
+              },
+              backupsProps: {
+                backupActionLoading,
+                backupsLoading,
+                backups,
+                backupRestoreDialogOpen,
+                backupRestoreTarget,
+                backupRestoreConfirmValue,
+                onCreateBackup: () => {
+                  void handleCreateBackup();
+                },
+                onRefresh: () => {
+                  if (token) {
+                    void loadBackups(token);
+                  }
+                },
+                onDownloadBackup: (item) => {
+                  void handleDownloadBackup(item);
+                },
+                onOpenRestoreDialog: openBackupRestoreDialog,
+                onCloseRestoreDialog: closeBackupRestoreDialog,
+                onBackupRestoreConfirmValueChange: setBackupRestoreConfirmValue,
+                onRestoreBackup: () => {
+                  void handleRestoreBackup();
+                },
+                formatStatus,
+                formatDateTime,
+                formatFileSize,
+              },
+              reviewRulesProps: {
+                showReviewRuleEditor,
+                reviewRuleForm,
+                reviewRuleSaving,
+                reviewRules,
+                reviewRuleTypes,
+                showReviewRuleListDialog,
+                onToggleEditor: () => {
+                  setShowReviewRuleEditor((current) => !current);
+                },
+                onReviewRuleFormChange: (field, value) => {
+                  setReviewRuleForm((current) => ({
+                    ...current,
+                    [field]: value,
+                  }));
+                },
+                onSaveReviewRule: () => {
+                  void handleSaveReviewRule();
+                },
+                onResetReviewRuleEditor: () => {
+                  resetReviewRuleEditor();
+                  setShowReviewRuleEditor(false);
+                },
+                onOpenListDialog: () => {
+                  setShowReviewRuleListDialog(true);
+                },
+                onCloseListDialog: () => {
+                  setShowReviewRuleListDialog(false);
+                },
+                onEditReviewRule: handleEditReviewRule,
+                formatReviewRuleTypeLabel,
+                formatReviewBucketLabel,
+              },
+              ocrLearningProps: {
+                ocrLearningStatusFilter,
+                ocrLearningTargetFieldFilter,
+                ocrLearningProfileScopeFilter,
+                ocrLearningStatuses,
+                ocrLearningTargetFields,
+                ocrLearningProfileScopes,
+                ocrLearningLoading,
+                ocrLearningSummaries,
+                ocrLearningSignals,
+                showOcrLearningListDialog,
+                ocrLearningDraftId,
+                ocrLearningUpdateId,
+                onOcrLearningStatusFilterChange: setOcrLearningStatusFilter,
+                onOcrLearningTargetFieldFilterChange: setOcrLearningTargetFieldFilter,
+                onOcrLearningProfileScopeFilterChange: setOcrLearningProfileScopeFilter,
+                onRefresh: () => {
+                  if (token) {
+                    void loadOcrLearningSignals(token);
+                  }
+                },
+                onReset: () => {
+                  setOcrLearningStatusFilter("");
+                  setOcrLearningTargetFieldFilter("");
+                  setOcrLearningProfileScopeFilter("");
+                  if (token) {
+                    void loadOcrLearningSignals(token, "", "", "");
+                  }
+                },
+                onOpenListDialog: () => {
+                  setShowOcrLearningListDialog(true);
+                },
+                onCloseListDialog: () => {
+                  setShowOcrLearningListDialog(false);
+                },
+                onLoadDraft: (signalId, draftType) => {
+                  void handleLoadOcrLearningDraft(signalId, draftType);
+                },
+                onUpdateSignalStatus: (signalId, nextStatus) => {
+                  void handleUpdateOcrLearningSignal(signalId, nextStatus);
+                },
+                formatOcrLearningStatusLabel,
+                formatOcrProfileName,
+                formatOcrFieldLabel,
+                formatOcrSignalTypeLabel,
+              },
+              ocrMatchersProps: {
+                ocrProfileMatcherProfileFilter,
+                ocrProfileMatcherProfiles,
+                ocrProfileMatchers,
+                ocrProfileMatcherForm,
+                ocrProfileMatcherSaving,
+                onProfileFilterChange: setOcrProfileMatcherProfileFilter,
+                onRefresh: () => {
+                  if (token) {
+                    void loadOcrProfileMatchers(token, ocrProfileMatcherProfileFilter);
+                  }
+                },
+                onResetFilter: () => {
+                  setOcrProfileMatcherProfileFilter("");
+                  if (token) {
+                    void loadOcrProfileMatchers(token, "");
+                  }
+                },
+                onFormChange: (field, value) => {
+                  setOcrProfileMatcherForm((current) => ({
+                    ...current,
+                    [field]: value,
+                  }));
+                },
+                onSave: () => {
+                  void handleSaveOcrProfileMatcher();
+                },
+                onResetForm: resetOcrProfileMatcherEditor,
+                onEdit: handleEditOcrProfileMatcher,
+                formatOcrProfileName,
+                formatSourceTypeLabel,
+              },
+              ocrRulesProps: {
+                ocrRuleProfileFilter,
+                ocrRuleProfiles,
+                ocrRuleTargetFields,
+                ocrRules,
+                ocrRuleForm,
+                ocrRuleSaving,
+                onProfileFilterChange: setOcrRuleProfileFilter,
+                onRefresh: () => {
+                  if (token) {
+                    void loadOcrRules(token, ocrRuleProfileFilter);
+                  }
+                },
+                onResetFilter: () => {
+                  setOcrRuleProfileFilter("");
+                  if (token) {
+                    void loadOcrRules(token, "");
+                  }
+                },
+                onFormChange: (field, value) => {
+                  setOcrRuleForm((current) => ({
+                    ...current,
+                    [field]: value,
+                  }));
+                },
+                onSave: () => {
+                  void handleSaveOcrRule();
+                },
+                onResetForm: resetOcrRuleEditor,
+                onEdit: handleEditOcrRule,
+                formatOcrProfileName,
+                formatOcrFieldLabel,
+                formatValueParserLabel,
+              },
+              historicalImportsProps: {
+                historicalImportLoading,
+                historicalImportFile,
+                historicalImportLimit,
+                historicalImportResult,
+                historicalImportJobs,
+                historicalImportJobsLoading,
+                historicalWorkReference,
+                historicalWorkReferenceLoading,
+                historicalWorkReferenceTotal,
+                historicalWorkReferenceQuery,
+                historicalWorkReferenceMinSamples,
+                importConflicts,
+                importConflictsLoading,
+                canRefreshJournal:
+                  !(historicalImportJobsLoading || historicalWorkReferenceLoading || importConflictsLoading) && !!token,
+                onHistoricalImportFileChange: setHistoricalImportFile,
+                onHistoricalImportLimitChange: setHistoricalImportLimit,
+                onStartHistoricalImport: () => {
+                  void handleHistoricalRepairImport();
+                },
+                onRefreshJournal: () => {
+                  if (token) {
+                    void Promise.all([
+                      loadHistoricalImportJobs(token),
+                      loadHistoricalWorkReference(token),
+                      loadImportConflicts(token),
+                    ]);
+                  }
+                },
+                onOpenImportedRepair: (repairId) => {
+                  void openRepairByIds(null, repairId);
+                },
+                onHistoricalWorkReferenceQueryChange: setHistoricalWorkReferenceQuery,
+                onHistoricalWorkReferenceMinSamplesChange: setHistoricalWorkReferenceMinSamples,
+                onRefreshHistoricalWorkReference: () => {
+                  if (token) {
+                    void loadHistoricalWorkReference(token);
+                  }
+                },
+                onOpenImportConflict: (conflictId) => {
+                  void openImportConflict(conflictId);
+                },
+                formatStatus,
+                formatMoney,
+                formatCompactNumber,
+                formatHours,
+                formatDateValue,
+                formatDateTime,
+              },
+              laborNormsProps: {
+                showLaborNormCatalogEditor,
+                showLaborNormImport,
+                showLaborNormEntryEditor,
+                editingLaborNormCatalogId,
+                laborNormCatalogForm,
+                laborNormCatalogSaving,
+                laborNormCatalogs,
+                laborNormQuery,
+                laborNormScope,
+                laborNormScopes,
+                laborNormCategory,
+                laborNormCategories,
+                laborNormLoading,
+                laborNormImportScope,
+                laborNormImportBrandFamily,
+                laborNormImportCatalogName,
+                laborNormFile,
+                laborNormImportLoading,
+                laborNormEntryForm,
+                laborNormEntrySaving,
+                laborNormTotal,
+                laborNormSourceFiles,
+                showLaborNormListDialog,
+                laborNorms,
+                onToggleCatalogEditor: () => setShowLaborNormCatalogEditor((current) => !current),
+                onToggleImport: () => setShowLaborNormImport((current) => !current),
+                onToggleEntryEditor: () => setShowLaborNormEntryEditor((current) => !current),
+                onCatalogFormChange: (field, value) =>
+                  setLaborNormCatalogForm((current) => ({
+                    ...current,
+                    [field]: value,
+                  })),
+                onSaveCatalog: () => {
+                  void handleSaveLaborNormCatalog();
+                },
+                onResetCatalogForm: () => {
+                  resetLaborNormCatalogEditor();
+                  setShowLaborNormCatalogEditor(false);
+                },
+                onEditCatalog: handleEditLaborNormCatalog,
+                onSelectCatalogScope: handleCatalogScopeSelected,
+                onQueryChange: setLaborNormQuery,
+                onScopeChange: setLaborNormScope,
+                onCategoryChange: setLaborNormCategory,
+                onSearch: () => {
+                  void handleLaborNormSearch();
+                },
+                onResetFilters: () => {
+                  setLaborNormQuery("");
+                  setLaborNormScope("");
+                  setLaborNormCategory("");
+                  if (token) {
+                    void loadLaborNormCatalog(token, "", "", "");
+                  }
+                },
+                onImportBrandFamilyChange: setLaborNormImportBrandFamily,
+                onImportCatalogNameChange: setLaborNormImportCatalogName,
+                onImportFileChange: setLaborNormFile,
+                onImport: () => {
+                  void handleLaborNormImport();
+                },
+                onEntryFormChange: (field, value) =>
+                  setLaborNormEntryForm((current) => ({
+                    ...current,
+                    [field]: value,
+                  })),
+                onSaveEntry: () => {
+                  void handleSaveLaborNormEntry();
+                },
+                onResetEntryForm: () => {
+                  resetLaborNormEntryEditor();
+                  setShowLaborNormEntryEditor(false);
+                },
+                onOpenListDialog: () => setShowLaborNormListDialog(true),
+                onCloseListDialog: () => setShowLaborNormListDialog(false),
+                onEditItem: handleEditLaborNormItem,
+                onArchiveItem: (item) => {
+                  void handleArchiveLaborNormItem(item);
+                },
+                formatCatalogCodeLabel,
+                formatStatus,
+                formatHours,
+              },
+            }}
+            repairProps={{
+              returnLabel: repairHasReturnTarget ? workspaceTabReturnLabels[repairReturnTabRef.current] : null,
+              onReturn: repairHasReturnTarget ? returnFromRepairPage : null,
+              contentProps: {
+                userRole: user?.role,
+                repairLoading,
+                selectedRepair,
+                selectedReviewItem,
+                isEditingRepair,
+                saveRepairLoading,
+                hasRepairDraft: Boolean(repairDraft),
+                repairExportLoading,
+                repairArchiveLoading,
+                repairDeleteLoading,
+                onCancelEdit: handleCancelRepairEdit,
+                onSaveRepair: () => {
+                  void handleSaveRepair();
+                },
+                onExportRepair: () => {
+                  void handleExportRepair();
+                },
+                onStartEdit: handleStartRepairEdit,
+                onArchiveRepair: () => {
+                  void handleArchiveRepair();
+                },
+                onDeleteRepair: (repairId) => {
+                  void handleDeleteRepair(repairId);
+                },
+                reviewDecisionProps:
+                  selectedRepair
+                    ? {
+                        userRole: user?.role,
+                        selectedRepairStatus: selectedRepair.status,
+                        selectedReviewItem,
+                        selectedRepair,
+                        selectedRepairDocument,
+                        reviewDocumentPreviewLoading,
+                        reviewDocumentPreviewKind,
+                        reviewDocumentPreviewUrl,
+                        documentOpenLoadingId,
+                        canLinkVehicleFromSelectedDocument,
+                        selectedRepairDocumentExtractedFields,
+                        reviewVehicleSearch,
+                        reviewVehicleSearchLoading,
+                        reviewVehicleLinkingId,
+                        reviewVehicleSearchResults,
+                        selectedRepairDocumentOcrServiceName,
+                        reviewServiceName,
+                        services,
+                        reviewServiceAssigning,
+                        reviewServiceSaving,
+                        reviewFieldSaving,
+                        showReviewServiceEditor,
+                        reviewServiceForm,
+                        canConfirmSelectedReview,
+                        reviewReadyFieldsCount,
+                        reviewRequiredFieldComparisons,
+                        showReviewFieldEditor,
+                        reviewFieldDraft,
+                        reviewMissingRequiredFields,
+                        selectedRepairDocumentFieldSnapshots,
+                        selectedRepairDocumentPayload,
+                        selectedRepairDocumentWorks,
+                        selectedRepairDocumentParts,
+                        reviewActionComment,
+                        reviewActionLoading,
+                        canCreateVehicleFromSelectedDocument,
+                        isEditingRepair,
+                        documentVehicleForm,
+                        documentVehicleSaving,
+                        onOpenDocumentFile: (documentId) => {
+                          void handleOpenDocumentFile(documentId);
+                        },
+                        onSearchVehicleChange: setReviewVehicleSearch,
+                        onSearchVehicles: () => {
+                          void handleSearchReviewVehicles();
+                        },
+                        onLinkVehicle: (vehicleId) => {
+                          void handleLinkReviewVehicle(vehicleId);
+                        },
+                        onServiceNameChange: setReviewServiceName,
+                        onToggleServiceCreate: () => {
+                          setShowReviewServiceEditor((current) => !current);
+                          setReviewServiceForm((current) => ({
+                            ...current,
+                            name: current.name || reviewServiceName || selectedRepairDocumentOcrServiceName,
+                          }));
+                        },
+                        onClearService: () => {
+                          setReviewServiceName("");
+                          void assignReviewService("");
+                        },
+                        onServiceFormChange: (field, value) => {
+                          setReviewServiceForm((current) => ({
+                            ...current,
+                            [field]: value,
+                          }));
+                        },
+                        onAssignService: () => {
+                          void handleAssignReviewService();
+                        },
+                        onCreateService: () => {
+                          void handleCreateReviewService();
+                        },
+                        onToggleFieldEditor: () => {
+                          setShowReviewFieldEditor((current) => !current);
+                        },
+                        onFillFieldsFromOcr: fillReviewFieldDraftFromOcr,
+                        onReviewFieldDraftChange: updateReviewFieldDraft,
+                        onSaveReviewFields: () => {
+                          void handleSaveReviewFields();
+                        },
+                        onReviewActionCommentChange: setReviewActionComment,
+                        onConfirm: () => {
+                          void handleReviewAction(user?.role === "admin" ? "confirm" : "employee_confirm");
+                        },
+                        onSendToReview: () => {
+                          void handleReviewAction("send_to_review");
+                        },
+                        onDocumentVehicleFormChange: (field, value) => {
+                          setDocumentVehicleForm((current) => ({
+                            ...current,
+                            [field]: value,
+                          }));
+                        },
+                        onCreateVehicle: () => {
+                          void handleCreateVehicleFromDocument();
+                        },
+                        getReviewComparisonColor,
+                        getReviewComparisonLabel,
+                        getConfidenceColor,
+                        formatConfidenceLabel,
+                        formatMoney,
+                        formatCompactNumber,
+                        formatHours,
+                        formatManualReviewReasons,
+                        formatOcrProfileMeta,
+                        formatLaborNormApplicability,
+                        readStringValue,
+                        readNumberValue,
+                        formatOcrLineUnit,
+                        formatDocumentKind,
+                        statusColor,
+                        formatDocumentStatusLabel,
+                        formatDateTime,
+                        formatSourceTypeLabel,
+                        formatConfidence,
+                        formatVehicle,
+                        formatVehicleTypeLabel,
                       }
-                    },
-                    onToggleUserEditor: () => {
-                      setShowUserEditor((current) => !current);
-                    },
-                    onUserFormChange: (field, value) => {
-                      setUserForm((current) => ({
-                        ...current,
-                        [field]: value,
-                      }));
-                    },
-                    onSaveUser: () => {
-                      void handleSaveUser();
-                    },
-                    onResetUserForm: () => {
-                      resetUserEditor();
-                      setShowUserEditor(false);
-                    },
-                    onSelectUser: setSelectedManagedUserId,
-                    onEditUser: handleEditUser,
-                    onAdminResetPasswordValueChange: setAdminResetPasswordValue,
-                    onAdminResetUserPassword: () => {
-                      void handleAdminResetUserPassword();
-                    },
-                    onUserVehicleSearchChange: setUserVehicleSearch,
-                    onUserAssignmentFormChange: (field, value) => {
-                      setUserAssignmentForm((current) => ({
-                        ...current,
-                        [field]: value,
-                      }));
-                    },
-                    onSearchVehiclesForAssignment: () => {
-                      void handleSearchVehiclesForAssignment();
-                    },
-                    onCreateUserAssignment: (vehicleId) => {
-                      void handleCreateUserAssignment(vehicleId);
-                    },
-                    onCloseUserAssignment: (assignment) => {
-                      void handleCloseUserAssignment(assignment);
-                    },
-                    formatUserRoleLabel,
-                    formatVehicle,
-                    formatVehicleTypeLabel,
-                    isAssignmentActive,
-                  }}
-                  servicesProps={{
-                    serviceQuery,
-                    serviceCityFilter,
-                    serviceCities,
-                    serviceLoading,
-                    showServiceEditor,
-                    serviceForm,
-                    serviceSaving,
-                    services,
-                    showServiceListDialog,
-                    onServiceQueryChange: setServiceQuery,
-                    onServiceCityFilterChange: setServiceCityFilter,
-                    onRefresh: () => {
-                      void handleServiceSearch();
-                    },
-                    onReset: () => {
-                      setServiceQuery("");
-                      setServiceCityFilter("");
-                      if (token) {
-                        void loadServices(token, "", "");
-                      }
-                    },
-                    onToggleEditor: () => {
-                      setShowServiceEditor((current) => !current);
-                    },
-                    onServiceFormChange: (field, value) => {
-                      setServiceForm((current) => ({
-                        ...current,
-                        [field]: value,
-                      }));
-                    },
-                    onSaveService: () => {
-                      void handleSaveService();
-                    },
-                    onResetEditor: () => {
-                      resetServiceEditor();
-                      setShowServiceEditor(false);
-                    },
-                    onOpenListDialog: () => {
-                      setShowServiceListDialog(true);
-                    },
-                    onCloseListDialog: () => {
-                      setShowServiceListDialog(false);
-                    },
-                    onEditService: handleEditService,
-                    formatStatus,
-                  }}
-                  backupsProps={{
-                    backupActionLoading,
-                    backupsLoading,
-                    backups,
-                    backupRestoreDialogOpen,
-                    backupRestoreTarget,
-                    backupRestoreConfirmValue,
-                    onCreateBackup: () => {
-                      void handleCreateBackup();
-                    },
-                    onRefresh: () => {
-                      if (token) {
-                        void loadBackups(token);
-                      }
-                    },
-                    onDownloadBackup: (item) => {
-                      void handleDownloadBackup(item);
-                    },
-                    onOpenRestoreDialog: openBackupRestoreDialog,
-                    onCloseRestoreDialog: closeBackupRestoreDialog,
-                    onBackupRestoreConfirmValueChange: setBackupRestoreConfirmValue,
-                    onRestoreBackup: () => {
-                      void handleRestoreBackup();
-                    },
-                    formatStatus,
-                    formatDateTime,
-                    formatFileSize,
-                  }}
-                  reviewRulesProps={{
-                    showReviewRuleEditor,
-                    reviewRuleForm,
-                    reviewRuleSaving,
-                    reviewRules,
-                    reviewRuleTypes,
-                    showReviewRuleListDialog,
-                    onToggleEditor: () => {
-                      setShowReviewRuleEditor((current) => !current);
-                    },
-                    onReviewRuleFormChange: (field, value) => {
-                      setReviewRuleForm((current) => ({
-                        ...current,
-                        [field]: value,
-                      }));
-                    },
-                    onSaveReviewRule: () => {
-                      void handleSaveReviewRule();
-                    },
-                    onResetReviewRuleEditor: () => {
-                      resetReviewRuleEditor();
-                      setShowReviewRuleEditor(false);
-                    },
-                    onOpenListDialog: () => {
-                      setShowReviewRuleListDialog(true);
-                    },
-                    onCloseListDialog: () => {
-                      setShowReviewRuleListDialog(false);
-                    },
-                    onEditReviewRule: handleEditReviewRule,
-                    formatReviewRuleTypeLabel,
-                    formatReviewBucketLabel,
-                  }}
-                  ocrLearningProps={{
-                    ocrLearningStatusFilter,
-                    ocrLearningTargetFieldFilter,
-                    ocrLearningProfileScopeFilter,
-                    ocrLearningStatuses,
-                    ocrLearningTargetFields,
-                    ocrLearningProfileScopes,
-                    ocrLearningLoading,
-                    ocrLearningSummaries,
-                    ocrLearningSignals,
-                    showOcrLearningListDialog,
-                    ocrLearningDraftId,
-                    ocrLearningUpdateId,
-                    onOcrLearningStatusFilterChange: setOcrLearningStatusFilter,
-                    onOcrLearningTargetFieldFilterChange: setOcrLearningTargetFieldFilter,
-                    onOcrLearningProfileScopeFilterChange: setOcrLearningProfileScopeFilter,
-                    onRefresh: () => {
-                      if (token) {
-                        void loadOcrLearningSignals(token);
-                      }
-                    },
-                    onReset: () => {
-                      setOcrLearningStatusFilter("");
-                      setOcrLearningTargetFieldFilter("");
-                      setOcrLearningProfileScopeFilter("");
-                      if (token) {
-                        void loadOcrLearningSignals(token, "", "", "");
-                      }
-                    },
-                    onOpenListDialog: () => {
-                      setShowOcrLearningListDialog(true);
-                    },
-                    onCloseListDialog: () => {
-                      setShowOcrLearningListDialog(false);
-                    },
-                    onLoadDraft: (signalId, draftType) => {
-                      void handleLoadOcrLearningDraft(signalId, draftType);
-                    },
-                    onUpdateSignalStatus: (signalId, nextStatus) => {
-                      void handleUpdateOcrLearningSignal(signalId, nextStatus);
-                    },
-                    formatOcrLearningStatusLabel,
-                    formatOcrProfileName,
-                    formatOcrFieldLabel,
-                    formatOcrSignalTypeLabel,
-                  }}
-                  ocrMatchersProps={{
-                    ocrProfileMatcherProfileFilter,
-                    ocrProfileMatcherProfiles,
-                    ocrProfileMatchers,
-                    ocrProfileMatcherForm,
-                    ocrProfileMatcherSaving,
-                    onProfileFilterChange: setOcrProfileMatcherProfileFilter,
-                    onRefresh: () => {
-                      if (token) {
-                        void loadOcrProfileMatchers(token, ocrProfileMatcherProfileFilter);
-                      }
-                    },
-                    onResetFilter: () => {
-                      setOcrProfileMatcherProfileFilter("");
-                      if (token) {
-                        void loadOcrProfileMatchers(token, "");
-                      }
-                    },
-                    onFormChange: (field, value) => {
-                      setOcrProfileMatcherForm((current) => ({
-                        ...current,
-                        [field]: value,
-                      }));
-                    },
-                    onSave: () => {
-                      void handleSaveOcrProfileMatcher();
-                    },
-                    onResetForm: resetOcrProfileMatcherEditor,
-                    onEdit: handleEditOcrProfileMatcher,
-                    formatOcrProfileName,
-                    formatSourceTypeLabel,
-                  }}
-                  ocrRulesProps={{
-                    ocrRuleProfileFilter,
-                    ocrRuleProfiles,
-                    ocrRuleTargetFields,
-                    ocrRules,
-                    ocrRuleForm,
-                    ocrRuleSaving,
-                    onProfileFilterChange: setOcrRuleProfileFilter,
-                    onRefresh: () => {
-                      if (token) {
-                        void loadOcrRules(token, ocrRuleProfileFilter);
-                      }
-                    },
-                    onResetFilter: () => {
-                      setOcrRuleProfileFilter("");
-                      if (token) {
-                        void loadOcrRules(token, "");
-                      }
-                    },
-                    onFormChange: (field, value) => {
-                      setOcrRuleForm((current) => ({
-                        ...current,
-                        [field]: value,
-                      }));
-                    },
-                    onSave: () => {
-                      void handleSaveOcrRule();
-                    },
-                    onResetForm: resetOcrRuleEditor,
-                    onEdit: handleEditOcrRule,
-                    formatOcrProfileName,
-                    formatOcrFieldLabel,
-                    formatValueParserLabel,
-                  }}
-                  historicalImportsProps={{
-                    historicalImportLoading,
-                    historicalImportFile,
-                    historicalImportLimit,
-                    historicalImportResult,
-                    historicalImportJobs,
-                    historicalImportJobsLoading,
-                    historicalWorkReference,
-                    historicalWorkReferenceLoading,
-                    historicalWorkReferenceTotal,
-                    historicalWorkReferenceQuery,
-                    historicalWorkReferenceMinSamples,
-                    importConflicts,
-                    importConflictsLoading,
-                    canRefreshJournal:
-                      !(historicalImportJobsLoading || historicalWorkReferenceLoading || importConflictsLoading) && !!token,
-                    onHistoricalImportFileChange: setHistoricalImportFile,
-                    onHistoricalImportLimitChange: setHistoricalImportLimit,
-                    onStartHistoricalImport: () => {
-                      void handleHistoricalRepairImport();
-                    },
-                    onRefreshJournal: () => {
-                      if (token) {
-                        void Promise.all([
-                          loadHistoricalImportJobs(token),
-                          loadHistoricalWorkReference(token),
-                          loadImportConflicts(token),
-                        ]);
-                      }
-                    },
-                    onOpenImportedRepair: (repairId) => {
-                      void openRepairByIds(null, repairId);
-                    },
-                    onHistoricalWorkReferenceQueryChange: setHistoricalWorkReferenceQuery,
-                    onHistoricalWorkReferenceMinSamplesChange: setHistoricalWorkReferenceMinSamples,
-                    onRefreshHistoricalWorkReference: () => {
-                      if (token) {
-                        void loadHistoricalWorkReference(token);
-                      }
-                    },
-                    onOpenImportConflict: (conflictId) => {
-                      void openImportConflict(conflictId);
-                    },
-                    formatStatus,
-                    formatMoney,
-                    formatCompactNumber,
-                    formatHours,
-                    formatDateValue,
-                    formatDateTime,
-                  }}
-                  laborNormsProps={{
-                    showLaborNormCatalogEditor,
-                    showLaborNormImport,
-                    showLaborNormEntryEditor,
-                    editingLaborNormCatalogId,
-                    laborNormCatalogForm,
-                    laborNormCatalogSaving,
-                    laborNormCatalogs,
-                    laborNormQuery,
-                    laborNormScope,
-                    laborNormScopes,
-                    laborNormCategory,
-                    laborNormCategories,
-                    laborNormLoading,
-                    laborNormImportScope,
-                    laborNormImportBrandFamily,
-                    laborNormImportCatalogName,
-                    laborNormFile,
-                    laborNormImportLoading,
-                    laborNormEntryForm,
-                    laborNormEntrySaving,
-                    laborNormTotal,
-                    laborNormSourceFiles,
-                    showLaborNormListDialog,
-                    laborNorms,
-                    onToggleCatalogEditor: () => setShowLaborNormCatalogEditor((current) => !current),
-                    onToggleImport: () => setShowLaborNormImport((current) => !current),
-                    onToggleEntryEditor: () => setShowLaborNormEntryEditor((current) => !current),
-                    onCatalogFormChange: (field, value) =>
-                      setLaborNormCatalogForm((current) => ({
-                        ...current,
-                        [field]: value,
-                      })),
-                    onSaveCatalog: () => {
-                      void handleSaveLaborNormCatalog();
-                    },
-                    onResetCatalogForm: () => {
-                      resetLaborNormCatalogEditor();
-                      setShowLaborNormCatalogEditor(false);
-                    },
-                    onEditCatalog: handleEditLaborNormCatalog,
-                    onSelectCatalogScope: handleCatalogScopeSelected,
-                    onQueryChange: setLaborNormQuery,
-                    onScopeChange: setLaborNormScope,
-                    onCategoryChange: setLaborNormCategory,
-                    onSearch: () => {
-                      void handleLaborNormSearch();
-                    },
-                    onResetFilters: () => {
-                      setLaborNormQuery("");
-                      setLaborNormScope("");
-                      setLaborNormCategory("");
-                      if (token) {
-                        void loadLaborNormCatalog(token, "", "", "");
-                      }
-                    },
-                    onImportBrandFamilyChange: setLaborNormImportBrandFamily,
-                    onImportCatalogNameChange: setLaborNormImportCatalogName,
-                    onImportFileChange: setLaborNormFile,
-                    onImport: () => {
-                      void handleLaborNormImport();
-                    },
-                    onEntryFormChange: (field, value) =>
-                      setLaborNormEntryForm((current) => ({
-                        ...current,
-                        [field]: value,
-                      })),
-                    onSaveEntry: () => {
-                      void handleSaveLaborNormEntry();
-                    },
-                    onResetEntryForm: () => {
-                      resetLaborNormEntryEditor();
-                      setShowLaborNormEntryEditor(false);
-                    },
-                    onOpenListDialog: () => setShowLaborNormListDialog(true),
-                    onCloseListDialog: () => setShowLaborNormListDialog(false),
-                    onEditItem: handleEditLaborNormItem,
-                    onArchiveItem: (item) => {
-                      void handleArchiveLaborNormItem(item);
-                    },
-                    formatCatalogCodeLabel,
-                    formatStatus,
-                    formatHours,
-                  }}
-                />
-
-                {activeWorkspaceTab === "repair" ? (
-                  <RepairWorkspacePanel
-                    returnLabel={repairHasReturnTarget ? workspaceTabReturnLabels[repairReturnTabRef.current] : null}
-                    onReturn={repairHasReturnTarget ? returnFromRepairPage : null}
-                    contentProps={{
-                      userRole: user?.role,
-                      repairLoading,
-                      selectedRepair,
-                      selectedReviewItem,
-                      isEditingRepair,
-                      saveRepairLoading,
-                      hasRepairDraft: Boolean(repairDraft),
-                      repairExportLoading,
-                      repairArchiveLoading,
-                      repairDeleteLoading,
-                      onCancelEdit: handleCancelRepairEdit,
-                      onSaveRepair: () => {
-                        void handleSaveRepair();
-                      },
-                      onExportRepair: () => {
-                        void handleExportRepair();
-                      },
-                      onStartEdit: handleStartRepairEdit,
-                      onArchiveRepair: () => {
-                        void handleArchiveRepair();
-                      },
-                      onDeleteRepair: (repairId) => {
-                        void handleDeleteRepair(repairId);
-                      },
-                      reviewDecisionProps:
-                        selectedRepair
-                          ? {
-                              userRole: user?.role,
-                              selectedRepairStatus: selectedRepair.status,
-                              selectedReviewItem,
-                              selectedRepair,
-                              selectedRepairDocument,
-                              reviewDocumentPreviewLoading,
-                              reviewDocumentPreviewKind,
-                              reviewDocumentPreviewUrl,
-                              documentOpenLoadingId,
-                              canLinkVehicleFromSelectedDocument,
-                              selectedRepairDocumentExtractedFields,
-                              reviewVehicleSearch,
-                              reviewVehicleSearchLoading,
-                              reviewVehicleLinkingId,
-                              reviewVehicleSearchResults,
-                              selectedRepairDocumentOcrServiceName,
-                              reviewServiceName,
-                              services,
-                              reviewServiceAssigning,
-                              reviewServiceSaving,
-                              reviewFieldSaving,
-                              showReviewServiceEditor,
-                              reviewServiceForm,
-                              canConfirmSelectedReview,
-                              reviewReadyFieldsCount,
-                              reviewRequiredFieldComparisons,
-                              showReviewFieldEditor,
-                              reviewFieldDraft,
-                              reviewMissingRequiredFields,
-                              selectedRepairDocumentFieldSnapshots,
-                              selectedRepairDocumentPayload,
-                              selectedRepairDocumentWorks,
-                              selectedRepairDocumentParts,
-                              reviewActionComment,
-                              reviewActionLoading,
-                              canCreateVehicleFromSelectedDocument,
-                              isEditingRepair,
-                              documentVehicleForm,
-                              documentVehicleSaving,
-                              onOpenDocumentFile: (documentId) => {
-                                void handleOpenDocumentFile(documentId);
-                              },
-                              onSearchVehicleChange: setReviewVehicleSearch,
-                              onSearchVehicles: () => {
-                                void handleSearchReviewVehicles();
-                              },
-                              onLinkVehicle: (vehicleId) => {
-                                void handleLinkReviewVehicle(vehicleId);
-                              },
-                              onServiceNameChange: setReviewServiceName,
-                              onToggleServiceCreate: () => {
-                                setShowReviewServiceEditor((current) => !current);
-                                setReviewServiceForm((current) => ({
-                                  ...current,
-                                  name: current.name || reviewServiceName || selectedRepairDocumentOcrServiceName,
-                                }));
-                              },
-                              onClearService: () => {
-                                setReviewServiceName("");
-                                void assignReviewService("");
-                              },
-                              onServiceFormChange: (field, value) => {
-                                setReviewServiceForm((current) => ({
-                                  ...current,
-                                  [field]: value,
-                                }));
-                              },
-                              onAssignService: () => {
-                                void handleAssignReviewService();
-                              },
-                              onCreateService: () => {
-                                void handleCreateReviewService();
-                              },
-                              onToggleFieldEditor: () => {
-                                setShowReviewFieldEditor((current) => !current);
-                              },
-                              onFillFieldsFromOcr: fillReviewFieldDraftFromOcr,
-                              onReviewFieldDraftChange: updateReviewFieldDraft,
-                              onSaveReviewFields: () => {
-                                void handleSaveReviewFields();
-                              },
-                              onReviewActionCommentChange: setReviewActionComment,
-                              onConfirm: () => {
-                                void handleReviewAction(user?.role === "admin" ? "confirm" : "employee_confirm");
-                              },
-                              onSendToReview: () => {
-                                void handleReviewAction("send_to_review");
-                              },
-                              onDocumentVehicleFormChange: (field, value) => {
-                                setDocumentVehicleForm((current) => ({
-                                  ...current,
-                                  [field]: value,
-                                }));
-                              },
-                              onCreateVehicle: () => {
-                                void handleCreateVehicleFromDocument();
-                              },
-                              getReviewComparisonColor,
-                              getReviewComparisonLabel,
-                              getConfidenceColor,
-                              formatConfidenceLabel,
-                              formatMoney,
-                              formatCompactNumber,
-                              formatHours,
-                              formatManualReviewReasons,
-                              formatOcrProfileMeta,
-                              formatLaborNormApplicability,
-                              readStringValue,
-                              readNumberValue,
-                              formatOcrLineUnit,
-                              formatDocumentKind,
-                              statusColor,
-                              formatDocumentStatusLabel,
-                              formatDateTime,
-                              formatSourceTypeLabel,
-                              formatConfidence,
-                              formatVehicle,
-                              formatVehicleTypeLabel,
-                            }
-                          : null,
-                      repairTabsProps:
-                        selectedRepair
-                          ? {
-                              activeRepairTab,
-                              repairTabDescriptions,
-                              isEditingRepair,
-                              selectedRepair,
-                              onRepairTabChange: handleRepairTabChange,
-                              editProps:
-                                isEditingRepair && repairDraft
-                                  ? {
-                                      activeRepairTab,
-                                      repairDraft,
-                                      services,
-                                      onRepairFieldChange: updateRepairDraftField,
-                                      onAddWorkDraft: addWorkDraft,
-                                      onUpdateWorkDraft: updateWorkDraft,
-                                      onRemoveWorkDraft: removeWorkDraft,
-                                      onAddPartDraft: addPartDraft,
-                                      onUpdatePartDraft: updatePartDraft,
-                                      onRemovePartDraft: removePartDraft,
-                                    }
-                                  : null,
-                              overviewProps: {
-                                selectedRepair,
-                                selectedRepairDocument,
-                                selectedRepairAwaitingOcr,
-                                selectedRepairUnresolvedChecksCount: selectedRepairUnresolvedChecks.length,
-                                selectedRepairHasBlockingFindings,
-                                reviewRequiredFieldComparisons,
-                                selectedRepairComparisonAttentionCount,
-                                selectedRepairDocumentWorksCount: selectedRepairDocumentWorks.length,
-                                selectedRepairDocumentPartsCount: selectedRepairDocumentParts.length,
-                                selectedRepairDocumentManualReviewReasons,
-                                selectedRepairReportSections,
-                                showRepairOverviewDetails,
-                                onToggleShowDetails: () => setShowRepairOverviewDetails((current) => !current),
-                                onOpenLinkedRepair: (repairId) => {
-                                  void openRepairByIds(null, repairId);
-                                },
-                                isPlaceholderVehicle,
-                                formatVehicle,
-                                formatRepairStatus,
-                                executiveRiskColor,
-                                formatExecutiveRiskLabel,
-                                statusColor,
-                                formatDocumentStatusLabel,
-                                formatCompactNumber,
-                                formatMoney,
-                                formatConfidence,
-                                formatManualReviewReasons,
-                                buildCheckPayloadDetails,
-                                getCheckLinkedRepairId,
-                                checkSeverityColor,
-                                formatStatus,
-                              },
-                              documentsProps: {
-                                userRole: user?.role,
-                                selectedRepair,
-                                documentKindOptions,
-                                attachedDocumentKind,
-                                attachedDocumentNotes,
-                                attachedDocumentFile,
-                                attachedFileInputRef,
-                                attachDocumentLoading,
-                                documentOpenLoadingId,
-                                reprocessLoading,
-                                selectedDocumentId,
-                                documentComparisonLoadingId,
-                                primaryDocumentLoadingId,
-                                documentArchiveLoadingId,
-                                documentComparison,
-                                documentComparisonComment,
-                                documentComparisonReviewLoading,
-                                onAttachedDocumentKindChange: setAttachedDocumentKind,
-                                onAttachedDocumentNotesChange: setAttachedDocumentNotes,
-                                onAttachedDocumentFileChange: setAttachedDocumentFile,
-                                onOpenAttachedFilePicker: () => attachedFileInputRef.current?.click(),
-                                onAttachDocument: () => {
-                                  void handleAttachDocumentToRepair();
-                                },
-                                onOpenDocumentFile: (documentId) => {
-                                  void handleOpenDocumentFile(documentId);
-                                },
-                                onReprocessDocumentById: (documentId, repairId) => {
-                                  void handleReprocessDocumentById(documentId, repairId);
-                                },
-                                onCompareWithPrimary: (documentId) => {
-                                  void handleCompareWithPrimary(documentId);
-                                },
-                                onSetPrimaryDocument: (documentId) => {
-                                  void handleSetPrimaryDocument(documentId);
-                                },
-                                onArchiveDocument: (documentId, repairId) => {
-                                  void handleArchiveDocument(documentId, repairId);
-                                },
-                                onCloseDocumentComparison: () => {
-                                  setDocumentComparison(null);
-                                },
-                                onDocumentComparisonCommentChange: setDocumentComparisonComment,
-                                onReviewDocumentComparison: (action) => {
-                                  void handleReviewDocumentComparison(action);
-                                },
-                                formatDocumentKind,
-                                importJobStatusColor,
-                                formatStatus,
-                                statusColor,
-                                formatDocumentStatusLabel,
-                                formatDateTime,
-                                formatSourceTypeLabel,
-                                formatConfidence,
-                                formatManualReviewReasons,
-                                formatOcrProfileMeta,
-                                formatLaborNormApplicability,
-                              },
-                              readOnlyProps: {
+                    : null,
+                repairTabsProps:
+                  selectedRepair
+                    ? {
+                        activeRepairTab,
+                        repairTabDescriptions,
+                        isEditingRepair,
+                        selectedRepair,
+                        onRepairTabChange: handleRepairTabChange,
+                        editProps:
+                          isEditingRepair && repairDraft
+                            ? {
                                 activeRepairTab,
-                                selectedRepair,
-                                filteredDocumentHistory,
-                                filteredRepairHistory,
-                                historySearch,
-                                historyFilter,
-                                historyFilters,
-                                checkComments,
-                                checkActionLoadingId,
-                                onHistorySearchChange: setHistorySearch,
-                                onHistoryFilterChange: setHistoryFilter,
-                                onCheckCommentChange: (checkId, value) =>
-                                  setCheckComments((current) => ({
-                                    ...current,
-                                    [checkId]: value,
-                                  })),
-                                onCheckResolution: (checkId, isResolved) => {
-                                  void handleCheckResolution(checkId, isResolved);
-                                },
-                                onOpenLinkedRepair: (repairId) => {
-                                  void openRepairByIds(null, repairId);
-                                },
-                                formatMoney,
-                                formatHours,
-                                formatStatus,
-                                formatWorkLaborNormMeta,
-                                buildCheckPayloadDetails,
-                                getCheckLinkedRepairId,
-                                checkSeverityColor,
-                                readCheckResolutionMeta,
-                                formatDateTime,
-                                formatHistoryActionLabel,
-                                formatDocumentKind,
-                                buildDocumentHistoryDetails,
-                                buildRepairHistoryDetails,
-                                renderHistoryDetails,
-                              },
-                            }
-                          : null,
-                      formatRepairStatus,
-                      reviewPriorityColor,
-                      formatReviewPriority,
-                    }}
-                  />
-                ) : null}
-
-                <WorkspaceOperationsPanels
-                  activeWorkspaceTab={activeWorkspaceTab}
-                  searchProps={{
-                    query: globalSearchQuery,
-                    loading: globalSearchLoading,
-                    result: globalSearchResult,
-                    onQueryChange: setGlobalSearchQuery,
-                    onSubmit: (event) => {
-                      void handleGlobalSearchSubmit(event);
-                    },
-                    onReset: () => {
-                      setGlobalSearchQuery("");
-                      setGlobalSearchResult(null);
-                    },
-                    onOpenRepair: (documentId, repairId) => {
-                      void openRepairByIds(documentId, repairId);
-                    },
-                    onOpenVehicle: openFleetVehicleById,
-                    statusColor,
-                    vehicleStatusColor,
-                    formatDocumentStatusLabel,
-                    formatRepairStatus,
-                    formatVehicleTypeLabel,
-                    formatVehicleStatusLabel,
-                    formatConfidence,
-                    formatDateTime,
-                    formatMoney,
-                  }}
-                  auditProps={{
-                    userRole: user?.role,
-                    auditSearchQuery,
-                    auditEntityTypeFilter,
-                    auditActionTypeFilter,
-                    auditUserIdFilter,
-                    auditDateFrom,
-                    auditDateTo,
-                    auditEntityTypes,
-                    auditActionTypes,
-                    users: usersList,
-                    auditLogLoading,
-                    auditLogItems,
-                    auditLogTotal,
-                    onAuditSearchQueryChange: setAuditSearchQuery,
-                    onAuditEntityTypeFilterChange: setAuditEntityTypeFilter,
-                    onAuditActionTypeFilterChange: setAuditActionTypeFilter,
-                    onAuditUserIdFilterChange: setAuditUserIdFilter,
-                    onAuditDateFromChange: setAuditDateFrom,
-                    onAuditDateToChange: setAuditDateTo,
-                    onRefresh: () => {
-                      if (token) {
-                        void loadAuditLog(token);
+                                repairDraft,
+                                services,
+                                onRepairFieldChange: updateRepairDraftField,
+                                onAddWorkDraft: addWorkDraft,
+                                onUpdateWorkDraft: updateWorkDraft,
+                                onRemoveWorkDraft: removeWorkDraft,
+                                onAddPartDraft: addPartDraft,
+                                onUpdatePartDraft: updatePartDraft,
+                                onRemovePartDraft: removePartDraft,
+                              }
+                            : null,
+                        overviewProps: {
+                          selectedRepair,
+                          selectedRepairDocument,
+                          selectedRepairAwaitingOcr,
+                          selectedRepairUnresolvedChecksCount: selectedRepairUnresolvedChecks.length,
+                          selectedRepairHasBlockingFindings,
+                          reviewRequiredFieldComparisons,
+                          selectedRepairComparisonAttentionCount,
+                          selectedRepairDocumentWorksCount: selectedRepairDocumentWorks.length,
+                          selectedRepairDocumentPartsCount: selectedRepairDocumentParts.length,
+                          selectedRepairDocumentManualReviewReasons,
+                          selectedRepairReportSections,
+                          showRepairOverviewDetails,
+                          onToggleShowDetails: () => setShowRepairOverviewDetails((current) => !current),
+                          onOpenLinkedRepair: (repairId) => {
+                            void openRepairByIds(null, repairId);
+                          },
+                          isPlaceholderVehicle,
+                          formatVehicle,
+                          formatRepairStatus,
+                          executiveRiskColor,
+                          formatExecutiveRiskLabel,
+                          statusColor,
+                          formatDocumentStatusLabel,
+                          formatCompactNumber,
+                          formatMoney,
+                          formatConfidence,
+                          formatManualReviewReasons,
+                          buildCheckPayloadDetails,
+                          getCheckLinkedRepairId,
+                          checkSeverityColor,
+                          formatStatus,
+                        },
+                        documentsProps: {
+                          userRole: user?.role,
+                          selectedRepair,
+                          documentKindOptions,
+                          attachedDocumentKind,
+                          attachedDocumentNotes,
+                          attachedDocumentFile,
+                          attachedFileInputRef,
+                          attachDocumentLoading,
+                          documentOpenLoadingId,
+                          reprocessLoading,
+                          selectedDocumentId,
+                          documentComparisonLoadingId,
+                          primaryDocumentLoadingId,
+                          documentArchiveLoadingId,
+                          documentComparison,
+                          documentComparisonComment,
+                          documentComparisonReviewLoading,
+                          onAttachedDocumentKindChange: setAttachedDocumentKind,
+                          onAttachedDocumentNotesChange: setAttachedDocumentNotes,
+                          onAttachedDocumentFileChange: setAttachedDocumentFile,
+                          onOpenAttachedFilePicker: () => attachedFileInputRef.current?.click(),
+                          onAttachDocument: () => {
+                            void handleAttachDocumentToRepair();
+                          },
+                          onOpenDocumentFile: (documentId) => {
+                            void handleOpenDocumentFile(documentId);
+                          },
+                          onReprocessDocumentById: (documentId, repairId) => {
+                            void handleReprocessDocumentById(documentId, repairId);
+                          },
+                          onCompareWithPrimary: (documentId) => {
+                            void handleCompareWithPrimary(documentId);
+                          },
+                          onSetPrimaryDocument: (documentId) => {
+                            void handleSetPrimaryDocument(documentId);
+                          },
+                          onArchiveDocument: (documentId, repairId) => {
+                            void handleArchiveDocument(documentId, repairId);
+                          },
+                          onCloseDocumentComparison: () => {
+                            setDocumentComparison(null);
+                          },
+                          onDocumentComparisonCommentChange: setDocumentComparisonComment,
+                          onReviewDocumentComparison: (action) => {
+                            void handleReviewDocumentComparison(action);
+                          },
+                          formatDocumentKind,
+                          importJobStatusColor,
+                          formatStatus,
+                          statusColor,
+                          formatDocumentStatusLabel,
+                          formatDateTime,
+                          formatSourceTypeLabel,
+                          formatConfidence,
+                          formatManualReviewReasons,
+                          formatOcrProfileMeta,
+                          formatLaborNormApplicability,
+                        },
+                        readOnlyProps: {
+                          activeRepairTab,
+                          selectedRepair,
+                          filteredDocumentHistory,
+                          filteredRepairHistory,
+                          historySearch,
+                          historyFilter,
+                          historyFilters,
+                          checkComments,
+                          checkActionLoadingId,
+                          onHistorySearchChange: setHistorySearch,
+                          onHistoryFilterChange: setHistoryFilter,
+                          onCheckCommentChange: (checkId, value) =>
+                            setCheckComments((current) => ({
+                              ...current,
+                              [checkId]: value,
+                            })),
+                          onCheckResolution: (checkId, isResolved) => {
+                            void handleCheckResolution(checkId, isResolved);
+                          },
+                          onOpenLinkedRepair: (repairId) => {
+                            void openRepairByIds(null, repairId);
+                          },
+                          formatMoney,
+                          formatHours,
+                          formatStatus,
+                          formatWorkLaborNormMeta,
+                          buildCheckPayloadDetails,
+                          getCheckLinkedRepairId,
+                          checkSeverityColor,
+                          readCheckResolutionMeta,
+                          formatDateTime,
+                          formatHistoryActionLabel,
+                          formatDocumentKind,
+                          buildDocumentHistoryDetails,
+                          buildRepairHistoryDetails,
+                          renderHistoryDetails,
+                        },
                       }
-                    },
-                    onReset: () => {
-                      setAuditSearchQuery("");
-                      setAuditEntityTypeFilter("");
-                      setAuditActionTypeFilter("");
-                      setAuditUserIdFilter("");
-                      setAuditDateFrom("");
-                      setAuditDateTo("");
-                    },
-                    formatAuditEntityLabel,
-                    formatHistoryActionLabel,
-                    formatDateTime,
-                    renderEntryDetails: (entry) => renderHistoryDetails(`audit-${entry.id}`, buildAuditEntryDetails(entry)),
-                  }}
-                  fleetProps={{
-                    viewMode: fleetViewMode,
-                    detailProps: {
-                      selectedFleetVehicleLoading,
-                      selectedFleetVehicle,
-                      userRole: user?.role,
-                      vehicleSaving,
-                      vehicleExportLoading,
-                      vehicles,
-                      fleetVehicles,
-                      onUpdateVehicleStatus: (status) => {
-                        void handleUpdateVehicle({ status });
-                      },
-                      onExportVehicle: () => {
-                        void handleExportVehicle();
-                      },
-                      onOpenRepair: (repairId) => {
-                        void openRepairByIds(null, repairId);
-                      },
-                      formatVehicle,
-                      formatVehicleTypeLabel,
-                      formatVehicleStatusLabel,
-                      formatDateValue,
-                      formatDateTime,
-                      formatMoney,
-                      formatUserRoleLabel,
-                      formatRepairStatus,
-                      vehicleStatusColor,
-                    },
-                    fleetQuery,
-                    fleetVehicleTypeFilter,
-                    fleetStatusFilter,
-                    fleetVehiclesTotal,
-                    selectedFleetVehicleId,
-                    fleetVehicles,
-                    fleetLoading,
-                    onFleetQueryChange: setFleetQuery,
-                    onFleetVehicleTypeFilterChange: setFleetVehicleTypeFilter,
-                    onFleetStatusFilterChange: setFleetStatusFilter,
-                    onRefresh: () => {
-                      if (token) {
-                        void loadFleetVehicles(token);
-                      }
-                    },
-                    onReset: () => {
-                      setFleetQuery("");
-                      setFleetVehicleTypeFilter("");
-                      setFleetStatusFilter("");
-                      if (token) {
-                        void loadFleetVehicles(token, "", "", "");
-                      }
-                    },
-                    onReturnToList: returnToFleetList,
-                    onOpenVehicleCard: openFleetVehicleCard,
-                    formatVehicle,
-                    formatVehicleTypeLabel,
-                    formatVehicleStatusLabel,
-                    formatDateValue,
-                    vehicleStatusColor,
-                  }}
-                />
-              </Stack>
-            </Grid>
-          </Grid>
+                    : null,
+                formatRepairStatus,
+                reviewPriorityColor,
+                formatReviewPriority,
+              },
+            }}
+            operationsProps={{
+              activeWorkspaceTab,
+              searchProps: {
+                query: globalSearchQuery,
+                loading: globalSearchLoading,
+                result: globalSearchResult,
+                onQueryChange: setGlobalSearchQuery,
+                onSubmit: (event) => {
+                  void handleGlobalSearchSubmit(event);
+                },
+                onReset: () => {
+                  setGlobalSearchQuery("");
+                  setGlobalSearchResult(null);
+                },
+                onOpenRepair: (documentId, repairId) => {
+                  void openRepairByIds(documentId, repairId);
+                },
+                onOpenVehicle: openFleetVehicleById,
+                statusColor,
+                vehicleStatusColor,
+                formatDocumentStatusLabel,
+                formatRepairStatus,
+                formatVehicleTypeLabel,
+                formatVehicleStatusLabel,
+                formatConfidence,
+                formatDateTime,
+                formatMoney,
+              },
+              auditProps: {
+                userRole: user?.role,
+                auditSearchQuery,
+                auditEntityTypeFilter,
+                auditActionTypeFilter,
+                auditUserIdFilter,
+                auditDateFrom,
+                auditDateTo,
+                auditEntityTypes,
+                auditActionTypes,
+                users: usersList,
+                auditLogLoading,
+                auditLogItems,
+                auditLogTotal,
+                onAuditSearchQueryChange: setAuditSearchQuery,
+                onAuditEntityTypeFilterChange: setAuditEntityTypeFilter,
+                onAuditActionTypeFilterChange: setAuditActionTypeFilter,
+                onAuditUserIdFilterChange: setAuditUserIdFilter,
+                onAuditDateFromChange: setAuditDateFrom,
+                onAuditDateToChange: setAuditDateTo,
+                onRefresh: () => {
+                  if (token) {
+                    void loadAuditLog(token);
+                  }
+                },
+                onReset: () => {
+                  setAuditSearchQuery("");
+                  setAuditEntityTypeFilter("");
+                  setAuditActionTypeFilter("");
+                  setAuditUserIdFilter("");
+                  setAuditDateFrom("");
+                  setAuditDateTo("");
+                },
+                formatAuditEntityLabel,
+                formatHistoryActionLabel,
+                formatDateTime,
+                renderEntryDetails: (entry) => renderHistoryDetails(`audit-${entry.id}`, buildAuditEntryDetails(entry)),
+              },
+              fleetProps: {
+                viewMode: fleetViewMode,
+                detailProps: {
+                  selectedFleetVehicleLoading,
+                  selectedFleetVehicle,
+                  userRole: user?.role,
+                  vehicleSaving,
+                  vehicleExportLoading,
+                  vehicles,
+                  fleetVehicles,
+                  onUpdateVehicleStatus: (status) => {
+                    void handleUpdateVehicle({ status });
+                  },
+                  onExportVehicle: () => {
+                    void handleExportVehicle();
+                  },
+                  onOpenRepair: (repairId) => {
+                    void openRepairByIds(null, repairId);
+                  },
+                  formatVehicle,
+                  formatVehicleTypeLabel,
+                  formatVehicleStatusLabel,
+                  formatDateValue,
+                  formatDateTime,
+                  formatMoney,
+                  formatUserRoleLabel,
+                  formatRepairStatus,
+                  vehicleStatusColor,
+                },
+                fleetQuery,
+                fleetVehicleTypeFilter,
+                fleetStatusFilter,
+                fleetVehiclesTotal,
+                selectedFleetVehicleId,
+                fleetVehicles,
+                fleetLoading,
+                onFleetQueryChange: setFleetQuery,
+                onFleetVehicleTypeFilterChange: setFleetVehicleTypeFilter,
+                onFleetStatusFilterChange: setFleetStatusFilter,
+                onRefresh: () => {
+                  if (token) {
+                    void loadFleetVehicles(token);
+                  }
+                },
+                onReset: () => {
+                  setFleetQuery("");
+                  setFleetVehicleTypeFilter("");
+                  setFleetStatusFilter("");
+                  if (token) {
+                    void loadFleetVehicles(token, "", "", "");
+                  }
+                },
+                onReturnToList: returnToFleetList,
+                onOpenVehicleCard: openFleetVehicleCard,
+                formatVehicle,
+                formatVehicleTypeLabel,
+                formatVehicleStatusLabel,
+                formatDateValue,
+                vehicleStatusColor,
+              },
+            }}
+          />
         </Stack>
       </Container>
     </Box>

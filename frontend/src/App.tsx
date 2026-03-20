@@ -20,6 +20,50 @@ import {
   buildRepairHistoryDetails,
   type HistoryDetailFormatters,
 } from "./shared/historyDetails";
+import {
+  checkSeverityColor,
+  documentHasActiveImportJob,
+  executiveRiskColor,
+  formatAuditEntityLabel,
+  formatCatalogCodeLabel,
+  formatCompactNumber,
+  formatConfidence,
+  formatConfidenceLabel,
+  formatDateTime,
+  formatDateValue,
+  formatDocumentKind,
+  formatDocumentStatusLabel,
+  formatExecutiveRiskLabel,
+  formatFileSize,
+  formatHistoryActionLabel,
+  formatHours,
+  formatJsonPretty,
+  formatLaborNormApplicability,
+  formatManualReviewReasons,
+  formatMoney,
+  formatOcrFieldLabel,
+  formatOcrLearningStatusLabel,
+  formatOcrProfileMeta,
+  formatOcrProfileName,
+  formatOcrSignalTypeLabel,
+  formatRepairStatus,
+  formatReviewBucketLabel,
+  formatReviewPriority,
+  formatReviewRuleTypeLabel,
+  formatSourceTypeLabel,
+  formatStatus,
+  formatUserRoleLabel,
+  formatValueParserLabel,
+  formatVehicleStatusLabel,
+  formatVehicleTypeLabel,
+  getConfidenceColor,
+  importJobStatusColor,
+  isDocumentAwaitingOcr,
+  readOcrProfileMeta,
+  reviewPriorityColor,
+  statusColor,
+  vehicleStatusColor,
+} from "./shared/displayFormatters";
 
 type UserRole = "admin" | "employee";
 type VehicleType = "truck" | "trailer";
@@ -1170,12 +1214,6 @@ type WorkLaborNormMeta = {
   standardHours: number | null;
 };
 
-type OcrProfileMeta = {
-  scope: string | null;
-  source: string | null;
-  reason: string | null;
-};
-
 type EditableWorkDraft = {
   work_code: string;
   work_name: string;
@@ -1607,234 +1645,6 @@ const manualReviewReasonLabels: Record<string, string> = {
   vehicle_missing: "не удалось определить технику",
   vehicle_not_found: "техника не найдена в базе",
 };
-
-function formatStatus(status: string) {
-  return genericStatusLabels[status] || status.split("_").join(" ");
-}
-
-function formatAuditEntityLabel(entityType: string | null | undefined) {
-  if (!entityType) {
-    return "Сущность";
-  }
-  return auditEntityLabels[entityType] || formatStatus(entityType);
-}
-
-function formatJsonPretty(value: unknown) {
-  if (value === null || value === undefined) {
-    return "—";
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function formatMoney(value?: number | null) {
-  if (typeof value !== "number") {
-    return null;
-  }
-  return new Intl.NumberFormat("ru-RU", {
-    style: "currency",
-    currency: "RUB",
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
-function formatFileSize(value: number) {
-  if (!Number.isFinite(value) || value <= 0) {
-    return "0 Б";
-  }
-  const units = ["Б", "КБ", "МБ", "ГБ"];
-  let size = value;
-  let unitIndex = 0;
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex += 1;
-  }
-  return `${size >= 10 || unitIndex === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`;
-}
-
-function getLaborNormApplicability(
-  payload: Record<string, unknown> | null | undefined,
-):
-  | {
-      eligible: boolean;
-      reason: string | null;
-      matchedCount: number;
-      unmatchedCount: number;
-    }
-  | null {
-  const rawValue = payload?.labor_norm_applicability;
-  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
-    return null;
-  }
-
-  const rawApplicability = rawValue as Record<string, unknown>;
-  return {
-    eligible: rawApplicability.eligible === true,
-    reason: typeof rawApplicability.reason === "string" ? rawApplicability.reason : null,
-    matchedCount:
-      typeof rawApplicability.matched_count === "number" ? rawApplicability.matched_count : 0,
-    unmatchedCount:
-      typeof rawApplicability.unmatched_count === "number" ? rawApplicability.unmatched_count : 0,
-  };
-}
-
-function formatLaborNormApplicability(payload: Record<string, unknown> | null | undefined) {
-  const applicability = getLaborNormApplicability(payload);
-  if (!applicability) {
-    return null;
-  }
-
-  if (!applicability.eligible) {
-    return `Нормо-часы: ${applicability.reason || "справочник не применяется к этой технике"}`;
-  }
-
-  if (applicability.matchedCount > 0) {
-    if (applicability.unmatchedCount > 0) {
-      return `Нормо-часы: найдено совпадений ${applicability.matchedCount}, без совпадения ${applicability.unmatchedCount}`;
-    }
-    return `Нормо-часы: найдено совпадений ${applicability.matchedCount}`;
-  }
-
-  if (applicability.unmatchedCount > 0) {
-    return "Нормо-часы: справочник применим, но совпадения не найдены";
-  }
-
-  return "Нормо-часы: применимость проверена";
-}
-
-function readOcrProfileMeta(payload: Record<string, unknown> | null | undefined): OcrProfileMeta | null {
-  if (!payload) {
-    return null;
-  }
-  return {
-    scope: typeof payload.ocr_profile_scope === "string" ? payload.ocr_profile_scope : null,
-    source: typeof payload.ocr_profile_source === "string" ? payload.ocr_profile_source : null,
-    reason: typeof payload.ocr_profile_reason === "string" ? payload.ocr_profile_reason : null,
-  };
-}
-
-function formatOcrProfileMeta(payload: Record<string, unknown> | null | undefined) {
-  const meta = readOcrProfileMeta(payload);
-  if (!meta?.scope) {
-    return null;
-  }
-  const sourceSuffix = meta.source ? ` · ${meta.source}` : "";
-  const reasonSuffix = meta.reason ? ` · ${meta.reason}` : "";
-  return `Шаблон OCR: ${formatOcrProfileName(meta.scope)}${sourceSuffix}${reasonSuffix}`;
-}
-
-function formatOcrProfileName(value: string | null | undefined) {
-  if (!value) {
-    return "Не указан";
-  }
-  if (value === "default") {
-    return "Базовый";
-  }
-  return value;
-}
-
-function formatValueParserLabel(value: string) {
-  const labels: Record<string, string> = {
-    raw: "Без обработки",
-    date: "Дата",
-    amount: "Сумма",
-    digits_int: "Целое число",
-  };
-  return labels[value] || value;
-}
-
-function formatReviewBucketLabel(value: string | null | undefined) {
-  if (!value) {
-    return "Без переопределения";
-  }
-  const labels: Record<string, string> = {
-    review: "Обычный",
-    critical: "Критичный",
-    suspicious: "Подозрительный",
-  };
-  return labels[value] || value;
-}
-
-function formatReviewRuleTypeLabel(value: string) {
-  const labels: Record<string, string> = {
-    manual_review_reason: "Причина ручной проверки",
-    document_status: "Статус документа",
-    repair_status: "Статус ремонта",
-    check_severity: "Уровень проверки",
-    signal: "Сигнал системы",
-  };
-  return labels[value] || value;
-}
-
-function formatOcrFieldLabel(value: string) {
-  const labels: Record<string, string> = {
-    order_number: "Номер заказ-наряда",
-    repair_date: "Дата ремонта",
-    mileage: "Пробег",
-    plate_number: "Госномер",
-    vin: "VIN",
-    service_name: "Сервис",
-    work_total: "Сумма работ",
-    parts_total: "Сумма запчастей",
-    vat_total: "НДС",
-    grand_total: "Итоговая сумма",
-  };
-  return labels[value] || value;
-}
-
-function formatOcrLearningStatusLabel(value: string) {
-  const labels: Record<string, string> = {
-    new: "Новый",
-    reviewed: "Просмотрен",
-    applied: "Применён",
-    rejected: "Отклонён",
-  };
-  return labels[value] || value;
-}
-
-function formatOcrSignalTypeLabel(value: string) {
-  const labels: Record<string, string> = {
-    corrected_value: "Исправленное значение",
-    missing_value: "Не извлечено",
-    mismatched_value: "Извлечено неверно",
-  };
-  return labels[value] || value;
-}
-
-function formatSourceTypeLabel(value: string | null | undefined) {
-  const labels: Record<string, string> = {
-    pdf: "PDF",
-    image: "Изображение",
-  };
-  if (!value) {
-    return "Любой";
-  }
-  return labels[value] || value.toUpperCase();
-}
-
-function formatCatalogCodeLabel(value: string | null | undefined) {
-  if (!value) {
-    return "Не указан";
-  }
-  return value;
-}
-
-function formatHours(value: number | null | undefined) {
-  if (typeof value !== "number") {
-    return null;
-  }
-  return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(value)} ч`;
-}
-
-function formatCompactNumber(value: number | null | undefined) {
-  if (typeof value !== "number") {
-    return null;
-  }
-  return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(value);
-}
 
 function readStringValue(item: Record<string, unknown>, ...keys: string[]) {
   for (const key of keys) {
@@ -2288,173 +2098,10 @@ function createVehicleFormFromPayload(payload: Record<string, unknown> | null | 
   };
 }
 
-function formatVehicleTypeLabel(value: VehicleType | "" | null | undefined) {
-  if (value === "truck") {
-    return "Грузовик";
-  }
-  if (value === "trailer") {
-    return "Прицеп";
-  }
-  return "Любой";
-}
-
-function formatUserRoleLabel(value: UserRole) {
-  if (value === "admin") {
-    return "Администратор";
-  }
-  return "Сотрудник";
-}
-
 function isAssignmentActive(assignment: UserAssignment) {
   const today = new Date().toISOString().slice(0, 10);
   return assignment.starts_at <= today && (!assignment.ends_at || assignment.ends_at >= today);
 }
-
-function formatVehicleStatusLabel(value: string | null | undefined) {
-  if (!value) {
-    return "Не указан";
-  }
-  const labels: Record<string, string> = {
-    active: "В работе",
-    in_repair: "В ремонте",
-    waiting_repair: "Ожидает ремонта",
-    inactive: "Не используется",
-    decommissioned: "Списан",
-    archived: "Архив",
-  };
-  return labels[value] || formatStatus(value);
-}
-
-function vehicleStatusColor(status: VehicleStatus | string): "default" | "success" | "warning" | "error" {
-  if (status === "active") {
-    return "success";
-  }
-  if (status === "in_repair" || status === "waiting_repair") {
-    return "warning";
-  }
-  if (status === "decommissioned") {
-    return "error";
-  }
-  return "default";
-}
-
-function statusColor(status: DocumentStatus): "default" | "success" | "error" | "warning" {
-  if (status === "confirmed" || status === "recognized") {
-    return "success";
-  }
-  if (status === "ocr_error") {
-    return "error";
-  }
-  if (status === "needs_review" || status === "partially_recognized") {
-    return "warning";
-  }
-  return "default";
-}
-
-function checkSeverityColor(severity: CheckSeverity): "default" | "success" | "error" | "warning" {
-  if (severity === "error") {
-    return "error";
-  }
-  if (severity === "warning" || severity === "suspicious") {
-    return "warning";
-  }
-  if (severity === "normal") {
-    return "success";
-  }
-  return "default";
-}
-
-function executiveRiskColor(level: "low" | "medium" | "high"): "success" | "warning" | "error" {
-  if (level === "high") {
-    return "error";
-  }
-  if (level === "medium") {
-    return "warning";
-  }
-  return "success";
-}
-
-function formatExecutiveRiskLabel(level: "low" | "medium" | "high") {
-  if (level === "high") {
-    return "Высокий риск";
-  }
-  if (level === "medium") {
-    return "Средний риск";
-  }
-  return "Низкий риск";
-}
-
-function reviewPriorityColor(bucket: ReviewPriorityBucket): "default" | "error" | "warning" {
-  if (bucket === "suspicious") {
-    return "error";
-  }
-  if (bucket === "critical") {
-    return "warning";
-  }
-  return "default";
-}
-
-function formatReviewPriority(bucket: ReviewPriorityBucket) {
-  if (bucket === "suspicious") {
-    return "Подозрительно";
-  }
-  if (bucket === "critical") {
-    return "Критично";
-  }
-  return "Проверить";
-}
-
-function formatDocumentKind(kind: DocumentKind) {
-  if (kind === "order") {
-    return "Заказ-наряд";
-  }
-  if (kind === "repeat_scan") {
-    return "Повторный скан";
-  }
-  if (kind === "attachment") {
-    return "Приложение";
-  }
-  return "Подтверждение";
-}
-
-function formatRepairStatus(status: string | null | undefined) {
-  if (!status) {
-    return "—";
-  }
-  return repairStatusLabels[status] || formatStatus(status);
-}
-
-function formatDocumentStatusLabel(status: string | null | undefined) {
-  if (!status) {
-    return "—";
-  }
-  return documentStatusLabels[status] || formatStatus(status);
-}
-
-function formatManualReviewReason(reason: string) {
-  return manualReviewReasonLabels[reason] || formatStatus(reason);
-}
-
-function formatManualReviewReasons(reasons: string[]) {
-  return reasons.map((reason) => formatManualReviewReason(reason)).join(", ");
-}
-
-function formatHistoryActionLabel(actionType: string) {
-  return historyActionLabels[actionType] || formatStatus(actionType);
-}
-
-function formatDateValue(value: string) {
-  const normalizedValue = value.length === 10 ? `${value}T00:00:00` : value;
-  const parsed = new Date(normalizedValue);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat(
-    "ru-RU",
-    value.length === 10 ? { dateStyle: "short" } : { dateStyle: "short", timeStyle: "short" },
-  ).format(parsed);
-}
-
 function matchesTextSearch(parts: Array<string | null | undefined>, search: string) {
   const normalizedSearch = search.trim().toLowerCase();
   if (!normalizedSearch) {
@@ -2602,20 +2249,6 @@ function getReviewComparisonColor(
   }
 }
 
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("ru-RU", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
-
-function formatConfidence(value: number | null) {
-  if (typeof value !== "number") {
-    return "—";
-  }
-  return `${Math.round(value * 100)}%`;
-}
-
 function readConfidenceValue(
   confidenceMap: Record<string, unknown> | null | undefined,
   ...keys: string[]
@@ -2629,55 +2262,11 @@ function readConfidenceValue(
   return null;
 }
 
-function getConfidenceColor(value: number | null): "default" | "success" | "warning" | "error" {
-  if (value === null) {
-    return "default";
-  }
-  if (value >= 0.9) {
-    return "success";
-  }
-  if (value >= 0.7) {
-    return "warning";
-  }
-  return "error";
-}
-
-function formatConfidenceLabel(value: number | null) {
-  return value === null ? "OCR без оценки" : `OCR ${formatConfidence(value)}`;
-}
-
 function resolveRepairDocumentId(repair: RepairDetail, preferredDocumentId: number | null) {
   if (preferredDocumentId !== null && repair.documents.some((document) => document.id === preferredDocumentId)) {
     return preferredDocumentId;
   }
   return repair.documents.find((document) => document.is_primary)?.id ?? repair.documents[0]?.id ?? null;
-}
-
-function isDocumentAwaitingOcr(status: string | null | undefined) {
-  return status === "uploaded";
-}
-
-function isImportJobActive(status: string | null | undefined) {
-  return status === "queued" || status === "retry" || status === "processing";
-}
-
-function documentHasActiveImportJob(
-  document: { latest_import_job?: { status?: string | null } | null } | null | undefined,
-) {
-  return isImportJobActive(document?.latest_import_job?.status);
-}
-
-function importJobStatusColor(status: string | null | undefined): "default" | "success" | "error" | "warning" {
-  if (status === "completed") {
-    return "success";
-  }
-  if (status === "failed") {
-    return "error";
-  }
-  if (status === "queued" || status === "retry" || status === "processing" || status === "completed_with_conflicts") {
-    return "warning";
-  }
-  return "default";
 }
 
 function repairHasDocumentsAwaitingOcr(repair: RepairDetail | null) {

@@ -64,6 +64,18 @@ import {
   statusColor,
   vehicleStatusColor,
 } from "./shared/displayFormatters";
+import {
+  createRepairDraft,
+  createReviewRepairFieldsDraft,
+  getDocumentPreviewKind,
+  getReviewComparisonColor,
+  getReviewComparisonLabel,
+  getReviewComparisonStatus,
+  readConfidenceValue,
+  repairHasDocumentsAwaitingOcr,
+  resolveRepairDocumentId,
+  type ReviewComparisonStatus,
+} from "./shared/repairUiHelpers";
 
 type UserRole = "admin" | "employee";
 type VehicleType = "truck" | "trailer";
@@ -1264,8 +1276,6 @@ type ReviewRepairFieldsDraft = {
   employee_comment: string;
 };
 
-type ReviewComparisonStatus = "match" | "missing" | "mismatch" | "ocr_missing" | "empty";
-
 type ReviewRequiredFieldComparisonItem = {
   key: string;
   label: string;
@@ -2110,172 +2120,6 @@ function matchesTextSearch(parts: Array<string | null | undefined>, search: stri
   return parts.some((part) => part?.toLowerCase().includes(normalizedSearch));
 }
 
-function createRepairDraft(repair: RepairDetail): EditableRepairDraft {
-  return {
-    order_number: repair.order_number || "",
-    repair_date: repair.repair_date,
-    mileage: repair.mileage,
-    reason: repair.reason || "",
-    employee_comment: repair.employee_comment || "",
-    service_name: repair.service?.name || "",
-    work_total: repair.work_total,
-    parts_total: repair.parts_total,
-    vat_total: repair.vat_total,
-    grand_total: repair.grand_total,
-    status: repair.status,
-    is_preliminary: repair.is_preliminary,
-    works: repair.works.map((item) => ({
-      work_code: item.work_code || "",
-      work_name: item.work_name,
-      quantity: item.quantity,
-      standard_hours: item.standard_hours ?? "",
-      actual_hours: item.actual_hours ?? "",
-      price: item.price,
-      line_total: item.line_total,
-      status: item.status,
-    })),
-    parts: repair.parts.map((item) => ({
-      article: item.article || "",
-      part_name: item.part_name,
-      quantity: item.quantity,
-      unit_name: item.unit_name || "",
-      price: item.price,
-      line_total: item.line_total,
-      status: item.status,
-    })),
-  };
-}
-
-function createReviewRepairFieldsDraft(repair: RepairDetail): ReviewRepairFieldsDraft {
-  return {
-    order_number: repair.order_number || "",
-    repair_date: repair.repair_date || "",
-    mileage: repair.mileage > 0 ? String(repair.mileage) : "",
-    work_total: String(repair.work_total ?? ""),
-    parts_total: String(repair.parts_total ?? ""),
-    vat_total: String(repair.vat_total ?? ""),
-    grand_total: String(repair.grand_total ?? ""),
-    reason: repair.reason || "",
-    employee_comment: repair.employee_comment || "",
-  };
-}
-
-function normalizeComparableText(value: unknown) {
-  if (value === null || value === undefined) {
-    return "";
-  }
-  return String(value).trim().toLowerCase();
-}
-
-function normalizeComparableNumber(value: unknown, digits = 2): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Number(value.toFixed(digits));
-  }
-  if (typeof value === "string") {
-    const normalized = value.replace(/\s+/g, "").replace(",", ".").trim();
-    if (!normalized) {
-      return null;
-    }
-    const parsed = Number(normalized);
-    if (Number.isFinite(parsed)) {
-      return Number(parsed.toFixed(digits));
-    }
-  }
-  return null;
-}
-
-function getReviewComparisonStatus(
-  currentValue: unknown,
-  ocrValue: unknown,
-  mode: "text" | "int" | "money" = "text",
-): ReviewComparisonStatus {
-  if (mode === "text") {
-    const current = normalizeComparableText(currentValue);
-    const ocr = normalizeComparableText(ocrValue);
-    if (!current && !ocr) {
-      return "empty";
-    }
-    if (!current && ocr) {
-      return "missing";
-    }
-    if (current && !ocr) {
-      return "ocr_missing";
-    }
-    return current === ocr ? "match" : "mismatch";
-  }
-
-  const digits = mode === "int" ? 0 : 2;
-  const current = normalizeComparableNumber(currentValue, digits);
-  const ocr = normalizeComparableNumber(ocrValue, digits);
-  if (current === null && ocr === null) {
-    return "empty";
-  }
-  if (current === null && ocr !== null) {
-    return "missing";
-  }
-  if (current !== null && ocr === null) {
-    return "ocr_missing";
-  }
-  return current === ocr ? "match" : "mismatch";
-}
-
-function getReviewComparisonLabel(status: ReviewComparisonStatus) {
-  switch (status) {
-    case "match":
-      return "Совпадает";
-    case "missing":
-      return "Нужно заполнить";
-    case "mismatch":
-      return "Расхождение";
-    case "ocr_missing":
-      return "Нет в OCR";
-    default:
-      return "Нет данных";
-  }
-}
-
-function getReviewComparisonColor(
-  status: ReviewComparisonStatus,
-): "default" | "success" | "warning" | "error" {
-  switch (status) {
-    case "match":
-      return "success";
-    case "missing":
-      return "warning";
-    case "mismatch":
-      return "error";
-    default:
-      return "default";
-  }
-}
-
-function readConfidenceValue(
-  confidenceMap: Record<string, unknown> | null | undefined,
-  ...keys: string[]
-) {
-  for (const key of keys) {
-    const rawValue = confidenceMap?.[key];
-    if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
-      return rawValue;
-    }
-  }
-  return null;
-}
-
-function resolveRepairDocumentId(repair: RepairDetail, preferredDocumentId: number | null) {
-  if (preferredDocumentId !== null && repair.documents.some((document) => document.id === preferredDocumentId)) {
-    return preferredDocumentId;
-  }
-  return repair.documents.find((document) => document.is_primary)?.id ?? repair.documents[0]?.id ?? null;
-}
-
-function repairHasDocumentsAwaitingOcr(repair: RepairDetail | null) {
-  return (
-    repair?.documents.some((document) => isDocumentAwaitingOcr(document.status) || documentHasActiveImportJob(document)) ??
-    false
-  );
-}
-
 function readCheckResolutionMeta(check: RepairDetail["checks"][number]): CheckResolutionMeta | null {
   const resolution = check.calculation_payload?.resolution;
   if (!resolution || typeof resolution !== "object") {
@@ -2512,19 +2356,6 @@ const historyDetailFormatters: HistoryDetailFormatters = {
   formatJsonPretty,
   readComparisonReviewMeta,
 };
-
-function getDocumentPreviewKind(mimeType: string | null | undefined): "pdf" | "image" | null {
-  if (!mimeType) {
-    return null;
-  }
-  if (mimeType === "application/pdf") {
-    return "pdf";
-  }
-  if (mimeType.startsWith("image/")) {
-    return "image";
-  }
-  return null;
-}
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_STORAGE_KEY) || "");

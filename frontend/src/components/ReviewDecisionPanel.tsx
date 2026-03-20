@@ -71,13 +71,14 @@ type ReviewDecisionPanelProps = {
   userRole: UserRole | undefined;
   selectedRepairStatus: string;
   selectedReviewItem: {
+    priority_bucket: "review" | "critical" | "suspicious";
     issue_titles: string[];
   } | null;
   selectedRepair: {
     service: {
       name: string;
     } | null;
-  };
+  } | null;
   selectedRepairDocument: {
     id: number;
     original_filename: string;
@@ -327,7 +328,7 @@ export function ReviewDecisionPanel({
                   ) : null}
 
                   <ReviewServicePanel
-                    currentServiceName={selectedRepair.service?.name || null}
+                    currentServiceName={selectedRepair?.service?.name || null}
                     ocrServiceName={selectedRepairDocumentOcrServiceName}
                     reviewServiceName={reviewServiceName}
                     services={services}

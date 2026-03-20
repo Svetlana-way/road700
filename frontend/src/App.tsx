@@ -118,6 +118,19 @@ import {
   splitEditorLines,
 } from "./shared/formStateFactories";
 import {
+  buildAuditLogQueryString,
+  buildFleetVehiclesQueryString,
+  buildGlobalSearchQueryString,
+  buildHistoricalWorkReferenceQueryString,
+  buildImportConflictsQueryString,
+  buildLaborNormQueryString,
+  buildOcrLearningSignalsQueryString,
+  buildOcrProfileMatchersQueryString,
+  buildOcrRulesQueryString,
+  buildServiceQueryString,
+  buildUsersQueryString,
+} from "./shared/queryBuilders";
+import {
   createRepairDraft,
   createReviewRepairFieldsDraft,
   getDocumentPreviewKind,
@@ -2127,25 +2140,6 @@ export default function App() {
     user?.role,
   ]);
 
-  function buildLaborNormQueryString(
-    query: string = laborNormQuery,
-    scope: string = laborNormScope,
-    category: string = laborNormCategory,
-  ) {
-    const params = new URLSearchParams();
-    params.set("limit", "12");
-    if (query.trim()) {
-      params.set("q", query.trim());
-    }
-    if (scope) {
-      params.set("scope", scope);
-    }
-    if (category) {
-      params.set("category", category);
-    }
-    return params.toString();
-  }
-
   async function loadLaborNormCatalog(
     activeToken: string,
     query: string = laborNormQuery,
@@ -2176,16 +2170,8 @@ export default function App() {
   ) {
     setServiceLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set("limit", "100");
-      if (query.trim()) {
-        params.set("q", query.trim());
-      }
-      if (city) {
-        params.set("city", city);
-      }
       const payload = await apiRequest<ServicesResponse>(
-        `/services?${params.toString()}`,
+        `/services?${buildServiceQueryString(query, city)}`,
         { method: "GET" },
         activeToken,
       );
@@ -2217,18 +2203,8 @@ export default function App() {
   ) {
     setHistoricalWorkReferenceLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set("limit", "20");
-      const normalizedQuery = query.trim();
-      if (normalizedQuery) {
-        params.set("q", normalizedQuery);
-      }
-      const normalizedMinSamples = Number(minSamplesValue.trim());
-      if (Number.isFinite(normalizedMinSamples) && normalizedMinSamples > 0) {
-        params.set("min_samples", String(Math.round(normalizedMinSamples)));
-      }
       const payload = await apiRequest<HistoricalWorkReferenceResponse>(
-        `/imports/historical-work-reference?${params.toString()}`,
+        `/imports/historical-work-reference?${buildHistoricalWorkReferenceQueryString(query, minSamplesValue)}`,
         { method: "GET" },
         activeToken,
       );
@@ -2243,7 +2219,7 @@ export default function App() {
     setImportConflictsLoading(true);
     try {
       const payload = await apiRequest<ImportConflictsResponse>(
-        `/imports/conflicts?status=${encodeURIComponent(status)}&limit=20`,
+        `/imports/conflicts?${buildImportConflictsQueryString(status)}`,
         { method: "GET" },
         activeToken,
       );
@@ -2279,12 +2255,9 @@ export default function App() {
   }
 
   async function loadOcrRules(activeToken: string, profileScope: string = ocrRuleProfileFilter) {
-    const params = new URLSearchParams();
-    if (profileScope) {
-      params.set("profile_scope", profileScope);
-    }
+    const queryString = buildOcrRulesQueryString(profileScope);
     const payload = await apiRequest<OcrRuleResponse>(
-      `/ocr-rules${params.toString() ? `?${params.toString()}` : ""}`,
+      `/ocr-rules${queryString ? `?${queryString}` : ""}`,
       { method: "GET" },
       activeToken,
     );
@@ -2297,12 +2270,9 @@ export default function App() {
     activeToken: string,
     profileScope: string = ocrProfileMatcherProfileFilter,
   ) {
-    const params = new URLSearchParams();
-    if (profileScope) {
-      params.set("profile_scope", profileScope);
-    }
+    const queryString = buildOcrProfileMatchersQueryString(profileScope);
     const payload = await apiRequest<OcrProfileMatcherResponse>(
-      `/ocr-profile-matchers${params.toString() ? `?${params.toString()}` : ""}`,
+      `/ocr-profile-matchers${queryString ? `?${queryString}` : ""}`,
       { method: "GET" },
       activeToken,
     );
@@ -2318,19 +2288,8 @@ export default function App() {
   ) {
     setOcrLearningLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set("limit", "50");
-      if (statusFilter) {
-        params.set("status", statusFilter);
-      }
-      if (targetFieldFilter) {
-        params.set("target_field", targetFieldFilter);
-      }
-      if (profileScopeFilter) {
-        params.set("profile_scope", profileScopeFilter);
-      }
       const payload = await apiRequest<OcrLearningResponse>(
-        `/ocr-learning/signals?${params.toString()}`,
+        `/ocr-learning/signals?${buildOcrLearningSignalsQueryString(statusFilter, targetFieldFilter, profileScopeFilter)}`,
         { method: "GET" },
         activeToken,
       );
@@ -2369,18 +2328,11 @@ export default function App() {
   ) {
     setFleetLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set("limit", String(VEHICLES_FULL_LIST_LIMIT));
-      if (query.trim()) {
-        params.set("search", query.trim());
-      }
-      if (vehicleType) {
-        params.set("vehicle_type", vehicleType);
-      }
-      if (statusFilter) {
-        params.set("status", statusFilter);
-      }
-      const payload = await apiRequest<VehiclesResponse>(`/vehicles?${params.toString()}`, { method: "GET" }, activeToken);
+      const payload = await apiRequest<VehiclesResponse>(
+        `/vehicles?${buildFleetVehiclesQueryString(VEHICLES_FULL_LIST_LIMIT, query, vehicleType, statusFilter)}`,
+        { method: "GET" },
+        activeToken,
+      );
       setFleetVehicles(payload.items);
       setFleetVehiclesTotal(payload.total);
       setSelectedFleetVehicleId((current) => {
@@ -2449,10 +2401,11 @@ export default function App() {
     }
     setGlobalSearchLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set("q", normalizedQuery);
-      params.set("limit_per_section", "8");
-      const payload = await apiRequest<GlobalSearchResponse>(`/search/global?${params.toString()}`, { method: "GET" }, activeToken);
+      const payload = await apiRequest<GlobalSearchResponse>(
+        `/search/global?${buildGlobalSearchQueryString(normalizedQuery)}`,
+        { method: "GET" },
+        activeToken,
+      );
       setGlobalSearchResult(payload);
     } finally {
       setGlobalSearchLoading(false);
@@ -2462,27 +2415,18 @@ export default function App() {
   async function loadAuditLog(activeToken: string) {
     setAuditLogLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set("limit", "80");
-      if (auditSearchQuery.trim()) {
-        params.set("search", auditSearchQuery.trim());
-      }
-      if (auditEntityTypeFilter) {
-        params.set("entity_type", auditEntityTypeFilter);
-      }
-      if (auditActionTypeFilter) {
-        params.set("action_type", auditActionTypeFilter);
-      }
-      if (auditUserIdFilter) {
-        params.set("user_id", auditUserIdFilter);
-      }
-      if (auditDateFrom) {
-        params.set("date_from", `${auditDateFrom}T00:00:00`);
-      }
-      if (auditDateTo) {
-        params.set("date_to", `${auditDateTo}T00:00:00`);
-      }
-      const payload = await apiRequest<AuditLogResponse>(`/audit?${params.toString()}`, { method: "GET" }, activeToken);
+      const payload = await apiRequest<AuditLogResponse>(
+        `/audit?${buildAuditLogQueryString(
+          auditSearchQuery,
+          auditEntityTypeFilter,
+          auditActionTypeFilter,
+          auditUserIdFilter,
+          auditDateFrom,
+          auditDateTo,
+        )}`,
+        { method: "GET" },
+        activeToken,
+      );
       setAuditLogItems(payload.items);
       setAuditLogTotal(payload.total);
       setAuditEntityTypes(payload.entity_types);
@@ -2495,12 +2439,11 @@ export default function App() {
   async function loadUsers(activeToken: string, search: string = userSearch) {
     setUserLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set("include_inactive", "true");
-      if (search.trim()) {
-        params.set("search", search.trim());
-      }
-      const payload = await apiRequest<UsersResponse>(`/users?${params.toString()}`, { method: "GET" }, activeToken);
+      const payload = await apiRequest<UsersResponse>(
+        `/users?${buildUsersQueryString(search)}`,
+        { method: "GET" },
+        activeToken,
+      );
       setUsersList(payload.items);
       setUsersTotal(payload.total);
       setSelectedManagedUserId((current) => {
@@ -2652,7 +2595,7 @@ export default function App() {
         ),
         me.role === "admin"
           ? apiRequest<LaborNormCatalogResponse>(
-              `/labor-norms?${buildLaborNormQueryString()}`,
+              `/labor-norms?${buildLaborNormQueryString(laborNormQuery, laborNormScope, laborNormCategory)}`,
               { method: "GET" },
               activeToken,
             )

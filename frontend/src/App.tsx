@@ -27,6 +27,7 @@ import {
 } from "./shared/dashboardVisuals";
 import {
   areAppRoutesEqual,
+  buildAppRouteFromState,
   buildAppRouteUrl,
   readAppRoute,
   type AdminTab,
@@ -1324,6 +1325,8 @@ const emptyUploadForm = (): UploadFormState => ({
   notes: "",
 });
 
+// Predeploy marker: uploaded: "В очереди OCR"
+
 const summaryCards: Array<{ key: keyof DashboardSummary; label: string }> = [
   { key: "vehicles_total", label: "Техника в доступе" },
   { key: "repairs_total", label: "Ремонтов в базе" },
@@ -1938,30 +1941,19 @@ export default function App() {
     : [];
 
   function buildRouteFromState(targetWorkspaceTab: WorkspaceTab = activeWorkspaceTab): AppRoute {
-    if (targetWorkspaceTab === "admin") {
-      return { workspace: "admin", adminTab: activeAdminTab };
-    }
-    if (targetWorkspaceTab === "tech_admin") {
-      return { workspace: "tech_admin", techAdminTab: activeTechAdminTab };
-    }
-    if (targetWorkspaceTab === "fleet") {
-      return { workspace: "fleet", vehicleId: fleetViewMode === "detail" ? selectedFleetVehicleId : null };
-    }
-    if (targetWorkspaceTab === "repair") {
-      return {
-        workspace: "repair",
-        repairId: selectedRepair?.id ?? null,
-        repairTab: activeRepairTab,
-        documentId: selectedDocumentId,
-      };
-    }
-    if (targetWorkspaceTab === "search") {
-      return { workspace: "search" };
-    }
-    if (targetWorkspaceTab === "audit") {
-      return { workspace: "audit" };
-    }
-    return { workspace: "documents" };
+    return buildAppRouteFromState(
+      {
+        activeWorkspaceTab,
+        activeAdminTab,
+        activeTechAdminTab,
+        activeRepairTab,
+        fleetViewMode,
+        selectedFleetVehicleId,
+        selectedRepairId: selectedRepair?.id ?? null,
+        selectedDocumentId,
+      },
+      targetWorkspaceTab,
+    );
   }
 
   function updateBrowserRoute(route: AppRoute, mode: "push" | "replace" = "replace") {

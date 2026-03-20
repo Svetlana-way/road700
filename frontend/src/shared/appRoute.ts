@@ -2,6 +2,7 @@ export type WorkspaceTab = "documents" | "repair" | "admin" | "tech_admin" | "fl
 export type AdminTab = "services" | "control" | "labor_norms" | "imports" | "employees" | "backups";
 export type TechAdminTab = "learning" | "matchers" | "rules";
 export type RepairTab = "overview" | "works" | "parts" | "documents" | "checks" | "history";
+export type FleetViewMode = "list" | "detail";
 
 export type AppRoute =
   | { workspace: "documents" }
@@ -11,6 +12,17 @@ export type AppRoute =
   | { workspace: "tech_admin"; techAdminTab: TechAdminTab }
   | { workspace: "fleet"; vehicleId: number | null }
   | { workspace: "repair"; repairId: number | null; repairTab: RepairTab; documentId: number | null };
+
+export type AppRouteStateSnapshot = {
+  activeWorkspaceTab: WorkspaceTab;
+  activeAdminTab: AdminTab;
+  activeTechAdminTab: TechAdminTab;
+  activeRepairTab: RepairTab;
+  fleetViewMode: FleetViewMode;
+  selectedFleetVehicleId: number | null;
+  selectedRepairId: number | null;
+  selectedDocumentId: number | null;
+};
 
 function normalizeAdminTab(value: string | null): AdminTab {
   if (value === "employees" || value === "control" || value === "labor_norms" || value === "imports" || value === "backups") {
@@ -113,6 +125,39 @@ export function buildAppRouteUrl(route: AppRoute): string {
   const query = params.toString();
   const path = route.repairId ? `/repairs/${route.repairId}` : "/repair";
   return query ? `${path}?${query}` : path;
+}
+
+export function buildAppRouteFromState(
+  state: AppRouteStateSnapshot,
+  targetWorkspaceTab: WorkspaceTab = state.activeWorkspaceTab,
+): AppRoute {
+  if (targetWorkspaceTab === "admin") {
+    return { workspace: "admin", adminTab: state.activeAdminTab };
+  }
+  if (targetWorkspaceTab === "tech_admin") {
+    return { workspace: "tech_admin", techAdminTab: state.activeTechAdminTab };
+  }
+  if (targetWorkspaceTab === "fleet") {
+    return {
+      workspace: "fleet",
+      vehicleId: state.fleetViewMode === "detail" ? state.selectedFleetVehicleId : null,
+    };
+  }
+  if (targetWorkspaceTab === "repair") {
+    return {
+      workspace: "repair",
+      repairId: state.selectedRepairId,
+      repairTab: state.activeRepairTab,
+      documentId: state.selectedDocumentId,
+    };
+  }
+  if (targetWorkspaceTab === "search") {
+    return { workspace: "search" };
+  }
+  if (targetWorkspaceTab === "audit") {
+    return { workspace: "audit" };
+  }
+  return { workspace: "documents" };
 }
 
 export function areAppRoutesEqual(left: AppRoute, right: AppRoute) {

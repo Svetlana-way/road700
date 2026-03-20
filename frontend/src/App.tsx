@@ -29,9 +29,6 @@ import { DataQualityOverviewPanel } from "./components/DataQualityOverviewPanel"
 import { DocumentsListPanel } from "./components/DocumentsListPanel";
 import { DocumentsUploadPanel } from "./components/DocumentsUploadPanel";
 import { EmployeesAdminPanel } from "./components/EmployeesAdminPanel";
-import { FleetPanel } from "./components/FleetPanel";
-import { FleetVehicleDetailPanel } from "./components/FleetVehicleDetailPanel";
-import { GlobalSearchPanel } from "./components/GlobalSearchPanel";
 import { HistoricalImportsAdminPanel } from "./components/HistoricalImportsAdminPanel";
 import { LaborNormsAdminPanel } from "./components/LaborNormsAdminPanel";
 import { OcrLearningAdminPanel } from "./components/OcrLearningAdminPanel";
@@ -42,6 +39,7 @@ import { ReviewRulesAdminPanel } from "./components/ReviewRulesAdminPanel";
 import { ReviewQueuePanel } from "./components/ReviewQueuePanel";
 import { ServicesAdminPanel } from "./components/ServicesAdminPanel";
 import { TechAdminWorkspacePanel } from "./components/TechAdminWorkspacePanel";
+import { WorkspaceOperationsPanels } from "./components/WorkspaceOperationsPanels";
 import { WorkspaceChromePanels } from "./components/WorkspaceChromePanels";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
 
@@ -8510,140 +8508,133 @@ export default function App() {
                   />
                 ) : null}
 
-                {activeWorkspaceTab === "search" ? (
-                  <GlobalSearchPanel
-                    query={globalSearchQuery}
-                    loading={globalSearchLoading}
-                    result={globalSearchResult}
-                    onQueryChange={setGlobalSearchQuery}
-                    onSubmit={(event) => {
+                <WorkspaceOperationsPanels
+                  activeWorkspaceTab={activeWorkspaceTab}
+                  searchProps={{
+                    query: globalSearchQuery,
+                    loading: globalSearchLoading,
+                    result: globalSearchResult,
+                    onQueryChange: setGlobalSearchQuery,
+                    onSubmit: (event) => {
                       void handleGlobalSearchSubmit(event);
-                    }}
-                    onReset={() => {
+                    },
+                    onReset: () => {
                       setGlobalSearchQuery("");
                       setGlobalSearchResult(null);
-                    }}
-                    onOpenRepair={(documentId, repairId) => {
+                    },
+                    onOpenRepair: (documentId, repairId) => {
                       void openRepairByIds(documentId, repairId);
-                    }}
-                    onOpenVehicle={openFleetVehicleById}
-                    statusColor={statusColor}
-                    vehicleStatusColor={vehicleStatusColor}
-                    formatDocumentStatusLabel={formatDocumentStatusLabel}
-                    formatRepairStatus={formatRepairStatus}
-                    formatVehicleTypeLabel={formatVehicleTypeLabel}
-                    formatVehicleStatusLabel={formatVehicleStatusLabel}
-                    formatConfidence={formatConfidence}
-                    formatDateTime={formatDateTime}
-                    formatMoney={formatMoney}
-                  />
-                ) : null}
-
-                {activeWorkspaceTab === "audit" ? (
-                  <AuditLogPanel
-                    userRole={user?.role}
-                    auditSearchQuery={auditSearchQuery}
-                    auditEntityTypeFilter={auditEntityTypeFilter}
-                    auditActionTypeFilter={auditActionTypeFilter}
-                    auditUserIdFilter={auditUserIdFilter}
-                    auditDateFrom={auditDateFrom}
-                    auditDateTo={auditDateTo}
-                    auditEntityTypes={auditEntityTypes}
-                    auditActionTypes={auditActionTypes}
-                    users={usersList}
-                    auditLogLoading={auditLogLoading}
-                    auditLogItems={auditLogItems}
-                    auditLogTotal={auditLogTotal}
-                    onAuditSearchQueryChange={setAuditSearchQuery}
-                    onAuditEntityTypeFilterChange={setAuditEntityTypeFilter}
-                    onAuditActionTypeFilterChange={setAuditActionTypeFilter}
-                    onAuditUserIdFilterChange={setAuditUserIdFilter}
-                    onAuditDateFromChange={setAuditDateFrom}
-                    onAuditDateToChange={setAuditDateTo}
-                    onRefresh={() => {
+                    },
+                    onOpenVehicle: openFleetVehicleById,
+                    statusColor,
+                    vehicleStatusColor,
+                    formatDocumentStatusLabel,
+                    formatRepairStatus,
+                    formatVehicleTypeLabel,
+                    formatVehicleStatusLabel,
+                    formatConfidence,
+                    formatDateTime,
+                    formatMoney,
+                  }}
+                  auditProps={{
+                    userRole: user?.role,
+                    auditSearchQuery,
+                    auditEntityTypeFilter,
+                    auditActionTypeFilter,
+                    auditUserIdFilter,
+                    auditDateFrom,
+                    auditDateTo,
+                    auditEntityTypes,
+                    auditActionTypes,
+                    users: usersList,
+                    auditLogLoading,
+                    auditLogItems,
+                    auditLogTotal,
+                    onAuditSearchQueryChange: setAuditSearchQuery,
+                    onAuditEntityTypeFilterChange: setAuditEntityTypeFilter,
+                    onAuditActionTypeFilterChange: setAuditActionTypeFilter,
+                    onAuditUserIdFilterChange: setAuditUserIdFilter,
+                    onAuditDateFromChange: setAuditDateFrom,
+                    onAuditDateToChange: setAuditDateTo,
+                    onRefresh: () => {
                       if (token) {
                         void loadAuditLog(token);
                       }
-                    }}
-                    onReset={() => {
+                    },
+                    onReset: () => {
                       setAuditSearchQuery("");
                       setAuditEntityTypeFilter("");
                       setAuditActionTypeFilter("");
                       setAuditUserIdFilter("");
                       setAuditDateFrom("");
                       setAuditDateTo("");
-                    }}
-                    formatAuditEntityLabel={formatAuditEntityLabel}
-                    formatHistoryActionLabel={formatHistoryActionLabel}
-                    formatDateTime={formatDateTime}
-                    renderEntryDetails={(entry) => renderHistoryDetails(`audit-${entry.id}`, buildAuditEntryDetails(entry))}
-                  />
-                ) : null}
-
-                {activeWorkspaceTab === "fleet" ? (
-                  <FleetPanel
-                    viewMode={fleetViewMode}
-                    detailContent={
-                      <FleetVehicleDetailPanel
-                        selectedFleetVehicleLoading={selectedFleetVehicleLoading}
-                        selectedFleetVehicle={selectedFleetVehicle}
-                        userRole={user?.role}
-                        vehicleSaving={vehicleSaving}
-                        vehicleExportLoading={vehicleExportLoading}
-                        vehicles={vehicles}
-                        fleetVehicles={fleetVehicles}
-                        onUpdateVehicleStatus={(status) => {
-                          void handleUpdateVehicle({ status });
-                        }}
-                        onExportVehicle={() => {
-                          void handleExportVehicle();
-                        }}
-                        onOpenRepair={(repairId) => {
-                          void openRepairByIds(null, repairId);
-                        }}
-                        formatVehicle={formatVehicle}
-                        formatVehicleTypeLabel={formatVehicleTypeLabel}
-                        formatVehicleStatusLabel={formatVehicleStatusLabel}
-                        formatDateValue={formatDateValue}
-                        formatDateTime={formatDateTime}
-                        formatMoney={formatMoney}
-                        formatUserRoleLabel={formatUserRoleLabel}
-                        formatRepairStatus={formatRepairStatus}
-                        vehicleStatusColor={vehicleStatusColor}
-                      />
-                    }
-                    fleetQuery={fleetQuery}
-                    fleetVehicleTypeFilter={fleetVehicleTypeFilter}
-                    fleetStatusFilter={fleetStatusFilter}
-                    fleetVehiclesTotal={fleetVehiclesTotal}
-                    selectedFleetVehicleId={selectedFleetVehicleId}
-                    fleetVehicles={fleetVehicles}
-                    fleetLoading={fleetLoading}
-                    onFleetQueryChange={setFleetQuery}
-                    onFleetVehicleTypeFilterChange={setFleetVehicleTypeFilter}
-                    onFleetStatusFilterChange={setFleetStatusFilter}
-                    onRefresh={() => {
+                    },
+                    formatAuditEntityLabel,
+                    formatHistoryActionLabel,
+                    formatDateTime,
+                    renderEntryDetails: (entry) => renderHistoryDetails(`audit-${entry.id}`, buildAuditEntryDetails(entry)),
+                  }}
+                  fleetProps={{
+                    viewMode: fleetViewMode,
+                    detailProps: {
+                      selectedFleetVehicleLoading,
+                      selectedFleetVehicle,
+                      userRole: user?.role,
+                      vehicleSaving,
+                      vehicleExportLoading,
+                      vehicles,
+                      fleetVehicles,
+                      onUpdateVehicleStatus: (status) => {
+                        void handleUpdateVehicle({ status });
+                      },
+                      onExportVehicle: () => {
+                        void handleExportVehicle();
+                      },
+                      onOpenRepair: (repairId) => {
+                        void openRepairByIds(null, repairId);
+                      },
+                      formatVehicle,
+                      formatVehicleTypeLabel,
+                      formatVehicleStatusLabel,
+                      formatDateValue,
+                      formatDateTime,
+                      formatMoney,
+                      formatUserRoleLabel,
+                      formatRepairStatus,
+                      vehicleStatusColor,
+                    },
+                    fleetQuery,
+                    fleetVehicleTypeFilter,
+                    fleetStatusFilter,
+                    fleetVehiclesTotal,
+                    selectedFleetVehicleId,
+                    fleetVehicles,
+                    fleetLoading,
+                    onFleetQueryChange: setFleetQuery,
+                    onFleetVehicleTypeFilterChange: setFleetVehicleTypeFilter,
+                    onFleetStatusFilterChange: setFleetStatusFilter,
+                    onRefresh: () => {
                       if (token) {
                         void loadFleetVehicles(token);
                       }
-                    }}
-                    onReset={() => {
+                    },
+                    onReset: () => {
                       setFleetQuery("");
                       setFleetVehicleTypeFilter("");
                       setFleetStatusFilter("");
                       if (token) {
                         void loadFleetVehicles(token, "", "", "");
                       }
-                    }}
-                    onReturnToList={returnToFleetList}
-                    onOpenVehicleCard={openFleetVehicleCard}
-                    formatVehicle={formatVehicle}
-                    formatVehicleTypeLabel={formatVehicleTypeLabel}
-                    formatVehicleStatusLabel={formatVehicleStatusLabel}
-                    formatDateValue={formatDateValue}
-                    vehicleStatusColor={vehicleStatusColor}
-                  />
-                ) : null}
+                    },
+                    onReturnToList: returnToFleetList,
+                    onOpenVehicleCard: openFleetVehicleCard,
+                    formatVehicle,
+                    formatVehicleTypeLabel,
+                    formatVehicleStatusLabel,
+                    formatDateValue,
+                    vehicleStatusColor,
+                  }}
+                />
               </Stack>
             </Grid>
           </Grid>

@@ -8,10 +8,6 @@ import {
   Chip,
   CircularProgress,
   Container,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
   Divider,
   Grid,
   MenuItem,
@@ -22,10 +18,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { AuditLogPanel } from "./components/AuditLogPanel";
-import { DataQualityOverviewPanel } from "./components/DataQualityOverviewPanel";
-import { WorkspaceContentPanels } from "./components/WorkspaceContentPanels";
-import { WorkspaceChromePanels } from "./components/WorkspaceChromePanels";
+import { WorkspaceMainView } from "./components/WorkspaceMainView";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
 
 type UserRole = "admin" | "employee";
@@ -7438,172 +7431,100 @@ export default function App() {
   }
 
   return (
-    <Box className="app-shell">
-      <Container maxWidth="xl">
-        <Stack spacing={3}>
-          <WorkspaceChromePanels
-            user={user ? { full_name: user.full_name, email: user.email, role: user.role } : null}
-            showPasswordChange={showPasswordChange}
-            currentPasswordValue={currentPasswordValue}
-            newPasswordValue={newPasswordValue}
-            passwordChangeLoading={passwordChangeLoading}
-            errorMessage={errorMessage}
-            successMessage={successMessage}
-            bootLoading={bootLoading}
-            activeWorkspaceTab={activeWorkspaceTab}
-            documentsCount={documents.length}
-            selectedRepairId={selectedRepair?.id ?? null}
-            showTechAdminTab={showTechAdminTab}
-            vehiclesCount={vehicles.length}
-            workspaceDescription={workspaceTabDescriptions[activeWorkspaceTab]}
-            summary={summary}
-            summaryCards={summaryCards}
-            onTogglePasswordChange={() => setShowPasswordChange((current) => !current)}
-            onCurrentPasswordValueChange={setCurrentPasswordValue}
-            onNewPasswordValueChange={setNewPasswordValue}
-            onChangePassword={() => {
-              void handleChangePassword();
-            }}
-            onCancelPasswordChange={() => {
-              setShowPasswordChange(false);
-              setCurrentPasswordValue("");
-              setNewPasswordValue("");
-            }}
-            onLogout={handleLogout}
-            onWorkspaceTabChange={handleWorkspaceTabChange}
-          />
-
-          <DataQualityOverviewPanel
-            dataQuality={dataQuality}
-            qualityCards={qualityCards}
-            repairVisualBars={repairVisualBars}
-            repairVisualMax={repairVisualMax}
-            qualityVisualBars={qualityVisualBars}
-            qualityVisualMax={qualityVisualMax}
-            attentionVisualBars={attentionVisualBars}
-            attentionVisualMax={attentionVisualMax}
-            topAttentionServices={topAttentionServices}
-            dataQualityDetails={dataQualityDetails}
-            showQualityDialog={showQualityDialog}
-            activeQualityTab={activeQualityTab}
-            userRole={user?.role}
-            onOpenQualityDialog={() => setShowQualityDialog(true)}
-            onCloseQualityDialog={() => setShowQualityDialog(false)}
-            onQualityTabChange={setActiveQualityTab}
-            onOpenQualityRepair={(documentId, repairId) => {
-              setShowQualityDialog(false);
-              void openQualityRepair(documentId, repairId);
-            }}
-            onOpenQualityService={(name) => {
-              setShowQualityDialog(false);
-              void openQualityService(name);
-            }}
-            onOpenImportConflict={(conflictId) => {
-              void openImportConflict(conflictId);
-            }}
-            buildDashboardVisualBarWidth={buildDashboardVisualBarWidth}
-            formatConfidence={formatConfidence}
-            formatMoney={formatMoney}
-            formatQualityVehicle={formatQualityVehicle}
-            statusColor={statusColor}
-            formatDocumentStatusLabel={formatDocumentStatusLabel}
-            formatRepairStatus={formatRepairStatus}
-            formatDateTime={formatDateTime}
-          />
-          <Dialog
-            open={showImportConflictDialog}
-            onClose={() => {
-              if (!importConflictSaving) {
-                setShowImportConflictDialog(false);
-              }
-            }}
-            fullWidth
-            maxWidth="md"
-          >
-            <DialogTitle>Разбор конфликта импорта</DialogTitle>
-            <DialogContent dividers>
-              {importConflictLoading ? (
-                <Stack spacing={2} alignItems="center">
-                  <CircularProgress size={24} />
-                  <Typography className="muted-copy">Загрузка конфликта...</Typography>
-                </Stack>
-              ) : selectedImportConflict ? (
-                <Stack spacing={2}>
-                  <Typography>
-                    {selectedImportConflict.entity_type} · {formatStatus(selectedImportConflict.status)}
-                  </Typography>
-                  <Typography className="muted-copy">
-                    {[selectedImportConflict.conflict_key, selectedImportConflict.source_filename, formatDateTime(selectedImportConflict.created_at)]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </Typography>
-                  <TextField
-                    label="Входящие данные"
-                    value={formatJsonPretty(selectedImportConflict.incoming_payload)}
-                    multiline
-                    minRows={6}
-                    fullWidth
-                    InputProps={{ readOnly: true }}
-                  />
-                  <TextField
-                    label="Существующие данные"
-                    value={formatJsonPretty(selectedImportConflict.existing_payload)}
-                    multiline
-                    minRows={6}
-                    fullWidth
-                    InputProps={{ readOnly: true }}
-                  />
-                  {selectedImportConflict.resolution_payload ? (
-                    <TextField
-                      label="Текущее решение"
-                      value={formatJsonPretty(selectedImportConflict.resolution_payload)}
-                      multiline
-                      minRows={4}
-                      fullWidth
-                      InputProps={{ readOnly: true }}
-                    />
-                  ) : null}
-                  <TextField
-                    label="Комментарий администратора"
-                    value={importConflictComment}
-                    onChange={(event) => setImportConflictComment(event.target.value)}
-                    fullWidth
-                    multiline
-                    minRows={3}
-                  />
-                </Stack>
-              ) : (
-                <Typography className="muted-copy">Конфликт не выбран.</Typography>
-              )}
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setShowImportConflictDialog(false)} disabled={importConflictSaving}>
-                Закрыть
-              </Button>
-              <Button
-                variant="outlined"
-                disabled={importConflictSaving || !selectedImportConflict}
-                onClick={() => {
-                  void handleResolveImportConflict("ignored");
-                }}
-              >
-                {importConflictSaving ? "Сохранение..." : "Игнорировать"}
-              </Button>
-              <Button
-                variant="contained"
-                disabled={importConflictSaving || !selectedImportConflict}
-                onClick={() => {
-                  void handleResolveImportConflict("resolved");
-                }}
-              >
-                {importConflictSaving ? "Сохранение..." : "Отметить решённым"}
-              </Button>
-            </DialogActions>
-          </Dialog>
-
-          <WorkspaceContentPanels
-            activeWorkspaceTab={activeWorkspaceTab}
-            documentsProps={{
+    <WorkspaceMainView
+      chromeProps={{
+        user: user ? { full_name: user.full_name, email: user.email, role: user.role } : null,
+        showPasswordChange,
+        currentPasswordValue,
+        newPasswordValue,
+        passwordChangeLoading,
+        errorMessage,
+        successMessage,
+        bootLoading,
+        activeWorkspaceTab,
+        documentsCount: documents.length,
+        selectedRepairId: selectedRepair?.id ?? null,
+        showTechAdminTab,
+        vehiclesCount: vehicles.length,
+        workspaceDescription: workspaceTabDescriptions[activeWorkspaceTab],
+        summary,
+        summaryCards,
+        onTogglePasswordChange: () => setShowPasswordChange((current) => !current),
+        onCurrentPasswordValueChange: setCurrentPasswordValue,
+        onNewPasswordValueChange: setNewPasswordValue,
+        onChangePassword: () => {
+          void handleChangePassword();
+        },
+        onCancelPasswordChange: () => {
+          setShowPasswordChange(false);
+          setCurrentPasswordValue("");
+          setNewPasswordValue("");
+        },
+        onLogout: handleLogout,
+        onWorkspaceTabChange: handleWorkspaceTabChange,
+      }}
+      dataQualityProps={{
+        dataQuality,
+        qualityCards,
+        repairVisualBars,
+        repairVisualMax,
+        qualityVisualBars,
+        qualityVisualMax,
+        attentionVisualBars,
+        attentionVisualMax,
+        topAttentionServices,
+        dataQualityDetails,
+        showQualityDialog,
+        activeQualityTab,
+        userRole: user?.role,
+        onOpenQualityDialog: () => setShowQualityDialog(true),
+        onCloseQualityDialog: () => setShowQualityDialog(false),
+        onQualityTabChange: setActiveQualityTab,
+        onOpenQualityRepair: (documentId, repairId) => {
+          setShowQualityDialog(false);
+          void openQualityRepair(documentId, repairId);
+        },
+        onOpenQualityService: (name) => {
+          setShowQualityDialog(false);
+          void openQualityService(name);
+        },
+        onOpenImportConflict: (conflictId) => {
+          void openImportConflict(conflictId);
+        },
+        buildDashboardVisualBarWidth,
+        formatConfidence,
+        formatMoney,
+        formatQualityVehicle,
+        statusColor,
+        formatDocumentStatusLabel,
+        formatRepairStatus,
+        formatDateTime,
+      }}
+      importConflictDialogProps={{
+        open: showImportConflictDialog,
+        importConflictLoading,
+        importConflictSaving,
+        selectedImportConflict,
+        importConflictComment,
+        onClose: () => {
+          if (!importConflictSaving) {
+            setShowImportConflictDialog(false);
+          }
+        },
+        onCommentChange: setImportConflictComment,
+        onIgnore: () => {
+          void handleResolveImportConflict("ignored");
+        },
+        onResolve: () => {
+          void handleResolveImportConflict("resolved");
+        },
+        formatStatus,
+        formatDateTime,
+        formatJsonPretty,
+      }}
+      contentProps={{
+        activeWorkspaceTab,
+        documentsProps: {
               active: activeWorkspaceTab === "documents",
               uploadProps: {
                 uploadForm,
@@ -7699,8 +7620,8 @@ export default function App() {
                 formatOcrProfileMeta,
                 formatLaborNormApplicability,
               },
-            }}
-            adminProps={{
+            },
+            adminProps: {
               activeWorkspaceTab,
               activeAdminTab,
               activeTechAdminTab,
@@ -8141,8 +8062,8 @@ export default function App() {
                 formatStatus,
                 formatHours,
               },
-            }}
-            repairProps={{
+            },
+            repairProps: {
               returnLabel: repairHasReturnTarget ? workspaceTabReturnLabels[repairReturnTabRef.current] : null,
               onReturn: repairHasReturnTarget ? returnFromRepairPage : null,
               contentProps: {
@@ -8452,8 +8373,8 @@ export default function App() {
                 reviewPriorityColor,
                 formatReviewPriority,
               },
-            }}
-            operationsProps={{
+            },
+            operationsProps: {
               activeWorkspaceTab,
               searchProps: {
                 query: globalSearchQuery,
@@ -8579,10 +8500,8 @@ export default function App() {
                 formatDateValue,
                 vehicleStatusColor,
               },
-            }}
+            },
+          }}
           />
-        </Stack>
-      </Container>
-    </Box>
   );
 }

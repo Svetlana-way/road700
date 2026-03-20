@@ -1,12 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import {
-  Box,
-  Button,
-  MenuItem,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { MenuItem } from "@mui/material";
 import { AuthLandingView } from "./components/AuthLandingView";
+import { HistoryDetailsPreview } from "./components/HistoryDetailsPreview";
 import { WorkspaceMainView } from "./components/WorkspaceMainView";
 import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
 
@@ -1629,8 +1624,6 @@ const rootDocumentKindOptions = documentKindOptions.filter(
   (option) => option.value === "order" || option.value === "repeat_scan",
 );
 const VEHICLES_FULL_LIST_LIMIT = 2000;
-const HISTORY_DETAIL_PREVIEW_LIMIT = 220;
-const HISTORY_DETAIL_PREVIEW_LINES = 3;
 const historyActionLabels: Record<string, string> = {
   manual_update: "Ручное редактирование ремонта",
   repair_archived: "Ремонт отправлен в архив",
@@ -3660,7 +3653,6 @@ export default function App() {
   const [documentComparisonComment, setDocumentComparisonComment] = useState("");
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
   const [historySearch, setHistorySearch] = useState("");
-  const [expandedHistoryEntries, setExpandedHistoryEntries] = useState<Record<string, boolean>>({});
   const [showRepairOverviewDetails, setShowRepairOverviewDetails] = useState(false);
   const [reviewActionComment, setReviewActionComment] = useState("");
   const [reviewFieldDraft, setReviewFieldDraft] = useState<ReviewRepairFieldsDraft | null>(null);
@@ -4813,7 +4805,6 @@ export default function App() {
         setDocumentComparisonComment("");
         setHistoryFilter("all");
         setHistorySearch("");
-        setExpandedHistoryEntries({});
         setAttachedDocumentKind("repeat_scan");
         setAttachedDocumentNotes("");
         setAttachedDocumentFile(null);
@@ -6931,47 +6922,6 @@ export default function App() {
     setRepairDraft((current) => (current ? { ...current, [field]: value } : current));
   }
 
-  function toggleHistoryEntry(entryKey: string) {
-    setExpandedHistoryEntries((current) => ({
-      ...current,
-      [entryKey]: !current[entryKey],
-    }));
-  }
-
-  function renderHistoryDetails(entryKey: string, lines: string[]) {
-    const text = lines.join("\n");
-    const previewLines = lines.slice(-HISTORY_DETAIL_PREVIEW_LINES);
-    const previewText = previewLines.join("\n");
-    const isExpandable = text.length > HISTORY_DETAIL_PREVIEW_LIMIT || lines.length > HISTORY_DETAIL_PREVIEW_LINES;
-    const isExpanded = Boolean(expandedHistoryEntries[entryKey]);
-    const visibleText =
-      !isExpandable || isExpanded
-        ? text
-        : previewText.length > HISTORY_DETAIL_PREVIEW_LIMIT
-          ? `${previewText.slice(0, HISTORY_DETAIL_PREVIEW_LIMIT).trimEnd()}...`
-          : previewText;
-
-    return (
-      <Stack spacing={0.5}>
-        <Typography className="muted-copy" sx={{ whiteSpace: "pre-line" }}>
-          {visibleText}
-        </Typography>
-        {isExpandable ? (
-          <Box>
-            <Button
-              size="small"
-              onClick={() => {
-                toggleHistoryEntry(entryKey);
-              }}
-            >
-              {isExpanded ? "Скрыть" : "Подробнее"}
-            </Button>
-          </Box>
-        ) : null}
-      </Stack>
-    );
-  }
-
   function updateWorkDraft(index: number, field: keyof EditableWorkDraft, value: EditableWorkDraft[keyof EditableWorkDraft]) {
     setRepairDraft((current) => {
       if (!current) {
@@ -8221,7 +8171,7 @@ export default function App() {
                           formatDocumentKind,
                           buildDocumentHistoryDetails,
                           buildRepairHistoryDetails,
-                          renderHistoryDetails,
+                          renderHistoryDetails: (_entryKey, lines) => <HistoryDetailsPreview lines={lines} />,
                         },
                       }
                     : null,
@@ -8294,7 +8244,7 @@ export default function App() {
                 formatAuditEntityLabel,
                 formatHistoryActionLabel,
                 formatDateTime,
-                renderEntryDetails: (entry) => renderHistoryDetails(`audit-${entry.id}`, buildAuditEntryDetails(entry)),
+                renderEntryDetails: (entry) => <HistoryDetailsPreview lines={buildAuditEntryDetails(entry)} />,
               },
               fleetProps: {
                 viewMode: fleetViewMode,

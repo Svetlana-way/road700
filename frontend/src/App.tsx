@@ -1,11 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  buildLaborNormCatalogCreatePayload,
-  buildLaborNormCatalogPayload,
-  buildLaborNormEntryPayload,
-  buildOcrProfileMatcherPayload,
-  buildOcrRulePayload,
-  buildReviewRulePayload,
   buildUserPayload,
 } from "./shared/adminPayloadBuilders";
 import { MenuItem } from "@mui/material";
@@ -14,6 +8,9 @@ import { HistoryDetailsPreview } from "./components/HistoryDetailsPreview";
 import { WorkspaceMainView } from "./components/WorkspaceMainView";
 import { useBackupsAdmin } from "./hooks/useBackupsAdmin";
 import { useEmployeesAdmin } from "./hooks/useEmployeesAdmin";
+import { useLaborNormsAdmin } from "./hooks/useLaborNormsAdmin";
+import { useOcrAdmin } from "./hooks/useOcrAdmin";
+import { useReviewRulesAdmin } from "./hooks/useReviewRulesAdmin";
 import { useRepairDocumentsWorkflow } from "./hooks/useRepairDocumentsWorkflow";
 import { useRepairEditingWorkflow } from "./hooks/useRepairEditingWorkflow";
 import { useFleetWorkspace } from "./hooks/useFleetWorkspace";
@@ -116,19 +113,9 @@ import {
   vehicleStatusColor,
 } from "./shared/displayFormatters";
 import {
-  createCatalogFormFromItem,
-  createEmptyCatalogForm,
   createEmptyDocumentVehicleForm,
-  createEmptyLaborNormEntryForm,
-  createEmptyOcrProfileMatcherForm,
-  createEmptyOcrRuleForm,
-  createEmptyReviewRuleForm,
   createEmptyUserAssignmentForm,
   createEmptyUserForm,
-  createLaborNormEntryFormFromItem,
-  createOcrProfileMatcherFormFromItem,
-  createOcrRuleFormFromItem,
-  createReviewRuleFormFromItem,
   createServiceFormFromItem,
   createUserFormFromItem,
 } from "./shared/formStateFactories";
@@ -149,10 +136,6 @@ import {
 import { loadWorkspaceBootstrapData } from "./shared/loadWorkspaceBootstrap";
 import {
   buildAuditLogQueryString,
-  buildLaborNormQueryString,
-  buildOcrLearningSignalsQueryString,
-  buildOcrProfileMatchersQueryString,
-  buildOcrRulesQueryString,
   buildServiceQueryString,
   buildUsersQueryString,
 } from "./shared/queryBuilders";
@@ -185,26 +168,12 @@ import type {
   DocumentsResponse,
   GlobalSearchResponse,
   ImportJobStatus,
-  LaborNormCatalogConfigItem,
-  LaborNormCatalogConfigResponse,
-  LaborNormCatalogItem,
-  LaborNormCatalogResponse,
-  OcrLearningResponse,
-  OcrLearningSignalItem,
-  OcrLearningSummaryItem,
-  OcrProfileMatcherItem,
-  OcrProfileMatcherResponse,
-  OcrRuleItem,
-  OcrRuleResponse,
   ReviewQueueCategory,
   ReviewQueueItem,
   ReviewQueueResponse,
-  ReviewRuleItem,
-  ReviewRuleResponse,
   ServiceItem,
   ServiceStatus,
   ServicesResponse,
-  SystemStatus,
   User,
   UserAssignment,
   UserItem,
@@ -214,41 +183,13 @@ import type {
 } from "./shared/workspaceBootstrapTypes";
 import type {
   DocumentVehicleFormState,
-  LaborNormCatalogFormState,
-  LaborNormEntryFormState,
-  OcrProfileMatcherFormState,
-  OcrRuleFormState,
   ReviewRepairFieldsDraft,
   ReviewRequiredFieldComparisonItem,
-  ReviewRuleFormState,
   ServiceFormState,
   UploadFormState,
   UserAssignmentFormState,
   UserFormState,
 } from "./shared/workspaceFormTypes";
-
-type OcrLearningDraftsResponse = {
-  signal: OcrLearningSignalItem;
-  ocr_rule_draft: {
-    profile_scope: string;
-    target_field: string;
-    pattern: string;
-    value_parser: string;
-    confidence: number;
-    priority: number;
-    notes: string | null;
-  };
-  matcher_draft: {
-    profile_scope: string;
-    title: string;
-    source_type: string | null;
-    filename_pattern: string | null;
-    text_pattern: string | null;
-    service_name_pattern: string | null;
-    priority: number;
-    notes: string | null;
-  };
-};
 
 type DocumentUploadResponse = {
   document: DocumentItem;
@@ -263,15 +204,6 @@ type DocumentBatchProcessResponse = {
   job_ids?: number[];
   status_counts: Record<string, number>;
   message: string;
-};
-
-type LaborNormImportResponse = {
-  message: string;
-  filename: string;
-  imported_at: string;
-  created: number;
-  updated: number;
-  skipped: number;
 };
 
 type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
@@ -481,12 +413,6 @@ export default function App() {
   const [showTechAdminTab, setShowTechAdminTab] = useState(false);
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [showPasswordRecoveryRequest, setShowPasswordRecoveryRequest] = useState(false);
-  const [showReviewRuleEditor, setShowReviewRuleEditor] = useState(false);
-  const [showReviewRuleListDialog, setShowReviewRuleListDialog] = useState(false);
-  const [showLaborNormCatalogEditor, setShowLaborNormCatalogEditor] = useState(false);
-  const [showLaborNormImport, setShowLaborNormImport] = useState(false);
-  const [showLaborNormEntryEditor, setShowLaborNormEntryEditor] = useState(false);
-  const [showLaborNormListDialog, setShowLaborNormListDialog] = useState(false);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [dataQuality, setDataQuality] = useState<DashboardDataQuality | null>(null);
   const [dataQualityDetails, setDataQualityDetails] = useState<DashboardDataQualityDetails | null>(null);
@@ -496,57 +422,7 @@ export default function App() {
   const repairScrollPositionRef = useRef(0);
   const [repairHasReturnTarget, setRepairHasReturnTarget] = useState(false);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
-  const [laborNorms, setLaborNorms] = useState<LaborNormCatalogItem[]>([]);
-  const [laborNormCatalogs, setLaborNormCatalogs] = useState<LaborNormCatalogConfigItem[]>([]);
-  const [laborNormTotal, setLaborNormTotal] = useState(0);
-  const [laborNormScopes, setLaborNormScopes] = useState<string[]>([]);
-  const [laborNormCategories, setLaborNormCategories] = useState<string[]>([]);
-  const [laborNormSourceFiles, setLaborNormSourceFiles] = useState<string[]>([]);
-  const [laborNormQuery, setLaborNormQuery] = useState("");
-  const [laborNormScope, setLaborNormScope] = useState("");
-  const [laborNormCategory, setLaborNormCategory] = useState("");
-  const [laborNormLoading, setLaborNormLoading] = useState(false);
-  const [laborNormImportLoading, setLaborNormImportLoading] = useState(false);
-  const [laborNormFile, setLaborNormFile] = useState<File | null>(null);
-  const [laborNormImportScope, setLaborNormImportScope] = useState("");
-  const [laborNormImportBrandFamily, setLaborNormImportBrandFamily] = useState("");
-  const [laborNormImportCatalogName, setLaborNormImportCatalogName] = useState("");
-  const [laborNormCatalogSaving, setLaborNormCatalogSaving] = useState(false);
-  const [laborNormEntrySaving, setLaborNormEntrySaving] = useState(false);
-  const [editingLaborNormCatalogId, setEditingLaborNormCatalogId] = useState<number | null>(null);
-  const [laborNormCatalogForm, setLaborNormCatalogForm] = useState<LaborNormCatalogFormState>(createEmptyCatalogForm);
-  const [laborNormEntryForm, setLaborNormEntryForm] = useState<LaborNormEntryFormState>(createEmptyLaborNormEntryForm);
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
-  const [reviewRules, setReviewRules] = useState<ReviewRuleItem[]>([]);
-  const [reviewRuleTypes, setReviewRuleTypes] = useState<string[]>([]);
-  const [reviewRuleSaving, setReviewRuleSaving] = useState(false);
-  const [reviewRuleForm, setReviewRuleForm] = useState<ReviewRuleFormState>(createEmptyReviewRuleForm);
-  const [ocrRules, setOcrRules] = useState<OcrRuleItem[]>([]);
-  const [ocrRuleProfiles, setOcrRuleProfiles] = useState<string[]>([]);
-  const [ocrRuleTargetFields, setOcrRuleTargetFields] = useState<string[]>([]);
-  const [ocrRuleProfileFilter, setOcrRuleProfileFilter] = useState("");
-  const [ocrRuleSaving, setOcrRuleSaving] = useState(false);
-  const [ocrRuleForm, setOcrRuleForm] = useState<OcrRuleFormState>(createEmptyOcrRuleForm);
-  const [ocrProfileMatchers, setOcrProfileMatchers] = useState<OcrProfileMatcherItem[]>([]);
-  const [ocrProfileMatcherProfiles, setOcrProfileMatcherProfiles] = useState<string[]>([]);
-  const [ocrProfileMatcherProfileFilter, setOcrProfileMatcherProfileFilter] = useState("");
-  const [ocrProfileMatcherSaving, setOcrProfileMatcherSaving] = useState(false);
-  const [ocrProfileMatcherForm, setOcrProfileMatcherForm] = useState<OcrProfileMatcherFormState>(
-    createEmptyOcrProfileMatcherForm,
-  );
-  const [ocrLearningSignals, setOcrLearningSignals] = useState<OcrLearningSignalItem[]>([]);
-  const [ocrLearningSummaries, setOcrLearningSummaries] = useState<OcrLearningSummaryItem[]>([]);
-  const [ocrLearningStatuses, setOcrLearningStatuses] = useState<string[]>([]);
-  const [ocrLearningTargetFields, setOcrLearningTargetFields] = useState<string[]>([]);
-  const [ocrLearningProfileScopes, setOcrLearningProfileScopes] = useState<string[]>([]);
-  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
-  const [ocrLearningStatusFilter, setOcrLearningStatusFilter] = useState("");
-  const [ocrLearningTargetFieldFilter, setOcrLearningTargetFieldFilter] = useState("");
-  const [ocrLearningProfileScopeFilter, setOcrLearningProfileScopeFilter] = useState("");
-  const [showOcrLearningListDialog, setShowOcrLearningListDialog] = useState(false);
-  const [ocrLearningLoading, setOcrLearningLoading] = useState(false);
-  const [ocrLearningUpdateId, setOcrLearningUpdateId] = useState<number | null>(null);
-  const [ocrLearningDraftId, setOcrLearningDraftId] = useState<number | null>(null);
   const [reviewQueueCounts, setReviewQueueCounts] = useState<Record<ReviewQueueCategory, number>>({
     all: 0,
     suspicious: 0,
@@ -662,6 +538,138 @@ export default function App() {
     userRole: user?.role,
     setErrorMessage,
     setSuccessMessage,
+  });
+  const {
+    showReviewRuleEditor,
+    setShowReviewRuleEditor,
+    showReviewRuleListDialog,
+    setShowReviewRuleListDialog,
+    reviewRules,
+    reviewRuleTypes,
+    reviewRuleSaving,
+    reviewRuleForm,
+    applyBootstrapReviewRules,
+    updateReviewRuleFormField,
+    editReviewRule,
+    resetReviewRuleEditor,
+    handleSaveReviewRule,
+    resetReviewRulesState,
+  } = useReviewRulesAdmin({
+    token,
+    userRole: user?.role,
+    setErrorMessage,
+    setSuccessMessage,
+    openReviewRulesAdmin,
+  });
+  const {
+    showLaborNormCatalogEditor,
+    setShowLaborNormCatalogEditor,
+    showLaborNormImport,
+    setShowLaborNormImport,
+    showLaborNormEntryEditor,
+    setShowLaborNormEntryEditor,
+    showLaborNormListDialog,
+    setShowLaborNormListDialog,
+    laborNorms,
+    laborNormCatalogs,
+    laborNormTotal,
+    laborNormScopes,
+    laborNormCategories,
+    laborNormSourceFiles,
+    laborNormQuery,
+    setLaborNormQuery,
+    laborNormScope,
+    setLaborNormScope,
+    laborNormCategory,
+    setLaborNormCategory,
+    laborNormLoading,
+    laborNormImportLoading,
+    laborNormFile,
+    setLaborNormFile,
+    laborNormImportScope,
+    laborNormImportBrandFamily,
+    setLaborNormImportBrandFamily,
+    laborNormImportCatalogName,
+    setLaborNormImportCatalogName,
+    laborNormCatalogSaving,
+    laborNormEntrySaving,
+    editingLaborNormCatalogId,
+    laborNormCatalogForm,
+    laborNormEntryForm,
+    applyBootstrapLaborNorms,
+    updateLaborNormCatalogFormField,
+    handleLaborNormSearch,
+    resetLaborNormFilters,
+    handleLaborNormImport,
+    editLaborNormCatalog,
+    resetLaborNormCatalogEditor,
+    selectCatalogScope,
+    handleSaveLaborNormCatalog,
+    updateLaborNormEntryFormField,
+    editLaborNormItem,
+    resetLaborNormEntryEditor,
+    handleSaveLaborNormEntry,
+    handleArchiveLaborNormItem,
+    resetLaborNormsState,
+  } = useLaborNormsAdmin({
+    token,
+    userRole: user?.role,
+    setErrorMessage,
+    setSuccessMessage,
+    openLaborNormsAdmin,
+  });
+  const {
+    ocrRules,
+    ocrRuleProfiles,
+    ocrRuleTargetFields,
+    ocrRuleProfileFilter,
+    setOcrRuleProfileFilter,
+    ocrRuleSaving,
+    ocrRuleForm,
+    ocrProfileMatchers,
+    ocrProfileMatcherProfiles,
+    ocrProfileMatcherProfileFilter,
+    setOcrProfileMatcherProfileFilter,
+    ocrProfileMatcherSaving,
+    ocrProfileMatcherForm,
+    ocrLearningSignals,
+    ocrLearningSummaries,
+    ocrLearningStatuses,
+    ocrLearningTargetFields,
+    ocrLearningProfileScopes,
+    systemStatus,
+    ocrLearningStatusFilter,
+    setOcrLearningStatusFilter,
+    ocrLearningTargetFieldFilter,
+    setOcrLearningTargetFieldFilter,
+    ocrLearningProfileScopeFilter,
+    setOcrLearningProfileScopeFilter,
+    showOcrLearningListDialog,
+    setShowOcrLearningListDialog,
+    ocrLearningLoading,
+    ocrLearningUpdateId,
+    ocrLearningDraftId,
+    applyBootstrapOcrAdmin,
+    loadOcrRules,
+    loadOcrProfileMatchers,
+    loadOcrLearningSignals,
+    updateOcrRuleFormField,
+    editOcrRule,
+    resetOcrRuleEditor,
+    handleSaveOcrRule,
+    updateOcrProfileMatcherFormField,
+    editOcrProfileMatcher,
+    resetOcrProfileMatcherEditor,
+    handleSaveOcrProfileMatcher,
+    handleUpdateOcrLearningSignal,
+    handleLoadOcrLearningDraft,
+    resetOcrAdminState,
+  } = useOcrAdmin({
+    token,
+    userRole: user?.role,
+    setErrorMessage,
+    setSuccessMessage,
+    openTechAdmin,
   });
   const {
     historicalImportLoading,
@@ -1392,101 +1400,6 @@ export default function App() {
     user?.role,
   ]);
 
-  async function loadLaborNormCatalog(
-    activeToken: string,
-    query: string = laborNormQuery,
-    scope: string = laborNormScope,
-    category: string = laborNormCategory,
-  ) {
-    setLaborNormLoading(true);
-    try {
-      const payload = await apiRequest<LaborNormCatalogResponse>(
-        `/labor-norms?${buildLaborNormQueryString(query, scope, category)}`,
-        { method: "GET" },
-        activeToken,
-      );
-      setLaborNorms(payload.items);
-      setLaborNormTotal(payload.total);
-      setLaborNormScopes(payload.scopes);
-      setLaborNormCategories(payload.categories);
-      setLaborNormSourceFiles(payload.source_files);
-    } finally {
-      setLaborNormLoading(false);
-    }
-  }
-
-  async function loadReviewRules(activeToken: string) {
-    const payload = await apiRequest<ReviewRuleResponse>("/review/rules", { method: "GET" }, activeToken);
-    setReviewRules(payload.items);
-    setReviewRuleTypes(payload.rule_types);
-  }
-
-  async function loadOcrRules(activeToken: string, profileScope: string = ocrRuleProfileFilter) {
-    const queryString = buildOcrRulesQueryString(profileScope);
-    const payload = await apiRequest<OcrRuleResponse>(
-      `/ocr-rules${queryString ? `?${queryString}` : ""}`,
-      { method: "GET" },
-      activeToken,
-    );
-    setOcrRules(payload.items);
-    setOcrRuleProfiles(payload.profile_scopes);
-    setOcrRuleTargetFields(payload.target_fields);
-  }
-
-  async function loadOcrProfileMatchers(
-    activeToken: string,
-    profileScope: string = ocrProfileMatcherProfileFilter,
-  ) {
-    const queryString = buildOcrProfileMatchersQueryString(profileScope);
-    const payload = await apiRequest<OcrProfileMatcherResponse>(
-      `/ocr-profile-matchers${queryString ? `?${queryString}` : ""}`,
-      { method: "GET" },
-      activeToken,
-    );
-    setOcrProfileMatchers(payload.items);
-    setOcrProfileMatcherProfiles(payload.profile_scopes);
-  }
-
-  async function loadOcrLearningSignals(
-    activeToken: string,
-    statusFilter: string = ocrLearningStatusFilter,
-    targetFieldFilter: string = ocrLearningTargetFieldFilter,
-    profileScopeFilter: string = ocrLearningProfileScopeFilter,
-  ) {
-    setOcrLearningLoading(true);
-    try {
-      const payload = await apiRequest<OcrLearningResponse>(
-        `/ocr-learning/signals?${buildOcrLearningSignalsQueryString(statusFilter, targetFieldFilter, profileScopeFilter)}`,
-        { method: "GET" },
-        activeToken,
-      );
-      setOcrLearningSignals(payload.items);
-      setOcrLearningSummaries(payload.summaries);
-      setOcrLearningStatuses(payload.statuses);
-      setOcrLearningTargetFields(payload.target_fields);
-      setOcrLearningProfileScopes(payload.profile_scopes);
-    } finally {
-      setOcrLearningLoading(false);
-    }
-  }
-
-  async function loadLaborNormCatalogConfigs(activeToken: string) {
-    const payload = await apiRequest<LaborNormCatalogConfigResponse>(
-      "/labor-norms/catalogs",
-      { method: "GET" },
-      activeToken,
-    );
-    setLaborNormCatalogs(payload.items);
-    if (!editingLaborNormCatalogId) {
-      setLaborNormCatalogForm((current) => {
-        if (current.scope || current.catalog_name || current.brand_family || current.notes) {
-          return current;
-        }
-        return createEmptyCatalogForm();
-      });
-    }
-  }
-
   async function loadWorkspace(
     activeToken: string,
     reviewCategory: ReviewQueueCategory = selectedReviewCategory,
@@ -1538,28 +1451,17 @@ export default function App() {
       applyBootstrapVehicleList(vehicleList);
       applyRecentDocuments(recentDocuments.items);
       applyBootstrapUsers(usersPayload);
-      setLaborNorms(laborNormCatalog?.items || []);
-      setLaborNormTotal(laborNormCatalog?.total || 0);
-      setLaborNormScopes(laborNormCatalog?.scopes || []);
-      setLaborNormCategories(laborNormCatalog?.categories || []);
-      setLaborNormSourceFiles(laborNormCatalog?.source_files || []);
-      setLaborNormCatalogs(laborNormCatalogConfigs?.items || []);
+      applyBootstrapLaborNorms({ laborNormCatalog, laborNormCatalogConfigs });
       setReviewQueue(reviewQueueData.items);
       setReviewQueueCounts(reviewQueueData.counts);
       applyBootstrapServices(servicesPayload);
-      setReviewRules(reviewRulesPayload?.items || []);
-      setReviewRuleTypes(reviewRulesPayload?.rule_types || []);
-      setOcrRules(ocrRulesPayload?.items || []);
-      setOcrRuleProfiles(ocrRulesPayload?.profile_scopes || []);
-      setOcrRuleTargetFields(ocrRulesPayload?.target_fields || []);
-      setOcrProfileMatchers(ocrProfileMatchersPayload?.items || []);
-      setOcrProfileMatcherProfiles(ocrProfileMatchersPayload?.profile_scopes || []);
-      setOcrLearningSignals(ocrLearningPayload?.items || []);
-      setOcrLearningSummaries(ocrLearningPayload?.summaries || []);
-      setOcrLearningStatuses(ocrLearningPayload?.statuses || []);
-      setOcrLearningTargetFields(ocrLearningPayload?.target_fields || []);
-      setOcrLearningProfileScopes(ocrLearningPayload?.profile_scopes || []);
-      setSystemStatus(systemStatusPayload);
+      applyBootstrapReviewRules(reviewRulesPayload);
+      applyBootstrapOcrAdmin({
+        ocrRulesPayload,
+        ocrProfileMatchersPayload,
+        ocrLearningPayload,
+        systemStatusPayload,
+      });
       if (selectedDocumentId === null) {
         const defaultDocumentId =
           reviewQueueData.items[0]?.document.id ?? recentDocuments.items[0]?.id ?? null;
@@ -1676,37 +1578,16 @@ export default function App() {
       setVehicles([]);
       resetFleetState();
       resetOperationsState();
+      resetLaborNormsState();
+      resetReviewRulesState();
       resetReviewWorkflowState();
       resetRepairEditingState();
       setDocuments([]);
       resetUsersState();
       resetServicesState();
-      setReviewRules([]);
-      setReviewRuleTypes([]);
-      setOcrRules([]);
-      setOcrRuleProfiles([]);
-      setOcrRuleTargetFields([]);
-      setOcrProfileMatchers([]);
-      setOcrProfileMatcherProfiles([]);
-      setOcrLearningSignals([]);
-      setOcrLearningSummaries([]);
-      setOcrLearningStatuses([]);
-      setOcrLearningTargetFields([]);
-      setOcrLearningProfileScopes([]);
-      setSystemStatus(null);
+      resetOcrAdminState();
       resetBackupsState();
-      setLaborNorms([]);
-      setLaborNormCatalogs([]);
-      setLaborNormTotal(0);
-      setLaborNormScopes([]);
-      setLaborNormCategories([]);
-      setLaborNormSourceFiles([]);
       resetHistoricalImportsState();
-      setLaborNormCatalogForm(createEmptyCatalogForm());
-      setLaborNormEntryForm(createEmptyLaborNormEntryForm());
-      setReviewRuleForm(createEmptyReviewRuleForm());
-      setOcrRuleForm(createEmptyOcrRuleForm());
-      setOcrProfileMatcherForm(createEmptyOcrProfileMatcherForm());
       setReviewQueue([]);
       setReviewQueueCounts({
         all: 0,
@@ -1725,18 +1606,6 @@ export default function App() {
     }
     void loadWorkspace(token, selectedReviewCategory);
   }, [selectedReviewCategory, token]);
-
-  useEffect(() => {
-    if (laborNormCatalogs.length === 0) {
-      return;
-    }
-    if (!laborNormEntryForm.scope) {
-      setLaborNormEntryForm((current) => ({ ...current, scope: laborNormCatalogs[0].scope }));
-    }
-    if (!laborNormImportScope) {
-      handleCatalogScopeSelected(laborNormCatalogs[0].scope);
-    }
-  }, [laborNormCatalogs, laborNormEntryForm.scope, laborNormImportScope]);
 
   useEffect(() => {
     if (!token) {
@@ -2238,18 +2107,6 @@ export default function App() {
     }
   }
 
-  async function handleLaborNormSearch() {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    setErrorMessage("");
-    try {
-      await loadLaborNormCatalog(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить справочник нормо-часов");
-    }
-  }
-
   function openTechAdmin(tab: TechAdminTab = "learning") {
     setShowTechAdminTab(true);
     setActiveWorkspaceTab("tech_admin");
@@ -2264,260 +2121,16 @@ export default function App() {
     updateBrowserRoute({ workspace: "admin", adminTab: activeAdminTab }, "push");
   }
 
-  function handleEditReviewRule(item: ReviewRuleItem) {
+  function openReviewRulesAdmin() {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("control");
     updateBrowserRoute({ workspace: "admin", adminTab: "control" }, "push");
-    setShowReviewRuleEditor(true);
-    setReviewRuleForm(createReviewRuleFormFromItem(item));
   }
 
-  function resetReviewRuleEditor() {
-    setReviewRuleForm(createEmptyReviewRuleForm());
-  }
-
-  async function handleSaveReviewRule() {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    if (!reviewRuleForm.rule_type.trim() || !reviewRuleForm.code.trim() || !reviewRuleForm.title.trim()) {
-      setErrorMessage("Для правила обязательны тип, код и название");
-      return;
-    }
-
-    setReviewRuleSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const payload = buildReviewRulePayload(reviewRuleForm);
-
-      if (reviewRuleForm.id) {
-        await apiRequest<ReviewRuleItem>(
-          `/review/rules/${reviewRuleForm.id}`,
-          {
-            method: "PATCH",
-            body: JSON.stringify({
-              title: payload.title,
-              weight: payload.weight,
-              bucket_override: payload.bucket_override,
-              is_active: payload.is_active,
-              sort_order: payload.sort_order,
-              notes: payload.notes,
-            }),
-          },
-          token,
-        );
-        setSuccessMessage("Правило очереди проверки обновлено");
-      } else {
-        await apiRequest<ReviewRuleItem>(
-          "/review/rules",
-          {
-            method: "POST",
-            body: JSON.stringify(payload),
-          },
-          token,
-        );
-        setSuccessMessage("Правило очереди проверки создано");
-      }
-
-      await loadReviewRules(token);
-      resetReviewRuleEditor();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить правило проверки");
-    } finally {
-      setReviewRuleSaving(false);
-    }
-  }
-
-  function handleEditOcrRule(item: OcrRuleItem) {
-    openTechAdmin("rules");
-    setOcrRuleForm(createOcrRuleFormFromItem(item));
-  }
-
-  function resetOcrRuleEditor() {
-    setOcrRuleForm(createEmptyOcrRuleForm());
-  }
-
-  async function handleSaveOcrRule() {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    if (!ocrRuleForm.profile_scope.trim() || !ocrRuleForm.target_field.trim() || !ocrRuleForm.pattern.trim()) {
-      setErrorMessage("Для OCR-правила обязательны шаблон, поле и выражение поиска");
-      return;
-    }
-
-    setOcrRuleSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const payload = buildOcrRulePayload(ocrRuleForm);
-
-      if (ocrRuleForm.id) {
-        await apiRequest<OcrRuleItem>(
-          `/ocr-rules/${ocrRuleForm.id}`,
-          {
-            method: "PATCH",
-            body: JSON.stringify(payload),
-          },
-          token,
-        );
-        setSuccessMessage("OCR-правило обновлено");
-      } else {
-        await apiRequest<OcrRuleItem>(
-          "/ocr-rules",
-          {
-            method: "POST",
-            body: JSON.stringify(payload),
-          },
-          token,
-        );
-        setSuccessMessage("OCR-правило создано");
-      }
-
-      await loadOcrRules(token, ocrRuleProfileFilter);
-      resetOcrRuleEditor();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить OCR-правило");
-    } finally {
-      setOcrRuleSaving(false);
-    }
-  }
-
-  function handleEditOcrProfileMatcher(item: OcrProfileMatcherItem) {
-    openTechAdmin("matchers");
-    setOcrProfileMatcherForm(createOcrProfileMatcherFormFromItem(item));
-  }
-
-  function resetOcrProfileMatcherEditor() {
-    setOcrProfileMatcherForm(createEmptyOcrProfileMatcherForm());
-  }
-
-  async function handleSaveOcrProfileMatcher() {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    if (!ocrProfileMatcherForm.profile_scope.trim() || !ocrProfileMatcherForm.title.trim()) {
-      setErrorMessage("Для правила выбора шаблона обязательны шаблон и название");
-      return;
-    }
-
-    setOcrProfileMatcherSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const payload = buildOcrProfileMatcherPayload(ocrProfileMatcherForm);
-
-      if (ocrProfileMatcherForm.id) {
-        await apiRequest<OcrProfileMatcherItem>(
-          `/ocr-profile-matchers/${ocrProfileMatcherForm.id}`,
-          {
-            method: "PATCH",
-            body: JSON.stringify(payload),
-          },
-          token,
-        );
-        setSuccessMessage("Правило выбора шаблона обновлено");
-      } else {
-        await apiRequest<OcrProfileMatcherItem>(
-          "/ocr-profile-matchers",
-          {
-            method: "POST",
-            body: JSON.stringify(payload),
-          },
-          token,
-        );
-        setSuccessMessage("Правило выбора шаблона создано");
-      }
-
-      await loadOcrProfileMatchers(token, ocrProfileMatcherProfileFilter);
-      resetOcrProfileMatcherEditor();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить правило выбора шаблона");
-    } finally {
-      setOcrProfileMatcherSaving(false);
-    }
-  }
-
-  async function handleUpdateOcrLearningSignal(signalId: number, nextStatus: string) {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    setOcrLearningUpdateId(signalId);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      await apiRequest<OcrLearningSignalItem>(
-        `/ocr-learning/signals/${signalId}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ status: nextStatus }),
-        },
-        token,
-      );
-      setSuccessMessage("OCR-сигнал обновлён");
-      await loadOcrLearningSignals(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось обновить OCR-сигнал");
-    } finally {
-      setOcrLearningUpdateId(null);
-    }
-  }
-
-  async function handleLoadOcrLearningDraft(
-    signalId: number,
-    target: "ocr_rule" | "matcher",
-  ) {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    setOcrLearningDraftId(signalId);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const payload = await apiRequest<OcrLearningDraftsResponse>(
-        `/ocr-learning/signals/${signalId}/drafts`,
-        { method: "GET" },
-        token,
-      );
-
-      if (target === "ocr_rule") {
-        openTechAdmin("rules");
-        setOcrRuleForm({
-          id: null,
-          profile_scope: payload.ocr_rule_draft.profile_scope,
-          target_field: payload.ocr_rule_draft.target_field,
-          pattern: payload.ocr_rule_draft.pattern,
-          value_parser: payload.ocr_rule_draft.value_parser,
-          confidence: String(payload.ocr_rule_draft.confidence),
-          priority: String(payload.ocr_rule_draft.priority),
-          is_active: "true",
-          notes: payload.ocr_rule_draft.notes || "",
-        });
-        setOcrRuleProfileFilter(payload.ocr_rule_draft.profile_scope);
-        setSuccessMessage("Черновик OCR-правила перенесён в форму редактирования");
-      } else {
-        openTechAdmin("matchers");
-        setOcrProfileMatcherForm({
-          id: null,
-          profile_scope: payload.matcher_draft.profile_scope,
-          title: payload.matcher_draft.title,
-          source_type: payload.matcher_draft.source_type || "",
-          filename_pattern: payload.matcher_draft.filename_pattern || "",
-          text_pattern: payload.matcher_draft.text_pattern || "",
-          service_name_pattern: payload.matcher_draft.service_name_pattern || "",
-          priority: String(payload.matcher_draft.priority),
-          is_active: "true",
-          notes: payload.matcher_draft.notes || "",
-        });
-        setOcrProfileMatcherProfileFilter(payload.matcher_draft.profile_scope);
-        setSuccessMessage("Черновик правила выбора перенесён в форму редактирования");
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить черновик из OCR-обучения");
-    } finally {
-      setOcrLearningDraftId(null);
-    }
+  function openLaborNormsAdmin() {
+    setActiveWorkspaceTab("admin");
+    setActiveAdminTab("labor_norms");
+    updateBrowserRoute({ workspace: "admin", adminTab: "labor_norms" }, "push");
   }
 
   function handleEditService(item: ServiceItem) {
@@ -2525,215 +2138,6 @@ export default function App() {
     setActiveAdminTab("services");
     updateBrowserRoute({ workspace: "admin", adminTab: "services" }, "push");
     editService(item);
-  }
-
-  async function handleLaborNormImport() {
-    if (!token || user?.role !== "admin" || !laborNormFile) {
-      setErrorMessage("Выберите .xlsx файл справочника");
-      return;
-    }
-
-    setLaborNormImportLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const body = new FormData();
-      body.append("file", laborNormFile);
-      body.append("scope", laborNormImportScope);
-      body.append("brand_family", laborNormImportBrandFamily);
-      body.append("catalog_name", laborNormImportCatalogName);
-
-      const result = await apiRequest<LaborNormImportResponse>(
-        "/labor-norms/import",
-        {
-          method: "POST",
-          body,
-        },
-        token,
-      );
-
-      setSuccessMessage(
-        `${result.message}. Создано ${result.created}, обновлено ${result.updated}, пропущено ${result.skipped}.`,
-      );
-      setLaborNormFile(null);
-      setLaborNormScope(laborNormImportScope);
-      await loadLaborNormCatalogConfigs(token);
-      await loadLaborNormCatalog(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось импортировать справочник нормо-часов");
-    } finally {
-      setLaborNormImportLoading(false);
-    }
-  }
-
-  function handleEditLaborNormCatalog(item: LaborNormCatalogConfigItem) {
-    setActiveWorkspaceTab("admin");
-    setActiveAdminTab("labor_norms");
-    updateBrowserRoute({ workspace: "admin", adminTab: "labor_norms" }, "push");
-    setShowLaborNormCatalogEditor(true);
-    setEditingLaborNormCatalogId(item.id);
-    setLaborNormCatalogForm(createCatalogFormFromItem(item));
-  }
-
-  function resetLaborNormCatalogEditor() {
-    setEditingLaborNormCatalogId(null);
-    setLaborNormCatalogForm(createEmptyCatalogForm());
-  }
-
-  function handleCatalogScopeSelected(scope: string) {
-    setActiveWorkspaceTab("admin");
-    setActiveAdminTab("labor_norms");
-    updateBrowserRoute({ workspace: "admin", adminTab: "labor_norms" }, "push");
-    setShowLaborNormImport(true);
-    setLaborNormImportScope(scope);
-    const selectedCatalog = laborNormCatalogs.find((item) => item.scope === scope);
-    if (selectedCatalog) {
-      setLaborNormImportBrandFamily(selectedCatalog.brand_family || "");
-      setLaborNormImportCatalogName(selectedCatalog.catalog_name);
-      if (!laborNormEntryForm.scope) {
-        setLaborNormEntryForm((current) => ({ ...current, scope }));
-      }
-    }
-  }
-
-  async function handleSaveLaborNormCatalog() {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-
-    if (!laborNormCatalogForm.scope.trim() || !laborNormCatalogForm.catalog_name.trim()) {
-      setErrorMessage("Для каталога обязательны код и название");
-      return;
-    }
-
-    setLaborNormCatalogSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const payload = buildLaborNormCatalogPayload(laborNormCatalogForm);
-
-      if (editingLaborNormCatalogId) {
-        await apiRequest<LaborNormCatalogConfigItem>(
-          `/labor-norms/catalogs/${editingLaborNormCatalogId}`,
-          {
-            method: "PATCH",
-            body: JSON.stringify(payload),
-          },
-          token,
-        );
-        setSuccessMessage("Каталог нормо-часов обновлён");
-      } else {
-        await apiRequest<LaborNormCatalogConfigItem>(
-          "/labor-norms/catalogs",
-          {
-            method: "POST",
-            body: JSON.stringify(buildLaborNormCatalogCreatePayload(laborNormCatalogForm)),
-          },
-          token,
-        );
-        setSuccessMessage("Каталог нормо-часов создан");
-      }
-
-      await loadLaborNormCatalogConfigs(token);
-      handleCatalogScopeSelected(laborNormCatalogForm.scope.trim());
-      if (laborNormScope === laborNormCatalogForm.scope.trim()) {
-        await loadLaborNormCatalog(token);
-      }
-      resetLaborNormCatalogEditor();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить каталог нормо-часов");
-    } finally {
-      setLaborNormCatalogSaving(false);
-    }
-  }
-
-  function handleEditLaborNormItem(item: LaborNormCatalogItem) {
-    setActiveWorkspaceTab("admin");
-    setActiveAdminTab("labor_norms");
-    updateBrowserRoute({ workspace: "admin", adminTab: "labor_norms" }, "push");
-    setShowLaborNormEntryEditor(true);
-    setLaborNormEntryForm(createLaborNormEntryFormFromItem(item));
-  }
-
-  function resetLaborNormEntryEditor(scope = laborNormScope || laborNormImportScope || laborNormCatalogs[0]?.scope || "") {
-    setLaborNormEntryForm(createEmptyLaborNormEntryForm(scope));
-  }
-
-  async function handleSaveLaborNormEntry() {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    if (!laborNormEntryForm.scope.trim() || !laborNormEntryForm.code.trim() || !laborNormEntryForm.name_ru.trim()) {
-      setErrorMessage("Для записи обязательны каталог, код и русское название");
-      return;
-    }
-    if (!laborNormEntryForm.standard_hours.trim()) {
-      setErrorMessage("Укажите норматив в часах");
-      return;
-    }
-
-    setLaborNormEntrySaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const payload = buildLaborNormEntryPayload(laborNormEntryForm);
-
-      if (laborNormEntryForm.id) {
-        await apiRequest<LaborNormCatalogItem>(
-          `/labor-norms/${laborNormEntryForm.id}`,
-          {
-            method: "PATCH",
-            body: JSON.stringify(payload),
-          },
-          token,
-        );
-        setSuccessMessage("Запись нормо-часов обновлена");
-      } else {
-        await apiRequest<LaborNormCatalogItem>(
-          "/labor-norms",
-          {
-            method: "POST",
-            body: JSON.stringify(payload),
-          },
-          token,
-        );
-        setSuccessMessage("Запись нормо-часов создана");
-      }
-
-      setLaborNormScope(laborNormEntryForm.scope.trim());
-      await loadLaborNormCatalogConfigs(token);
-      await loadLaborNormCatalog(token, laborNormQuery, laborNormEntryForm.scope.trim(), laborNormCategory);
-      resetLaborNormEntryEditor(laborNormEntryForm.scope.trim());
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить запись нормо-часов");
-    } finally {
-      setLaborNormEntrySaving(false);
-    }
-  }
-
-  async function handleArchiveLaborNormItem(item: LaborNormCatalogItem) {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    setLaborNormEntrySaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      await apiRequest<LaborNormCatalogItem>(
-        `/labor-norms/${item.id}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ status: "archived" }),
-        },
-        token,
-      );
-      setSuccessMessage(`Запись ${item.code} отправлена в архив`);
-      await loadLaborNormCatalog(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось отправить запись в архив");
-    } finally {
-      setLaborNormEntrySaving(false);
-    }
   }
 
   function handleStartRepairEdit() {
@@ -2787,9 +2191,7 @@ export default function App() {
     setShowPasswordRecoveryRequest(false);
     setShowServiceEditor(false);
     setShowReviewRuleEditor(false);
-    setShowLaborNormCatalogEditor(false);
-    setShowLaborNormImport(false);
-    setShowLaborNormEntryEditor(false);
+    resetLaborNormsState();
     setLastUploadedDocument(null);
     setCurrentPasswordValue("");
     setNewPasswordValue("");
@@ -3188,14 +2590,10 @@ export default function App() {
                 reviewRuleTypes,
                 showReviewRuleListDialog,
                 onToggleEditor: () => {
+                  openReviewRulesAdmin();
                   setShowReviewRuleEditor((current) => !current);
                 },
-                onReviewRuleFormChange: (field, value) => {
-                  setReviewRuleForm((current) => ({
-                    ...current,
-                    [field]: value,
-                  }));
-                },
+                onReviewRuleFormChange: updateReviewRuleFormField,
                 onSaveReviewRule: () => {
                   void handleSaveReviewRule();
                 },
@@ -3209,7 +2607,7 @@ export default function App() {
                 onCloseListDialog: () => {
                   setShowReviewRuleListDialog(false);
                 },
-                onEditReviewRule: handleEditReviewRule,
+                onEditReviewRule: editReviewRule,
                 formatReviewRuleTypeLabel,
                 formatReviewBucketLabel,
               },
@@ -3231,7 +2629,7 @@ export default function App() {
                 onOcrLearningProfileScopeFilterChange: setOcrLearningProfileScopeFilter,
                 onRefresh: () => {
                   if (token) {
-                    void loadOcrLearningSignals(token);
+                    void loadOcrLearningSignals();
                   }
                 },
                 onReset: () => {
@@ -3239,7 +2637,7 @@ export default function App() {
                   setOcrLearningTargetFieldFilter("");
                   setOcrLearningProfileScopeFilter("");
                   if (token) {
-                    void loadOcrLearningSignals(token, "", "", "");
+                    void loadOcrLearningSignals("", "", "");
                   }
                 },
                 onOpenListDialog: () => {
@@ -3268,26 +2666,21 @@ export default function App() {
                 onProfileFilterChange: setOcrProfileMatcherProfileFilter,
                 onRefresh: () => {
                   if (token) {
-                    void loadOcrProfileMatchers(token, ocrProfileMatcherProfileFilter);
+                    void loadOcrProfileMatchers();
                   }
                 },
                 onResetFilter: () => {
                   setOcrProfileMatcherProfileFilter("");
                   if (token) {
-                    void loadOcrProfileMatchers(token, "");
+                    void loadOcrProfileMatchers("");
                   }
                 },
-                onFormChange: (field, value) => {
-                  setOcrProfileMatcherForm((current) => ({
-                    ...current,
-                    [field]: value,
-                  }));
-                },
+                onFormChange: updateOcrProfileMatcherFormField,
                 onSave: () => {
                   void handleSaveOcrProfileMatcher();
                 },
                 onResetForm: resetOcrProfileMatcherEditor,
-                onEdit: handleEditOcrProfileMatcher,
+                onEdit: editOcrProfileMatcher,
                 formatOcrProfileName,
                 formatSourceTypeLabel,
               },
@@ -3301,26 +2694,21 @@ export default function App() {
                 onProfileFilterChange: setOcrRuleProfileFilter,
                 onRefresh: () => {
                   if (token) {
-                    void loadOcrRules(token, ocrRuleProfileFilter);
+                    void loadOcrRules();
                   }
                 },
                 onResetFilter: () => {
                   setOcrRuleProfileFilter("");
                   if (token) {
-                    void loadOcrRules(token, "");
+                    void loadOcrRules("");
                   }
                 },
-                onFormChange: (field, value) => {
-                  setOcrRuleForm((current) => ({
-                    ...current,
-                    [field]: value,
-                  }));
-                },
+                onFormChange: updateOcrRuleFormField,
                 onSave: () => {
                   void handleSaveOcrRule();
                 },
                 onResetForm: resetOcrRuleEditor,
-                onEdit: handleEditOcrRule,
+                onEdit: editOcrRule,
                 formatOcrProfileName,
                 formatOcrFieldLabel,
                 formatValueParserLabel,
@@ -3392,14 +2780,19 @@ export default function App() {
                 laborNormSourceFiles,
                 showLaborNormListDialog,
                 laborNorms,
-                onToggleCatalogEditor: () => setShowLaborNormCatalogEditor((current) => !current),
-                onToggleImport: () => setShowLaborNormImport((current) => !current),
-                onToggleEntryEditor: () => setShowLaborNormEntryEditor((current) => !current),
-                onCatalogFormChange: (field, value) =>
-                  setLaborNormCatalogForm((current) => ({
-                    ...current,
-                    [field]: value,
-                  })),
+                onToggleCatalogEditor: () => {
+                  openLaborNormsAdmin();
+                  setShowLaborNormCatalogEditor((current) => !current);
+                },
+                onToggleImport: () => {
+                  openLaborNormsAdmin();
+                  setShowLaborNormImport((current) => !current);
+                },
+                onToggleEntryEditor: () => {
+                  openLaborNormsAdmin();
+                  setShowLaborNormEntryEditor((current) => !current);
+                },
+                onCatalogFormChange: updateLaborNormCatalogFormField,
                 onSaveCatalog: () => {
                   void handleSaveLaborNormCatalog();
                 },
@@ -3407,8 +2800,8 @@ export default function App() {
                   resetLaborNormCatalogEditor();
                   setShowLaborNormCatalogEditor(false);
                 },
-                onEditCatalog: handleEditLaborNormCatalog,
-                onSelectCatalogScope: handleCatalogScopeSelected,
+                onEditCatalog: editLaborNormCatalog,
+                onSelectCatalogScope: selectCatalogScope,
                 onQueryChange: setLaborNormQuery,
                 onScopeChange: setLaborNormScope,
                 onCategoryChange: setLaborNormCategory,
@@ -3416,12 +2809,7 @@ export default function App() {
                   void handleLaborNormSearch();
                 },
                 onResetFilters: () => {
-                  setLaborNormQuery("");
-                  setLaborNormScope("");
-                  setLaborNormCategory("");
-                  if (token) {
-                    void loadLaborNormCatalog(token, "", "", "");
-                  }
+                  void resetLaborNormFilters();
                 },
                 onImportBrandFamilyChange: setLaborNormImportBrandFamily,
                 onImportCatalogNameChange: setLaborNormImportCatalogName,
@@ -3429,11 +2817,7 @@ export default function App() {
                 onImport: () => {
                   void handleLaborNormImport();
                 },
-                onEntryFormChange: (field, value) =>
-                  setLaborNormEntryForm((current) => ({
-                    ...current,
-                    [field]: value,
-                  })),
+                onEntryFormChange: updateLaborNormEntryFormField,
                 onSaveEntry: () => {
                   void handleSaveLaborNormEntry();
                 },
@@ -3443,7 +2827,7 @@ export default function App() {
                 },
                 onOpenListDialog: () => setShowLaborNormListDialog(true),
                 onCloseListDialog: () => setShowLaborNormListDialog(false),
-                onEditItem: handleEditLaborNormItem,
+                onEditItem: editLaborNormItem,
                 onArchiveItem: (item) => {
                   void handleArchiveLaborNormItem(item);
                 },

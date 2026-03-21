@@ -1,4 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  buildLaborNormCatalogCreatePayload,
+  buildLaborNormCatalogPayload,
+  buildLaborNormEntryPayload,
+  buildOcrProfileMatcherPayload,
+  buildOcrRulePayload,
+  buildReviewFieldsPayload,
+  buildReviewRulePayload,
+  buildServicePayload,
+  buildUserPayload,
+} from "./shared/adminPayloadBuilders";
 import { MenuItem } from "@mui/material";
 import { AuthLandingView } from "./components/AuthLandingView";
 import { HistoryDetailsPreview } from "./components/HistoryDetailsPreview";
@@ -114,8 +125,6 @@ import {
   createReviewRuleFormFromItem,
   createServiceFormFromItem,
   createUserFormFromItem,
-  joinEditorLines,
-  splitEditorLines,
 } from "./shared/formStateFactories";
 import {
   adminTabDescriptions,
@@ -3670,14 +3679,7 @@ export default function App() {
     setErrorMessage("");
     setSuccessMessage("");
     try {
-      const body = {
-        full_name: userForm.full_name.trim(),
-        login: userForm.login.trim(),
-        email: userForm.email.trim(),
-        role: userForm.role,
-        is_active: userForm.is_active === "true",
-        ...(userForm.password.trim() ? { password: userForm.password.trim() } : {}),
-      };
+      const body = buildUserPayload(userForm);
 
       if (userForm.id) {
         await apiRequest<UserItem>(
@@ -3869,16 +3871,7 @@ export default function App() {
     setErrorMessage("");
     setSuccessMessage("");
     try {
-      const payload = {
-        rule_type: reviewRuleForm.rule_type.trim(),
-        code: reviewRuleForm.code.trim(),
-        title: reviewRuleForm.title.trim(),
-        weight: Number(reviewRuleForm.weight || "0"),
-        bucket_override: reviewRuleForm.bucket_override || null,
-        is_active: reviewRuleForm.is_active === "true",
-        sort_order: Number(reviewRuleForm.sort_order || "100"),
-        notes: reviewRuleForm.notes.trim() || null,
-      };
+      const payload = buildReviewRulePayload(reviewRuleForm);
 
       if (reviewRuleForm.id) {
         await apiRequest<ReviewRuleItem>(
@@ -3940,16 +3933,7 @@ export default function App() {
     setErrorMessage("");
     setSuccessMessage("");
     try {
-      const payload = {
-        profile_scope: ocrRuleForm.profile_scope.trim(),
-        target_field: ocrRuleForm.target_field.trim(),
-        pattern: ocrRuleForm.pattern,
-        value_parser: ocrRuleForm.value_parser.trim(),
-        confidence: Number(ocrRuleForm.confidence || "0.6"),
-        priority: Number(ocrRuleForm.priority || "100"),
-        is_active: ocrRuleForm.is_active === "true",
-        notes: ocrRuleForm.notes.trim() || null,
-      };
+      const payload = buildOcrRulePayload(ocrRuleForm);
 
       if (ocrRuleForm.id) {
         await apiRequest<OcrRuleItem>(
@@ -4004,17 +3988,7 @@ export default function App() {
     setErrorMessage("");
     setSuccessMessage("");
     try {
-      const payload = {
-        profile_scope: ocrProfileMatcherForm.profile_scope.trim(),
-        title: ocrProfileMatcherForm.title.trim(),
-        source_type: ocrProfileMatcherForm.source_type || null,
-        filename_pattern: ocrProfileMatcherForm.filename_pattern.trim() || null,
-        text_pattern: ocrProfileMatcherForm.text_pattern.trim() || null,
-        service_name_pattern: ocrProfileMatcherForm.service_name_pattern.trim() || null,
-        priority: Number(ocrProfileMatcherForm.priority || "100"),
-        is_active: ocrProfileMatcherForm.is_active === "true",
-        notes: ocrProfileMatcherForm.notes.trim() || null,
-      };
+      const payload = buildOcrProfileMatcherPayload(ocrProfileMatcherForm);
 
       if (ocrProfileMatcherForm.id) {
         await apiRequest<OcrProfileMatcherItem>(
@@ -4153,13 +4127,7 @@ export default function App() {
     setErrorMessage("");
     setSuccessMessage("");
     try {
-      const payload = {
-        name: serviceForm.name.trim(),
-        city: serviceForm.city.trim() || null,
-        contact: serviceForm.contact.trim() || null,
-        comment: serviceForm.comment.trim() || null,
-        status: serviceForm.status,
-      };
+      const payload = buildServicePayload(serviceForm);
 
       if (serviceForm.id) {
         await apiRequest<ServiceItem>(
@@ -4246,13 +4214,12 @@ export default function App() {
         "/services",
         {
           method: "POST",
-          body: JSON.stringify({
-            name: reviewServiceForm.name.trim(),
-            city: reviewServiceForm.city.trim() || null,
-            contact: reviewServiceForm.contact.trim() || null,
-            comment: reviewServiceForm.comment.trim() || null,
-            status: user?.role === "admin" ? reviewServiceForm.status : "preliminary",
-          }),
+          body: JSON.stringify(
+            buildServicePayload(
+              reviewServiceForm,
+              user?.role === "admin" ? reviewServiceForm.status : "preliminary",
+            ),
+          ),
         },
         token,
       );
@@ -4387,33 +4354,11 @@ export default function App() {
       return;
     }
 
-    const parseOptionalNumber = (value: string, label: string) => {
-      const normalized = value.trim().replace(/\s+/g, "").replace(",", ".");
-      if (!normalized) {
-        return null;
-      }
-      const parsed = Number(normalized);
-      if (!Number.isFinite(parsed)) {
-        throw new Error(`Поле \`${label}\` заполнено некорректно`);
-      }
-      return parsed;
-    };
-
     setReviewFieldSaving(true);
     setErrorMessage("");
     setSuccessMessage("");
     try {
-      const payload = {
-        order_number: reviewFieldDraft.order_number.trim() || null,
-        repair_date: reviewFieldDraft.repair_date || null,
-        mileage: parseOptionalNumber(reviewFieldDraft.mileage, "Пробег"),
-        work_total: parseOptionalNumber(reviewFieldDraft.work_total, "Работы"),
-        parts_total: parseOptionalNumber(reviewFieldDraft.parts_total, "Запчасти"),
-        vat_total: parseOptionalNumber(reviewFieldDraft.vat_total, "НДС"),
-        grand_total: parseOptionalNumber(reviewFieldDraft.grand_total, "Итоговая сумма"),
-        reason: reviewFieldDraft.reason.trim() || null,
-        employee_comment: reviewFieldDraft.employee_comment.trim() || null,
-      };
+      const payload = buildReviewFieldsPayload(reviewFieldDraft);
 
       const savedRepair = await apiRequest<RepairDetail>(
         `/repairs/${selectedRepair.id}/review-fields`,
@@ -4593,20 +4538,7 @@ export default function App() {
     setErrorMessage("");
     setSuccessMessage("");
     try {
-      const payload = {
-        catalog_name: laborNormCatalogForm.catalog_name.trim(),
-        brand_family: laborNormCatalogForm.brand_family.trim() || null,
-        vehicle_type: laborNormCatalogForm.vehicle_type || null,
-        year_from: laborNormCatalogForm.year_from.trim() ? Number(laborNormCatalogForm.year_from) : null,
-        year_to: laborNormCatalogForm.year_to.trim() ? Number(laborNormCatalogForm.year_to) : null,
-        brand_keywords: splitEditorLines(laborNormCatalogForm.brand_keywords),
-        model_keywords: splitEditorLines(laborNormCatalogForm.model_keywords),
-        vin_prefixes: splitEditorLines(laborNormCatalogForm.vin_prefixes),
-        priority: Number(laborNormCatalogForm.priority || "100"),
-        auto_match_enabled: laborNormCatalogForm.auto_match_enabled === "true",
-        status: laborNormCatalogForm.status,
-        notes: laborNormCatalogForm.notes.trim() || null,
-      };
+      const payload = buildLaborNormCatalogPayload(laborNormCatalogForm);
 
       if (editingLaborNormCatalogId) {
         await apiRequest<LaborNormCatalogConfigItem>(
@@ -4623,10 +4555,7 @@ export default function App() {
           "/labor-norms/catalogs",
           {
             method: "POST",
-            body: JSON.stringify({
-              scope: laborNormCatalogForm.scope.trim(),
-              ...payload,
-            }),
+            body: JSON.stringify(buildLaborNormCatalogCreatePayload(laborNormCatalogForm)),
           },
           token,
         );
@@ -4675,19 +4604,7 @@ export default function App() {
     setErrorMessage("");
     setSuccessMessage("");
     try {
-      const payload = {
-        scope: laborNormEntryForm.scope.trim(),
-        code: laborNormEntryForm.code.trim(),
-        category: laborNormEntryForm.category.trim() || null,
-        name_ru: laborNormEntryForm.name_ru.trim(),
-        name_ru_alt: laborNormEntryForm.name_ru_alt.trim() || null,
-        name_cn: laborNormEntryForm.name_cn.trim() || null,
-        name_en: laborNormEntryForm.name_en.trim() || null,
-        standard_hours: Number(laborNormEntryForm.standard_hours.replace(",", ".")),
-        source_sheet: laborNormEntryForm.source_sheet.trim() || null,
-        source_file: laborNormEntryForm.source_file.trim() || null,
-        status: laborNormEntryForm.status,
-      };
+      const payload = buildLaborNormEntryPayload(laborNormEntryForm);
 
       if (laborNormEntryForm.id) {
         await apiRequest<LaborNormCatalogItem>(

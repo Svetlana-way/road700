@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   buildUserPayload,
 } from "./shared/adminPayloadBuilders";
@@ -6,7 +6,9 @@ import { MenuItem } from "@mui/material";
 import { AuthLandingView } from "./components/AuthLandingView";
 import { HistoryDetailsPreview } from "./components/HistoryDetailsPreview";
 import { WorkspaceMainView } from "./components/WorkspaceMainView";
+import { useAuthSession } from "./hooks/useAuthSession";
 import { useBackupsAdmin } from "./hooks/useBackupsAdmin";
+import { useDocumentsWorkspace } from "./hooks/useDocumentsWorkspace";
 import { useEmployeesAdmin } from "./hooks/useEmployeesAdmin";
 import { useLaborNormsAdmin } from "./hooks/useLaborNormsAdmin";
 import { useOcrAdmin } from "./hooks/useOcrAdmin";
@@ -18,7 +20,7 @@ import { useHistoricalImportsAdmin } from "./hooks/useHistoricalImportsAdmin";
 import { useRepairReviewWorkflow } from "./hooks/useRepairReviewWorkflow";
 import { useServicesAdmin } from "./hooks/useServicesAdmin";
 import { useWorkspaceOperations } from "./hooks/useWorkspaceOperations";
-import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, loginRequest } from "./shared/api";
+import { apiRequest, downloadApiFile } from "./shared/api";
 import {
   createVehicleFormFromPayload,
   formatQualityVehicle,
@@ -31,8 +33,6 @@ import {
   isAssignmentActive,
   isPlaceholderVehicle,
   matchesTextSearch,
-  parseOrderNumberFromFilename,
-  parseRepairDateFromFilename,
 } from "./shared/fleetDocumentHelpers";
 import {
   buildAttentionVisualBars,
@@ -191,21 +191,6 @@ import type {
   UserFormState,
 } from "./shared/workspaceFormTypes";
 
-type DocumentUploadResponse = {
-  document: DocumentItem;
-  message: string;
-  job_id?: number | null;
-  import_status?: string | null;
-};
-
-type DocumentBatchProcessResponse = {
-  processed_count: number;
-  document_ids: number[];
-  job_ids?: number[];
-  status_counts: Record<string, number>;
-  message: string;
-};
-
 type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
 type QualityDetailTab = "documents" | "services" | "works" | "parts" | "conflicts";
 
@@ -214,23 +199,6 @@ type DocumentCreateVehicleResponse = {
   repair_id: number;
   created_new_vehicle: boolean;
   document: DocumentItem;
-};
-
-type LoginResponse = {
-  access_token: string;
-};
-
-type ChangePasswordResponse = {
-  message: string;
-};
-
-type PasswordResetRequestResponse = {
-  message: string;
-  delivery_method: string;
-};
-
-type PasswordResetConfirmResponse = {
-  message: string;
 };
 
 type CheckSeverity = "normal" | "warning" | "suspicious" | "error";
@@ -401,7 +369,6 @@ const historyDetailFormatters: HistoryDetailFormatters = {
 };
 
 export default function App() {
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_STORAGE_KEY) || "");
   const [routeSnapshot, setRouteSnapshot] = useState<AppRoute>(() => readAppRoute(window.location));
   const [user, setUser] = useState<User | null>(null);
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("documents");
@@ -411,8 +378,6 @@ export default function App() {
   const [activeQualityTab, setActiveQualityTab] = useState<QualityDetailTab>("documents");
   const [showQualityDialog, setShowQualityDialog] = useState(false);
   const [showTechAdminTab, setShowTechAdminTab] = useState(false);
-  const [showPasswordChange, setShowPasswordChange] = useState(false);
-  const [showPasswordRecoveryRequest, setShowPasswordRecoveryRequest] = useState(false);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [dataQuality, setDataQuality] = useState<DashboardDataQuality | null>(null);
   const [dataQualityDetails, setDataQualityDetails] = useState<DashboardDataQualityDetails | null>(null);
@@ -435,41 +400,106 @@ export default function App() {
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
   const [selectedRepair, setSelectedRepair] = useState<RepairDetail | null>(null);
   const [documentVehicleForm, setDocumentVehicleForm] = useState<DocumentVehicleFormState>(createEmptyDocumentVehicleForm);
-  const [loginValue, setLoginValue] = useState("");
-  const [passwordValue, setPasswordValue] = useState("");
-  const [currentPasswordValue, setCurrentPasswordValue] = useState("");
-  const [newPasswordValue, setNewPasswordValue] = useState("");
-  const [recoveryEmailValue, setRecoveryEmailValue] = useState("");
-  const [recoveryTokenValue, setRecoveryTokenValue] = useState("");
-  const [recoveryNewPasswordValue, setRecoveryNewPasswordValue] = useState("");
-  const [uploadForm, setUploadForm] = useState<UploadFormState>(emptyUploadForm);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [lastUploadedDocument, setLastUploadedDocument] = useState<DocumentItem | null>(null);
-  const uploadFileInputRef = useRef<HTMLInputElement | null>(null);
   const workspaceAutoRefreshInFlightRef = useRef(false);
   const repairAutoRefreshInFlightRef = useRef(false);
   const attachedFileInputRef = useRef<HTMLInputElement | null>(null);
   const [bootLoading, setBootLoading] = useState(false);
-  const [loginLoading, setLoginLoading] = useState(false);
-  const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
-  const [passwordRecoveryLoading, setPasswordRecoveryLoading] = useState(false);
-  const [uploadLoading, setUploadLoading] = useState(false);
   const [repairLoading, setRepairLoading] = useState(false);
   const [repairExportLoading, setRepairExportLoading] = useState(false);
-  const [reprocessLoading, setReprocessLoading] = useState(false);
-  const [batchReprocessLoading, setBatchReprocessLoading] = useState(false);
-  const [batchReprocessLimit, setBatchReprocessLimit] = useState("50");
-  const [batchReprocessStatusFilter, setBatchReprocessStatusFilter] = useState("");
-  const [batchReprocessPrimaryOnly, setBatchReprocessPrimaryOnly] = useState<"false" | "true">("false");
   const [documentVehicleSaving, setDocumentVehicleSaving] = useState(false);
   const [checkActionLoadingId, setCheckActionLoadingId] = useState<number | null>(null);
-  const [documentArchiveLoadingId, setDocumentArchiveLoadingId] = useState<number | null>(null);
   const [checkComments, setCheckComments] = useState<Record<number, string>>({});
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
   const [historySearch, setHistorySearch] = useState("");
   const [showRepairOverviewDetails, setShowRepairOverviewDetails] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const {
+    token,
+    showPasswordChange,
+    setShowPasswordChange,
+    showPasswordRecoveryRequest,
+    loginValue,
+    setLoginValue,
+    passwordValue,
+    setPasswordValue,
+    currentPasswordValue,
+    setCurrentPasswordValue,
+    newPasswordValue,
+    setNewPasswordValue,
+    recoveryEmailValue,
+    setRecoveryEmailValue,
+    recoveryTokenValue,
+    setRecoveryTokenValue,
+    recoveryNewPasswordValue,
+    setRecoveryNewPasswordValue,
+    loginLoading,
+    passwordChangeLoading,
+    passwordRecoveryLoading,
+    invalidateSession,
+    handleLogin,
+    handleChangePassword,
+    handleRequestPasswordRecovery,
+    handleConfirmPasswordRecovery,
+    openPasswordRecovery,
+    handleBackToLogin,
+    cancelPasswordChange,
+    handleLogout,
+  } = useAuthSession({
+    setErrorMessage,
+    setSuccessMessage,
+    onLogoutAppReset: () => {
+      setActiveWorkspaceTab("documents");
+      setActiveAdminTab("services");
+      setActiveTechAdminTab("learning");
+      setActiveRepairTab("overview");
+      setShowTechAdminTab(false);
+      setLastUploadedDocument(null);
+      resetRepairDocumentsWorkflowState();
+    },
+  });
+  const {
+    uploadForm,
+    selectedFile,
+    lastUploadedDocument,
+    setLastUploadedDocument,
+    uploadFileInputRef,
+    uploadLoading,
+    reprocessLoading,
+    batchReprocessLoading,
+    batchReprocessLimit,
+    setBatchReprocessLimit,
+    batchReprocessStatusFilter,
+    setBatchReprocessStatusFilter,
+    batchReprocessPrimaryOnly,
+    setBatchReprocessPrimaryOnly,
+    documentArchiveLoadingId,
+    handleUpload,
+    updateUploadFormField,
+    handleUploadFileSelect,
+    handleReprocessDocumentById,
+    handleReprocessDocument,
+    handleBatchReprocessDocuments,
+    handleArchiveDocument,
+    resetDocumentsWorkspaceState,
+  } = useDocumentsWorkspace({
+    token,
+    userRole: user?.role,
+    emptyUploadForm,
+    setErrorMessage,
+    setSuccessMessage,
+    refreshWorkspace: async () => {
+      if (token) {
+        await loadWorkspace(token);
+      }
+    },
+    openRepairByIds: async (documentId, repairId) => {
+      await openRepairByIds(documentId, repairId);
+    },
+    selectedDocumentId,
+    selectedRepairId: selectedRepair?.id ?? null,
+    formatDocumentStatusLabel,
+  });
   const {
     usersList,
     usersTotal,
@@ -1478,8 +1508,7 @@ export default function App() {
         setErrorMessage(message);
       }
       if (message.toLowerCase().includes("validate credentials")) {
-        localStorage.removeItem(TOKEN_STORAGE_KEY);
-        setToken("");
+        invalidateSession();
         setUser(null);
       }
     } finally {
@@ -1581,8 +1610,10 @@ export default function App() {
       resetLaborNormsState();
       resetReviewRulesState();
       resetReviewWorkflowState();
+      resetRepairDocumentsWorkflowState();
       resetRepairEditingState();
       setDocuments([]);
+      resetDocumentsWorkspaceState();
       resetUsersState();
       resetServicesState();
       resetOcrAdminState();
@@ -1600,8 +1631,6 @@ export default function App() {
       setSelectedDocumentId(null);
       setSelectedRepair(null);
       setDocumentVehicleForm(createEmptyDocumentVehicleForm());
-      setCurrentPasswordValue("");
-      setNewPasswordValue("");
       return;
     }
     void loadWorkspace(token, selectedReviewCategory);
@@ -1690,206 +1719,6 @@ export default function App() {
     selectedRepairDocumentOcrServiceName,
   ]);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const resetToken = params.get("reset_token") || "";
-    setRecoveryTokenValue(resetToken);
-    if (resetToken) {
-      setShowPasswordRecoveryRequest(true);
-    }
-  }, []);
-
-  async function handleLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoginLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
-    try {
-      const payload = await loginRequest<LoginResponse>(loginValue, passwordValue);
-      localStorage.setItem(TOKEN_STORAGE_KEY, payload.access_token);
-      setToken(payload.access_token);
-      setPasswordValue("");
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось выполнить вход");
-    } finally {
-      setLoginLoading(false);
-    }
-  }
-
-  async function handleChangePassword() {
-    if (!token) {
-      return;
-    }
-    if (!currentPasswordValue.trim() || !newPasswordValue.trim()) {
-      setErrorMessage("Укажите текущий и новый пароль");
-      return;
-    }
-
-    setPasswordChangeLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const result = await apiRequest<ChangePasswordResponse>(
-        "/auth/change-password",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            current_password: currentPasswordValue,
-            new_password: newPasswordValue,
-          }),
-        },
-        token,
-      );
-      setSuccessMessage(result.message);
-      setCurrentPasswordValue("");
-      setNewPasswordValue("");
-      setShowPasswordChange(false);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось сменить пароль");
-    } finally {
-      setPasswordChangeLoading(false);
-    }
-  }
-
-  async function handleRequestPasswordRecovery() {
-    if (!recoveryEmailValue.trim()) {
-      setErrorMessage("Укажите почту для восстановления");
-      return;
-    }
-    setPasswordRecoveryLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const result = await apiRequest<PasswordResetRequestResponse>(
-        "/auth/password-reset/request",
-        {
-          method: "POST",
-          body: JSON.stringify({ email: recoveryEmailValue.trim() }),
-        },
-      );
-      setSuccessMessage(result.message);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось запросить восстановление пароля");
-    } finally {
-      setPasswordRecoveryLoading(false);
-    }
-  }
-
-  async function handleConfirmPasswordRecovery() {
-    if (!recoveryTokenValue.trim() || !recoveryNewPasswordValue.trim()) {
-      setErrorMessage("Укажите токен восстановления и новый пароль");
-      return;
-    }
-    setPasswordRecoveryLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const result = await apiRequest<PasswordResetConfirmResponse>(
-        "/auth/password-reset/confirm",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            token: recoveryTokenValue.trim(),
-            new_password: recoveryNewPasswordValue,
-          }),
-        },
-      );
-      setSuccessMessage(result.message);
-      setRecoveryNewPasswordValue("");
-      setRecoveryTokenValue("");
-      const url = new URL(window.location.href);
-      url.searchParams.delete("reset_token");
-      window.history.replaceState({}, "", url.toString());
-      setShowPasswordRecoveryRequest(false);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось восстановить пароль");
-    } finally {
-      setPasswordRecoveryLoading(false);
-    }
-  }
-
-  async function handleUpload(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!token || !selectedFile) {
-      setErrorMessage("Сначала выберите файл");
-      return;
-    }
-
-    setUploadLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
-    try {
-      const body = new FormData();
-      body.append("kind", uploadForm.documentKind);
-      if (uploadForm.vehicleId) {
-        body.append("vehicle_id", uploadForm.vehicleId);
-      }
-      if (uploadForm.repairDate) {
-        body.append("repair_date", uploadForm.repairDate);
-      }
-      if (uploadForm.mileage.trim()) {
-        body.append("mileage", uploadForm.mileage);
-      }
-      if (uploadForm.orderNumber.trim()) {
-        body.append("order_number", uploadForm.orderNumber);
-      }
-      if (uploadForm.reason.trim()) {
-        body.append("reason", uploadForm.reason);
-      }
-      if (uploadForm.employeeComment.trim()) {
-        body.append("employee_comment", uploadForm.employeeComment);
-      }
-      if (uploadForm.notes.trim()) {
-        body.append("notes", uploadForm.notes);
-      }
-      body.append("file", selectedFile);
-
-      const result = await apiRequest<DocumentUploadResponse>(
-        "/documents/upload",
-        {
-          method: "POST",
-          body,
-        },
-        token,
-      );
-
-      setSuccessMessage(result.message);
-      setLastUploadedDocument(result.document);
-      setUploadForm(emptyUploadForm());
-      setSelectedFile(null);
-      await loadWorkspace(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить документ");
-    } finally {
-      setUploadLoading(false);
-    }
-  }
-
-  function handleUploadFieldChange(field: keyof UploadFormState, value: string) {
-    setUploadForm((current) => ({
-      ...current,
-      [field]: value,
-    }));
-  }
-
-  function handleUploadFileSelect(nextFile: File | null) {
-    setLastUploadedDocument(null);
-    setSelectedFile(nextFile);
-    if (!nextFile) {
-      return;
-    }
-
-    const parsedRepairDate = parseRepairDateFromFilename(nextFile.name);
-    const parsedOrderNumber = parseOrderNumberFromFilename(nextFile.name);
-    setUploadForm((current) => ({
-      ...current,
-      repairDate: parsedRepairDate || current.repairDate,
-      orderNumber: current.orderNumber.trim() || !parsedOrderNumber ? current.orderNumber : parsedOrderNumber,
-    }));
-  }
-
   async function openRepairByIds(documentId: number | null, repairId: number) {
     if (activeWorkspaceTab !== "repair") {
       repairReturnTabRef.current = activeWorkspaceTab;
@@ -1960,78 +1789,6 @@ export default function App() {
 
   async function handleOpenReviewQueueItem(item: ReviewQueueItem) {
     await openRepairByIds(item.document.id, item.repair.id);
-  }
-
-  async function handleReprocessDocumentById(documentId: number, repairId: number) {
-    if (!token) {
-      return;
-    }
-    setReprocessLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const result = await apiRequest<{ message: string }>(
-        `/documents/${documentId}/process`,
-        { method: "POST" },
-        token,
-      );
-      setSuccessMessage(result.message);
-      await loadWorkspace(token);
-      await openRepairByIds(documentId, repairId);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось повторно распознать документ");
-    } finally {
-      setReprocessLoading(false);
-    }
-  }
-
-  async function handleReprocessDocument(document: DocumentItem) {
-    await handleReprocessDocumentById(document.id, document.repair.id);
-  }
-
-  async function handleBatchReprocessDocuments() {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-
-    setBatchReprocessLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const normalizedLimit = String(Math.min(500, Math.max(1, Number(batchReprocessLimit || "50") || 50)));
-      const params = new URLSearchParams();
-      params.set("limit", normalizedLimit);
-      if (batchReprocessStatusFilter) {
-        params.set("status", batchReprocessStatusFilter);
-      }
-      if (batchReprocessPrimaryOnly === "true") {
-        params.set("only_primary", "true");
-      }
-
-      const result = await apiRequest<DocumentBatchProcessResponse>(
-        `/documents/reprocess-existing?${params.toString()}`,
-        { method: "POST" },
-        token,
-      );
-
-      const statusSummary = Object.entries(result.status_counts)
-        .map(([status, count]) => `${formatDocumentStatusLabel(status)}: ${count}`)
-        .join(", ");
-
-      setSuccessMessage(
-        statusSummary
-          ? `Переобработано ${result.processed_count} документов. ${statusSummary}`
-          : `Переобработано ${result.processed_count} документов.`,
-      );
-      await loadWorkspace(token);
-      if (selectedDocumentId !== null && selectedRepair) {
-        await openRepairByIds(selectedDocumentId, selectedRepair.id);
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось запустить массовую переобработку");
-    } finally {
-      setBatchReprocessLoading(false);
-    }
   }
 
   async function handleCheckResolution(checkId: number, isResolved: boolean) {
@@ -2149,63 +1906,6 @@ export default function App() {
     cancelRepairEdit();
   }
 
-  async function handleArchiveDocument(documentId: number, repairId: number) {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-
-    setDocumentArchiveLoadingId(documentId);
-    setErrorMessage("");
-    setSuccessMessage("");
-
-    try {
-      const updatedDocument = await apiRequest<DocumentItem>(
-        `/documents/${documentId}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ status: "archived" }),
-        },
-        token,
-      );
-      setSuccessMessage(`Документ ${updatedDocument.original_filename} отправлен в архив`);
-      await loadWorkspace(token);
-      if (selectedRepair?.id === repairId) {
-        await openRepairByIds(updatedDocument.id, repairId);
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось отправить документ в архив");
-    } finally {
-      setDocumentArchiveLoadingId(null);
-    }
-  }
-
-  function handleLogout() {
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
-    setToken("");
-    setActiveWorkspaceTab("documents");
-    setActiveAdminTab("services");
-    setActiveTechAdminTab("learning");
-    setActiveRepairTab("overview");
-    setShowTechAdminTab(false);
-    setShowPasswordChange(false);
-    setShowPasswordRecoveryRequest(false);
-    setShowServiceEditor(false);
-    setShowReviewRuleEditor(false);
-    resetLaborNormsState();
-    setLastUploadedDocument(null);
-    setCurrentPasswordValue("");
-    setNewPasswordValue("");
-    setRecoveryEmailValue("");
-    setRecoveryTokenValue("");
-    setRecoveryNewPasswordValue("");
-    setAdminResetPasswordValue("");
-    resetReviewWorkflowState();
-    resetRepairDocumentsWorkflowState();
-    resetRepairEditingState();
-    setSuccessMessage("");
-    setErrorMessage("");
-  }
-
   if (!token) {
     return (
       <AuthLandingView
@@ -2222,11 +1922,7 @@ export default function App() {
         onLoginSubmit={handleLogin}
         onLoginValueChange={setLoginValue}
         onPasswordValueChange={setPasswordValue}
-        onOpenPasswordRecovery={() => {
-          setShowPasswordRecoveryRequest(true);
-          setErrorMessage("");
-          setSuccessMessage("");
-        }}
+        onOpenPasswordRecovery={openPasswordRecovery}
         onRecoveryEmailValueChange={setRecoveryEmailValue}
         onRequestPasswordRecovery={() => {
           void handleRequestPasswordRecovery();
@@ -2236,15 +1932,7 @@ export default function App() {
         onConfirmPasswordRecovery={() => {
           void handleConfirmPasswordRecovery();
         }}
-        onBackToLogin={() => {
-          setShowPasswordRecoveryRequest(false);
-          setErrorMessage("");
-          setSuccessMessage("");
-          setRecoveryNewPasswordValue("");
-          if (!window.location.search.includes("reset_token=")) {
-            setRecoveryTokenValue("");
-          }
-        }}
+        onBackToLogin={handleBackToLogin}
       />
     );
   }
@@ -2274,11 +1962,7 @@ export default function App() {
         onChangePassword: () => {
           void handleChangePassword();
         },
-        onCancelPasswordChange: () => {
-          setShowPasswordChange(false);
-          setCurrentPasswordValue("");
-          setNewPasswordValue("");
-        },
+        onCancelPasswordChange: cancelPasswordChange,
         onLogout: handleLogout,
         onWorkspaceTabChange: handleWorkspaceTabChange,
       }}
@@ -2355,7 +2039,7 @@ export default function App() {
                 lastUploadedDocument,
                 uploadFileInputRef,
                 onSubmit: handleUpload,
-                onUploadFieldChange: handleUploadFieldChange,
+                onUploadFieldChange: updateUploadFormField,
                 onFileSelect: handleUploadFileSelect,
                 onOpenFilePicker: () => uploadFileInputRef.current?.click(),
                 onOpenUploadedRepair: (documentId, repairId) => {

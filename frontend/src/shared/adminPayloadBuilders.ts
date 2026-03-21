@@ -1,97 +1,14 @@
 import { splitEditorLines } from "./formStateFactories";
-
-type UserFormState = {
-  full_name: string;
-  login: string;
-  email: string;
-  role: "admin" | "employee";
-  is_active: "true" | "false";
-  password: string;
-};
-
-type ReviewRuleFormState = {
-  rule_type: string;
-  code: string;
-  title: string;
-  weight: string;
-  bucket_override: string;
-  is_active: "true" | "false";
-  sort_order: string;
-  notes: string;
-};
-
-type OcrRuleFormState = {
-  profile_scope: string;
-  target_field: string;
-  pattern: string;
-  value_parser: string;
-  confidence: string;
-  priority: string;
-  is_active: "true" | "false";
-  notes: string;
-};
-
-type OcrProfileMatcherFormState = {
-  profile_scope: string;
-  title: string;
-  source_type: string;
-  filename_pattern: string;
-  text_pattern: string;
-  service_name_pattern: string;
-  priority: string;
-  is_active: "true" | "false";
-  notes: string;
-};
-
-type ServiceFormState = {
-  name: string;
-  city: string;
-  contact: string;
-  comment: string;
-  status: "preliminary" | "confirmed" | "archived";
-};
-
-type ReviewRepairFieldsDraft = {
-  order_number: string;
-  repair_date: string;
-  mileage: string;
-  work_total: string;
-  parts_total: string;
-  vat_total: string;
-  grand_total: string;
-  reason: string;
-  employee_comment: string;
-};
-
-type LaborNormCatalogFormState = {
-  scope: string;
-  catalog_name: string;
-  brand_family: string;
-  vehicle_type: "" | "truck" | "trailer";
-  year_from: string;
-  year_to: string;
-  brand_keywords: string;
-  model_keywords: string;
-  vin_prefixes: string;
-  priority: string;
-  auto_match_enabled: "true" | "false";
-  status: string;
-  notes: string;
-};
-
-type LaborNormEntryFormState = {
-  scope: string;
-  code: string;
-  category: string;
-  name_ru: string;
-  name_ru_alt: string;
-  name_cn: string;
-  name_en: string;
-  standard_hours: string;
-  source_sheet: string;
-  source_file: string;
-  status: string;
-};
+import type {
+  LaborNormCatalogFormState,
+  LaborNormEntryFormState,
+  OcrProfileMatcherFormState,
+  OcrRuleFormState,
+  ReviewRepairFieldsDraft,
+  ReviewRuleFormState,
+  ServiceFormState,
+  UserFormState,
+} from "./workspaceFormTypes";
 
 export function buildUserPayload(form: UserFormState) {
   return {

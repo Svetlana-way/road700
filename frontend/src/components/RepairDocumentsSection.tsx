@@ -1,16 +1,11 @@
 import { type Ref } from "react";
 import { Alert, Box, Button, Chip, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
-
-type UserRole = "admin" | "employee";
-type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
-type DocumentStatus =
-  | "uploaded"
-  | "recognized"
-  | "partially_recognized"
-  | "needs_review"
-  | "confirmed"
-  | "ocr_error"
-  | "archived";
+import type {
+  DocumentComparisonResponse,
+  DocumentKind,
+  DocumentStatus,
+  UserRole,
+} from "../shared/workspaceBootstrapTypes";
 
 type RepairDocumentItem = {
   id: number;
@@ -49,28 +44,6 @@ type RepairDetailLike = {
   id: number;
   status: string;
   documents: RepairDocumentItem[];
-};
-
-type DocumentComparisonResponse = {
-  left_document: {
-    id: number;
-    original_filename: string;
-  };
-  right_document: {
-    id: number;
-    original_filename: string;
-  };
-  compared_fields: Array<{
-    field_name: string;
-    label: string;
-    left_value: string | null;
-    right_value: string | null;
-    is_different: boolean;
-  }>;
-  works_count_left: number;
-  works_count_right: number;
-  parts_count_left: number;
-  parts_count_right: number;
 };
 
 type RepairDocumentsSectionProps = {

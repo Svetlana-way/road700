@@ -53,6 +53,9 @@ MANUAL_REVIEW_REASON_LABELS = {
     "service_name_suspicious": "Название сервиса выглядит сомнительно",
     "service_not_found": "Сервис не найден в справочнике",
     "text_not_found": "Не удалось извлечь текст из документа",
+    "image_ocr_unavailable": "OCR для изображений недоступен в текущем окружении",
+    "pdf_ocr_unavailable": "OCR для сканов PDF недоступен в текущем окружении",
+    "pdf_renderer_unavailable": "Рендер PDF для OCR недоступен в текущем окружении",
     "vehicle_missing": "Не удалось определить технику",
     "vehicle_not_found": "Техника не найдена в базе",
 }

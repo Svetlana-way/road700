@@ -33,6 +33,7 @@ services:
       ROAD700_PROJECT_ROOT: /app
       ROAD700_STORAGE_ROOT: /app/storage
       ROAD700_FRONTEND_DIST: /app/frontend/dist
+      REQUIRE_FULL_OCR_RUNTIME: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -69,6 +70,7 @@ services:
       ROAD700_PROJECT_ROOT: /app
       ROAD700_STORAGE_ROOT: /app/storage
       ROAD700_FRONTEND_DIST: /app/frontend/dist
+      REQUIRE_FULL_OCR_RUNTIME: "true"
     depends_on:
       app:
         condition: service_healthy

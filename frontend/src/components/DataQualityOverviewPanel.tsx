@@ -14,100 +14,21 @@ import {
   Tabs,
   Typography,
 } from "@mui/material";
+import type {
+  DashboardDataQuality,
+  DashboardDataQualityDetails,
+  DocumentStatus,
+  UserRole,
+} from "../shared/workspaceBootstrapTypes";
 
-type UserRole = "admin" | "employee";
-type DocumentStatus =
-  | "uploaded"
-  | "recognized"
-  | "partially_recognized"
-  | "needs_review"
-  | "confirmed"
-  | "ocr_error"
-  | "archived";
 type QualityDetailTab = "documents" | "services" | "works" | "parts" | "conflicts";
 type DashboardVisualTone = "blue" | "amber" | "red" | "green";
-
-type DashboardDataQuality = {
-  average_ocr_confidence: number | null;
-  documents_low_confidence: number;
-  documents_ocr_error: number;
-  documents_needs_review: number;
-  services_preliminary: number;
-  works_preliminary: number;
-  parts_preliminary: number;
-  import_conflicts_pending: number;
-  repairs_suspicious: number;
-};
 
 type DashboardVisualBar = {
   label: string;
   value: number;
   hint?: string;
   tone: DashboardVisualTone;
-};
-
-type DashboardDataQualityDetails = {
-  counts: {
-    documents: number;
-    services: number;
-    works: number;
-    parts: number;
-    conflicts: number;
-  };
-  documents: Array<{
-    document_id: number;
-    repair_id: number | null;
-    original_filename: string;
-    document_status: string;
-    repair_status: string | null;
-    repair_date: string | null;
-    ocr_confidence: number | null;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-  }>;
-  services: Array<{
-    service_id: number;
-    name: string;
-    city: string | null;
-    repairs_total: number;
-    last_repair_date: string | null;
-  }>;
-  works: Array<{
-    work_id: number;
-    repair_id: number;
-    document_id: number | null;
-    work_name: string;
-    line_total: number;
-    repair_date: string;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-  }>;
-  parts: Array<{
-    part_id: number;
-    repair_id: number;
-    document_id: number | null;
-    part_name: string;
-    line_total: number;
-    repair_date: string;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-  }>;
-  conflicts: Array<{
-    conflict_id: number;
-    import_job_id: number;
-    entity_type: string;
-    conflict_key: string;
-    source_filename: string | null;
-    repair_id: number | null;
-    document_id: number | null;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-    created_at: string;
-  }>;
 };
 
 type DataQualityOverviewPanelProps = {

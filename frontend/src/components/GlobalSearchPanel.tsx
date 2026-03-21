@@ -11,70 +11,12 @@ import {
   Typography,
 } from "@mui/material";
 import type { ChipProps } from "@mui/material/Chip";
-
-type VehicleType = "truck" | "trailer";
-type VehicleStatus = "active" | "in_repair" | "waiting_repair" | "inactive" | "decommissioned" | "archived";
-type DocumentStatus =
-  | "uploaded"
-  | "recognized"
-  | "partially_recognized"
-  | "needs_review"
-  | "confirmed"
-  | "ocr_error"
-  | "archived";
-
-type GlobalSearchDocumentItem = {
-  document_id: number;
-  repair_id: number | null;
-  vehicle_id: number | null;
-  original_filename: string;
-  document_status: DocumentStatus;
-  ocr_confidence: number | null;
-  order_number: string | null;
-  repair_date: string | null;
-  service_name: string | null;
-  plate_number: string | null;
-  vin: string | null;
-  matched_by: string[];
-  created_at: string;
-};
-
-type GlobalSearchRepairItem = {
-  repair_id: number;
-  vehicle_id: number;
-  order_number: string | null;
-  repair_date: string;
-  repair_status: string;
-  service_name: string | null;
-  plate_number: string | null;
-  vin: string | null;
-  grand_total: number;
-  matched_by: string[];
-  created_at: string;
-};
-
-type GlobalSearchVehicleItem = {
-  vehicle_id: number;
-  vehicle_type: VehicleType;
-  plate_number: string | null;
-  vin: string | null;
-  brand: string | null;
-  model: string | null;
-  status: VehicleStatus;
-  archived_at: string | null;
-  matched_by: string[];
-  updated_at: string;
-};
-
-type GlobalSearchResponse = {
-  query: string;
-  documents_total: number;
-  repairs_total: number;
-  vehicles_total: number;
-  documents: GlobalSearchDocumentItem[];
-  repairs: GlobalSearchRepairItem[];
-  vehicles: GlobalSearchVehicleItem[];
-};
+import type {
+  DocumentStatus,
+  GlobalSearchResponse,
+  VehicleStatus,
+  VehicleType,
+} from "../shared/workspaceBootstrapTypes";
 
 type GlobalSearchPanelProps = {
   query: string;

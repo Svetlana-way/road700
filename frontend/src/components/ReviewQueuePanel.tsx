@@ -1,65 +1,13 @@
 import { Box, Button, Chip, Paper, Stack, Typography } from "@mui/material";
 import type { ChipProps } from "@mui/material/Chip";
-
-type UserRole = "admin" | "employee";
-type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
-type DocumentStatus =
-  | "uploaded"
-  | "recognized"
-  | "partially_recognized"
-  | "needs_review"
-  | "confirmed"
-  | "ocr_error"
-  | "archived";
-type VehicleType = "truck" | "trailer";
-type ReviewPriorityBucket = "review" | "critical" | "suspicious";
-type ReviewQueueCategory =
-  | "all"
-  | "suspicious"
-  | "ocr_error"
-  | "partial_recognition"
-  | "employee_confirmation"
-  | "manual_review";
-
-type ReviewQueueItem = {
-  category: ReviewQueueCategory;
-  priority_score: number;
-  priority_bucket: ReviewPriorityBucket;
-  issue_count: number;
-  issue_titles: string[];
-  manual_review_reasons: string[];
-  extracted_order_number: string | null;
-  extracted_grand_total: number | null;
-  document: {
-    id: number;
-    original_filename: string;
-    source_type: string;
-    kind: DocumentKind;
-    status: DocumentStatus;
-    created_at: string;
-    updated_at: string;
-    ocr_confidence: number | null;
-    review_queue_priority: number;
-  };
-  repair: {
-    id: number;
-    order_number: string | null;
-    repair_date: string;
-    mileage: number;
-    status: string;
-    is_partially_recognized: boolean;
-    unresolved_checks_total: number;
-    suspicious_checks_total: number;
-  };
-  vehicle: {
-    id: number;
-    external_id: string | null;
-    vehicle_type: VehicleType;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-  };
-};
+import type {
+  DocumentKind,
+  DocumentStatus,
+  ReviewPriorityBucket,
+  ReviewQueueCategory,
+  ReviewQueueItem,
+  UserRole,
+} from "../shared/workspaceBootstrapTypes";
 
 type ReviewQueueFilter = {
   key: ReviewQueueCategory;

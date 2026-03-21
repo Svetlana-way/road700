@@ -10,74 +10,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-
-type UserRole = "admin" | "employee";
-type VehicleType = "truck" | "trailer";
-
-type UserAssignment = {
-  id: number;
-  vehicle_id: number;
-  starts_at: string;
-  ends_at: string | null;
-  comment: string | null;
-  vehicle: {
-    id: number;
-    vehicle_type: VehicleType;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-  };
-};
-
-type UserItem = {
-  id: number;
-  full_name: string;
-  login: string;
-  email: string;
-  role: UserRole;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-  assignments: UserAssignment[];
-};
-
-type UserFormState = {
-  id: number | null;
-  full_name: string;
-  login: string;
-  email: string;
-  role: UserRole;
-  is_active: "true" | "false";
-  password: string;
-};
-
-type UserAssignmentFormState = {
-  starts_at: string;
-  ends_at: string;
-  comment: string;
-};
-
-type VehicleItem = {
-  id: number;
-  external_id: string | null;
-  vehicle_type: VehicleType;
-  vin: string | null;
-  plate_number: string | null;
-  brand: string | null;
-  model: string | null;
-  year: number | null;
-  column_name: string | null;
-  mechanic_name: string | null;
-  current_driver_name: string | null;
-  last_coordinates_at: string | null;
-  comment: string | null;
-  status: string;
-  archived_at: string | null;
-  historical_repairs_total: number;
-  historical_last_repair_date: string | null;
-  created_at: string;
-  updated_at: string;
-};
+import type { UserAssignment, UserItem, UserRole, Vehicle, VehicleType } from "../shared/workspaceBootstrapTypes";
+import type { UserAssignmentFormState, UserFormState } from "../shared/workspaceFormTypes";
 
 type EmployeesAdminPanelProps = {
   userSearch: string;
@@ -92,7 +26,7 @@ type EmployeesAdminPanelProps = {
   adminResetPasswordValue: string;
   userVehicleSearch: string;
   userVehicleSearchLoading: boolean;
-  userVehicleSearchResults: VehicleItem[];
+  userVehicleSearchResults: Vehicle[];
   userAssignmentForm: UserAssignmentFormState;
   userAssignmentSaving: boolean;
   onUserSearchChange: (value: string) => void;
@@ -112,7 +46,7 @@ type EmployeesAdminPanelProps = {
   onCreateUserAssignment: (vehicleId: number) => void;
   onCloseUserAssignment: (assignment: UserAssignment) => void;
   formatUserRoleLabel: (value: UserRole) => string;
-  formatVehicle: (vehicle: VehicleItem | UserAssignment["vehicle"]) => string;
+  formatVehicle: (vehicle: Vehicle | UserAssignment["vehicle"]) => string;
   formatVehicleTypeLabel: (value: VehicleType | "" | null | undefined) => string;
   isAssignmentActive: (assignment: UserAssignment) => boolean;
 };

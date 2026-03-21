@@ -11,76 +11,13 @@ import {
   Typography,
 } from "@mui/material";
 import type { ChipProps } from "@mui/material/Chip";
-
-type UserRole = "admin" | "employee";
-type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
-type VehicleType = "truck" | "trailer";
-type DocumentStatus =
-  | "uploaded"
-  | "recognized"
-  | "partially_recognized"
-  | "needs_review"
-  | "confirmed"
-  | "ocr_error"
-  | "archived";
-type ImportJobStatus = "queued" | "retry" | "draft" | "processing" | "completed" | "completed_with_conflicts" | "failed";
-
-type DocumentItem = {
-  id: number;
-  original_filename: string;
-  source_type: string;
-  kind: DocumentKind;
-  status: DocumentStatus;
-  is_primary?: boolean;
-  ocr_confidence?: number | null;
-  created_at: string;
-  notes: string | null;
-  parsed_payload?: {
-    extracted_fields?: {
-      order_number?: string;
-      grand_total?: number;
-      plate_number?: string;
-      vin?: string;
-    };
-    extracted_items?: {
-      works?: Array<Record<string, unknown>>;
-      parts?: Array<Record<string, unknown>>;
-    };
-    manual_review_reasons?: string[];
-    labor_norm_applicability?: {
-      eligible?: boolean;
-      reason?: string;
-      matched_count?: number;
-      unmatched_count?: number;
-      brand_family?: string | null;
-    };
-  } | null;
-  repair: {
-    id: number;
-    order_number: string | null;
-    repair_date: string;
-    mileage: number;
-    status: string;
-  };
-  vehicle: {
-    id: number;
-    external_id: string | null;
-    vehicle_type: VehicleType;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-  };
-  latest_import_job?: {
-    id: number;
-    status: ImportJobStatus;
-    error_message?: string | null;
-    attempts: number;
-    started_at?: string | null;
-    finished_at?: string | null;
-    created_at: string;
-    updated_at: string;
-  } | null;
-};
+import type {
+  DocumentItem,
+  DocumentKind,
+  DocumentStatus,
+  ImportJobStatus,
+  UserRole,
+} from "../shared/workspaceBootstrapTypes";
 
 type DocumentsListPanelProps = {
   userRole: UserRole | null | undefined;

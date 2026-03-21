@@ -12,89 +12,14 @@ import {
   Typography,
 } from "@mui/material";
 import type { ChipProps } from "@mui/material/Chip";
-
-type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
-type VehicleType = "truck" | "trailer";
-type VehicleStatus = "active" | "in_repair" | "waiting_repair" | "inactive" | "decommissioned" | "archived";
-type DocumentStatus =
-  | "uploaded"
-  | "recognized"
-  | "partially_recognized"
-  | "needs_review"
-  | "confirmed"
-  | "ocr_error"
-  | "archived";
-type ImportJobStatus = "queued" | "retry" | "draft" | "processing" | "completed" | "completed_with_conflicts" | "failed";
-
-type VehicleItem = {
-  id: number;
-  external_id: string | null;
-  vehicle_type: VehicleType;
-  vin: string | null;
-  plate_number: string | null;
-  brand: string | null;
-  model: string | null;
-  year: number | null;
-  column_name: string | null;
-  mechanic_name: string | null;
-  current_driver_name: string | null;
-  last_coordinates_at: string | null;
-  comment: string | null;
-  status: VehicleStatus;
-  archived_at: string | null;
-  historical_repairs_total: number;
-  historical_last_repair_date: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type UploadFormState = {
-  vehicleId: string;
-  documentKind: DocumentKind;
-  repairDate: string;
-  mileage: string;
-  orderNumber: string;
-  reason: string;
-  employeeComment: string;
-  notes: string;
-};
-
-type DocumentItem = {
-  id: number;
-  original_filename: string;
-  kind: DocumentKind;
-  status: DocumentStatus;
-  ocr_confidence?: number | null;
-  parsed_payload?: {
-    extracted_fields?: {
-      service_name?: string;
-    };
-  } | null;
-  repair: {
-    id: number;
-    order_number: string | null;
-    repair_date: string;
-    mileage: number;
-  };
-  vehicle: {
-    id: number;
-    external_id: string | null;
-    vehicle_type: VehicleType;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-  };
-  latest_import_job?: {
-    id: number;
-    status: ImportJobStatus;
-    error_message?: string | null;
-    attempts: number;
-    started_at?: string | null;
-    finished_at?: string | null;
-    created_at: string;
-    updated_at: string;
-  } | null;
-};
+import type {
+  DocumentItem,
+  DocumentKind,
+  DocumentStatus,
+  ImportJobStatus,
+  Vehicle,
+} from "../shared/workspaceBootstrapTypes";
+import type { UploadFormState } from "../shared/workspaceFormTypes";
 
 type DocumentKindOption = {
   value: DocumentKind;
@@ -105,7 +30,7 @@ type UploadField = keyof UploadFormState;
 
 type DocumentsUploadPanelProps = {
   uploadForm: UploadFormState;
-  vehicles: VehicleItem[];
+  vehicles: Vehicle[];
   rootDocumentKindOptions: DocumentKindOption[];
   selectedFile: File | null;
   uploadMissingRequirements: string[];
@@ -118,7 +43,7 @@ type DocumentsUploadPanelProps = {
   onOpenFilePicker: () => void;
   onOpenUploadedRepair: (documentId: number, repairId: number) => void;
   onHideUploadedResult: () => void;
-  formatVehicle: (vehicle: VehicleItem | DocumentItem["vehicle"]) => string;
+  formatVehicle: (vehicle: Vehicle | DocumentItem["vehicle"]) => string;
   formatDocumentKind: (kind: DocumentKind) => string;
   importJobStatusColor: (status: ImportJobStatus) => ChipProps["color"];
   formatStatus: (value: string) => string;

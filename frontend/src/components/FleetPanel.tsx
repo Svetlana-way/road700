@@ -12,24 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import type { ChipProps } from "@mui/material/Chip";
-
-type VehicleType = "truck" | "trailer";
-type VehicleStatus = "active" | "in_repair" | "waiting_repair" | "inactive" | "decommissioned" | "archived";
-
-type FleetVehicleItem = {
-  id: number;
-  vehicle_type: VehicleType;
-  vin: string | null;
-  plate_number: string | null;
-  brand: string | null;
-  model: string | null;
-  mechanic_name: string | null;
-  current_driver_name: string | null;
-  status: VehicleStatus;
-  archived_at: string | null;
-  historical_repairs_total: number;
-  historical_last_repair_date: string | null;
-};
+import type { Vehicle, VehicleStatus, VehicleType } from "../shared/workspaceBootstrapTypes";
 
 type FleetPanelProps = {
   viewMode: "list" | "detail";
@@ -39,7 +22,7 @@ type FleetPanelProps = {
   fleetStatusFilter: "" | VehicleStatus;
   fleetVehiclesTotal: number;
   selectedFleetVehicleId: number | null;
-  fleetVehicles: FleetVehicleItem[];
+  fleetVehicles: Vehicle[];
   fleetLoading: boolean;
   onFleetQueryChange: (value: string) => void;
   onFleetVehicleTypeFilterChange: (value: "" | VehicleType) => void;
@@ -48,7 +31,7 @@ type FleetPanelProps = {
   onReset: () => void;
   onReturnToList: () => void;
   onOpenVehicleCard: (vehicleId: number) => void;
-  formatVehicle: (vehicle: FleetVehicleItem) => string;
+  formatVehicle: (vehicle: Vehicle) => string;
   formatVehicleTypeLabel: (value: VehicleType | "" | null | undefined) => string;
   formatVehicleStatusLabel: (value: string | null | undefined) => string;
   formatDateValue: (value: string) => string;

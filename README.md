@@ -60,11 +60,12 @@ The repository now includes:
 The repository includes a dedicated server stack:
 
 - `Dockerfile.app` builds the frontend and backend into one application image
-- `docker-compose.server.yml` runs `postgres`, `app`, and `caddy`
+- `docker-compose.server.yml` runs `postgres`, `app`, `worker`, and `caddy`
 - `deploy/server/Caddyfile` serves the application over HTTPS
 - `deploy/server/.env.example` contains the required production variables
 - `scripts/predeploy-usecase-check.sh` runs the local pre-deploy checklist for the employee workflow
 - `scripts/deploy-server.sh` safely syncs the project to the server without deleting `.env.server` and `storage/`
+- `scripts/smoke-test-ocr-runtime.sh` validates OCR runtime after deploy
 
 Typical server bootstrap:
 
@@ -75,6 +76,15 @@ Typical server bootstrap:
    - `docker compose --env-file .env.server -f docker-compose.server.yml up -d --build`
 5. Open:
    - `https://your-domain`
+
+Production OCR runtime:
+
+- the production image now installs `tesseract-ocr`, `tesseract-ocr-rus`, and `poppler-utils`
+- `app` startup prints OCR runtime diagnostics before launching the API
+- `worker` validates the OCR runtime on startup when `REQUIRE_FULL_OCR_RUNTIME=true`
+- `/api/health` reports `ocr_backend`, `pdf_renderer`, `image_ocr`, and `pdf_scan_ocr`
+- the technical admin screen shows whether the current environment is ready for image OCR and scanned PDF OCR
+- `scripts/smoke-test-ocr-runtime.sh` checks OCR runtime in both `app` and `worker` and verifies `/api/health` and `/api/system/status`
 
 Typical update deploy from the local workstation:
 
@@ -87,8 +97,9 @@ Typical update deploy from the local workstation:
    - runs `scripts/predeploy-usecase-check.sh` automatically unless `SKIP_USE_CASE_CHECK=1`
    - syncs the repository
    - protects `.env.server` and `storage/` from deletion during `rsync --delete`
-   - rebuilds `app` and `caddy`
+   - rebuilds `app`, `worker`, and `caddy`
    - prints `docker compose ps`
+   - runs `scripts/smoke-test-ocr-runtime.sh` on the server
 
 Password recovery email:
 

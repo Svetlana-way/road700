@@ -1,27 +1,9 @@
 import { Alert, Box, Button, Chip, Grid, Paper, Stack, TextField, Typography } from "@mui/material";
-
-type ReviewComparisonStatus = "match" | "missing" | "mismatch" | "ocr_missing" | "empty";
-
-type ReviewRepairFieldsDraft = {
-  order_number: string;
-  repair_date: string;
-  mileage: string;
-  work_total: string;
-  parts_total: string;
-  vat_total: string;
-  grand_total: string;
-  reason: string;
-  employee_comment: string;
-};
-
-type ReviewRequiredFieldComparisonItem = {
-  key: string;
-  label: string;
-  currentDisplay: string;
-  ocrDisplay: string;
-  confidenceValue: number | null;
-  status: ReviewComparisonStatus;
-};
+import type { ReviewComparisonStatus } from "../shared/repairUiHelpers";
+import type {
+  ReviewRepairFieldsDraft,
+  ReviewRequiredFieldComparisonItem,
+} from "../shared/workspaceFormTypes";
 
 type ReviewRequiredFieldsPanelProps = {
   canConfirmSelectedReview: boolean;

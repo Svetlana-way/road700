@@ -86,7 +86,10 @@ run_rsync \
   "$REMOTE_USER@$REMOTE_HOST:$REMOTE_DIR/"
 
 echo "Rebuilding application containers"
-run_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$REMOTE_ENV_FILE' -f docker-compose.server.yml up -d --build app caddy"
+run_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$REMOTE_ENV_FILE' -f docker-compose.server.yml up -d --build app worker caddy"
 
 echo "Container status"
 run_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$REMOTE_ENV_FILE' -f docker-compose.server.yml ps"
+
+echo "Running OCR runtime smoke test"
+run_ssh "cd '$REMOTE_DIR' && chmod +x ./scripts/smoke-test-ocr-runtime.sh && ENV_FILE='$REMOTE_ENV_FILE' COMPOSE_FILE='docker-compose.server.yml' ./scripts/smoke-test-ocr-runtime.sh"

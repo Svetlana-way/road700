@@ -5,16 +5,23 @@ import {
   buildLaborNormEntryPayload,
   buildOcrProfileMatcherPayload,
   buildOcrRulePayload,
-  buildReviewFieldsPayload,
   buildReviewRulePayload,
-  buildServicePayload,
   buildUserPayload,
 } from "./shared/adminPayloadBuilders";
 import { MenuItem } from "@mui/material";
 import { AuthLandingView } from "./components/AuthLandingView";
 import { HistoryDetailsPreview } from "./components/HistoryDetailsPreview";
 import { WorkspaceMainView } from "./components/WorkspaceMainView";
-import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, downloadDocumentFile, loginRequest } from "./shared/api";
+import { useBackupsAdmin } from "./hooks/useBackupsAdmin";
+import { useEmployeesAdmin } from "./hooks/useEmployeesAdmin";
+import { useRepairDocumentsWorkflow } from "./hooks/useRepairDocumentsWorkflow";
+import { useRepairEditingWorkflow } from "./hooks/useRepairEditingWorkflow";
+import { useFleetWorkspace } from "./hooks/useFleetWorkspace";
+import { useHistoricalImportsAdmin } from "./hooks/useHistoricalImportsAdmin";
+import { useRepairReviewWorkflow } from "./hooks/useRepairReviewWorkflow";
+import { useServicesAdmin } from "./hooks/useServicesAdmin";
+import { useWorkspaceOperations } from "./hooks/useWorkspaceOperations";
+import { TOKEN_STORAGE_KEY, apiRequest, downloadApiFile, loginRequest } from "./shared/api";
 import {
   createVehicleFormFromPayload,
   formatQualityVehicle,
@@ -116,7 +123,6 @@ import {
   createEmptyOcrProfileMatcherForm,
   createEmptyOcrRuleForm,
   createEmptyReviewRuleForm,
-  createEmptyServiceForm,
   createEmptyUserAssignmentForm,
   createEmptyUserForm,
   createLaborNormEntryFormFromItem,
@@ -140,12 +146,9 @@ import {
   workspaceTabDescriptions,
   workspaceTabReturnLabels,
 } from "./shared/appUiConfig";
+import { loadWorkspaceBootstrapData } from "./shared/loadWorkspaceBootstrap";
 import {
   buildAuditLogQueryString,
-  buildFleetVehiclesQueryString,
-  buildGlobalSearchQueryString,
-  buildHistoricalWorkReferenceQueryString,
-  buildImportConflictsQueryString,
   buildLaborNormQueryString,
   buildOcrLearningSignalsQueryString,
   buildOcrProfileMatchersQueryString,
@@ -154,9 +157,6 @@ import {
   buildUsersQueryString,
 } from "./shared/queryBuilders";
 import {
-  createRepairDraft,
-  createReviewRepairFieldsDraft,
-  getDocumentPreviewKind,
   getReviewComparisonColor,
   getReviewComparisonLabel,
   getReviewComparisonStatus,
@@ -165,608 +165,67 @@ import {
   resolveRepairDocumentId,
   type ReviewComparisonStatus,
 } from "./shared/repairUiHelpers";
-
-type UserRole = "admin" | "employee";
-type VehicleType = "truck" | "trailer";
-type VehicleStatus = "active" | "in_repair" | "waiting_repair" | "inactive" | "decommissioned" | "archived";
-type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
-type ServiceStatus = "preliminary" | "confirmed" | "archived";
-type ImportStatus = "draft" | "processing" | "completed" | "completed_with_conflicts" | "failed";
-type ImportJobStatus = "queued" | "retry" | "draft" | "processing" | "completed" | "completed_with_conflicts" | "failed";
-type DocumentStatus =
-  | "uploaded"
-  | "recognized"
-  | "partially_recognized"
-  | "needs_review"
-  | "confirmed"
-  | "ocr_error"
-  | "archived";
-
-type DashboardSummary = {
-  vehicles_total: number;
-  repairs_total: number;
-  repairs_draft: number;
-  repairs_suspicious: number;
-  documents_total: number;
-  documents_review_queue: number;
-};
-
-type DashboardDataQuality = {
-  average_ocr_confidence: number | null;
-  documents_low_confidence: number;
-  documents_ocr_error: number;
-  documents_needs_review: number;
-  services_preliminary: number;
-  works_preliminary: number;
-  parts_preliminary: number;
-  import_conflicts_pending: number;
-  repairs_suspicious: number;
-};
-
-type DashboardDataQualityDetails = {
-  counts: {
-    documents: number;
-    services: number;
-    works: number;
-    parts: number;
-    conflicts: number;
-  };
-  documents: Array<{
-    document_id: number;
-    repair_id: number | null;
-    original_filename: string;
-    document_status: string;
-    repair_status: string | null;
-    repair_date: string | null;
-    ocr_confidence: number | null;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-  }>;
-  services: Array<{
-    service_id: number;
-    name: string;
-    city: string | null;
-    repairs_total: number;
-    last_repair_date: string | null;
-  }>;
-  works: Array<{
-    work_id: number;
-    repair_id: number;
-    document_id: number | null;
-    work_name: string;
-    line_total: number;
-    repair_date: string;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-  }>;
-  parts: Array<{
-    part_id: number;
-    repair_id: number;
-    document_id: number | null;
-    part_name: string;
-    line_total: number;
-    repair_date: string;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-  }>;
-  conflicts: Array<{
-    conflict_id: number;
-    import_job_id: number;
-    entity_type: string;
-    conflict_key: string;
-    source_filename: string | null;
-    repair_id: number | null;
-    document_id: number | null;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-    created_at: string;
-  }>;
-};
-
-type GlobalSearchDocumentItem = {
-  document_id: number;
-  repair_id: number | null;
-  vehicle_id: number | null;
-  original_filename: string;
-  document_status: DocumentStatus;
-  ocr_confidence: number | null;
-  order_number: string | null;
-  repair_date: string | null;
-  service_name: string | null;
-  plate_number: string | null;
-  vin: string | null;
-  matched_by: string[];
-  created_at: string;
-};
-
-type GlobalSearchRepairItem = {
-  repair_id: number;
-  vehicle_id: number;
-  order_number: string | null;
-  repair_date: string;
-  repair_status: string;
-  service_name: string | null;
-  plate_number: string | null;
-  vin: string | null;
-  grand_total: number;
-  matched_by: string[];
-  created_at: string;
-};
-
-type GlobalSearchVehicleItem = {
-  vehicle_id: number;
-  vehicle_type: VehicleType;
-  plate_number: string | null;
-  vin: string | null;
-  brand: string | null;
-  model: string | null;
-  status: VehicleStatus;
-  archived_at: string | null;
-  matched_by: string[];
-  updated_at: string;
-};
-
-type GlobalSearchResponse = {
-  query: string;
-  documents_total: number;
-  repairs_total: number;
-  vehicles_total: number;
-  documents: GlobalSearchDocumentItem[];
-  repairs: GlobalSearchRepairItem[];
-  vehicles: GlobalSearchVehicleItem[];
-};
-
-type AuditLogItem = {
-  id: number;
-  created_at: string;
-  user_id: number | null;
-  user_name: string | null;
-  entity_type: string;
-  entity_id: string;
-  action_type: string;
-  old_value: Record<string, unknown> | null;
-  new_value: Record<string, unknown> | null;
-};
-
-type AuditLogResponse = {
-  items: AuditLogItem[];
-  total: number;
-  limit: number;
-  offset: number;
-  action_types: string[];
-  entity_types: string[];
-};
-
-type User = {
-  id: number;
-  full_name: string;
-  login: string;
-  email: string;
-  role: UserRole;
-  is_active: boolean;
-};
-
-type UserAssignment = {
-  id: number;
-  vehicle_id: number;
-  starts_at: string;
-  ends_at: string | null;
-  comment: string | null;
-  vehicle: {
-    id: number;
-    vehicle_type: VehicleType;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-  };
-};
-
-type UserItem = User & {
-  created_at: string;
-  updated_at: string;
-  assignments: UserAssignment[];
-};
-
-type UsersResponse = {
-  items: UserItem[];
-  total: number;
-};
-
-type UserFormState = {
-  id: number | null;
-  full_name: string;
-  login: string;
-  email: string;
-  role: UserRole;
-  is_active: "true" | "false";
-  password: string;
-};
-
-type UserAssignmentFormState = {
-  starts_at: string;
-  ends_at: string;
-  comment: string;
-};
-
-type Vehicle = {
-  id: number;
-  external_id: string | null;
-  vehicle_type: VehicleType;
-  vin: string | null;
-  plate_number: string | null;
-  brand: string | null;
-  model: string | null;
-  year: number | null;
-  column_name: string | null;
-  mechanic_name: string | null;
-  current_driver_name: string | null;
-  last_coordinates_at: string | null;
-  comment: string | null;
-  status: VehicleStatus;
-  archived_at: string | null;
-  historical_repairs_total: number;
-  historical_last_repair_date: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type VehiclesResponse = {
-  items: Vehicle[];
-  total: number;
-  limit: number;
-  offset: number;
-};
-
-type VehicleUpdatePayload = {
-  status?: VehicleStatus;
-  comment?: string | null;
-};
-
-type VehicleLink = {
-  id: number;
-  left_vehicle_id: number;
-  right_vehicle_id: number;
-  starts_at: string;
-  ends_at: string | null;
-  comment: string | null;
-};
-
-type VehicleActiveAssignment = {
-  id: number;
-  user_id: number;
-  starts_at: string;
-  ends_at: string | null;
-  comment: string | null;
-  user: {
-    id: number;
-    full_name: string;
-    email: string;
-    role: UserRole;
-  };
-};
-
-type VehicleRepairHistoryItem = {
-  repair_id: number;
-  order_number: string | null;
-  repair_date: string;
-  mileage: number;
-  status: string;
-  service_name: string | null;
-  grand_total: number;
-  documents_total: number;
-  created_at: string;
-  updated_at: string;
-};
-
-type VehicleHistorySummary = {
-  repairs_total: number;
-  documents_total: number;
-  confirmed_repairs: number;
-  suspicious_repairs: number;
-  last_repair_date: string | null;
-  last_mileage: number | null;
-};
-
-type VehicleHistoricalRepairHistoryItem = {
-  repair_id: number;
-  order_number: string | null;
-  repair_date: string;
-  mileage: number;
-  service_name: string | null;
-  grand_total: number;
-  employee_comment: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type VehicleHistoricalHistorySummary = {
-  repairs_total: number;
-  services_total: number;
-  total_spend: number;
-  first_repair_date: string | null;
-  last_repair_date: string | null;
-  last_mileage: number | null;
-};
-
-type VehicleDetail = Vehicle & {
-  active_links: VehicleLink[];
-  active_assignments: VehicleActiveAssignment[];
-  repair_history: VehicleRepairHistoryItem[];
-  history_summary: VehicleHistorySummary;
-  historical_repair_history: VehicleHistoricalRepairHistoryItem[];
-  historical_history_summary: VehicleHistoricalHistorySummary;
-};
-
-type ServiceItem = {
-  id: number;
-  name: string;
-  city: string | null;
-  contact: string | null;
-  comment: string | null;
-  status: ServiceStatus;
-  created_by_user_id: number | null;
-  confirmed_by_user_id: number | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type HistoricalRepairImportResponse = {
-  message: string;
-  job_id: number;
-  status: ImportStatus;
-  source_filename: string;
-  rows_total: number;
-  grouped_repairs: number;
-  created_repairs: number;
-  duplicate_repairs: number;
-  conflicts_created: number;
-  created_services: number;
-  created_works: number;
-  created_parts: number;
-  repair_limit_applied: number | null;
-  first_repair_id: number | null;
-  recent_repair_ids: number[];
-  sample_conflicts: string[];
-};
-
-type HistoricalWorkReferenceServiceItem = {
-  service_id: number | null;
-  service_name: string;
-  samples: number;
-};
-
-type HistoricalWorkReferenceItem = {
-  key: string;
-  work_code: string | null;
-  work_name: string;
-  normalized_name: string;
-  sample_repairs: number;
-  sample_lines: number;
-  historical_sample_repairs: number;
-  historical_sample_lines: number;
-  operational_sample_repairs: number;
-  operational_sample_lines: number;
-  services_count: number;
-  vehicle_types: string[];
-  median_line_total: number;
-  min_line_total: number;
-  max_line_total: number;
-  median_price: number;
-  median_quantity: number;
-  median_mileage: number | null;
-  min_mileage: number | null;
-  max_mileage: number | null;
-  median_standard_hours: number | null;
-  median_actual_hours: number | null;
-  recent_repair_date: string | null;
-  recent_operational_repair_date: string | null;
-  top_services: HistoricalWorkReferenceServiceItem[];
-};
-
-type HistoricalWorkReferenceResponse = {
-  items: HistoricalWorkReferenceItem[];
-  total: number;
-  limit: number;
-  q: string | null;
-  min_samples: number;
-};
-
-type ImportJobItem = {
-  id: number;
-  import_type: string;
-  source_filename: string;
-  status: ImportStatus;
-  summary: Record<string, unknown> | null;
-  error_message: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type ImportJobsResponse = {
-  items: ImportJobItem[];
-};
-
-type ImportConflictItem = {
-  id: number;
-  import_job_id: number;
-  entity_type: string;
-  conflict_key: string;
-  incoming_payload: Record<string, unknown> | null;
-  existing_payload: Record<string, unknown> | null;
-  resolution_payload: Record<string, unknown> | null;
-  status: string;
-  source_filename: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type ImportConflictsResponse = {
-  items: ImportConflictItem[];
-};
-
-type ImportConflictResolveResponse = {
-  message: string;
-  conflict: ImportConflictItem;
-};
-
-type ServicesResponse = {
-  items: ServiceItem[];
-  total: number;
-  limit: number;
-  offset: number;
-  cities: string[];
-};
-
-type ServiceFormState = {
-  id: number | null;
-  name: string;
-  city: string;
-  contact: string;
-  comment: string;
-  status: ServiceStatus;
-};
-
-type OcrRuleItem = {
-  id: number;
-  profile_scope: string;
-  target_field: string;
-  pattern: string;
-  value_parser: string;
-  confidence: number;
-  priority: number;
-  is_active: boolean;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type OcrRuleResponse = {
-  items: OcrRuleItem[];
-  profile_scopes: string[];
-  target_fields: string[];
-};
-
-type OcrRuleFormState = {
-  id: number | null;
-  profile_scope: string;
-  target_field: string;
-  pattern: string;
-  value_parser: string;
-  confidence: string;
-  priority: string;
-  is_active: "true" | "false";
-  notes: string;
-};
-
-type OcrProfileMatcherItem = {
-  id: number;
-  profile_scope: string;
-  title: string;
-  source_type: string | null;
-  filename_pattern: string | null;
-  text_pattern: string | null;
-  service_name_pattern: string | null;
-  priority: number;
-  is_active: boolean;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type OcrProfileMatcherResponse = {
-  items: OcrProfileMatcherItem[];
-  profile_scopes: string[];
-};
-
-type OcrProfileMatcherFormState = {
-  id: number | null;
-  profile_scope: string;
-  title: string;
-  source_type: string;
-  filename_pattern: string;
-  text_pattern: string;
-  service_name_pattern: string;
-  priority: string;
-  is_active: "true" | "false";
-  notes: string;
-};
-
-type OcrLearningSignalItem = {
-  id: number;
-  repair_id: number;
-  document_id: number | null;
-  document_version_id: number | null;
-  created_by_user_id: number | null;
-  signal_type: string;
-  target_field: string;
-  ocr_profile_scope: string | null;
-  extracted_value: string | null;
-  corrected_value: string;
-  service_name: string | null;
-  source_type: string | null;
-  document_filename: string | null;
-  text_excerpt: string | null;
-  suggestion_summary: string | null;
-  status: string;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type OcrLearningSummaryItem = {
-  target_field: string;
-  ocr_profile_scope: string | null;
-  signal_type: string;
-  count: number;
-  suggestion_summary: string;
-  example_services: string[];
-  example_filenames: string[];
-};
-
-type SystemStatus = {
-  password_recovery_delivery_mode: "email" | "manual";
-  password_recovery_email_configured: boolean;
-};
-
-type BackupItem = {
-  backup_id: string;
-  filename: string;
-  created_at: string;
-  backup_type: string;
-  source: string;
-  status: string;
-  size_bytes: number;
-  storage_files_total: number;
-  tables_total: number;
-};
-
-type BackupListResponse = {
-  items: BackupItem[];
-  total: number;
-};
-
-type BackupCreateResponse = {
-  message: string;
-  backup: BackupItem;
-};
-
-type BackupRestoreResponse = {
-  message: string;
-  backup: BackupItem;
-};
-
-type OcrLearningResponse = {
-  items: OcrLearningSignalItem[];
-  summaries: OcrLearningSummaryItem[];
-  total: number;
-  statuses: string[];
-  target_fields: string[];
-  profile_scopes: string[];
-};
+import type {
+  HistoricalRepairImportResponse,
+  HistoricalWorkReferenceItem,
+  HistoricalWorkReferenceResponse,
+  ImportConflictItem,
+  ImportConflictResolveResponse,
+  ImportConflictsResponse,
+  ImportJobItem,
+  ImportJobsResponse,
+} from "./shared/importAdminTypes";
+import type {
+  DashboardDataQuality,
+  DashboardDataQualityDetails,
+  DashboardSummary,
+  DocumentItem,
+  DocumentKind,
+  DocumentStatus,
+  DocumentsResponse,
+  GlobalSearchResponse,
+  ImportJobStatus,
+  LaborNormCatalogConfigItem,
+  LaborNormCatalogConfigResponse,
+  LaborNormCatalogItem,
+  LaborNormCatalogResponse,
+  OcrLearningResponse,
+  OcrLearningSignalItem,
+  OcrLearningSummaryItem,
+  OcrProfileMatcherItem,
+  OcrProfileMatcherResponse,
+  OcrRuleItem,
+  OcrRuleResponse,
+  ReviewQueueCategory,
+  ReviewQueueItem,
+  ReviewQueueResponse,
+  ReviewRuleItem,
+  ReviewRuleResponse,
+  ServiceItem,
+  ServiceStatus,
+  ServicesResponse,
+  SystemStatus,
+  User,
+  UserAssignment,
+  UserItem,
+  UserRole,
+  UsersResponse,
+  Vehicle,
+} from "./shared/workspaceBootstrapTypes";
+import type {
+  DocumentVehicleFormState,
+  LaborNormCatalogFormState,
+  LaborNormEntryFormState,
+  OcrProfileMatcherFormState,
+  OcrRuleFormState,
+  ReviewRepairFieldsDraft,
+  ReviewRequiredFieldComparisonItem,
+  ReviewRuleFormState,
+  ServiceFormState,
+  UploadFormState,
+  UserAssignmentFormState,
+  UserFormState,
+} from "./shared/workspaceFormTypes";
 
 type OcrLearningDraftsResponse = {
   signal: OcrLearningSignalItem;
@@ -791,80 +250,6 @@ type OcrLearningDraftsResponse = {
   };
 };
 
-type VehiclePreview = {
-  id: number;
-  external_id?: string | null;
-  plate_number: string | null;
-  brand: string | null;
-  model: string | null;
-};
-
-type DocumentItem = {
-  id: number;
-  original_filename: string;
-  source_type: string;
-  kind: DocumentKind;
-  mime_type?: string | null;
-  status: DocumentStatus;
-  is_primary?: boolean;
-  ocr_confidence?: number | null;
-  review_queue_priority?: number;
-  created_at: string;
-  notes: string | null;
-  parsed_payload?: {
-    extracted_fields?: {
-      order_number?: string;
-      mileage?: number;
-      grand_total?: number;
-      service_name?: string;
-      plate_number?: string;
-      vin?: string;
-      repair_date?: string;
-    };
-    extracted_items?: {
-      works?: Array<Record<string, unknown>>;
-      parts?: Array<Record<string, unknown>>;
-    };
-    manual_review_reasons?: string[];
-    labor_norm_applicability?: {
-      eligible?: boolean;
-      reason?: string;
-      matched_count?: number;
-      unmatched_count?: number;
-      brand_family?: string | null;
-    };
-  } | null;
-  repair: {
-    id: number;
-    order_number: string | null;
-    repair_date: string;
-    mileage: number;
-    status: string;
-  };
-  vehicle: {
-    id: number;
-    external_id: string | null;
-    vehicle_type: VehicleType;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-  };
-  latest_import_job?: {
-    id: number;
-    status: ImportJobStatus;
-    error_message?: string | null;
-    attempts: number;
-    started_at?: string | null;
-    finished_at?: string | null;
-    created_at: string;
-    updated_at: string;
-  } | null;
-};
-
-type DocumentsResponse = {
-  items: DocumentItem[];
-};
-
 type DocumentUploadResponse = {
   document: DocumentItem;
   message: string;
@@ -880,60 +265,6 @@ type DocumentBatchProcessResponse = {
   message: string;
 };
 
-type LaborNormCatalogItem = {
-  id: number;
-  scope: string;
-  brand_family: string | null;
-  catalog_name: string | null;
-  code: string;
-  category: string | null;
-  name_ru: string;
-  name_ru_alt: string | null;
-  name_cn: string | null;
-  name_en: string | null;
-  normalized_name: string;
-  standard_hours: number;
-  source_sheet: string | null;
-  source_file: string | null;
-  status: string;
-  created_at: string;
-  updated_at: string;
-};
-
-type LaborNormCatalogConfigItem = {
-  id: number;
-  scope: string;
-  catalog_name: string;
-  brand_family: string | null;
-  vehicle_type: VehicleType | null;
-  year_from: number | null;
-  year_to: number | null;
-  brand_keywords: string[] | null;
-  model_keywords: string[] | null;
-  vin_prefixes: string[] | null;
-  priority: number;
-  auto_match_enabled: boolean;
-  status: string;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type LaborNormCatalogConfigResponse = {
-  items: LaborNormCatalogConfigItem[];
-  scopes: string[];
-};
-
-type LaborNormCatalogResponse = {
-  items: LaborNormCatalogItem[];
-  total: number;
-  limit: number;
-  offset: number;
-  scopes: string[];
-  categories: string[];
-  source_files: string[];
-};
-
 type LaborNormImportResponse = {
   message: string;
   filename: string;
@@ -943,97 +274,8 @@ type LaborNormImportResponse = {
   skipped: number;
 };
 
-type LaborNormCatalogFormState = {
-  scope: string;
-  catalog_name: string;
-  brand_family: string;
-  vehicle_type: "" | VehicleType;
-  year_from: string;
-  year_to: string;
-  brand_keywords: string;
-  model_keywords: string;
-  vin_prefixes: string;
-  priority: string;
-  auto_match_enabled: "true" | "false";
-  status: string;
-  notes: string;
-};
-
-type LaborNormEntryFormState = {
-  id: number | null;
-  scope: string;
-  code: string;
-  category: string;
-  name_ru: string;
-  name_ru_alt: string;
-  name_cn: string;
-  name_en: string;
-  standard_hours: string;
-  source_sheet: string;
-  source_file: string;
-  status: string;
-};
-
-type ReviewPriorityBucket = "review" | "critical" | "suspicious";
 type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
 type QualityDetailTab = "documents" | "services" | "works" | "parts" | "conflicts";
-type ReviewQueueCategory =
-  | "all"
-  | "suspicious"
-  | "ocr_error"
-  | "partial_recognition"
-  | "employee_confirmation"
-  | "manual_review";
-
-type ReviewQueueItem = {
-  category: ReviewQueueCategory;
-  priority_score: number;
-  priority_bucket: ReviewPriorityBucket;
-  issue_count: number;
-  issue_titles: string[];
-  manual_review_reasons: string[];
-  extracted_order_number: string | null;
-  extracted_grand_total: number | null;
-  document: {
-    id: number;
-    original_filename: string;
-    source_type: string;
-    kind: DocumentKind;
-    status: DocumentStatus;
-    created_at: string;
-    updated_at: string;
-    ocr_confidence: number | null;
-    review_queue_priority: number;
-  };
-  repair: {
-    id: number;
-    order_number: string | null;
-    repair_date: string;
-    mileage: number;
-    status: string;
-    is_partially_recognized: boolean;
-    unresolved_checks_total: number;
-    suspicious_checks_total: number;
-  };
-  vehicle: {
-    id: number;
-    external_id: string | null;
-    vehicle_type: VehicleType;
-    plate_number: string | null;
-    brand: string | null;
-    model: string | null;
-  };
-};
-
-type DocumentVehicleFormState = {
-  vehicle_type: VehicleType;
-  plate_number: string;
-  vin: string;
-  brand: string;
-  model: string;
-  year: string;
-  comment: string;
-};
 
 type DocumentCreateVehicleResponse = {
   message: string;
@@ -1042,89 +284,12 @@ type DocumentCreateVehicleResponse = {
   document: DocumentItem;
 };
 
-type ReviewQueueResponse = {
-  items: ReviewQueueItem[];
-  counts: Record<ReviewQueueCategory, number>;
-  total: number;
-  limit: number;
-  offset: number;
-};
-
-type ReviewRuleItem = {
-  id: number;
-  rule_type: string;
-  code: string;
-  title: string;
-  weight: number;
-  bucket_override: string | null;
-  is_active: boolean;
-  sort_order: number;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type ReviewRuleResponse = {
-  items: ReviewRuleItem[];
-  rule_types: string[];
-};
-
-type ReviewRuleFormState = {
-  id: number | null;
-  rule_type: string;
-  code: string;
-  title: string;
-  weight: string;
-  bucket_override: string;
-  is_active: "true" | "false";
-  sort_order: string;
-  notes: string;
-};
-
-type ReviewActionResponse = {
-  message: string;
-  document_id: number;
-  repair_id: number;
-  document_status: DocumentStatus;
-  repair_status: string;
-  queue_item: ReviewQueueItem | null;
-};
-
-type DocumentComparisonResponse = {
-  left_document: DocumentItem;
-  right_document: DocumentItem;
-  compared_fields: Array<{
-    field_name: string;
-    label: string;
-    left_value: string | null;
-    right_value: string | null;
-    is_different: boolean;
-  }>;
-  works_count_left: number;
-  works_count_right: number;
-  parts_count_left: number;
-  parts_count_right: number;
-};
-
-type DocumentComparisonReviewResponse = {
-  message: string;
-  action: string;
-  document_id: number;
-  repair_id: number;
-  source_document_id: number | null;
-};
-
 type LoginResponse = {
   access_token: string;
 };
 
 type ChangePasswordResponse = {
   message: string;
-};
-
-type RepairDeleteResponse = {
-  message: string;
-  deleted_repair_id: number;
 };
 
 type PasswordResetRequestResponse = {
@@ -1278,78 +443,6 @@ type RepairDetail = {
 type RepairHistoryEntry = RepairDetail["history"][number];
 type RepairDocumentHistoryEntry = RepairDetail["document_history"][number];
 
-type EditableWorkDraft = {
-  work_code: string;
-  work_name: string;
-  quantity: number;
-  standard_hours: number | "";
-  actual_hours: number | "";
-  price: number;
-  line_total: number;
-  status: string;
-};
-
-type EditablePartDraft = {
-  article: string;
-  part_name: string;
-  quantity: number;
-  unit_name: string;
-  price: number;
-  line_total: number;
-  status: string;
-};
-
-type EditableRepairDraft = {
-  order_number: string;
-  repair_date: string;
-  mileage: number;
-  reason: string;
-  employee_comment: string;
-  service_name: string;
-  work_total: number;
-  parts_total: number;
-  vat_total: number;
-  grand_total: number;
-  status: string;
-  is_preliminary: boolean;
-  works: EditableWorkDraft[];
-  parts: EditablePartDraft[];
-};
-
-type ReviewRepairFieldsDraft = {
-  order_number: string;
-  repair_date: string;
-  mileage: string;
-  work_total: string;
-  parts_total: string;
-  vat_total: string;
-  grand_total: string;
-  reason: string;
-  employee_comment: string;
-};
-
-type ReviewRequiredFieldComparisonItem = {
-  key: string;
-  label: string;
-  currentValue: unknown;
-  ocrValue: unknown;
-  currentDisplay: string;
-  ocrDisplay: string;
-  confidenceValue: number | null;
-  status: ReviewComparisonStatus;
-};
-
-type UploadFormState = {
-  vehicleId: string;
-  documentKind: DocumentKind;
-  repairDate: string;
-  mileage: string;
-  orderNumber: string;
-  reason: string;
-  employeeComment: string;
-  notes: string;
-};
-
 const emptyUploadForm = (): UploadFormState => ({
   vehicleId: "",
   documentKind: "order",
@@ -1388,8 +481,6 @@ export default function App() {
   const [showTechAdminTab, setShowTechAdminTab] = useState(false);
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [showPasswordRecoveryRequest, setShowPasswordRecoveryRequest] = useState(false);
-  const [showServiceEditor, setShowServiceEditor] = useState(false);
-  const [showServiceListDialog, setShowServiceListDialog] = useState(false);
   const [showReviewRuleEditor, setShowReviewRuleEditor] = useState(false);
   const [showReviewRuleListDialog, setShowReviewRuleListDialog] = useState(false);
   const [showLaborNormCatalogEditor, setShowLaborNormCatalogEditor] = useState(false);
@@ -1400,58 +491,11 @@ export default function App() {
   const [dataQuality, setDataQuality] = useState<DashboardDataQuality | null>(null);
   const [dataQualityDetails, setDataQualityDetails] = useState<DashboardDataQualityDetails | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [fleetVehicles, setFleetVehicles] = useState<Vehicle[]>([]);
-  const [fleetVehiclesTotal, setFleetVehiclesTotal] = useState(0);
-  const [fleetLoading, setFleetLoading] = useState(false);
-  const [fleetQuery, setFleetQuery] = useState("");
-  const [fleetVehicleTypeFilter, setFleetVehicleTypeFilter] = useState<"" | VehicleType>("");
-  const [fleetStatusFilter, setFleetStatusFilter] = useState<"" | VehicleStatus>("");
-  const [selectedFleetVehicleId, setSelectedFleetVehicleId] = useState<number | null>(null);
-  const [selectedFleetVehicle, setSelectedFleetVehicle] = useState<VehicleDetail | null>(null);
-  const [selectedFleetVehicleLoading, setSelectedFleetVehicleLoading] = useState(false);
-  const [fleetViewMode, setFleetViewMode] = useState<"list" | "detail">("list");
-  const fleetListScrollPositionRef = useRef(0);
   const repairReturnTabRef = useRef<WorkspaceTab>("documents");
   const repairReturnRouteRef = useRef<AppRoute>({ workspace: "documents" });
   const repairScrollPositionRef = useRef(0);
   const [repairHasReturnTarget, setRepairHasReturnTarget] = useState(false);
-  const [vehicleSaving, setVehicleSaving] = useState(false);
-  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
-  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
-  const [globalSearchResult, setGlobalSearchResult] = useState<GlobalSearchResponse | null>(null);
-  const [auditLogItems, setAuditLogItems] = useState<AuditLogItem[]>([]);
-  const [auditLogLoading, setAuditLogLoading] = useState(false);
-  const [auditLogTotal, setAuditLogTotal] = useState(0);
-  const [auditEntityTypes, setAuditEntityTypes] = useState<string[]>([]);
-  const [auditActionTypes, setAuditActionTypes] = useState<string[]>([]);
-  const [auditSearchQuery, setAuditSearchQuery] = useState("");
-  const [auditEntityTypeFilter, setAuditEntityTypeFilter] = useState("");
-  const [auditActionTypeFilter, setAuditActionTypeFilter] = useState("");
-  const [auditUserIdFilter, setAuditUserIdFilter] = useState("");
-  const [auditDateFrom, setAuditDateFrom] = useState("");
-  const [auditDateTo, setAuditDateTo] = useState("");
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
-  const [usersList, setUsersList] = useState<UserItem[]>([]);
-  const [usersTotal, setUsersTotal] = useState(0);
-  const [userLoading, setUserLoading] = useState(false);
-  const [userSaving, setUserSaving] = useState(false);
-  const [userSearch, setUserSearch] = useState("");
-  const [showUserEditor, setShowUserEditor] = useState(false);
-  const [userForm, setUserForm] = useState<UserFormState>(createEmptyUserForm);
-  const [selectedManagedUserId, setSelectedManagedUserId] = useState<number | null>(null);
-  const [userVehicleSearch, setUserVehicleSearch] = useState("");
-  const [userVehicleSearchLoading, setUserVehicleSearchLoading] = useState(false);
-  const [userVehicleSearchResults, setUserVehicleSearchResults] = useState<Vehicle[]>([]);
-  const [userAssignmentForm, setUserAssignmentForm] = useState<UserAssignmentFormState>(createEmptyUserAssignmentForm);
-  const [userAssignmentSaving, setUserAssignmentSaving] = useState(false);
-  const [adminResetPasswordValue, setAdminResetPasswordValue] = useState("");
-  const [services, setServices] = useState<ServiceItem[]>([]);
-  const [serviceCities, setServiceCities] = useState<string[]>([]);
-  const [serviceQuery, setServiceQuery] = useState("");
-  const [serviceCityFilter, setServiceCityFilter] = useState("");
-  const [serviceLoading, setServiceLoading] = useState(false);
-  const [serviceSaving, setServiceSaving] = useState(false);
-  const [serviceForm, setServiceForm] = useState<ServiceFormState>(createEmptyServiceForm);
   const [laborNorms, setLaborNorms] = useState<LaborNormCatalogItem[]>([]);
   const [laborNormCatalogs, setLaborNormCatalogs] = useState<LaborNormCatalogConfigItem[]>([]);
   const [laborNormTotal, setLaborNormTotal] = useState(0);
@@ -1469,24 +513,6 @@ export default function App() {
   const [laborNormImportCatalogName, setLaborNormImportCatalogName] = useState("");
   const [laborNormCatalogSaving, setLaborNormCatalogSaving] = useState(false);
   const [laborNormEntrySaving, setLaborNormEntrySaving] = useState(false);
-  const [historicalImportLoading, setHistoricalImportLoading] = useState(false);
-  const [historicalImportFile, setHistoricalImportFile] = useState<File | null>(null);
-  const [historicalImportLimit, setHistoricalImportLimit] = useState("1000");
-  const [historicalImportResult, setHistoricalImportResult] = useState<HistoricalRepairImportResponse | null>(null);
-  const [historicalImportJobs, setHistoricalImportJobs] = useState<ImportJobItem[]>([]);
-  const [historicalImportJobsLoading, setHistoricalImportJobsLoading] = useState(false);
-  const [historicalWorkReference, setHistoricalWorkReference] = useState<HistoricalWorkReferenceItem[]>([]);
-  const [historicalWorkReferenceLoading, setHistoricalWorkReferenceLoading] = useState(false);
-  const [historicalWorkReferenceTotal, setHistoricalWorkReferenceTotal] = useState(0);
-  const [historicalWorkReferenceQuery, setHistoricalWorkReferenceQuery] = useState("");
-  const [historicalWorkReferenceMinSamples, setHistoricalWorkReferenceMinSamples] = useState("2");
-  const [importConflicts, setImportConflicts] = useState<ImportConflictItem[]>([]);
-  const [importConflictsLoading, setImportConflictsLoading] = useState(false);
-  const [selectedImportConflict, setSelectedImportConflict] = useState<ImportConflictItem | null>(null);
-  const [showImportConflictDialog, setShowImportConflictDialog] = useState(false);
-  const [importConflictLoading, setImportConflictLoading] = useState(false);
-  const [importConflictSaving, setImportConflictSaving] = useState(false);
-  const [importConflictComment, setImportConflictComment] = useState("");
   const [editingLaborNormCatalogId, setEditingLaborNormCatalogId] = useState<number | null>(null);
   const [laborNormCatalogForm, setLaborNormCatalogForm] = useState<LaborNormCatalogFormState>(createEmptyCatalogForm);
   const [laborNormEntryForm, setLaborNormEntryForm] = useState<LaborNormEntryFormState>(createEmptyLaborNormEntryForm);
@@ -1514,7 +540,6 @@ export default function App() {
   const [ocrLearningTargetFields, setOcrLearningTargetFields] = useState<string[]>([]);
   const [ocrLearningProfileScopes, setOcrLearningProfileScopes] = useState<string[]>([]);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
-  const [backups, setBackups] = useState<BackupItem[]>([]);
   const [ocrLearningStatusFilter, setOcrLearningStatusFilter] = useState("");
   const [ocrLearningTargetFieldFilter, setOcrLearningTargetFieldFilter] = useState("");
   const [ocrLearningProfileScopeFilter, setOcrLearningProfileScopeFilter] = useState("");
@@ -1534,8 +559,6 @@ export default function App() {
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
   const [selectedRepair, setSelectedRepair] = useState<RepairDetail | null>(null);
   const [documentVehicleForm, setDocumentVehicleForm] = useState<DocumentVehicleFormState>(createEmptyDocumentVehicleForm);
-  const [repairDraft, setRepairDraft] = useState<EditableRepairDraft | null>(null);
-  const [isEditingRepair, setIsEditingRepair] = useState(false);
   const [loginValue, setLoginValue] = useState("");
   const [passwordValue, setPasswordValue] = useState("");
   const [currentPasswordValue, setCurrentPasswordValue] = useState("");
@@ -1555,61 +578,225 @@ export default function App() {
   const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
   const [passwordRecoveryLoading, setPasswordRecoveryLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
-  const [attachDocumentLoading, setAttachDocumentLoading] = useState(false);
   const [repairLoading, setRepairLoading] = useState(false);
   const [repairExportLoading, setRepairExportLoading] = useState(false);
-  const [vehicleExportLoading, setVehicleExportLoading] = useState(false);
   const [reprocessLoading, setReprocessLoading] = useState(false);
   const [batchReprocessLoading, setBatchReprocessLoading] = useState(false);
   const [batchReprocessLimit, setBatchReprocessLimit] = useState("50");
   const [batchReprocessStatusFilter, setBatchReprocessStatusFilter] = useState("");
   const [batchReprocessPrimaryOnly, setBatchReprocessPrimaryOnly] = useState<"false" | "true">("false");
-  const [reviewActionLoading, setReviewActionLoading] = useState(false);
-  const [reviewFieldSaving, setReviewFieldSaving] = useState(false);
-  const [reviewVehicleSearch, setReviewVehicleSearch] = useState("");
-  const [reviewVehicleSearchLoading, setReviewVehicleSearchLoading] = useState(false);
-  const [reviewVehicleSearchResults, setReviewVehicleSearchResults] = useState<Vehicle[]>([]);
-  const [reviewVehicleLinkingId, setReviewVehicleLinkingId] = useState<number | null>(null);
-  const [reviewServiceAssigning, setReviewServiceAssigning] = useState(false);
-  const [reviewServiceSaving, setReviewServiceSaving] = useState(false);
   const [documentVehicleSaving, setDocumentVehicleSaving] = useState(false);
   const [checkActionLoadingId, setCheckActionLoadingId] = useState<number | null>(null);
-  const [documentOpenLoadingId, setDocumentOpenLoadingId] = useState<number | null>(null);
-  const [primaryDocumentLoadingId, setPrimaryDocumentLoadingId] = useState<number | null>(null);
-  const [documentComparisonLoadingId, setDocumentComparisonLoadingId] = useState<number | null>(null);
-  const [documentComparisonReviewLoading, setDocumentComparisonReviewLoading] = useState(false);
-  const [saveRepairLoading, setSaveRepairLoading] = useState(false);
-  const [repairArchiveLoading, setRepairArchiveLoading] = useState(false);
-  const [repairDeleteLoading, setRepairDeleteLoading] = useState(false);
   const [documentArchiveLoadingId, setDocumentArchiveLoadingId] = useState<number | null>(null);
   const [checkComments, setCheckComments] = useState<Record<number, string>>({});
-  const [attachedDocumentKind, setAttachedDocumentKind] = useState<DocumentKind>("repeat_scan");
-  const [attachedDocumentNotes, setAttachedDocumentNotes] = useState("");
-  const [attachedDocumentFile, setAttachedDocumentFile] = useState<File | null>(null);
-  const [documentComparison, setDocumentComparison] = useState<DocumentComparisonResponse | null>(null);
-  const [documentComparisonComment, setDocumentComparisonComment] = useState("");
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
   const [historySearch, setHistorySearch] = useState("");
   const [showRepairOverviewDetails, setShowRepairOverviewDetails] = useState(false);
-  const [reviewActionComment, setReviewActionComment] = useState("");
-  const [reviewFieldDraft, setReviewFieldDraft] = useState<ReviewRepairFieldsDraft | null>(null);
-  const [showReviewFieldEditor, setShowReviewFieldEditor] = useState(false);
-  const [reviewServiceName, setReviewServiceName] = useState("");
-  const [reviewServiceForm, setReviewServiceForm] = useState<ServiceFormState>(createEmptyServiceForm);
-  const [showReviewServiceEditor, setShowReviewServiceEditor] = useState(false);
-  const [reviewDocumentPreviewUrl, setReviewDocumentPreviewUrl] = useState("");
-  const [reviewDocumentPreviewLoading, setReviewDocumentPreviewLoading] = useState(false);
-  const [backupsLoading, setBackupsLoading] = useState(false);
-  const [backupActionLoading, setBackupActionLoading] = useState(false);
-  const [backupRestoreDialogOpen, setBackupRestoreDialogOpen] = useState(false);
-  const [backupRestoreTarget, setBackupRestoreTarget] = useState<BackupItem | null>(null);
-  const [backupRestoreConfirmValue, setBackupRestoreConfirmValue] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-
+  const {
+    usersList,
+    usersTotal,
+    userLoading,
+    userSaving,
+    userSearch,
+    setUserSearch,
+    showUserEditor,
+    setShowUserEditor,
+    userForm,
+    selectedManagedUserId,
+    setSelectedManagedUserId,
+    selectedManagedUser,
+    adminResetPasswordValue,
+    setAdminResetPasswordValue,
+    userVehicleSearch,
+    setUserVehicleSearch,
+    userVehicleSearchLoading,
+    userVehicleSearchResults,
+    userAssignmentForm,
+    userAssignmentSaving,
+    applyBootstrapUsers,
+    resetUserEditor,
+    editUser,
+    updateUserFormField,
+    updateUserAssignmentFormField,
+    handleUserSearch,
+    resetUsersSearch,
+    handleSaveUser,
+    handleSearchVehiclesForAssignment,
+    handleCreateUserAssignment,
+    handleAdminResetUserPassword,
+    handleCloseUserAssignment,
+    resetUsersState,
+  } = useEmployeesAdmin({
+    token,
+    userRole: user?.role,
+    setErrorMessage,
+    setSuccessMessage,
+  });
+  const {
+    services,
+    serviceCities,
+    serviceQuery,
+    setServiceQuery,
+    serviceCityFilter,
+    setServiceCityFilter,
+    serviceLoading,
+    serviceSaving,
+    serviceForm,
+    showServiceEditor,
+    setShowServiceEditor,
+    showServiceListDialog,
+    setShowServiceListDialog,
+    applyBootstrapServices,
+    loadServices,
+    updateServiceFormField,
+    editService,
+    resetServiceEditor,
+    handleServiceSearch,
+    resetServicesFilters,
+    handleSaveService,
+    resetServicesState,
+  } = useServicesAdmin({
+    token,
+    userRole: user?.role,
+    setErrorMessage,
+    setSuccessMessage,
+  });
+  const {
+    historicalImportLoading,
+    historicalImportFile,
+    setHistoricalImportFile,
+    historicalImportLimit,
+    setHistoricalImportLimit,
+    historicalImportResult,
+    historicalImportJobs,
+    historicalImportJobsLoading,
+    historicalWorkReference,
+    historicalWorkReferenceLoading,
+    historicalWorkReferenceTotal,
+    historicalWorkReferenceQuery,
+    setHistoricalWorkReferenceQuery,
+    historicalWorkReferenceMinSamples,
+    setHistoricalWorkReferenceMinSamples,
+    importConflicts,
+    importConflictsLoading,
+    selectedImportConflict,
+    showImportConflictDialog,
+    importConflictLoading,
+    importConflictSaving,
+    importConflictComment,
+    setImportConflictComment,
+    setShowImportConflictDialog,
+    loadHistoricalWorkReference,
+    refreshHistoricalImportsJournal,
+    openImportConflict,
+    handleHistoricalRepairImport,
+    handleResolveImportConflict,
+    resetHistoricalImportsState,
+  } = useHistoricalImportsAdmin({
+    token,
+    userRole: user?.role,
+    activeWorkspaceTab,
+    activeAdminTab,
+    setErrorMessage,
+    setSuccessMessage,
+    refreshWorkspace: async () => {
+      if (token) {
+        await loadWorkspace(token);
+      }
+    },
+  });
+  const {
+    globalSearchQuery,
+    setGlobalSearchQuery,
+    globalSearchLoading,
+    globalSearchResult,
+    handleGlobalSearchSubmit,
+    resetGlobalSearch,
+    auditLogItems,
+    auditLogLoading,
+    auditLogTotal,
+    auditEntityTypes,
+    auditActionTypes,
+    auditSearchQuery,
+    setAuditSearchQuery,
+    auditEntityTypeFilter,
+    setAuditEntityTypeFilter,
+    auditActionTypeFilter,
+    setAuditActionTypeFilter,
+    auditUserIdFilter,
+    setAuditUserIdFilter,
+    auditDateFrom,
+    setAuditDateFrom,
+    auditDateTo,
+    setAuditDateTo,
+    loadAuditLog,
+    resetAudit,
+    resetOperationsState,
+  } = useWorkspaceOperations({
+    activeWorkspaceTab,
+    token,
+    onError: setErrorMessage,
+  });
+  const {
+    backups,
+    backupsLoading,
+    backupActionLoading,
+    backupRestoreDialogOpen,
+    backupRestoreTarget,
+    backupRestoreConfirmValue,
+    setBackupRestoreConfirmValue,
+    loadBackups,
+    openBackupRestoreDialog,
+    closeBackupRestoreDialog,
+    handleCreateBackup,
+    handleDownloadBackup,
+    handleRestoreBackup,
+    resetBackupsState,
+  } = useBackupsAdmin({
+    token,
+    userRole: user?.role,
+    activeWorkspaceTab,
+    activeAdminTab,
+    setErrorMessage,
+    setSuccessMessage,
+  });
+  const {
+    fleetVehicles,
+    fleetVehiclesTotal,
+    fleetLoading,
+    fleetQuery,
+    setFleetQuery,
+    fleetVehicleTypeFilter,
+    setFleetVehicleTypeFilter,
+    fleetStatusFilter,
+    setFleetStatusFilter,
+    selectedFleetVehicleId,
+    setSelectedFleetVehicleId,
+    selectedFleetVehicle,
+    selectedFleetVehicleLoading,
+    fleetViewMode,
+    setFleetViewMode,
+    vehicleSaving,
+    vehicleExportLoading,
+    loadFleetVehicles,
+    applyBootstrapVehicleList,
+    openFleetVehicleCard,
+    returnToFleetList,
+    openFleetVehicleById,
+    handleUpdateVehicle,
+    handleExportVehicle,
+    resetFleetState,
+  } = useFleetWorkspace({
+    token,
+    activeWorkspaceTab,
+    vehiclesFullListLimit: VEHICLES_FULL_LIST_LIMIT,
+    setErrorMessage,
+    setSuccessMessage,
+  });
   const selectedReviewItem =
     reviewQueue.find((item) => item.document.id === selectedDocumentId) ?? null;
-  const selectedManagedUser = usersList.find((item) => item.id === selectedManagedUserId) ?? null;
   const selectedRepairDocument = selectedRepair?.documents.find((item) => item.id === selectedDocumentId) ?? null;
   const selectedRepairDocumentPayload = getLatestRepairDocumentPayload(selectedRepair, selectedDocumentId);
   const selectedRepairDocumentConfidenceMap = getLatestRepairDocumentConfidenceMap(selectedRepair, selectedDocumentId);
@@ -1619,6 +806,140 @@ export default function App() {
     typeof selectedRepairDocumentExtractedFields?.service_name === "string"
       ? selectedRepairDocumentExtractedFields.service_name.trim()
       : "";
+  const {
+    repairDraft,
+    setRepairDraft,
+    isEditingRepair,
+    saveRepairLoading,
+    repairArchiveLoading,
+    repairDeleteLoading,
+    startRepairEdit,
+    cancelRepairEdit,
+    updateRepairDraftField,
+    updateWorkDraft,
+    updatePartDraft,
+    addWorkDraft,
+    addPartDraft,
+    removeWorkDraft,
+    removePartDraft,
+    handleSaveRepair,
+    handleArchiveRepair,
+    handleDeleteRepair,
+    syncRepairDraftFromRepair,
+    resetRepairEditingState,
+  } = useRepairEditingWorkflow({
+    token,
+    userRole: user?.role,
+    selectedRepair,
+    refreshWorkspace: async () => {
+      if (token) {
+        await loadWorkspace(token);
+      }
+    },
+    setSelectedRepair: (repair) => {
+      setSelectedRepair(repair as RepairDetail | null);
+    },
+    setSelectedDocumentId,
+    setActiveWorkspaceTab,
+    setErrorMessage,
+    setSuccessMessage,
+  });
+  const {
+    reviewActionLoading,
+    reviewActionComment,
+    setReviewActionComment,
+    reviewFieldSaving,
+    reviewVehicleSearch,
+    setReviewVehicleSearch,
+    reviewVehicleSearchLoading,
+    reviewVehicleSearchResults,
+    reviewVehicleLinkingId,
+    reviewServiceAssigning,
+    reviewServiceSaving,
+    reviewServiceName,
+    setReviewServiceName,
+    reviewServiceForm,
+    setReviewServiceForm,
+    showReviewServiceEditor,
+    setShowReviewServiceEditor,
+    reviewFieldDraft,
+    showReviewFieldEditor,
+    setShowReviewFieldEditor,
+    reviewDocumentPreviewUrl,
+    reviewDocumentPreviewLoading,
+    reviewDocumentPreviewKind,
+    handleReviewAction,
+    assignReviewService,
+    handleAssignReviewService,
+    handleCreateReviewService,
+    handleSearchReviewVehicles,
+    handleLinkReviewVehicle,
+    updateReviewFieldDraft,
+    fillReviewFieldDraftFromOcr,
+    handleSaveReviewFields,
+    resetReviewWorkflowState,
+  } = useRepairReviewWorkflow({
+    token,
+    userRole: user?.role,
+    selectedRepair,
+    selectedRepairDocument,
+    selectedReviewItem,
+    selectedDocumentId,
+    selectedRepairDocumentOcrServiceName,
+    selectedRepairDocumentExtractedFields,
+    defaultReviewServiceStatus: user?.role === "admin" ? "confirmed" : "preliminary",
+    isEditingRepair,
+    loadServices,
+    refreshWorkspace: async () => {
+      if (token) {
+        await loadWorkspace(token);
+      }
+    },
+    openRepairByIds,
+    setSelectedRepair: (repair) => {
+      setSelectedRepair(repair as RepairDetail);
+    },
+    setRepairDraft: (repair) => {
+      syncRepairDraftFromRepair(repair);
+    },
+    setErrorMessage,
+    setSuccessMessage,
+  });
+  const {
+    attachDocumentLoading,
+    documentOpenLoadingId,
+    primaryDocumentLoadingId,
+    documentComparisonLoadingId,
+    documentComparisonReviewLoading,
+    attachedDocumentKind,
+    setAttachedDocumentKind,
+    attachedDocumentNotes,
+    setAttachedDocumentNotes,
+    attachedDocumentFile,
+    setAttachedDocumentFile,
+    documentComparison,
+    setDocumentComparison,
+    documentComparisonComment,
+    setDocumentComparisonComment,
+    handleOpenDocumentFile,
+    handleAttachDocumentToRepair,
+    handleSetPrimaryDocument,
+    handleCompareWithPrimary,
+    handleReviewDocumentComparison,
+    resetRepairDocumentsWorkflowState,
+  } = useRepairDocumentsWorkflow({
+    token,
+    selectedRepair,
+    selectedDocumentId,
+    refreshWorkspace: async () => {
+      if (token) {
+        await loadWorkspace(token);
+      }
+    },
+    openRepairByIds,
+    setErrorMessage,
+    setSuccessMessage,
+  });
   const selectedRepairDocumentWorks = Array.isArray(selectedRepairDocumentExtractedItems?.works)
     ? selectedRepairDocumentExtractedItems.works
     : [];
@@ -1644,7 +965,6 @@ export default function App() {
   const attentionVisualBars = buildAttentionVisualBars(dataQualityDetails);
   const attentionVisualMax = Math.max(...attentionVisualBars.map((item) => item.value), 0);
   const topAttentionServices = dataQualityDetails?.services.slice(0, 5) || [];
-  const reviewDocumentPreviewKind = getDocumentPreviewKind(selectedRepairDocument?.mime_type);
   const reviewRequiredFieldComparisons: ReviewRequiredFieldComparisonItem[] = selectedRepair
     ? [
         {
@@ -2095,91 +1415,6 @@ export default function App() {
     }
   }
 
-  async function loadServices(
-    activeToken: string,
-    query: string = serviceQuery,
-    city: string = serviceCityFilter,
-  ) {
-    setServiceLoading(true);
-    try {
-      const payload = await apiRequest<ServicesResponse>(
-        `/services?${buildServiceQueryString(query, city)}`,
-        { method: "GET" },
-        activeToken,
-      );
-      setServices(payload.items);
-      setServiceCities(payload.cities);
-    } finally {
-      setServiceLoading(false);
-    }
-  }
-
-  async function loadHistoricalImportJobs(activeToken: string) {
-    setHistoricalImportJobsLoading(true);
-    try {
-      const payload = await apiRequest<ImportJobsResponse>(
-        "/imports/jobs?import_type=historical_repairs&limit=12",
-        { method: "GET" },
-        activeToken,
-      );
-      setHistoricalImportJobs(payload.items);
-    } finally {
-      setHistoricalImportJobsLoading(false);
-    }
-  }
-
-  async function loadHistoricalWorkReference(
-    activeToken: string,
-    query: string = historicalWorkReferenceQuery,
-    minSamplesValue: string = historicalWorkReferenceMinSamples,
-  ) {
-    setHistoricalWorkReferenceLoading(true);
-    try {
-      const payload = await apiRequest<HistoricalWorkReferenceResponse>(
-        `/imports/historical-work-reference?${buildHistoricalWorkReferenceQueryString(query, minSamplesValue)}`,
-        { method: "GET" },
-        activeToken,
-      );
-      setHistoricalWorkReference(payload.items);
-      setHistoricalWorkReferenceTotal(payload.total);
-    } finally {
-      setHistoricalWorkReferenceLoading(false);
-    }
-  }
-
-  async function loadImportConflicts(activeToken: string, status: string = "pending") {
-    setImportConflictsLoading(true);
-    try {
-      const payload = await apiRequest<ImportConflictsResponse>(
-        `/imports/conflicts?${buildImportConflictsQueryString(status)}`,
-        { method: "GET" },
-        activeToken,
-      );
-      setImportConflicts(payload.items);
-    } finally {
-      setImportConflictsLoading(false);
-    }
-  }
-
-  async function openImportConflict(conflictId: number) {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    setImportConflictLoading(true);
-    setImportConflictComment("");
-    setSelectedImportConflict(null);
-    setShowImportConflictDialog(true);
-    try {
-      const payload = await apiRequest<ImportConflictItem>(`/imports/conflicts/${conflictId}`, { method: "GET" }, token);
-      setSelectedImportConflict(payload);
-    } catch (error) {
-      setShowImportConflictDialog(false);
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить конфликт импорта");
-    } finally {
-      setImportConflictLoading(false);
-    }
-  }
-
   async function loadReviewRules(activeToken: string) {
     const payload = await apiRequest<ReviewRuleResponse>("/review/rules", { method: "GET" }, activeToken);
     setReviewRules(payload.items);
@@ -2252,241 +1487,6 @@ export default function App() {
     }
   }
 
-  async function loadFleetVehicles(
-    activeToken: string,
-    query: string = fleetQuery,
-    vehicleType: "" | VehicleType = fleetVehicleTypeFilter,
-    statusFilter: "" | VehicleStatus = fleetStatusFilter,
-  ) {
-    setFleetLoading(true);
-    try {
-      const payload = await apiRequest<VehiclesResponse>(
-        `/vehicles?${buildFleetVehiclesQueryString(VEHICLES_FULL_LIST_LIMIT, query, vehicleType, statusFilter)}`,
-        { method: "GET" },
-        activeToken,
-      );
-      setFleetVehicles(payload.items);
-      setFleetVehiclesTotal(payload.total);
-      setSelectedFleetVehicleId((current) => {
-        if (current && payload.items.some((item) => item.id === current)) {
-          return current;
-        }
-        return payload.items[0]?.id ?? null;
-      });
-    } finally {
-      setFleetLoading(false);
-    }
-  }
-
-  async function loadFleetVehicleDetail(activeToken: string, vehicleId: number) {
-    setSelectedFleetVehicleLoading(true);
-    try {
-      const payload = await apiRequest<VehicleDetail>(`/vehicles/${vehicleId}`, { method: "GET" }, activeToken);
-      setSelectedFleetVehicle(payload);
-    } finally {
-      setSelectedFleetVehicleLoading(false);
-    }
-  }
-
-  function openFleetVehicleCard(vehicleId: number) {
-    fleetListScrollPositionRef.current = window.scrollY;
-    setSelectedFleetVehicleId(vehicleId);
-    setFleetViewMode("detail");
-    updateBrowserRoute({ workspace: "fleet", vehicleId }, "push");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function returnToFleetList() {
-    setFleetViewMode("list");
-    updateBrowserRoute({ workspace: "fleet", vehicleId: null }, "push");
-    window.requestAnimationFrame(() => {
-      window.scrollTo({ top: fleetListScrollPositionRef.current, behavior: "auto" });
-    });
-  }
-
-  async function handleUpdateVehicle(payload: VehicleUpdatePayload) {
-    if (!token || !selectedFleetVehicle) {
-      return;
-    }
-    setVehicleSaving(true);
-    setErrorMessage("");
-    try {
-      const result = await apiRequest<VehicleDetail>(`/vehicles/${selectedFleetVehicle.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-      }, token);
-      setSelectedFleetVehicle(result);
-      setSuccessMessage(payload.status === "archived" ? "Техника отправлена в архив" : "Карточка техники обновлена");
-      await loadFleetVehicles(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось обновить карточку техники");
-    } finally {
-      setVehicleSaving(false);
-    }
-  }
-
-  async function runGlobalSearch(activeToken: string, query: string = globalSearchQuery) {
-    const normalizedQuery = query.trim();
-    if (normalizedQuery.length < 2) {
-      setGlobalSearchResult(null);
-      return;
-    }
-    setGlobalSearchLoading(true);
-    try {
-      const payload = await apiRequest<GlobalSearchResponse>(
-        `/search/global?${buildGlobalSearchQueryString(normalizedQuery)}`,
-        { method: "GET" },
-        activeToken,
-      );
-      setGlobalSearchResult(payload);
-    } finally {
-      setGlobalSearchLoading(false);
-    }
-  }
-
-  async function loadAuditLog(activeToken: string) {
-    setAuditLogLoading(true);
-    try {
-      const payload = await apiRequest<AuditLogResponse>(
-        `/audit?${buildAuditLogQueryString(
-          auditSearchQuery,
-          auditEntityTypeFilter,
-          auditActionTypeFilter,
-          auditUserIdFilter,
-          auditDateFrom,
-          auditDateTo,
-        )}`,
-        { method: "GET" },
-        activeToken,
-      );
-      setAuditLogItems(payload.items);
-      setAuditLogTotal(payload.total);
-      setAuditEntityTypes(payload.entity_types);
-      setAuditActionTypes(payload.action_types);
-    } finally {
-      setAuditLogLoading(false);
-    }
-  }
-
-  async function loadUsers(activeToken: string, search: string = userSearch) {
-    setUserLoading(true);
-    try {
-      const payload = await apiRequest<UsersResponse>(
-        `/users?${buildUsersQueryString(search)}`,
-        { method: "GET" },
-        activeToken,
-      );
-      setUsersList(payload.items);
-      setUsersTotal(payload.total);
-      setSelectedManagedUserId((current) => {
-        if (current && payload.items.some((item) => item.id === current)) {
-          return current;
-        }
-        return payload.items[0]?.id ?? null;
-      });
-    } finally {
-      setUserLoading(false);
-    }
-  }
-
-  async function loadBackups(activeToken: string) {
-    setBackupsLoading(true);
-    try {
-      const payload = await apiRequest<BackupListResponse>("/backups", { method: "GET" }, activeToken);
-      setBackups(payload.items);
-    } finally {
-      setBackupsLoading(false);
-    }
-  }
-
-  function openBackupRestoreDialog(item: BackupItem) {
-    setBackupRestoreTarget(item);
-    setBackupRestoreConfirmValue("");
-    setBackupRestoreDialogOpen(true);
-  }
-
-  function closeBackupRestoreDialog() {
-    setBackupRestoreDialogOpen(false);
-    setBackupRestoreTarget(null);
-    setBackupRestoreConfirmValue("");
-  }
-
-  async function handleCreateBackup() {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    setBackupActionLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const payload = await apiRequest<BackupCreateResponse>("/backups", { method: "POST" }, token);
-      setSuccessMessage(payload.message);
-      await loadBackups(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось создать резервную копию");
-    } finally {
-      setBackupActionLoading(false);
-    }
-  }
-
-  async function handleDownloadBackup(item: BackupItem) {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    setBackupActionLoading(true);
-    setErrorMessage("");
-    try {
-      await downloadApiFile(`/backups/${item.backup_id}/download`, token, item.filename);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось скачать резервную копию");
-    } finally {
-      setBackupActionLoading(false);
-    }
-  }
-
-  async function handleRestoreBackup() {
-    if (!token || user?.role !== "admin" || !backupRestoreTarget) {
-      return;
-    }
-    setBackupActionLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const payload = await apiRequest<BackupRestoreResponse>(
-        `/backups/${backupRestoreTarget.backup_id}/restore`,
-        {
-          method: "POST",
-          body: JSON.stringify({ confirm_backup_id: backupRestoreConfirmValue }),
-        },
-        token,
-      );
-      setSuccessMessage(payload.message);
-      closeBackupRestoreDialog();
-      await loadBackups(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось восстановить резервную копию");
-    } finally {
-      setBackupActionLoading(false);
-    }
-  }
-
-  async function searchVehiclesForUserAssignment(activeToken: string, search: string) {
-    if (!search.trim()) {
-      setUserVehicleSearchResults([]);
-      return;
-    }
-    setUserVehicleSearchLoading(true);
-    try {
-      const params = new URLSearchParams();
-      params.set("limit", "50");
-      params.set("search", search.trim());
-      const payload = await apiRequest<VehiclesResponse>(`/vehicles?${params.toString()}`, { method: "GET" }, activeToken);
-      setUserVehicleSearchResults(payload.items);
-    } finally {
-      setUserVehicleSearchLoading(false);
-    }
-  }
-
   async function loadWorkspace(
     activeToken: string,
     reviewCategory: ReviewQueueCategory = selectedReviewCategory,
@@ -2497,8 +1497,8 @@ export default function App() {
       setBootLoading(true);
     }
     try {
-      const me = await apiRequest<User>("/auth/me", { method: "GET" }, activeToken);
-      const [
+      const {
+        me,
         dashboard,
         dataQualityPayload,
         dataQualityDetailsPayload,
@@ -2514,47 +1514,11 @@ export default function App() {
         ocrLearningPayload,
         usersPayload,
         systemStatusPayload,
-      ] = await Promise.all([
-        apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
-        apiRequest<DashboardDataQuality>("/dashboard/data-quality", { method: "GET" }, activeToken),
-        apiRequest<DashboardDataQualityDetails>("/dashboard/data-quality/details?limit=8", { method: "GET" }, activeToken),
-        apiRequest<VehiclesResponse>(`/vehicles?limit=${VEHICLES_FULL_LIST_LIMIT}`, { method: "GET" }, activeToken),
-        apiRequest<DocumentsResponse>("/documents?limit=8", { method: "GET" }, activeToken),
-        apiRequest<ReviewQueueResponse>(
-          `/review/queue?limit=6&category=${reviewCategory}`,
-          { method: "GET" },
-          activeToken,
-        ),
-        me.role === "admin"
-          ? apiRequest<LaborNormCatalogResponse>(
-              `/labor-norms?${buildLaborNormQueryString(laborNormQuery, laborNormScope, laborNormCategory)}`,
-              { method: "GET" },
-              activeToken,
-            )
-          : Promise.resolve(null),
-        me.role === "admin"
-          ? apiRequest<LaborNormCatalogConfigResponse>("/labor-norms/catalogs", { method: "GET" }, activeToken)
-          : Promise.resolve(null),
-        apiRequest<ServicesResponse>("/services?limit=100", { method: "GET" }, activeToken),
-        me.role === "admin"
-          ? apiRequest<ReviewRuleResponse>("/review/rules", { method: "GET" }, activeToken)
-          : Promise.resolve(null),
-        me.role === "admin"
-          ? apiRequest<OcrRuleResponse>("/ocr-rules", { method: "GET" }, activeToken)
-          : Promise.resolve(null),
-        me.role === "admin"
-          ? apiRequest<OcrProfileMatcherResponse>("/ocr-profile-matchers", { method: "GET" }, activeToken)
-          : Promise.resolve(null),
-        me.role === "admin"
-          ? apiRequest<OcrLearningResponse>("/ocr-learning/signals?limit=50", { method: "GET" }, activeToken)
-          : Promise.resolve(null),
-        me.role === "admin"
-          ? apiRequest<UsersResponse>("/users?include_inactive=true", { method: "GET" }, activeToken)
-          : Promise.resolve(null),
-        me.role === "admin"
-          ? apiRequest<SystemStatus>("/system/status", { method: "GET" }, activeToken)
-          : Promise.resolve(null),
-      ]);
+      } = await loadWorkspaceBootstrapData(activeToken, reviewCategory, {
+        query: laborNormQuery,
+        scope: laborNormScope,
+        category: laborNormCategory,
+      });
 
       const applyRecentDocuments = (items: DocumentItem[]) => {
         setDocuments(items);
@@ -2571,13 +1535,9 @@ export default function App() {
       setDataQuality(dataQualityPayload);
       setDataQualityDetails(dataQualityDetailsPayload);
       setVehicles(vehicleList.items);
-      setFleetVehicles(vehicleList.items);
-      setFleetVehiclesTotal(vehicleList.total);
-      setSelectedFleetVehicleId((current) => current ?? vehicleList.items[0]?.id ?? null);
+      applyBootstrapVehicleList(vehicleList);
       applyRecentDocuments(recentDocuments.items);
-      setUsersList(usersPayload?.items || []);
-      setUsersTotal(usersPayload?.total || 0);
-      setSelectedManagedUserId((current) => current ?? usersPayload?.items?.[0]?.id ?? null);
+      applyBootstrapUsers(usersPayload);
       setLaborNorms(laborNormCatalog?.items || []);
       setLaborNormTotal(laborNormCatalog?.total || 0);
       setLaborNormScopes(laborNormCatalog?.scopes || []);
@@ -2586,8 +1546,7 @@ export default function App() {
       setLaborNormCatalogs(laborNormCatalogConfigs?.items || []);
       setReviewQueue(reviewQueueData.items);
       setReviewQueueCounts(reviewQueueData.counts);
-      setServices(servicesPayload?.items || []);
-      setServiceCities(servicesPayload?.cities || []);
+      applyBootstrapServices(servicesPayload);
       setReviewRules(reviewRulesPayload?.items || []);
       setReviewRuleTypes(reviewRulesPayload?.rule_types || []);
       setOcrRules(ocrRulesPayload?.items || []);
@@ -2657,17 +1616,13 @@ export default function App() {
       setSelectedRepair(payload);
       if (resetTransientState) {
         setCheckComments({});
-        setDocumentComparison(null);
-        setDocumentComparisonComment("");
+        resetRepairDocumentsWorkflowState();
         setHistoryFilter("all");
         setHistorySearch("");
-        setAttachedDocumentKind("repeat_scan");
-        setAttachedDocumentNotes("");
-        setAttachedDocumentFile(null);
       }
       setSelectedDocumentId((current) => resolveRepairDocumentId(payload, preferredDocumentId ?? current));
       if (!isEditingRepair) {
-        setRepairDraft(createRepairDraft(payload));
+        syncRepairDraftFromRepair(payload);
       }
       setLastUploadedDocument((current) => {
         if (!current) {
@@ -2719,35 +1674,13 @@ export default function App() {
       setDataQuality(null);
       setDataQualityDetails(null);
       setVehicles([]);
-      setFleetVehicles([]);
-      setFleetVehiclesTotal(0);
-      setFleetQuery("");
-      setFleetVehicleTypeFilter("");
-      setSelectedFleetVehicleId(null);
-      setSelectedFleetVehicle(null);
-      setFleetViewMode("list");
-      setAuditLogItems([]);
-      setAuditLogTotal(0);
-      setAuditEntityTypes([]);
-      setAuditActionTypes([]);
-      setAuditSearchQuery("");
-      setAuditEntityTypeFilter("");
-      setAuditActionTypeFilter("");
-      setAuditDateFrom("");
-      setAuditDateTo("");
+      resetFleetState();
+      resetOperationsState();
+      resetReviewWorkflowState();
+      resetRepairEditingState();
       setDocuments([]);
-      setUsersList([]);
-      setUsersTotal(0);
-      setUserSearch("");
-      setShowUserEditor(false);
-      setUserForm(createEmptyUserForm());
-      setSelectedManagedUserId(null);
-      setUserVehicleSearch("");
-      setUserVehicleSearchResults([]);
-      setUserAssignmentForm(createEmptyUserAssignmentForm());
-      setAdminResetPasswordValue("");
-      setServices([]);
-      setServiceCities([]);
+      resetUsersState();
+      resetServicesState();
       setReviewRules([]);
       setReviewRuleTypes([]);
       setOcrRules([]);
@@ -2761,23 +1694,16 @@ export default function App() {
       setOcrLearningTargetFields([]);
       setOcrLearningProfileScopes([]);
       setSystemStatus(null);
+      resetBackupsState();
       setLaborNorms([]);
       setLaborNormCatalogs([]);
       setLaborNormTotal(0);
       setLaborNormScopes([]);
       setLaborNormCategories([]);
       setLaborNormSourceFiles([]);
-      setHistoricalImportFile(null);
-      setHistoricalImportLimit("1000");
-      setHistoricalImportResult(null);
-      setHistoricalImportJobs([]);
-      setImportConflicts([]);
-      setSelectedImportConflict(null);
-      setShowImportConflictDialog(false);
-      setImportConflictComment("");
+      resetHistoricalImportsState();
       setLaborNormCatalogForm(createEmptyCatalogForm());
       setLaborNormEntryForm(createEmptyLaborNormEntryForm());
-      setServiceForm(createEmptyServiceForm());
       setReviewRuleForm(createEmptyReviewRuleForm());
       setOcrRuleForm(createEmptyOcrRuleForm());
       setOcrProfileMatcherForm(createEmptyOcrProfileMatcherForm());
@@ -2799,61 +1725,6 @@ export default function App() {
     }
     void loadWorkspace(token, selectedReviewCategory);
   }, [selectedReviewCategory, token]);
-
-  useEffect(() => {
-    if (!token || activeWorkspaceTab !== "fleet") {
-      return;
-    }
-    void loadFleetVehicles(token).catch((error) => {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить список техники");
-    });
-  }, [activeWorkspaceTab, token]);
-
-  useEffect(() => {
-    if (!token || activeWorkspaceTab !== "fleet" || selectedFleetVehicleId === null) {
-      setSelectedFleetVehicle(null);
-      return;
-    }
-    void loadFleetVehicleDetail(token, selectedFleetVehicleId).catch((error) => {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить карточку техники");
-    });
-  }, [activeWorkspaceTab, selectedFleetVehicleId, token]);
-
-  useEffect(() => {
-    if (!token || activeWorkspaceTab !== "audit") {
-      return;
-    }
-    void loadAuditLog(token).catch((error) => {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить журнал действий");
-    });
-  }, [
-    activeWorkspaceTab,
-    auditActionTypeFilter,
-    auditDateFrom,
-    auditDateTo,
-    auditEntityTypeFilter,
-    auditSearchQuery,
-    auditUserIdFilter,
-    token,
-  ]);
-
-  useEffect(() => {
-    if (!token || user?.role !== "admin" || activeWorkspaceTab !== "admin" || activeAdminTab !== "imports") {
-      return;
-    }
-    void Promise.all([loadHistoricalImportJobs(token), loadHistoricalWorkReference(token), loadImportConflicts(token)]).catch((error) => {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить историю импортов");
-    });
-  }, [activeAdminTab, activeWorkspaceTab, token, user?.role]);
-
-  useEffect(() => {
-    if (!token || user?.role !== "admin" || activeWorkspaceTab !== "admin" || activeAdminTab !== "backups") {
-      return;
-    }
-    void loadBackups(token).catch((error) => {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить резервные копии");
-    });
-  }, [activeAdminTab, activeWorkspaceTab, token, user?.role]);
 
   useEffect(() => {
     if (laborNormCatalogs.length === 0) {
@@ -2941,73 +1812,14 @@ export default function App() {
   }, [selectedDocumentId, selectedRepairDocumentPayload]);
 
   useEffect(() => {
-    const nextServiceName = selectedRepair?.service?.name || selectedRepairDocumentOcrServiceName || "";
-    setReviewVehicleSearch(
-      typeof selectedRepairDocumentExtractedFields?.plate_number === "string"
-        ? selectedRepairDocumentExtractedFields.plate_number
-        : typeof selectedRepairDocumentExtractedFields?.vin === "string"
-          ? selectedRepairDocumentExtractedFields.vin
-          : "",
-    );
-    setReviewVehicleSearchResults([]);
-    setReviewServiceName(nextServiceName);
-    setReviewFieldDraft(selectedRepair ? createReviewRepairFieldsDraft(selectedRepair) : null);
-    setReviewServiceForm({
-      id: null,
-      name: selectedRepairDocumentOcrServiceName,
-      city: "",
-      contact: "",
-      comment: "",
-      status: user?.role === "admin" ? "confirmed" : "preliminary",
-    });
-    setShowReviewFieldEditor(false);
-    setShowReviewServiceEditor(false);
     setShowRepairOverviewDetails(false);
-  }, [selectedRepair?.id, selectedRepair?.service?.name, selectedRepairDocumentExtractedFields?.plate_number, selectedRepairDocumentExtractedFields?.vin, selectedRepairDocumentOcrServiceName, user?.role]);
-
-  useEffect(() => {
-    if (!token || !selectedRepairDocument || !reviewDocumentPreviewKind) {
-      setReviewDocumentPreviewUrl("");
-      setReviewDocumentPreviewLoading(false);
-      return;
-    }
-
-    let isMounted = true;
-    let objectUrl = "";
-
-    setReviewDocumentPreviewLoading(true);
-    setReviewDocumentPreviewUrl("");
-    void downloadDocumentFile(selectedRepairDocument.id, token)
-      .then((url) => {
-        if (!isMounted) {
-          URL.revokeObjectURL(url);
-          return;
-        }
-        objectUrl = url;
-        setReviewDocumentPreviewUrl(url);
-      })
-      .catch((error) => {
-        if (isMounted) {
-          setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить превью документа");
-        }
-      })
-      .finally(() => {
-        if (isMounted) {
-          setReviewDocumentPreviewLoading(false);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
-  }, [reviewDocumentPreviewKind, selectedRepairDocument, token]);
-
-  useEffect(() => {
-    setAdminResetPasswordValue("");
-  }, [selectedManagedUserId]);
+  }, [
+    selectedRepair?.id,
+    selectedRepair?.service?.name,
+    selectedRepairDocumentExtractedFields?.plate_number,
+    selectedRepairDocumentExtractedFields?.vin,
+    selectedRepairDocumentOcrServiceName,
+  ]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -3236,13 +2048,6 @@ export default function App() {
     });
   }
 
-  function openFleetVehicleById(vehicleId: number) {
-    setActiveWorkspaceTab("fleet");
-    setSelectedFleetVehicleId(vehicleId);
-    setFleetViewMode("detail");
-    updateBrowserRoute({ workspace: "fleet", vehicleId }, "push");
-  }
-
   async function openQualityRepair(documentId: number | null, repairId: number | null) {
     if (!repairId) {
       return;
@@ -3259,22 +2064,9 @@ export default function App() {
       return;
     }
     try {
-      await loadServices(token, name, "");
+      await loadServices(name, "");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось открыть список сервисов");
-    }
-  }
-
-  async function handleGlobalSearchSubmit(event?: FormEvent<HTMLFormElement>) {
-    event?.preventDefault();
-    if (!token) {
-      return;
-    }
-    setErrorMessage("");
-    try {
-      await runGlobalSearch(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось выполнить поиск");
     }
   }
 
@@ -3290,21 +2082,6 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось выгрузить карточку ремонта");
     } finally {
       setRepairExportLoading(false);
-    }
-  }
-
-  async function handleExportVehicle() {
-    if (!token || !selectedFleetVehicle) {
-      return;
-    }
-    setVehicleExportLoading(true);
-    setErrorMessage("");
-    try {
-      await downloadApiFile(`/vehicles/${selectedFleetVehicle.id}/export`, token, `vehicle_${selectedFleetVehicle.id}.xlsx`);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось выгрузить карточку техники");
-    } finally {
-      setVehicleExportLoading(false);
     }
   }
 
@@ -3388,151 +2165,6 @@ export default function App() {
     }
   }
 
-  async function handleOpenDocumentFile(documentId: number) {
-    if (!token) {
-      return;
-    }
-
-    setDocumentOpenLoadingId(documentId);
-    setErrorMessage("");
-    try {
-      const objectUrl = await downloadDocumentFile(documentId, token);
-      window.open(objectUrl, "_blank", "noopener,noreferrer");
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось открыть документ");
-    } finally {
-      setDocumentOpenLoadingId(null);
-    }
-  }
-
-  async function handleAttachDocumentToRepair() {
-    if (!token || !selectedRepair || !attachedDocumentFile) {
-      setErrorMessage("Сначала выберите файл");
-      return;
-    }
-
-    setAttachDocumentLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const body = new FormData();
-      body.append("repair_id", String(selectedRepair.id));
-      body.append("kind", attachedDocumentKind);
-      body.append("notes", attachedDocumentNotes);
-      body.append("file", attachedDocumentFile);
-
-      const result = await apiRequest<{ document: { id: number }; message: string }>(
-        "/documents/upload-to-repair",
-        {
-          method: "POST",
-          body,
-        },
-        token,
-      );
-
-      setSuccessMessage(result.message);
-      setAttachedDocumentNotes("");
-      setAttachedDocumentFile(null);
-      await loadWorkspace(token);
-      await openRepairByIds(result.document.id, selectedRepair.id);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось прикрепить документ к ремонту");
-    } finally {
-      setAttachDocumentLoading(false);
-    }
-  }
-
-  async function handleSetPrimaryDocument(documentId: number) {
-    if (!token || !selectedRepair) {
-      return;
-    }
-
-    setPrimaryDocumentLoadingId(documentId);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const result = await apiRequest<{ id: number }>(
-        `/documents/${documentId}/set-primary`,
-        {
-          method: "POST",
-        },
-        token,
-      );
-      setSuccessMessage("Основной документ обновлён");
-      await loadWorkspace(token);
-      await openRepairByIds(result.id, selectedRepair.id);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось назначить основной документ");
-    } finally {
-      setPrimaryDocumentLoadingId(null);
-    }
-  }
-
-  async function handleCompareWithPrimary(documentId: number) {
-    if (!token || !selectedRepair) {
-      return;
-    }
-
-    const primaryDocument = selectedRepair.documents.find((item) => item.is_primary);
-    if (!primaryDocument || primaryDocument.id === documentId) {
-      return;
-    }
-
-    setDocumentComparisonLoadingId(documentId);
-    setErrorMessage("");
-    try {
-      const result = await apiRequest<DocumentComparisonResponse>(
-        `/documents/${documentId}/compare?with_document_id=${primaryDocument.id}`,
-        {
-          method: "GET",
-        },
-        token,
-      );
-      setDocumentComparison(result);
-      setDocumentComparisonComment("");
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось сравнить документы");
-    } finally {
-      setDocumentComparisonLoadingId(null);
-    }
-  }
-
-  async function handleReviewDocumentComparison(
-    action: "keep_current_primary" | "make_document_primary" | "mark_reviewed",
-  ) {
-    if (!token || !selectedRepair || !documentComparison) {
-      return;
-    }
-
-    setDocumentComparisonReviewLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const result = await apiRequest<DocumentComparisonReviewResponse>(
-        `/documents/${documentComparison.left_document.id}/compare/review`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            with_document_id: documentComparison.right_document.id,
-            action,
-            comment: documentComparisonComment.trim() || null,
-          }),
-        },
-        token,
-      );
-      setSuccessMessage(result.message);
-      setDocumentComparison(null);
-      setDocumentComparisonComment("");
-      await loadWorkspace(token);
-      await openRepairByIds(result.document_id, result.repair_id);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить решение по сверке документов");
-    } finally {
-      setDocumentComparisonReviewLoading(false);
-    }
-  }
-
   async function handleCheckResolution(checkId: number, isResolved: boolean) {
     if (!token || !selectedRepair) {
       return;
@@ -3561,37 +2193,6 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось обновить проверку ремонта");
     } finally {
       setCheckActionLoadingId(null);
-    }
-  }
-
-  async function handleReviewAction(action: "employee_confirm" | "confirm" | "send_to_review") {
-    if (!token || !selectedReviewItem) {
-      return;
-    }
-
-    setReviewActionLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const result = await apiRequest<ReviewActionResponse>(
-        `/review/queue/${selectedReviewItem.document.id}/action`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            action,
-            comment: reviewActionComment.trim() || null,
-          }),
-        },
-        token,
-      );
-      setSuccessMessage(result.message);
-      setReviewActionComment("");
-      await loadWorkspace(token);
-      await openRepairByIds(result.document_id, result.repair_id);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось применить действие по проверке");
-    } finally {
-      setReviewActionLoading(false);
     }
   }
 
@@ -3637,177 +2238,6 @@ export default function App() {
     }
   }
 
-  function resetUserEditor() {
-    setUserForm(createEmptyUserForm());
-    setUserAssignmentForm(createEmptyUserAssignmentForm());
-    setUserVehicleSearch("");
-    setUserVehicleSearchResults([]);
-  }
-
-  function handleEditUser(item: UserItem) {
-    setUserForm(createUserFormFromItem(item));
-    setSelectedManagedUserId(item.id);
-    setShowUserEditor(true);
-  }
-
-  async function handleUserSearch() {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    setErrorMessage("");
-    try {
-      await loadUsers(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить список сотрудников");
-    }
-  }
-
-  async function handleSaveUser() {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    if (!userForm.full_name.trim() || !userForm.login.trim() || !userForm.email.trim()) {
-      setErrorMessage("Имя, логин и почта обязательны");
-      return;
-    }
-    if (!userForm.id && !userForm.password.trim()) {
-      setErrorMessage("Для нового пользователя нужно задать пароль");
-      return;
-    }
-
-    setUserSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const body = buildUserPayload(userForm);
-
-      if (userForm.id) {
-        await apiRequest<UserItem>(
-          `/users/${userForm.id}`,
-          { method: "PATCH", body: JSON.stringify(body) },
-          token,
-        );
-        setSuccessMessage("Пользователь обновлён");
-      } else {
-        await apiRequest<UserItem>("/users", { method: "POST", body: JSON.stringify(body) }, token);
-        setSuccessMessage("Пользователь создан");
-      }
-      await loadUsers(token);
-      resetUserEditor();
-      setShowUserEditor(false);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить пользователя");
-    } finally {
-      setUserSaving(false);
-    }
-  }
-
-  async function handleSearchVehiclesForAssignment() {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    setErrorMessage("");
-    try {
-      await searchVehiclesForUserAssignment(token, userVehicleSearch);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось найти технику");
-    }
-  }
-
-  async function handleCreateUserAssignment(vehicleId: number) {
-    if (!token || user?.role !== "admin" || selectedManagedUserId === null) {
-      return;
-    }
-    setUserAssignmentSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      await apiRequest<UserItem>(
-        `/users/${selectedManagedUserId}/vehicle-assignments`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            vehicle_id: vehicleId,
-            starts_at: userAssignmentForm.starts_at,
-            ends_at: userAssignmentForm.ends_at || null,
-            comment: userAssignmentForm.comment.trim() || null,
-          }),
-        },
-        token,
-      );
-      setSuccessMessage("Техника закреплена за сотрудником");
-      setUserAssignmentForm(createEmptyUserAssignmentForm());
-      setUserVehicleSearch("");
-      setUserVehicleSearchResults([]);
-      await loadUsers(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось закрепить технику");
-    } finally {
-      setUserAssignmentSaving(false);
-    }
-  }
-
-  async function handleAdminResetUserPassword() {
-    if (!token || user?.role !== "admin" || selectedManagedUserId === null) {
-      return;
-    }
-    if (!adminResetPasswordValue.trim()) {
-      setErrorMessage("Укажите новый пароль для сотрудника");
-      return;
-    }
-
-    setUserSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      await apiRequest<UserItem>(
-        `/users/${selectedManagedUserId}/reset-password`,
-        {
-          method: "POST",
-          body: JSON.stringify({ new_password: adminResetPasswordValue.trim() }),
-        },
-        token,
-      );
-      setSuccessMessage("Пароль сотрудника обновлён");
-      setAdminResetPasswordValue("");
-      await loadUsers(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось сбросить пароль сотрудника");
-    } finally {
-      setUserSaving(false);
-    }
-  }
-
-  async function handleCloseUserAssignment(assignment: UserAssignment) {
-    if (!token || user?.role !== "admin" || selectedManagedUserId === null) {
-      return;
-    }
-    const today = new Date().toISOString().slice(0, 10);
-    const closeDate = assignment.starts_at > today ? assignment.starts_at : today;
-    setUserAssignmentSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      await apiRequest<UserItem>(
-        `/users/${selectedManagedUserId}/vehicle-assignments/${assignment.id}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            ends_at: closeDate,
-            comment: assignment.comment,
-          }),
-        },
-        token,
-      );
-      setSuccessMessage("Назначение техники закрыто");
-      await loadUsers(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось закрыть назначение техники");
-    } finally {
-      setUserAssignmentSaving(false);
-    }
-  }
-
   async function handleLaborNormSearch() {
     if (!token || user?.role !== "admin") {
       return;
@@ -3817,18 +2247,6 @@ export default function App() {
       await loadLaborNormCatalog(token);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить справочник нормо-часов");
-    }
-  }
-
-  async function handleServiceSearch() {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    setErrorMessage("");
-    try {
-      await loadServices(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить сервисы");
     }
   }
 
@@ -4106,278 +2524,7 @@ export default function App() {
     setActiveWorkspaceTab("admin");
     setActiveAdminTab("services");
     updateBrowserRoute({ workspace: "admin", adminTab: "services" }, "push");
-    setShowServiceEditor(true);
-    setServiceForm(createServiceFormFromItem(item));
-  }
-
-  function resetServiceEditor() {
-    setServiceForm(createEmptyServiceForm());
-  }
-
-  async function handleSaveService() {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    if (!serviceForm.name.trim()) {
-      setErrorMessage("Название сервиса обязательно");
-      return;
-    }
-
-    setServiceSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const payload = buildServicePayload(serviceForm);
-
-      if (serviceForm.id) {
-        await apiRequest<ServiceItem>(
-          `/services/${serviceForm.id}`,
-          {
-            method: "PATCH",
-            body: JSON.stringify(payload),
-          },
-          token,
-        );
-        setSuccessMessage("Сервис обновлён");
-      } else {
-        await apiRequest<ServiceItem>(
-          "/services",
-          {
-            method: "POST",
-            body: JSON.stringify(payload),
-          },
-          token,
-        );
-        setSuccessMessage("Сервис создан");
-      }
-
-      await loadServices(token);
-      resetServiceEditor();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить сервис");
-    } finally {
-      setServiceSaving(false);
-    }
-  }
-
-  async function assignReviewService(serviceName: string) {
-    if (!token || !selectedRepair) {
-      return;
-    }
-
-    setReviewServiceAssigning(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const savedRepair = await apiRequest<RepairDetail>(
-        `/repairs/${selectedRepair.id}/service`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            service_name: serviceName.trim() || null,
-          }),
-        },
-        token,
-      );
-      setSelectedRepair(savedRepair);
-      if (!isEditingRepair) {
-        setRepairDraft(createRepairDraft(savedRepair));
-      }
-      setReviewServiceName(savedRepair.service?.name || "");
-      setSuccessMessage(savedRepair.service ? "Сервис назначен ремонту" : "Сервис у ремонта очищен");
-      await loadWorkspace(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось назначить сервис");
-    } finally {
-      setReviewServiceAssigning(false);
-    }
-  }
-
-  async function handleAssignReviewService() {
-    await assignReviewService(reviewServiceName);
-  }
-
-  async function handleCreateReviewService() {
-    if (!token || !selectedRepair) {
-      return;
-    }
-    if (!reviewServiceForm.name.trim()) {
-      setErrorMessage("Название сервиса обязательно");
-      return;
-    }
-
-    setReviewServiceSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const createdService = await apiRequest<ServiceItem>(
-        "/services",
-        {
-          method: "POST",
-          body: JSON.stringify(
-            buildServicePayload(
-              reviewServiceForm,
-              user?.role === "admin" ? reviewServiceForm.status : "preliminary",
-            ),
-          ),
-        },
-        token,
-      );
-      await loadServices(token);
-      setReviewServiceForm({
-        id: null,
-        name: "",
-        city: "",
-        contact: "",
-        comment: "",
-        status: user?.role === "admin" ? "confirmed" : "preliminary",
-      });
-      setShowReviewServiceEditor(false);
-      await assignReviewService(createdService.name);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось создать сервис");
-    } finally {
-      setReviewServiceSaving(false);
-    }
-  }
-
-  async function searchReviewVehicles(activeToken: string, search: string) {
-    if (!search.trim()) {
-      setReviewVehicleSearchResults([]);
-      return;
-    }
-
-    setReviewVehicleSearchLoading(true);
-    try {
-      const params = new URLSearchParams();
-      params.set("limit", "20");
-      params.set("search", search.trim());
-      const payload = await apiRequest<VehiclesResponse>(`/vehicles?${params.toString()}`, { method: "GET" }, activeToken);
-      setReviewVehicleSearchResults(
-        payload.items.filter((item) => !isPlaceholderVehicle(item.external_id)),
-      );
-    } finally {
-      setReviewVehicleSearchLoading(false);
-    }
-  }
-
-  async function handleSearchReviewVehicles() {
-    if (!token) {
-      return;
-    }
-    setErrorMessage("");
-    try {
-      await searchReviewVehicles(token, reviewVehicleSearch);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось найти технику");
-    }
-  }
-
-  async function handleLinkReviewVehicle(vehicleId: number) {
-    if (!token || !selectedDocumentId || !selectedRepair) {
-      return;
-    }
-
-    setReviewVehicleLinkingId(vehicleId);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const result = await apiRequest<DocumentCreateVehicleResponse>(
-        `/documents/${selectedDocumentId}/link-vehicle`,
-        {
-          method: "POST",
-          body: JSON.stringify({ vehicle_id: vehicleId }),
-        },
-        token,
-      );
-      setSuccessMessage(result.message);
-      setReviewVehicleSearchResults([]);
-      await loadWorkspace(token);
-      await openRepairByIds(result.document.id, result.repair_id);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось привязать технику");
-    } finally {
-      setReviewVehicleLinkingId(null);
-    }
-  }
-
-  function updateReviewFieldDraft<K extends keyof ReviewRepairFieldsDraft>(field: K, value: ReviewRepairFieldsDraft[K]) {
-    setReviewFieldDraft((current) => (current ? { ...current, [field]: value } : current));
-  }
-
-  function fillReviewFieldDraftFromOcr() {
-    setReviewFieldDraft((current) => {
-      if (!current) {
-        return current;
-      }
-      return {
-        ...current,
-        order_number:
-          typeof selectedRepairDocumentExtractedFields?.order_number === "string"
-            ? selectedRepairDocumentExtractedFields.order_number
-            : current.order_number,
-        repair_date:
-          typeof selectedRepairDocumentExtractedFields?.repair_date === "string"
-            ? selectedRepairDocumentExtractedFields.repair_date
-            : current.repair_date,
-        mileage:
-          selectedRepairDocumentExtractedFields?.mileage !== null &&
-          selectedRepairDocumentExtractedFields?.mileage !== undefined
-            ? String(selectedRepairDocumentExtractedFields.mileage)
-            : current.mileage,
-        work_total:
-          selectedRepairDocumentExtractedFields?.work_total !== null &&
-          selectedRepairDocumentExtractedFields?.work_total !== undefined
-            ? String(selectedRepairDocumentExtractedFields.work_total)
-            : current.work_total,
-        parts_total:
-          selectedRepairDocumentExtractedFields?.parts_total !== null &&
-          selectedRepairDocumentExtractedFields?.parts_total !== undefined
-            ? String(selectedRepairDocumentExtractedFields.parts_total)
-            : current.parts_total,
-        vat_total:
-          selectedRepairDocumentExtractedFields?.vat_total !== null &&
-          selectedRepairDocumentExtractedFields?.vat_total !== undefined
-            ? String(selectedRepairDocumentExtractedFields.vat_total)
-            : current.vat_total,
-        grand_total:
-          selectedRepairDocumentExtractedFields?.grand_total !== null &&
-          selectedRepairDocumentExtractedFields?.grand_total !== undefined
-            ? String(selectedRepairDocumentExtractedFields.grand_total)
-            : current.grand_total,
-      };
-    });
-  }
-
-  async function handleSaveReviewFields() {
-    if (!token || !selectedRepair || !reviewFieldDraft) {
-      return;
-    }
-
-    setReviewFieldSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const payload = buildReviewFieldsPayload(reviewFieldDraft);
-
-      const savedRepair = await apiRequest<RepairDetail>(
-        `/repairs/${selectedRepair.id}/review-fields`,
-        {
-          method: "PATCH",
-          body: JSON.stringify(payload),
-        },
-        token,
-      );
-      setSelectedRepair(savedRepair);
-      setRepairDraft(createRepairDraft(savedRepair));
-      setReviewFieldDraft(createReviewRepairFieldsDraft(savedRepair));
-      setSuccessMessage("Поля проверки сохранены");
-      await loadWorkspace(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить поля проверки");
-    } finally {
-      setReviewFieldSaving(false);
-    }
+    editService(item);
   }
 
   async function handleLaborNormImport() {
@@ -4416,81 +2563,6 @@ export default function App() {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось импортировать справочник нормо-часов");
     } finally {
       setLaborNormImportLoading(false);
-    }
-  }
-
-  async function handleHistoricalRepairImport() {
-    if (!token || user?.role !== "admin" || !historicalImportFile) {
-      setErrorMessage("Выберите .xlsx файл истории ремонтов");
-      return;
-    }
-
-    setHistoricalImportLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const body = new FormData();
-      body.append("file", historicalImportFile);
-      const normalizedLimit = historicalImportLimit.trim();
-      if (normalizedLimit) {
-        body.append("repair_limit", normalizedLimit);
-      }
-
-      const result = await apiRequest<HistoricalRepairImportResponse>(
-        "/imports/historical-repairs",
-        {
-          method: "POST",
-          body,
-        },
-        token,
-      );
-
-      setHistoricalImportResult(result);
-      setSuccessMessage(
-        `${result.message}. Создано ремонтов ${result.created_repairs}, конфликтов ${result.conflicts_created}, дублей ${result.duplicate_repairs}.`,
-      );
-      setHistoricalImportFile(null);
-      await Promise.all([loadHistoricalImportJobs(token), loadHistoricalWorkReference(token), loadImportConflicts(token)]);
-      await loadWorkspace(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось импортировать историю ремонтов");
-    } finally {
-      setHistoricalImportLoading(false);
-    }
-  }
-
-  async function handleResolveImportConflict(nextStatus: "resolved" | "ignored") {
-    if (!token || user?.role !== "admin" || !selectedImportConflict) {
-      return;
-    }
-
-    setImportConflictSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const payload = await apiRequest<ImportConflictResolveResponse>(
-        `/imports/conflicts/${selectedImportConflict.id}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            status: nextStatus,
-            comment: importConflictComment.trim() || null,
-          }),
-        },
-        token,
-      );
-      setSelectedImportConflict(payload.conflict);
-      setSuccessMessage(payload.message);
-      setShowImportConflictDialog(false);
-      setImportConflictComment("");
-      await Promise.all([
-        loadImportConflicts(token),
-        loadWorkspace(token),
-      ]);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось обновить конфликт импорта");
-    } finally {
-      setImportConflictSaving(false);
     }
   }
 
@@ -4665,240 +2737,12 @@ export default function App() {
   }
 
   function handleStartRepairEdit() {
-    if (!selectedRepair) {
-      return;
-    }
     setActiveRepairTab("overview");
-    setRepairDraft(createRepairDraft(selectedRepair));
-    setIsEditingRepair(true);
+    startRepairEdit();
   }
 
   function handleCancelRepairEdit() {
-    if (selectedRepair) {
-      setRepairDraft(createRepairDraft(selectedRepair));
-    } else {
-      setRepairDraft(null);
-    }
-    setIsEditingRepair(false);
-  }
-
-  function updateRepairDraftField<K extends keyof EditableRepairDraft>(field: K, value: EditableRepairDraft[K]) {
-    setRepairDraft((current) => (current ? { ...current, [field]: value } : current));
-  }
-
-  function updateWorkDraft(index: number, field: keyof EditableWorkDraft, value: EditableWorkDraft[keyof EditableWorkDraft]) {
-    setRepairDraft((current) => {
-      if (!current) {
-        return current;
-      }
-      const works = [...current.works];
-      works[index] = { ...works[index], [field]: value };
-      return { ...current, works };
-    });
-  }
-
-  function updatePartDraft(index: number, field: keyof EditablePartDraft, value: EditablePartDraft[keyof EditablePartDraft]) {
-    setRepairDraft((current) => {
-      if (!current) {
-        return current;
-      }
-      const parts = [...current.parts];
-      parts[index] = { ...parts[index], [field]: value };
-      return { ...current, parts };
-    });
-  }
-
-  function addWorkDraft() {
-    setRepairDraft((current) =>
-      current
-        ? {
-            ...current,
-            works: [
-              ...current.works,
-              {
-                work_code: "",
-                work_name: "",
-                quantity: 1,
-                standard_hours: "",
-                actual_hours: "",
-                price: 0,
-                line_total: 0,
-                status: "preliminary",
-              },
-            ],
-          }
-        : current,
-    );
-  }
-
-  function addPartDraft() {
-    setRepairDraft((current) =>
-      current
-        ? {
-            ...current,
-            parts: [
-              ...current.parts,
-              {
-                article: "",
-                part_name: "",
-                quantity: 1,
-                unit_name: "шт",
-                price: 0,
-                line_total: 0,
-                status: "preliminary",
-              },
-            ],
-          }
-        : current,
-    );
-  }
-
-  function removeWorkDraft(index: number) {
-    setRepairDraft((current) =>
-      current
-        ? { ...current, works: current.works.filter((_, itemIndex) => itemIndex !== index) }
-        : current,
-    );
-  }
-
-  function removePartDraft(index: number) {
-    setRepairDraft((current) =>
-      current
-        ? { ...current, parts: current.parts.filter((_, itemIndex) => itemIndex !== index) }
-        : current,
-    );
-  }
-
-  async function handleSaveRepair() {
-    if (!token || !selectedRepair || !repairDraft) {
-      return;
-    }
-
-    setSaveRepairLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
-    try {
-      const payload = {
-        order_number: repairDraft.order_number || null,
-        repair_date: repairDraft.repair_date,
-        mileage: Number(repairDraft.mileage),
-        reason: repairDraft.reason || null,
-        employee_comment: repairDraft.employee_comment || null,
-        service_name: repairDraft.service_name || null,
-        work_total: Number(repairDraft.work_total),
-        parts_total: Number(repairDraft.parts_total),
-        vat_total: Number(repairDraft.vat_total),
-        grand_total: Number(repairDraft.grand_total),
-        status: repairDraft.status,
-        is_preliminary: repairDraft.is_preliminary,
-        works: repairDraft.works.map((item) => ({
-          work_code: item.work_code || null,
-          work_name: item.work_name,
-          quantity: Number(item.quantity),
-          standard_hours: item.standard_hours === "" ? null : Number(item.standard_hours),
-          actual_hours: item.actual_hours === "" ? null : Number(item.actual_hours),
-          price: Number(item.price),
-          line_total: Number(item.line_total),
-          status: item.status,
-          reference_payload: { source: "manual_edit" },
-        })),
-        parts: repairDraft.parts.map((item) => ({
-          article: item.article || null,
-          part_name: item.part_name,
-          quantity: Number(item.quantity),
-          unit_name: item.unit_name || null,
-          price: Number(item.price),
-          line_total: Number(item.line_total),
-          status: item.status,
-        })),
-      };
-
-      const savedRepair = await apiRequest<RepairDetail>(
-        `/repairs/${selectedRepair.id}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify(payload),
-        },
-        token,
-      );
-
-      setSelectedRepair(savedRepair);
-      setRepairDraft(createRepairDraft(savedRepair));
-      setIsEditingRepair(false);
-      setSuccessMessage("Карточка ремонта обновлена");
-      await loadWorkspace(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить ремонт");
-    } finally {
-      setSaveRepairLoading(false);
-    }
-  }
-
-  async function handleArchiveRepair() {
-    if (!token || !selectedRepair || user?.role !== "admin") {
-      return;
-    }
-
-    setRepairArchiveLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
-    try {
-      const savedRepair = await apiRequest<RepairDetail>(
-        `/repairs/${selectedRepair.id}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ status: "archived" }),
-        },
-        token,
-      );
-      setSelectedRepair(savedRepair);
-      setRepairDraft(createRepairDraft(savedRepair));
-      setIsEditingRepair(false);
-      setSelectedDocumentId((current) => resolveRepairDocumentId(savedRepair, current));
-      setSuccessMessage(`Ремонт #${savedRepair.id} отправлен в архив`);
-      await loadWorkspace(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось отправить ремонт в архив");
-    } finally {
-      setRepairArchiveLoading(false);
-    }
-  }
-
-  async function handleDeleteRepair(repairId: number) {
-    if (!token || user?.role !== "admin") {
-      return;
-    }
-    const confirmed = window.confirm(
-      "Удалить ошибочно введенный заказ-наряд вместе со связанными документами и OCR-данными?",
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    setRepairDeleteLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
-    try {
-      const payload = await apiRequest<RepairDeleteResponse>(
-        `/repairs/${repairId}`,
-        { method: "DELETE" },
-        token,
-      );
-      if (selectedRepair?.id === repairId) {
-        setSelectedRepair(null);
-        setSelectedDocumentId(null);
-        setActiveWorkspaceTab("documents");
-      }
-      setSuccessMessage(payload.message);
-      await loadWorkspace(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось удалить заказ-наряд");
-    } finally {
-      setRepairDeleteLoading(false);
-    }
+    cancelRepairEdit();
   }
 
   async function handleArchiveDocument(documentId: number, repairId: number) {
@@ -4953,6 +2797,9 @@ export default function App() {
     setRecoveryTokenValue("");
     setRecoveryNewPasswordValue("");
     setAdminResetPasswordValue("");
+    resetReviewWorkflowState();
+    resetRepairDocumentsWorkflowState();
+    resetRepairEditingState();
     setSuccessMessage("");
     setErrorMessage("");
   }
@@ -5206,6 +3053,10 @@ export default function App() {
                 activeTechAdminTab,
                 description: techAdminTabDescriptions[activeTechAdminTab],
                 isPasswordRecoveryEmailConfigured: Boolean(systemStatus?.password_recovery_email_configured),
+                ocrBackend: systemStatus?.ocr_backend,
+                pdfRenderer: systemStatus?.pdf_renderer,
+                isImageOcrAvailable: Boolean(systemStatus?.image_ocr_available),
+                isPdfScanOcrAvailable: Boolean(systemStatus?.pdf_scan_ocr_available),
                 onTechAdminTabChange: handleTechAdminTabChange,
                 onCloseTechAdmin: closeTechAdmin,
               },
@@ -5230,20 +3081,12 @@ export default function App() {
                   void handleUserSearch();
                 },
                 onResetUsersSearch: () => {
-                  setUserSearch("");
-                  if (token) {
-                    void loadUsers(token, "");
-                  }
+                  void resetUsersSearch();
                 },
                 onToggleUserEditor: () => {
                   setShowUserEditor((current) => !current);
                 },
-                onUserFormChange: (field, value) => {
-                  setUserForm((current) => ({
-                    ...current,
-                    [field]: value,
-                  }));
-                },
+                onUserFormChange: updateUserFormField,
                 onSaveUser: () => {
                   void handleSaveUser();
                 },
@@ -5252,18 +3095,13 @@ export default function App() {
                   setShowUserEditor(false);
                 },
                 onSelectUser: setSelectedManagedUserId,
-                onEditUser: handleEditUser,
+                onEditUser: editUser,
                 onAdminResetPasswordValueChange: setAdminResetPasswordValue,
                 onAdminResetUserPassword: () => {
                   void handleAdminResetUserPassword();
                 },
                 onUserVehicleSearchChange: setUserVehicleSearch,
-                onUserAssignmentFormChange: (field, value) => {
-                  setUserAssignmentForm((current) => ({
-                    ...current,
-                    [field]: value,
-                  }));
-                },
+                onUserAssignmentFormChange: updateUserAssignmentFormField,
                 onSearchVehiclesForAssignment: () => {
                   void handleSearchVehiclesForAssignment();
                 },
@@ -5294,21 +3132,12 @@ export default function App() {
                   void handleServiceSearch();
                 },
                 onReset: () => {
-                  setServiceQuery("");
-                  setServiceCityFilter("");
-                  if (token) {
-                    void loadServices(token, "", "");
-                  }
+                  void resetServicesFilters();
                 },
                 onToggleEditor: () => {
                   setShowServiceEditor((current) => !current);
                 },
-                onServiceFormChange: (field, value) => {
-                  setServiceForm((current) => ({
-                    ...current,
-                    [field]: value,
-                  }));
-                },
+                onServiceFormChange: updateServiceFormField,
                 onSaveService: () => {
                   void handleSaveService();
                 },
@@ -5336,9 +3165,7 @@ export default function App() {
                   void handleCreateBackup();
                 },
                 onRefresh: () => {
-                  if (token) {
-                    void loadBackups(token);
-                  }
+                  void loadBackups();
                 },
                 onDownloadBackup: (item) => {
                   void handleDownloadBackup(item);
@@ -5520,13 +3347,7 @@ export default function App() {
                   void handleHistoricalRepairImport();
                 },
                 onRefreshJournal: () => {
-                  if (token) {
-                    void Promise.all([
-                      loadHistoricalImportJobs(token),
-                      loadHistoricalWorkReference(token),
-                      loadImportConflicts(token),
-                    ]);
-                  }
+                  void refreshHistoricalImportsJournal();
                 },
                 onOpenImportedRepair: (repairId) => {
                   void openRepairByIds(null, repairId);
@@ -5534,9 +3355,7 @@ export default function App() {
                 onHistoricalWorkReferenceQueryChange: setHistoricalWorkReferenceQuery,
                 onHistoricalWorkReferenceMinSamplesChange: setHistoricalWorkReferenceMinSamples,
                 onRefreshHistoricalWorkReference: () => {
-                  if (token) {
-                    void loadHistoricalWorkReference(token);
-                  }
+                  void loadHistoricalWorkReference();
                 },
                 onOpenImportConflict: (conflictId) => {
                   void openImportConflict(conflictId);
@@ -5956,14 +3775,13 @@ export default function App() {
                 onSubmit: (event) => {
                   void handleGlobalSearchSubmit(event);
                 },
-                onReset: () => {
-                  setGlobalSearchQuery("");
-                  setGlobalSearchResult(null);
-                },
+                onReset: resetGlobalSearch,
                 onOpenRepair: (documentId, repairId) => {
                   void openRepairByIds(documentId, repairId);
                 },
-                onOpenVehicle: openFleetVehicleById,
+                onOpenVehicle: (vehicleId) => {
+                  openFleetVehicleById(vehicleId, setActiveWorkspaceTab, updateBrowserRoute);
+                },
                 statusColor,
                 vehicleStatusColor,
                 formatDocumentStatusLabel,
@@ -5995,18 +3813,9 @@ export default function App() {
                 onAuditDateFromChange: setAuditDateFrom,
                 onAuditDateToChange: setAuditDateTo,
                 onRefresh: () => {
-                  if (token) {
-                    void loadAuditLog(token);
-                  }
+                  void loadAuditLog();
                 },
-                onReset: () => {
-                  setAuditSearchQuery("");
-                  setAuditEntityTypeFilter("");
-                  setAuditActionTypeFilter("");
-                  setAuditUserIdFilter("");
-                  setAuditDateFrom("");
-                  setAuditDateTo("");
-                },
+                onReset: resetAudit,
                 formatAuditEntityLabel,
                 formatHistoryActionLabel,
                 formatDateTime,
@@ -6053,20 +3862,20 @@ export default function App() {
                 onFleetVehicleTypeFilterChange: setFleetVehicleTypeFilter,
                 onFleetStatusFilterChange: setFleetStatusFilter,
                 onRefresh: () => {
-                  if (token) {
-                    void loadFleetVehicles(token);
-                  }
+                  void loadFleetVehicles();
                 },
                 onReset: () => {
                   setFleetQuery("");
                   setFleetVehicleTypeFilter("");
                   setFleetStatusFilter("");
-                  if (token) {
-                    void loadFleetVehicles(token, "", "", "");
-                  }
+                  void loadFleetVehicles("", "", "");
                 },
-                onReturnToList: returnToFleetList,
-                onOpenVehicleCard: openFleetVehicleCard,
+                onReturnToList: () => {
+                  returnToFleetList(updateBrowserRoute);
+                },
+                onOpenVehicleCard: (vehicleId) => {
+                  openFleetVehicleCard(vehicleId, updateBrowserRoute);
+                },
                 formatVehicle,
                 formatVehicleTypeLabel,
                 formatVehicleStatusLabel,

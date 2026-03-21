@@ -1,14 +1,5 @@
 import { Box, Button, Chip, CircularProgress, Paper, Stack, Typography } from "@mui/material";
-
-type DocumentStatus =
-  | "uploaded"
-  | "recognized"
-  | "partially_recognized"
-  | "needs_review"
-  | "confirmed"
-  | "ocr_error"
-  | "archived";
-type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
+import type { DocumentKind, DocumentStatus } from "../shared/workspaceBootstrapTypes";
 
 type ReviewDocumentPreviewPanelProps = {
   document: {

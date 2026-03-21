@@ -1,16 +1,6 @@
 import { Box, Button, Chip, Grid, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
-
-type VehicleType = "truck" | "trailer";
-
-type DocumentVehicleFormState = {
-  vehicle_type: VehicleType;
-  plate_number: string;
-  vin: string;
-  brand: string;
-  model: string;
-  year: string;
-  comment: string;
-};
+import type { VehicleType } from "../shared/workspaceBootstrapTypes";
+import type { DocumentVehicleFormState } from "../shared/workspaceFormTypes";
 
 type DocumentVehicleCreatePanelProps = {
   documentVehicleForm: DocumentVehicleFormState;

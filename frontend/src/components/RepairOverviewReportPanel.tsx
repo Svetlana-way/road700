@@ -1,24 +1,9 @@
 import { Alert, Box, Button, Chip, Grid, Paper, Stack, Typography } from "@mui/material";
+import type { DocumentStatus } from "../shared/workspaceBootstrapTypes";
+import type { ReviewComparisonStatus } from "../shared/repairUiHelpers";
+import type { ReviewRequiredFieldComparisonItem } from "../shared/workspaceFormTypes";
 
-type DocumentStatus =
-  | "uploaded"
-  | "recognized"
-  | "partially_recognized"
-  | "needs_review"
-  | "confirmed"
-  | "ocr_error"
-  | "archived";
-type ReviewComparisonStatus = "match" | "missing" | "mismatch" | "ocr_missing" | "empty";
 type CheckSeverity = "normal" | "warning" | "suspicious" | "error";
-
-type ReviewRequiredFieldComparisonItem = {
-  key: string;
-  label: string;
-  currentDisplay: string;
-  ocrDisplay: string;
-  confidenceValue: number | null;
-  status: ReviewComparisonStatus;
-};
 
 type RepairOverviewReportPanelProps = {
   selectedRepair: {

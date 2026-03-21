@@ -1,14 +1,6 @@
 import { Box, Button, Chip, Grid, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
-
-type ServiceStatus = "preliminary" | "confirmed" | "archived";
-
-type ReviewServiceForm = {
-  name: string;
-  city: string;
-  contact: string;
-  status: ServiceStatus;
-  comment: string;
-};
+import type { UserRole } from "../shared/workspaceBootstrapTypes";
+import type { ReviewServiceForm } from "../shared/workspaceFormTypes";
 
 type ReviewServicePanelProps = {
   currentServiceName: string | null;
@@ -24,7 +16,7 @@ type ReviewServicePanelProps = {
   reviewVehicleLinking: boolean;
   showReviewServiceEditor: boolean;
   reviewServiceForm: ReviewServiceForm;
-  userRole: "admin" | "employee" | undefined;
+  userRole: UserRole | undefined;
   onServiceNameChange: (value: string) => void;
   onAssign: () => void;
   onToggleCreate: () => void;
@@ -133,7 +125,7 @@ export function ReviewServicePanel({
                   fullWidth
                   label="Статус"
                   value={reviewServiceForm.status}
-                  onChange={(event) => onFormChange("status", event.target.value as ServiceStatus)}
+                  onChange={(event) => onFormChange("status", event.target.value as ReviewServiceForm["status"])}
                 >
                   <MenuItem value="confirmed">Подтверждён</MenuItem>
                   <MenuItem value="preliminary">Предварительный</MenuItem>

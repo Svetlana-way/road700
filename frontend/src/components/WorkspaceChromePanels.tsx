@@ -12,25 +12,11 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-
-type UserRole = "admin" | "employee";
-type WorkspaceTab = "documents" | "repair" | "admin" | "tech_admin" | "fleet" | "search" | "audit";
-
-type DashboardSummary = {
-  vehicles_total: number;
-  repairs_total: number;
-  repairs_draft: number;
-  repairs_suspicious: number;
-  documents_total: number;
-  documents_review_queue: number;
-};
+import type { WorkspaceTab } from "../shared/appRoute";
+import type { DashboardSummary, User } from "../shared/workspaceBootstrapTypes";
 
 type WorkspaceChromePanelsProps = {
-  user: {
-    full_name: string;
-    email: string;
-    role: UserRole;
-  } | null;
+  user: Pick<User, "full_name" | "email" | "role"> | null;
   showPasswordChange: boolean;
   currentPasswordValue: string;
   newPasswordValue: string;

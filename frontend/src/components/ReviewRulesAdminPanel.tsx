@@ -12,32 +12,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-
-type ReviewRuleItem = {
-  id: number;
-  rule_type: string;
-  code: string;
-  title: string;
-  weight: number;
-  bucket_override: string | null;
-  is_active: boolean;
-  sort_order: number;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type ReviewRuleFormState = {
-  id: number | null;
-  rule_type: string;
-  code: string;
-  title: string;
-  weight: string;
-  bucket_override: string;
-  is_active: "true" | "false";
-  sort_order: string;
-  notes: string;
-};
+import type { ReviewRuleItem } from "../shared/workspaceBootstrapTypes";
+import type { ReviewRuleFormState } from "../shared/workspaceFormTypes";
 
 type ReviewRulesAdminPanelProps = {
   showReviewRuleEditor: boolean;

@@ -12,38 +12,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-
-type OcrLearningSignalItem = {
-  id: number;
-  repair_id: number;
-  document_id: number | null;
-  document_version_id: number | null;
-  created_by_user_id: number | null;
-  signal_type: string;
-  target_field: string;
-  ocr_profile_scope: string | null;
-  extracted_value: string | null;
-  corrected_value: string;
-  service_name: string | null;
-  source_type: string | null;
-  document_filename: string | null;
-  text_excerpt: string | null;
-  suggestion_summary: string | null;
-  status: string;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type OcrLearningSummaryItem = {
-  target_field: string;
-  ocr_profile_scope: string | null;
-  signal_type: string;
-  count: number;
-  suggestion_summary: string;
-  example_services: string[];
-  example_filenames: string[];
-};
+import type { OcrLearningSignalItem, OcrLearningSummaryItem } from "../shared/workspaceBootstrapTypes";
 
 type OcrLearningAdminPanelProps = {
   ocrLearningStatusFilter: string;

@@ -4,8 +4,10 @@ import argparse
 import logging
 import time
 
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.imports import ImportJob
+from app.services.document_processing import ensure_ocr_runtime, format_ocr_runtime_status_lines
 from app.services.import_jobs import claim_next_document_processing_job, run_document_processing_job
 
 
@@ -44,6 +46,11 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     parser = build_argument_parser()
     args = parser.parse_args()
+
+    for line in format_ocr_runtime_status_lines():
+        logger.info("job_worker_ocr_runtime %s", line)
+    if settings.require_full_ocr_runtime:
+        ensure_ocr_runtime()
 
     while True:
         processed = process_single_job()

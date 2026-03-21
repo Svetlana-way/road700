@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.access import get_repair_visibility_clause
+from app.api.access import get_allowed_vehicle_ids_query, get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion

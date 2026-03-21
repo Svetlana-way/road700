@@ -53,6 +53,10 @@ from app.core.paths import STORAGE_ROOT
 LOCAL_STORAGE_ROOT = STORAGE_ROOT
 VISION_OCR_SCRIPT = Path(__file__).with_name("vision_ocr.swift")
 logger = logging.getLogger(__name__)
+TESSERACT_BINARY = "tesseract"
+PDFTOPPM_BINARY = "pdftoppm"
+SIPS_BINARY = "sips"
+TESSERACT_LANGUAGE = "rus+eng"
 
 OCR_CONFUSABLE_CHARSETS = {
     "а": "аa4@",
@@ -542,6 +546,84 @@ def select_best_text_variant(text: str) -> str:
 
 def is_vision_ocr_available() -> bool:
     return shutil.which("swift") is not None and VISION_OCR_SCRIPT.exists()
+
+
+def is_tesseract_ocr_available() -> bool:
+    return shutil.which(TESSERACT_BINARY) is not None
+
+
+def is_pdftoppm_available() -> bool:
+    return shutil.which(PDFTOPPM_BINARY) is not None
+
+
+def is_sips_available() -> bool:
+    return shutil.which(SIPS_BINARY) is not None
+
+
+def get_available_ocr_backend() -> str | None:
+    if is_vision_ocr_available():
+        return "vision"
+    if is_tesseract_ocr_available():
+        return "tesseract"
+    return None
+
+
+def get_available_pdf_renderer() -> str | None:
+    if is_pdftoppm_available():
+        return "pdftoppm"
+    if is_sips_available():
+        return "sips"
+    return None
+
+
+def get_ocr_runtime_status() -> dict[str, object]:
+    ocr_backend = get_available_ocr_backend()
+    pdf_renderer = get_available_pdf_renderer()
+    return {
+        "ocr_backend": ocr_backend,
+        "pdf_renderer": pdf_renderer,
+        "image_ocr_available": ocr_backend is not None,
+        "pdf_scan_ocr_available": ocr_backend is not None and pdf_renderer is not None,
+        "vision_available": is_vision_ocr_available(),
+        "tesseract_available": is_tesseract_ocr_available(),
+        "pdftoppm_available": is_pdftoppm_available(),
+        "sips_available": is_sips_available(),
+    }
+
+
+def get_ocr_runtime_issues(*, require_pdf_scan_ocr: bool = True) -> list[str]:
+    status = get_ocr_runtime_status()
+    issues: list[str] = []
+    if not bool(status["image_ocr_available"]):
+        issues.append("OCR backend for images is not available")
+    if require_pdf_scan_ocr and not bool(status["pdf_scan_ocr_available"]):
+        if status["ocr_backend"] is None:
+            issues.append("OCR backend for scanned PDFs is not available")
+        if status["pdf_renderer"] is None:
+            issues.append("PDF renderer for OCR is not available")
+    return issues
+
+
+def format_ocr_runtime_status_lines(*, require_pdf_scan_ocr: bool = True) -> list[str]:
+    status = get_ocr_runtime_status()
+    issues = get_ocr_runtime_issues(require_pdf_scan_ocr=require_pdf_scan_ocr)
+    lines = [
+        f"OCR backend: {status['ocr_backend'] or 'missing'}",
+        f"PDF renderer: {status['pdf_renderer'] or 'missing'}",
+        f"Image OCR available: {'yes' if status['image_ocr_available'] else 'no'}",
+        f"Scanned PDF OCR available: {'yes' if status['pdf_scan_ocr_available'] else 'no'}",
+    ]
+    if issues:
+        lines.append(f"Issues: {'; '.join(issues)}")
+    else:
+        lines.append("Issues: none")
+    return lines
+
+
+def ensure_ocr_runtime(*, require_pdf_scan_ocr: bool = True) -> None:
+    issues = get_ocr_runtime_issues(require_pdf_scan_ocr=require_pdf_scan_ocr)
+    if issues:
+        raise RuntimeError("; ".join(issues))
 
 
 def is_pillow_available() -> bool:
@@ -2379,6 +2461,44 @@ def run_vision_ocr(image_paths: list[Path]) -> dict[str, str]:
     return {item["path"]: item["text"] for item in payload.get("results", [])}
 
 
+def run_tesseract_ocr(image_paths: list[Path]) -> dict[str, str]:
+    if not image_paths:
+        return {}
+    if not is_tesseract_ocr_available():
+        raise RuntimeError("Tesseract OCR is not available in the current environment")
+
+    payload: dict[str, str] = {}
+    for image_path in image_paths:
+        command = [
+            TESSERACT_BINARY,
+            image_path.as_posix(),
+            "stdout",
+            "-l",
+            TESSERACT_LANGUAGE,
+            "--psm",
+            "6",
+        ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "Tesseract OCR command failed")
+        payload[image_path.as_posix()] = result.stdout
+    return payload
+
+
+def run_ocr_backend(image_paths: list[Path]) -> tuple[dict[str, str], str]:
+    backend = get_available_ocr_backend()
+    if backend == "vision":
+        return run_vision_ocr(image_paths), backend
+    if backend == "tesseract":
+        return run_tesseract_ocr(image_paths), backend
+    raise RuntimeError("No supported OCR backend is available in the current environment")
+
+
 def save_pillow_optimized_image(source_path: Path, output_path: Path) -> bool:
     if not is_pillow_available():
         return False
@@ -2442,36 +2562,77 @@ def preprocess_image_for_ocr(path: Path) -> tuple[tempfile.TemporaryDirectory, P
     if save_pillow_optimized_image(path, processed_path):
         return temp_dir, processed_path
 
-    command = [
-        "sips",
-        "-s",
-        "format",
-        "jpeg",
-        "-s",
-        "formatOptions",
-        "best",
-        "-Z",
-        "2400",
-        path.as_posix(),
-        "--out",
-        processed_path.as_posix(),
-    ]
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        temp_dir.cleanup()
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Failed to preprocess image for OCR")
+    if is_sips_available():
+        command = [
+            SIPS_BINARY,
+            "-s",
+            "format",
+            "jpeg",
+            "-s",
+            "formatOptions",
+            "best",
+            "-Z",
+            "2400",
+            path.as_posix(),
+            "--out",
+            processed_path.as_posix(),
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            temp_dir.cleanup()
+            raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Failed to preprocess image for OCR")
+        optimize_existing_image_for_ocr(processed_path)
+        return temp_dir, processed_path
 
-    optimize_existing_image_for_ocr(processed_path)
-    return temp_dir, processed_path
+    passthrough_suffix = path.suffix if path.suffix else ".img"
+    passthrough_path = Path(temp_dir.name) / f"{path.stem}_ocr{passthrough_suffix}"
+    shutil.copy2(path, passthrough_path)
+    return temp_dir, passthrough_path
 
 
-def extract_image_text(path: Path) -> str:
+def extract_image_text(path: Path) -> tuple[str, str]:
     temp_dir, processed_path = preprocess_image_for_ocr(path)
     try:
-        ocr_results = run_vision_ocr([processed_path])
-        return select_best_text_variant(ocr_results.get(processed_path.as_posix(), ""))
+        ocr_results, backend = run_ocr_backend([processed_path])
+        return select_best_text_variant(ocr_results.get(processed_path.as_posix(), "")), backend
     finally:
         temp_dir.cleanup()
+
+
+def render_single_page_pdf_for_ocr(source_path: Path, output_path: Path) -> None:
+    if is_pdftoppm_available():
+        output_prefix = output_path.with_suffix("")
+        command = [
+            PDFTOPPM_BINARY,
+            "-jpeg",
+            "-r",
+            "300",
+            "-singlefile",
+            source_path.as_posix(),
+            output_prefix.as_posix(),
+        ]
+    elif is_sips_available():
+        command = [
+            SIPS_BINARY,
+            "-s",
+            "format",
+            "jpeg",
+            "-s",
+            "formatOptions",
+            "best",
+            "-Z",
+            "2400",
+            source_path.as_posix(),
+            "--out",
+            output_path.as_posix(),
+        ]
+    else:
+        raise RuntimeError("Failed to render PDF page for OCR: no supported PDF renderer is available")
+
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Failed to render PDF page for OCR")
+    optimize_existing_image_for_ocr(output_path)
 
 
 def render_pdf_pages_for_ocr(path: Path, max_pages: int = 5) -> tuple[tempfile.TemporaryDirectory, list[Path]]:
@@ -2486,45 +2647,32 @@ def render_pdf_pages_for_ocr(path: Path, max_pages: int = 5) -> tuple[tempfile.T
         writer.add_page(reader.pages[page_index])
         with single_page_pdf_path.open("wb") as output_stream:
             writer.write(output_stream)
-        command = [
-            "sips",
-            "-s",
-            "format",
-            "jpeg",
-            "-s",
-            "formatOptions",
-            "best",
-            "-Z",
-            "2400",
-            single_page_pdf_path.as_posix(),
-            "--out",
-            image_path.as_posix(),
-        ]
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
+        try:
+            render_single_page_pdf_for_ocr(single_page_pdf_path, image_path)
+        except RuntimeError:
             temp_dir.cleanup()
-            raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Failed to render PDF page for OCR")
+            raise
         image_paths.append(image_path)
 
     return temp_dir, image_paths
 
 
-def extract_scanned_pdf_text(path: Path) -> str:
+def extract_scanned_pdf_text(path: Path) -> tuple[str, str]:
     temp_dir, image_paths = render_pdf_pages_for_ocr(path)
     try:
-        ocr_results = run_vision_ocr(image_paths)
+        ocr_results, backend = run_ocr_backend(image_paths)
         chunks = [select_best_text_variant(ocr_results.get(image_path.as_posix(), "")) for image_path in image_paths]
-        return "\n".join(filter(None, chunks)).strip()
+        return "\n".join(filter(None, chunks)).strip(), backend
     finally:
         temp_dir.cleanup()
 
 
 def extract_document_text(path: Path, source_type: str) -> tuple[str, str, Optional[str]]:
     if source_type == "image":
-        if not is_vision_ocr_available():
+        if get_available_ocr_backend() is None:
             return "", "manual_review", "image_ocr_unavailable"
-        text = extract_image_text(path)
-        return text, "image_vision_ocr", None if text else "image_text_not_found"
+        text, backend = extract_image_text(path)
+        return text, f"image_{backend}_ocr", None if text else "image_text_not_found"
 
     text = select_best_text_variant(extract_pdf_text(path))
     extracted_from = "pdf_text"
@@ -2533,16 +2681,19 @@ def extract_document_text(path: Path, source_type: str) -> tuple[str, str, Optio
     if score_text_quality(text)[0] >= 2 or score_text_quality(text)[1] >= 6:
         return text, extracted_from, None
 
-    if not is_vision_ocr_available():
+    if get_available_ocr_backend() is None:
         return text, extracted_from, "pdf_ocr_unavailable" if not text else None
 
-    scanned_text = extract_scanned_pdf_text(path)
+    try:
+        scanned_text, backend = extract_scanned_pdf_text(path)
+    except RuntimeError:
+        return text, extracted_from, "pdf_renderer_unavailable" if not text else None
     if score_text_quality(scanned_text) > score_text_quality(text):
-        return scanned_text, "pdf_vision_ocr", None if scanned_text else "pdf_text_not_found"
+        return scanned_text, f"pdf_{backend}_ocr", None if scanned_text else "pdf_text_not_found"
 
     if not text and not scanned_text:
         failure_reason = "pdf_text_not_found"
-    return text or scanned_text, extracted_from if text else "pdf_vision_ocr", failure_reason
+    return text or scanned_text, extracted_from if text else f"pdf_{backend}_ocr", failure_reason
 
 
 def parse_document_text(text: str, db: Session | None = None, *, profile_scope: str | None = None) -> dict[str, object]:
@@ -2804,6 +2955,33 @@ def build_manual_review_check(
             "severity": CheckSeverity.WARNING,
             "title": "Не удалось извлечь текст из документа",
             "details": "Документ сохранён, но автоматическое распознавание не извлекло текст для проверки.",
+            "payload": {"reason": reason},
+        }
+
+    if reason == "image_ocr_unavailable":
+        return {
+            "check_type": "ocr_image_backend_unavailable",
+            "severity": CheckSeverity.WARNING,
+            "title": "OCR для изображений недоступен",
+            "details": "В текущем окружении не найден поддерживаемый OCR backend для изображений.",
+            "payload": {"reason": reason},
+        }
+
+    if reason == "pdf_ocr_unavailable":
+        return {
+            "check_type": "ocr_pdf_backend_unavailable",
+            "severity": CheckSeverity.WARNING,
+            "title": "OCR для PDF-сканов недоступен",
+            "details": "В текущем окружении не найден поддерживаемый OCR backend для PDF-сканов.",
+            "payload": {"reason": reason},
+        }
+
+    if reason == "pdf_renderer_unavailable":
+        return {
+            "check_type": "ocr_pdf_renderer_unavailable",
+            "severity": CheckSeverity.WARNING,
+            "title": "Рендер PDF для OCR недоступен",
+            "details": "В текущем окружении не найден поддерживаемый renderer PDF-страниц для OCR.",
             "payload": {"reason": reason},
         }
 

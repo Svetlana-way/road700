@@ -13,78 +13,12 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-
-type VehicleType = "truck" | "trailer";
-
-type LaborNormCatalogItem = {
-  id: number;
-  scope: string;
-  brand_family: string | null;
-  catalog_name: string | null;
-  code: string;
-  category: string | null;
-  name_ru: string;
-  name_ru_alt: string | null;
-  name_cn: string | null;
-  name_en: string | null;
-  normalized_name: string;
-  standard_hours: number;
-  source_sheet: string | null;
-  source_file: string | null;
-  status: string;
-  created_at: string;
-  updated_at: string;
-};
-
-type LaborNormCatalogConfigItem = {
-  id: number;
-  scope: string;
-  catalog_name: string;
-  brand_family: string | null;
-  vehicle_type: VehicleType | null;
-  year_from: number | null;
-  year_to: number | null;
-  brand_keywords: string[] | null;
-  model_keywords: string[] | null;
-  vin_prefixes: string[] | null;
-  priority: number;
-  auto_match_enabled: boolean;
-  status: string;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type LaborNormCatalogFormState = {
-  scope: string;
-  catalog_name: string;
-  brand_family: string;
-  vehicle_type: "" | VehicleType;
-  year_from: string;
-  year_to: string;
-  brand_keywords: string;
-  model_keywords: string;
-  vin_prefixes: string;
-  priority: string;
-  auto_match_enabled: "true" | "false";
-  status: string;
-  notes: string;
-};
-
-type LaborNormEntryFormState = {
-  id: number | null;
-  scope: string;
-  code: string;
-  category: string;
-  name_ru: string;
-  name_ru_alt: string;
-  name_cn: string;
-  name_en: string;
-  standard_hours: string;
-  source_sheet: string;
-  source_file: string;
-  status: string;
-};
+import type {
+  LaborNormCatalogConfigItem,
+  LaborNormCatalogItem,
+  VehicleType,
+} from "../shared/workspaceBootstrapTypes";
+import type { LaborNormCatalogFormState, LaborNormEntryFormState } from "../shared/workspaceFormTypes";
 
 type LaborNormsAdminPanelProps = {
   showLaborNormCatalogEditor: boolean;

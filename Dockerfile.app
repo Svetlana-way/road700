@@ -21,6 +21,13 @@ ENV ROAD700_PROJECT_ROOT=/app
 ENV ROAD700_STORAGE_ROOT=/app/storage
 ENV ROAD700_FRONTEND_DIST=/app/frontend/dist
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        poppler-utils \
+        tesseract-ocr \
+        tesseract-ocr-rus \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY backend/pyproject.toml backend/alembic.ini /app/
 COPY backend/alembic /app/alembic
 COPY backend/app /app/app

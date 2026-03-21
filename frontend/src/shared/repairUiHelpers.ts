@@ -1,6 +1,7 @@
 import { documentHasActiveImportJob, isDocumentAwaitingOcr } from "./displayFormatters";
+import type { ReviewRepairFieldsDraft } from "./workspaceFormTypes";
 
-type EditableWorkDraft = {
+export type EditableWorkDraft = {
   work_code: string;
   work_name: string;
   quantity: number;
@@ -11,7 +12,7 @@ type EditableWorkDraft = {
   status: string;
 };
 
-type EditablePartDraft = {
+export type EditablePartDraft = {
   article: string;
   part_name: string;
   quantity: number;
@@ -21,7 +22,7 @@ type EditablePartDraft = {
   status: string;
 };
 
-type EditableRepairDraft = {
+export type EditableRepairDraft = {
   order_number: string;
   repair_date: string;
   mileage: number;
@@ -38,21 +39,9 @@ type EditableRepairDraft = {
   parts: EditablePartDraft[];
 };
 
-type ReviewRepairFieldsDraft = {
-  order_number: string;
-  repair_date: string;
-  mileage: string;
-  work_total: string;
-  parts_total: string;
-  vat_total: string;
-  grand_total: string;
-  reason: string;
-  employee_comment: string;
-};
-
 export type ReviewComparisonStatus = "match" | "missing" | "mismatch" | "ocr_missing" | "empty";
 
-type RepairDetailForDraft = {
+export type RepairDetailForDraft = {
   order_number: string | null;
   repair_date: string;
   mileage: number;

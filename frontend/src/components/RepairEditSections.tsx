@@ -1,44 +1,7 @@
 import { Button, Grid, Paper, Stack, TextField, Typography } from "@mui/material";
+import type { EditablePartDraft, EditableRepairDraft, EditableWorkDraft } from "../shared/repairUiHelpers";
 
 type RepairTab = "overview" | "works" | "parts" | "documents" | "checks" | "history";
-
-type EditableWorkDraft = {
-  work_code: string;
-  work_name: string;
-  quantity: number;
-  standard_hours: number | "";
-  actual_hours: number | "";
-  price: number;
-  line_total: number;
-  status: string;
-};
-
-type EditablePartDraft = {
-  article: string;
-  part_name: string;
-  quantity: number;
-  unit_name: string;
-  price: number;
-  line_total: number;
-  status: string;
-};
-
-type EditableRepairDraft = {
-  order_number: string;
-  repair_date: string;
-  mileage: number;
-  reason: string;
-  employee_comment: string;
-  service_name: string;
-  work_total: number;
-  parts_total: number;
-  vat_total: number;
-  grand_total: number;
-  status: string;
-  is_preliminary: boolean;
-  works: EditableWorkDraft[];
-  parts: EditablePartDraft[];
-};
 
 type ServiceOption = {
   id: number;

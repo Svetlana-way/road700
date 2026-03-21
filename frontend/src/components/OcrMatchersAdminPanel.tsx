@@ -1,32 +1,6 @@
 import { Box, Button, Chip, Grid, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
-
-type OcrProfileMatcherItem = {
-  id: number;
-  profile_scope: string;
-  title: string;
-  source_type: string | null;
-  filename_pattern: string | null;
-  text_pattern: string | null;
-  service_name_pattern: string | null;
-  priority: number;
-  is_active: boolean;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type OcrProfileMatcherFormState = {
-  id: number | null;
-  profile_scope: string;
-  title: string;
-  source_type: string;
-  filename_pattern: string;
-  text_pattern: string;
-  service_name_pattern: string;
-  priority: string;
-  is_active: "true" | "false";
-  notes: string;
-};
+import type { OcrProfileMatcherItem } from "../shared/workspaceBootstrapTypes";
+import type { OcrProfileMatcherFormState } from "../shared/workspaceFormTypes";
 
 type OcrMatchersAdminPanelProps = {
   ocrProfileMatcherProfileFilter: string;

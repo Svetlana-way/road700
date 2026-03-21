@@ -1,10 +1,10 @@
 import { type ReactNode } from "react";
 import { Box, Button, Chip, Paper, Stack, TextField, Typography } from "@mui/material";
+import type { RepairTab } from "../shared/appRoute";
+import type { HistoryFilter } from "../shared/appUiConfig";
+import type { DocumentKind } from "../shared/workspaceBootstrapTypes";
 
 type CheckSeverity = "normal" | "warning" | "suspicious" | "error";
-type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
-type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
-type RepairTab = "overview" | "works" | "parts" | "documents" | "checks" | "history";
 
 type RepairDetail = {
   works: Array<{

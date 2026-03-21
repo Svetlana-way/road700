@@ -1,4 +1,4 @@
-type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
+import type { DocumentKind } from "./workspaceBootstrapTypes";
 
 type HistoryContext = "repair" | "document" | "generic";
 

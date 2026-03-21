@@ -1,88 +1,11 @@
 import { Box, Button, Chip, CircularProgress, Grid, Paper, Stack, Typography } from "@mui/material";
-
-type UserRole = "admin" | "employee";
-type VehicleType = "truck" | "trailer";
-type VehicleStatus = "active" | "in_repair" | "waiting_repair" | "inactive" | "decommissioned" | "archived";
-
-type VehiclePreview = {
-  id: number;
-  external_id?: string | null;
-  plate_number: string | null;
-  brand: string | null;
-  model: string | null;
-};
-
-type VehicleDetail = {
-  id: number;
-  external_id: string | null;
-  vehicle_type: VehicleType;
-  vin: string | null;
-  plate_number: string | null;
-  brand: string | null;
-  model: string | null;
-  year: number | null;
-  column_name: string | null;
-  mechanic_name: string | null;
-  current_driver_name: string | null;
-  comment: string | null;
-  status: VehicleStatus;
-  updated_at: string;
-  active_links: Array<{
-    id: number;
-    left_vehicle_id: number;
-    right_vehicle_id: number;
-    starts_at: string;
-    ends_at: string | null;
-    comment: string | null;
-  }>;
-  active_assignments: Array<{
-    id: number;
-    starts_at: string;
-    ends_at: string | null;
-    comment: string | null;
-    user: {
-      full_name: string;
-      email: string;
-      role: UserRole;
-    };
-  }>;
-  repair_history: Array<{
-    repair_id: number;
-    order_number: string | null;
-    repair_date: string;
-    mileage: number;
-    status: string;
-    service_name: string | null;
-    grand_total: number;
-    documents_total: number;
-    updated_at: string;
-  }>;
-  history_summary: {
-    repairs_total: number;
-    documents_total: number;
-    confirmed_repairs: number;
-    suspicious_repairs: number;
-    last_repair_date: string | null;
-    last_mileage: number | null;
-  };
-  historical_repair_history: Array<{
-    repair_id: number;
-    order_number: string | null;
-    repair_date: string;
-    mileage: number;
-    service_name: string | null;
-    grand_total: number;
-    employee_comment: string | null;
-  }>;
-  historical_history_summary: {
-    repairs_total: number;
-    services_total: number;
-    total_spend: number;
-    first_repair_date: string | null;
-    last_repair_date: string | null;
-    last_mileage: number | null;
-  };
-};
+import type {
+  UserRole,
+  VehicleDetail,
+  VehiclePreview,
+  VehicleStatus,
+  VehicleType,
+} from "../shared/workspaceBootstrapTypes";
 
 type FleetVehicleDetailPanelProps = {
   selectedFleetVehicleLoading: boolean;

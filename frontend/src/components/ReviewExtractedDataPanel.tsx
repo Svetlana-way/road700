@@ -1,11 +1,5 @@
 import { Box, Chip, Grid, Paper, Stack, Typography } from "@mui/material";
-
-type ReviewExtractedFieldSnapshot = {
-  key: string;
-  label: string;
-  value: string;
-  confidenceValue: number | null;
-};
+import type { ReviewExtractedFieldSnapshot } from "../shared/workspaceFormTypes";
 
 type ReviewExtractedDataPanelProps = {
   selectedRepairDocumentFieldSnapshots: ReviewExtractedFieldSnapshot[];

@@ -8,6 +8,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.core.paths import STORAGE_ROOT
 from app.db.session import engine
+from app.services.document_processing import get_ocr_runtime_status
 
 
 router = APIRouter()
@@ -37,6 +38,12 @@ def healthcheck() -> dict[str, object]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"status": "error", "dependency": "storage", "message": str(exc)},
         ) from exc
+
+    ocr_runtime = get_ocr_runtime_status()
+    checks["ocr_backend"] = str(ocr_runtime["ocr_backend"] or "missing")
+    checks["pdf_renderer"] = str(ocr_runtime["pdf_renderer"] or "missing")
+    checks["image_ocr"] = "ok" if bool(ocr_runtime["image_ocr_available"]) else "degraded"
+    checks["pdf_scan_ocr"] = "ok" if bool(ocr_runtime["pdf_scan_ocr_available"]) else "degraded"
 
     return {
         "status": "ok",

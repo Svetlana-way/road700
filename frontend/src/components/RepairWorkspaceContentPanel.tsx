@@ -2,9 +2,7 @@ import { type ComponentProps } from "react";
 import { Button, Chip, CircularProgress, Stack, Typography } from "@mui/material";
 import { RepairTabsPanel } from "./RepairTabsPanel";
 import { ReviewDecisionPanel } from "./ReviewDecisionPanel";
-
-type UserRole = "admin" | "employee";
-type ReviewPriorityBucket = "review" | "critical" | "suspicious";
+import type { ReviewPriorityBucket, UserRole } from "../shared/workspaceBootstrapTypes";
 
 type ReviewDecisionProps = ComponentProps<typeof ReviewDecisionPanel>;
 type RepairTabsProps = ComponentProps<typeof RepairTabsPanel>;

@@ -9,18 +9,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-
-type ImportConflictItem = {
-  id: number;
-  entity_type: string;
-  conflict_key: string;
-  source_filename: string | null;
-  incoming_payload: Record<string, unknown> | null;
-  existing_payload: Record<string, unknown> | null;
-  resolution_payload: Record<string, unknown> | null;
-  status: string;
-  created_at: string;
-};
+import type { ImportConflictItem } from "../shared/importAdminTypes";
 
 type ImportConflictDialogProps = {
   open: boolean;

@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     s3_bucket: str = "road700-documents"
     s3_region: str = "us-east-1"
     s3_endpoint: str = "http://minio:9000"
+    require_full_ocr_runtime: bool = False
 
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),

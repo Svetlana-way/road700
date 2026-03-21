@@ -6,66 +6,15 @@ import { ReviewExtractedDataPanel } from "./ReviewExtractedDataPanel";
 import { ReviewRequiredFieldsPanel } from "./ReviewRequiredFieldsPanel";
 import { ReviewServicePanel } from "./ReviewServicePanel";
 import { ReviewVehicleLinkPanel } from "./ReviewVehicleLinkPanel";
-
-type UserRole = "admin" | "employee";
-type VehicleType = "truck" | "trailer";
-type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
-type DocumentStatus =
-  | "uploaded"
-  | "recognized"
-  | "partially_recognized"
-  | "needs_review"
-  | "confirmed"
-  | "ocr_error"
-  | "archived";
-type ServiceStatus = "preliminary" | "confirmed" | "archived";
-type ReviewComparisonStatus = "match" | "missing" | "mismatch" | "ocr_missing" | "empty";
-
-type ReviewRepairFieldsDraft = {
-  order_number: string;
-  repair_date: string;
-  mileage: string;
-  work_total: string;
-  parts_total: string;
-  vat_total: string;
-  grand_total: string;
-  reason: string;
-  employee_comment: string;
-};
-
-type ReviewRequiredFieldComparisonItem = {
-  key: string;
-  label: string;
-  currentDisplay: string;
-  ocrDisplay: string;
-  confidenceValue: number | null;
-  status: ReviewComparisonStatus;
-};
-
-type ReviewExtractedFieldSnapshot = {
-  key: string;
-  label: string;
-  value: string;
-  confidenceValue: number | null;
-};
-
-type ReviewServiceForm = {
-  name: string;
-  city: string;
-  contact: string;
-  status: ServiceStatus;
-  comment: string;
-};
-
-type DocumentVehicleFormState = {
-  vehicle_type: VehicleType;
-  plate_number: string;
-  vin: string;
-  brand: string;
-  model: string;
-  year: string;
-  comment: string;
-};
+import type { ReviewComparisonStatus } from "../shared/repairUiHelpers";
+import type { DocumentKind, DocumentStatus, UserRole, VehicleType } from "../shared/workspaceBootstrapTypes";
+import type {
+  DocumentVehicleFormState,
+  ReviewExtractedFieldSnapshot,
+  ReviewRepairFieldsDraft,
+  ReviewRequiredFieldComparisonItem,
+  ReviewServiceForm,
+} from "../shared/workspaceFormTypes";
 
 type ReviewDecisionPanelProps = {
   userRole: UserRole | undefined;

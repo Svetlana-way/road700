@@ -5,7 +5,7 @@ from sqlalchemy import distinct, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user, get_current_admin, get_db
-from app.models.enums import ServiceStatus
+from app.models.enums import ServiceStatus, UserRole
 from app.models.service import Service
 from app.models.user import User
 from app.schemas.service import ServiceCreate, ServiceListResponse, ServiceRead, ServiceUpdate
@@ -24,6 +24,7 @@ def get_visible_services_stmt():
     return or_(
         Service.name.in_(catalog_names),
         Service.created_by_user_id.is_not(None),
+        Service.confirmed_by_user_id.is_not(None),
     )
 
 
@@ -67,7 +68,7 @@ def list_services(
     current_user: User = Depends(get_current_active_user),
 ) -> ServiceListResponse:
     _ = current_user
-    ensure_service_catalog_synced(db, commit=True)
+    ensure_service_catalog_synced(db, commit=False)
     visible_services = get_visible_services_stmt()
     stmt = select(Service).where(visible_services)
     count_stmt = select(func.count(Service.id)).where(visible_services)
@@ -123,7 +124,7 @@ def create_service(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> ServiceRead:
-    ensure_service_catalog_synced(db, commit=True)
+    ensure_service_catalog_synced(db, commit=False)
     normalized_name = normalize_service_name(payload.name)
     existing = db.scalar(select(Service).where(func.lower(Service.name) == normalized_name.lower()))
     if existing is not None:
@@ -137,9 +138,13 @@ def create_service(
         city=normalize_optional_text(payload.city),
         contact=normalize_optional_text(payload.contact),
         comment=normalize_optional_text(payload.comment),
-        status=payload.status if current_user.role == "admin" else ServiceStatus.PRELIMINARY,
+        status=payload.status if current_user.role == UserRole.ADMIN else ServiceStatus.PRELIMINARY,
         created_by_user_id=current_user.id,
-        confirmed_by_user_id=current_user.id if current_user.role == "admin" and payload.status == ServiceStatus.CONFIRMED else None,
+        confirmed_by_user_id=(
+            current_user.id
+            if current_user.role == UserRole.ADMIN and payload.status == ServiceStatus.CONFIRMED
+            else None
+        ),
     )
     db.add(service_item)
     db.commit()
@@ -154,7 +159,7 @@ def update_service(
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_admin),
 ) -> ServiceRead:
-    ensure_service_catalog_synced(db, commit=True)
+    ensure_service_catalog_synced(db, commit=False)
     service_item = get_service_or_404(db, service_id)
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
@@ -181,6 +186,8 @@ def update_service(
         service_item.contact = normalize_optional_text(update_data["contact"])
     if "comment" in update_data:
         service_item.comment = normalize_optional_text(update_data["comment"])
+    if service_item.confirmed_by_user_id is None:
+        service_item.confirmed_by_user_id = current_admin.id
     if "status" in update_data:
         service_item.status = update_data["status"]
         if service_item.status == ServiceStatus.CONFIRMED:

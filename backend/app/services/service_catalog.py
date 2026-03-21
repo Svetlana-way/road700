@@ -235,17 +235,22 @@ def ensure_service_catalog_synced(db: Session, *, commit: bool = False) -> tuple
         if service_item is None:
             service_item = Service(name=entry.name)
             changed = True
+        is_manual_override = service_item.created_by_user_id is not None or service_item.confirmed_by_user_id is not None
+        next_city = service_item.city if is_manual_override else entry.city
+        next_contact = service_item.contact if is_manual_override else entry.contact
+        next_comment = service_item.comment if is_manual_override else entry.comment
+        next_status = service_item.status if is_manual_override else ServiceStatus.CONFIRMED
         if (
-            service_item.city != entry.city
-            or service_item.contact != entry.contact
-            or service_item.comment != entry.comment
-            or service_item.status != ServiceStatus.CONFIRMED
+            service_item.city != next_city
+            or service_item.contact != next_contact
+            or service_item.comment != next_comment
+            or service_item.status != next_status
         ):
             changed = True
-        service_item.city = entry.city
-        service_item.contact = entry.contact
-        service_item.comment = entry.comment
-        service_item.status = ServiceStatus.CONFIRMED
+        service_item.city = next_city
+        service_item.contact = next_contact
+        service_item.comment = next_comment
+        service_item.status = next_status
         db.add(service_item)
         db.flush()
         services.append(service_item)

@@ -10,11 +10,8 @@ import { OcrRulesAdminPanel } from "./OcrRulesAdminPanel";
 import { ReviewRulesAdminPanel } from "./ReviewRulesAdminPanel";
 import { ServicesAdminPanel } from "./ServicesAdminPanel";
 import { TechAdminWorkspacePanel } from "./TechAdminWorkspacePanel";
-
-type WorkspaceTab = "documents" | "repair" | "admin" | "tech_admin" | "fleet" | "search" | "audit";
-type AdminTab = "services" | "control" | "labor_norms" | "imports" | "employees" | "backups";
-type TechAdminTab = "learning" | "matchers" | "rules";
-type UserRole = "admin" | "employee";
+import type { AdminTab, TechAdminTab, WorkspaceTab } from "../shared/appRoute";
+import type { UserRole } from "../shared/workspaceBootstrapTypes";
 
 type WorkspaceAdminPanelsProps = {
   activeWorkspaceTab: WorkspaceTab;

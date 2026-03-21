@@ -1,191 +1,23 @@
-type LaborNormCatalogFormState = {
-  scope: string;
-  catalog_name: string;
-  brand_family: string;
-  vehicle_type: "" | "truck" | "trailer";
-  year_from: string;
-  year_to: string;
-  brand_keywords: string;
-  model_keywords: string;
-  vin_prefixes: string;
-  priority: string;
-  auto_match_enabled: "true" | "false";
-  status: string;
-  notes: string;
-};
-
-type LaborNormCatalogConfigItem = {
-  scope: string;
-  catalog_name: string;
-  brand_family: string | null;
-  vehicle_type: "truck" | "trailer" | null;
-  year_from: number | null;
-  year_to: number | null;
-  brand_keywords: string[] | null;
-  model_keywords: string[] | null;
-  vin_prefixes: string[] | null;
-  priority: number;
-  auto_match_enabled: boolean;
-  status: string;
-  notes: string | null;
-};
-
-type LaborNormEntryFormState = {
-  id: number | null;
-  scope: string;
-  code: string;
-  category: string;
-  name_ru: string;
-  name_ru_alt: string;
-  name_cn: string;
-  name_en: string;
-  standard_hours: string;
-  source_sheet: string;
-  source_file: string;
-  status: string;
-};
-
-type LaborNormCatalogItem = {
-  id: number;
-  scope: string;
-  code: string;
-  category: string | null;
-  name_ru: string;
-  name_ru_alt: string | null;
-  name_cn: string | null;
-  name_en: string | null;
-  standard_hours: number;
-  source_sheet: string | null;
-  source_file: string | null;
-  status: string;
-};
-
-type ServiceFormState = {
-  id: number | null;
-  name: string;
-  city: string;
-  contact: string;
-  comment: string;
-  status: "preliminary" | "confirmed" | "archived";
-};
-
-type ServiceItem = {
-  id: number;
-  name: string;
-  city: string | null;
-  contact: string | null;
-  comment: string | null;
-  status: "preliminary" | "confirmed" | "archived";
-};
-
-type UserFormState = {
-  id: number | null;
-  full_name: string;
-  login: string;
-  email: string;
-  role: "admin" | "employee";
-  is_active: "true" | "false";
-  password: string;
-};
-
-type UserItem = {
-  id: number;
-  full_name: string;
-  login: string;
-  email: string;
-  role: "admin" | "employee";
-  is_active: boolean;
-};
-
-type UserAssignmentFormState = {
-  starts_at: string;
-  ends_at: string;
-  comment: string;
-};
-
-type DocumentVehicleFormState = {
-  vehicle_type: "truck" | "trailer";
-  plate_number: string;
-  vin: string;
-  brand: string;
-  model: string;
-  year: string;
-  comment: string;
-};
-
-type ReviewRuleFormState = {
-  id: number | null;
-  rule_type: string;
-  code: string;
-  title: string;
-  weight: string;
-  bucket_override: string;
-  is_active: "true" | "false";
-  sort_order: string;
-  notes: string;
-};
-
-type ReviewRuleItem = {
-  id: number;
-  rule_type: string;
-  code: string;
-  title: string;
-  weight: number;
-  bucket_override: string | null;
-  is_active: boolean;
-  sort_order: number;
-  notes: string | null;
-};
-
-type OcrRuleFormState = {
-  id: number | null;
-  profile_scope: string;
-  target_field: string;
-  pattern: string;
-  value_parser: string;
-  confidence: string;
-  priority: string;
-  is_active: "true" | "false";
-  notes: string;
-};
-
-type OcrRuleItem = {
-  id: number;
-  profile_scope: string;
-  target_field: string;
-  pattern: string;
-  value_parser: string;
-  confidence: number;
-  priority: number;
-  is_active: boolean;
-  notes: string | null;
-};
-
-type OcrProfileMatcherFormState = {
-  id: number | null;
-  profile_scope: string;
-  title: string;
-  source_type: string;
-  filename_pattern: string;
-  text_pattern: string;
-  service_name_pattern: string;
-  priority: string;
-  is_active: "true" | "false";
-  notes: string;
-};
-
-type OcrProfileMatcherItem = {
-  id: number;
-  profile_scope: string;
-  title: string;
-  source_type: string | null;
-  filename_pattern: string | null;
-  text_pattern: string | null;
-  service_name_pattern: string | null;
-  priority: number;
-  is_active: boolean;
-  notes: string | null;
-};
+import type {
+  LaborNormCatalogConfigItem,
+  LaborNormCatalogItem,
+  OcrProfileMatcherItem,
+  OcrRuleItem,
+  ReviewRuleItem,
+  ServiceItem,
+  UserItem,
+} from "./workspaceBootstrapTypes";
+import type {
+  DocumentVehicleFormState,
+  LaborNormCatalogFormState,
+  LaborNormEntryFormState,
+  OcrProfileMatcherFormState,
+  OcrRuleFormState,
+  ReviewRuleFormState,
+  ServiceFormState,
+  UserAssignmentFormState,
+  UserFormState,
+} from "./workspaceFormTypes";
 
 export function splitEditorLines(value: string) {
   return value

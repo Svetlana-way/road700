@@ -1,30 +1,6 @@
 import { Box, Button, Chip, Grid, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
-
-type OcrRuleItem = {
-  id: number;
-  profile_scope: string;
-  target_field: string;
-  pattern: string;
-  value_parser: string;
-  confidence: number;
-  priority: number;
-  is_active: boolean;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type OcrRuleFormState = {
-  id: number | null;
-  profile_scope: string;
-  target_field: string;
-  pattern: string;
-  value_parser: string;
-  confidence: string;
-  priority: string;
-  is_active: "true" | "false";
-  notes: string;
-};
+import type { OcrRuleItem } from "../shared/workspaceBootstrapTypes";
+import type { OcrRuleFormState } from "../shared/workspaceFormTypes";
 
 type OcrRulesAdminPanelProps = {
   ocrRuleProfileFilter: string;

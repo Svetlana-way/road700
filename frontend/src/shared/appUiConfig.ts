@@ -1,4 +1,5 @@
 import type { AdminTab, RepairTab, TechAdminTab, WorkspaceTab } from "./appRoute";
+import type { DocumentKind, ReviewQueueCategory } from "./workspaceBootstrapTypes";
 
 type DashboardSummaryKey =
   | "vehicles_total"
@@ -16,16 +17,7 @@ type DashboardDataQualityKey =
   | "parts_preliminary"
   | "import_conflicts_pending";
 
-type ReviewQueueCategory =
-  | "all"
-  | "suspicious"
-  | "ocr_error"
-  | "partial_recognition"
-  | "employee_confirmation"
-  | "manual_review";
-
-type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
-type DocumentKind = "order" | "repeat_scan" | "attachment" | "confirmation";
+export type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
 
 export const summaryCards: Array<{ key: DashboardSummaryKey; label: string }> = [
   { key: "vehicles_total", label: "Техника в доступе" },

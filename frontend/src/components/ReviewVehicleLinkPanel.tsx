@@ -1,6 +1,5 @@
 import { Box, Button, Chip, Paper, Stack, TextField, Typography } from "@mui/material";
-
-type VehicleType = "truck" | "trailer";
+import type { UserRole, VehicleType } from "../shared/workspaceBootstrapTypes";
 
 type ReviewVehicleLinkPanelProps = {
   plateNumber: string | null;
@@ -16,7 +15,7 @@ type ReviewVehicleLinkPanelProps = {
     brand: string | null;
     model: string | null;
   }>;
-  userRole: "admin" | "employee" | undefined;
+  userRole: UserRole | undefined;
   onSearchChange: (value: string) => void;
   onSearch: () => void;
   onLinkVehicle: (vehicleId: number) => void;

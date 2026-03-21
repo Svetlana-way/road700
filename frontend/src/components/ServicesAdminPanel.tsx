@@ -13,30 +13,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-
-type ServiceStatus = "preliminary" | "confirmed" | "archived";
-
-type ServiceItem = {
-  id: number;
-  name: string;
-  city: string | null;
-  contact: string | null;
-  comment: string | null;
-  status: ServiceStatus;
-  created_by_user_id: number | null;
-  confirmed_by_user_id: number | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type ServiceFormState = {
-  id: number | null;
-  name: string;
-  city: string;
-  contact: string;
-  comment: string;
-  status: ServiceStatus;
-};
+import type { ServiceItem, ServiceStatus } from "../shared/workspaceBootstrapTypes";
+import type { ServiceFormState } from "../shared/workspaceFormTypes";
 
 type ServicesAdminPanelProps = {
   serviceQuery: string;

@@ -16,19 +16,21 @@ import {
   buildRepairWorkspaceProps,
   type BuildRepairWorkspacePropsParams,
 } from "./buildRepairWorkspaceProps";
-import type { WorkspaceTab } from "./appRoute";
 
 type WorkspaceContentPanelsProps = ComponentProps<typeof WorkspaceContentPanels>;
 type BuildWorkspaceContentPropsParams = {
-  activeWorkspaceTab: WorkspaceTab;
-} & BuildAdminWorkspacePropsParams & BuildDocumentsWorkspacePropsParams & BuildOperationsWorkspacePropsParams & BuildRepairWorkspacePropsParams;
+  admin: BuildAdminWorkspacePropsParams;
+  documents: BuildDocumentsWorkspacePropsParams;
+  operations: BuildOperationsWorkspacePropsParams;
+  repair: BuildRepairWorkspacePropsParams;
+};
 
 export function buildWorkspaceContentProps(params: BuildWorkspaceContentPropsParams): WorkspaceContentPanelsProps {
   return {
-    activeWorkspaceTab: params.activeWorkspaceTab,
-    documentsProps: buildDocumentsWorkspaceProps(params),
-    adminProps: buildAdminWorkspaceProps(params),
-    repairProps: buildRepairWorkspaceProps(params),
-    operationsProps: buildOperationsWorkspaceProps(params),
+    activeWorkspaceTab: params.documents.activeWorkspaceTab,
+    documentsProps: buildDocumentsWorkspaceProps(params.documents),
+    adminProps: buildAdminWorkspaceProps(params.admin),
+    repairProps: buildRepairWorkspaceProps(params.repair),
+    operationsProps: buildOperationsWorkspaceProps(params.operations),
   };
 }

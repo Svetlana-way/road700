@@ -1,68 +1,21 @@
 import { type ReactNode } from "react";
 import { Box, Button, Chip, Paper, Stack, TextField, Typography } from "@mui/material";
 import type { RepairTab } from "../shared/appRoute";
-import type { HistoryFilter } from "../shared/appUiConfig";
+import type {
+  RepairCheck,
+  RepairDetail,
+  RepairDocumentHistoryEntry,
+  RepairHistoryEntry,
+  RepairWorkItem,
+} from "../shared/repairDetailTypes";
+import type { CheckSeverity, HistoryFilter } from "../shared/workspaceViewTypes";
 import type { DocumentKind } from "../shared/workspaceBootstrapTypes";
-
-type CheckSeverity = "normal" | "warning" | "suspicious" | "error";
-
-type RepairDetail = {
-  works: Array<{
-    id: number;
-    work_code: string | null;
-    work_name: string;
-    quantity: number;
-    standard_hours: number | null;
-    actual_hours: number | null;
-    price: number;
-    line_total: number;
-    status: string;
-    reference_payload: Record<string, unknown> | null;
-  }>;
-  parts: Array<{
-    id: number;
-    article: string | null;
-    part_name: string;
-    quantity: number;
-    unit_name: string | null;
-    line_total: number;
-  }>;
-  checks: Array<{
-    id: number;
-    check_type: string;
-    severity: CheckSeverity;
-    title: string;
-    details: string | null;
-    calculation_payload: Record<string, unknown> | null;
-    is_resolved: boolean;
-    created_at: string;
-  }>;
-  document_history: Array<{
-    id: number;
-    action_type: string;
-    created_at: string;
-    user_name: string | null;
-    document_id: number | null;
-    document_filename: string | null;
-    document_kind: DocumentKind | null;
-    old_value: Record<string, unknown> | null;
-    new_value: Record<string, unknown> | null;
-  }>;
-  history: Array<{
-    id: number;
-    action_type: string;
-    created_at: string;
-    user_name: string | null;
-    old_value: Record<string, unknown> | null;
-    new_value: Record<string, unknown> | null;
-  }>;
-};
 
 type RepairReadOnlySectionsProps = {
   activeRepairTab: RepairTab;
-  selectedRepair: RepairDetail;
-  filteredDocumentHistory: RepairDetail["document_history"];
-  filteredRepairHistory: RepairDetail["history"];
+  selectedRepair: Pick<RepairDetail, "works" | "parts" | "checks" | "document_history" | "history">;
+  filteredDocumentHistory: RepairDocumentHistoryEntry[];
+  filteredRepairHistory: RepairHistoryEntry[];
   historySearch: string;
   historyFilter: HistoryFilter;
   historyFilters: Array<{ key: HistoryFilter; label: string }>;
@@ -76,11 +29,11 @@ type RepairReadOnlySectionsProps = {
   formatMoney: (value: number | null | undefined) => string | null;
   formatHours: (value: number | null | undefined) => string | null;
   formatStatus: (value: string) => string;
-  formatWorkLaborNormMeta: (item: RepairDetail["works"][number]) => string | null;
-  buildCheckPayloadDetails: (check: RepairDetail["checks"][number]) => string[];
-  getCheckLinkedRepairId: (check: RepairDetail["checks"][number]) => number | null;
+  formatWorkLaborNormMeta: (item: RepairWorkItem) => string | null;
+  buildCheckPayloadDetails: (check: RepairCheck) => string[];
+  getCheckLinkedRepairId: (check: RepairCheck) => number | null;
   checkSeverityColor: (severity: CheckSeverity) => "default" | "success" | "error" | "warning";
-  readCheckResolutionMeta: (check: RepairDetail["checks"][number]) => {
+  readCheckResolutionMeta: (check: RepairCheck) => {
     user_name?: string | null;
     resolved_at?: string | null;
     comment?: string | null;
@@ -88,8 +41,8 @@ type RepairReadOnlySectionsProps = {
   formatDateTime: (value: string) => string;
   formatHistoryActionLabel: (actionType: string) => string;
   formatDocumentKind: (value: DocumentKind) => string;
-  buildDocumentHistoryDetails: (entry: RepairDetail["document_history"][number]) => string[];
-  buildRepairHistoryDetails: (entry: RepairDetail["history"][number]) => string[];
+  buildDocumentHistoryDetails: (entry: RepairDocumentHistoryEntry) => string[];
+  buildRepairHistoryDetails: (entry: RepairHistoryEntry) => string[];
   renderHistoryDetails: (entryKey: string, lines: string[]) => ReactNode;
 };
 

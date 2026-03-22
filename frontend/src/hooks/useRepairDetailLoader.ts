@@ -1,20 +1,16 @@
 import { useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { apiRequest } from "../shared/api";
+import type { RepairDocumentItem } from "../shared/repairDetailTypes";
 import { resolveRepairDocumentId, type RepairDetailForDraft } from "../shared/repairUiHelpers";
 
 type RepairDocumentVersionLike = {
   parsed_payload: Record<string, unknown> | null;
 };
 
-type RepairDocumentLike = {
-  id: number;
-  mime_type: string | null;
-  status: string;
-  is_primary: boolean;
-  ocr_confidence: number | null;
-  review_queue_priority: number;
-  notes: string | null;
-  created_at: string;
+type RepairDocumentLike = Pick<
+  RepairDocumentItem,
+  "id" | "mime_type" | "status" | "is_primary" | "ocr_confidence" | "review_queue_priority" | "notes" | "created_at"
+> & {
   versions: RepairDocumentVersionLike[];
 };
 

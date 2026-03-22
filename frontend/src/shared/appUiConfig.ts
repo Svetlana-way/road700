@@ -1,4 +1,5 @@
 import type { AdminTab, RepairTab, TechAdminTab, WorkspaceTab } from "./appRoute";
+import type { HistoryFilter } from "./workspaceViewTypes";
 import type { DocumentKind, ReviewQueueCategory } from "./workspaceBootstrapTypes";
 
 type DashboardSummaryKey =
@@ -16,8 +17,6 @@ type DashboardDataQualityKey =
   | "works_preliminary"
   | "parts_preliminary"
   | "import_conflicts_pending";
-
-export type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
 
 export const summaryCards: Array<{ key: DashboardSummaryKey; label: string }> = [
   { key: "vehicles_total", label: "Техника в доступе" },

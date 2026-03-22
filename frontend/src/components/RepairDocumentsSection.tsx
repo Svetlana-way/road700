@@ -1,5 +1,6 @@
 import { type Ref } from "react";
 import { Alert, Box, Button, Chip, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
+import type { RepairDetail } from "../shared/repairDetailTypes";
 import type {
   DocumentComparisonResponse,
   DocumentKind,
@@ -7,48 +8,9 @@ import type {
   UserRole,
 } from "../shared/workspaceBootstrapTypes";
 
-type RepairDocumentItem = {
-  id: number;
-  original_filename: string;
-  source_type: string;
-  kind: DocumentKind;
-  mime_type: string | null;
-  status: string;
-  is_primary: boolean;
-  ocr_confidence: number | null;
-  review_queue_priority: number;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-  latest_import_job?: {
-    id: number;
-    status: string;
-    error_message?: string | null;
-    attempts: number;
-    started_at?: string | null;
-    finished_at?: string | null;
-    created_at: string;
-    updated_at: string;
-  } | null;
-  versions: Array<{
-    id: number;
-    version_number: number;
-    created_at: string;
-    change_summary: string | null;
-    parsed_payload: Record<string, unknown> | null;
-    field_confidence_map: Record<string, unknown> | null;
-  }>;
-};
-
-type RepairDetailLike = {
-  id: number;
-  status: string;
-  documents: RepairDocumentItem[];
-};
-
 type RepairDocumentsSectionProps = {
   userRole?: UserRole;
-  selectedRepair: RepairDetailLike;
+  selectedRepair: Pick<RepairDetail, "id" | "status" | "documents">;
   documentKindOptions: Array<{ value: DocumentKind; label: string }>;
   attachedDocumentKind: DocumentKind;
   attachedDocumentNotes: string;

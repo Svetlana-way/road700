@@ -1,3 +1,5 @@
+import type { CheckSeverity } from "./workspaceViewTypes";
+
 export type UserRoleFormatter = "admin" | "employee";
 export type VehicleTypeFormatter = "truck" | "trailer";
 export type VehicleStatusFormatter = "active" | "in_repair" | "waiting_repair" | "inactive" | "decommissioned" | "archived";
@@ -10,7 +12,7 @@ export type DocumentStatusFormatter =
   | "confirmed"
   | "ocr_error"
   | "archived";
-export type CheckSeverityFormatter = "normal" | "warning" | "suspicious" | "error";
+export type CheckSeverityFormatter = CheckSeverity;
 export type ReviewPriorityBucketFormatter = "review" | "critical" | "suspicious";
 
 export type OcrProfileMeta = {
@@ -425,7 +427,7 @@ export function statusColor(status: DocumentStatusFormatter): "default" | "succe
   return "default";
 }
 
-export function checkSeverityColor(severity: CheckSeverityFormatter): "default" | "success" | "error" | "warning" {
+export function checkSeverityColor(severity: CheckSeverity): "default" | "success" | "error" | "warning" {
   if (severity === "error") {
     return "error";
   }

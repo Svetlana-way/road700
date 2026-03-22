@@ -20,8 +20,7 @@ import type {
   DocumentStatus,
   UserRole,
 } from "../shared/workspaceBootstrapTypes";
-
-type QualityDetailTab = "documents" | "services" | "works" | "parts" | "conflicts";
+import type { QualityDetailTab } from "../shared/workspaceViewTypes";
 type DashboardVisualTone = "blue" | "amber" | "red" | "green";
 
 type DashboardVisualBar = {

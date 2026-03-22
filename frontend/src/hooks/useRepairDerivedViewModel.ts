@@ -19,10 +19,10 @@ import {
   readConfidenceValue,
 } from "../shared/repairUiHelpers";
 import { groupRepairChecksForReport } from "../shared/repairReportHelpers";
+import type { RepairDetail } from "../shared/repairDetailTypes";
 import type {
   DashboardDataQuality,
   DashboardDataQualityDetails,
-  DocumentKind,
   DashboardSummary,
   ReviewQueueItem,
   UserRole,
@@ -32,50 +32,10 @@ import type {
   ReviewRequiredFieldComparisonItem,
 } from "../shared/workspaceFormTypes";
 
-type RepairDetailLike = {
-  id: number;
-  order_number: string | null;
-  repair_date: string;
-  mileage: number;
-  grand_total: number;
-  vehicle: {
-    id: number;
-    external_id: string | null;
-    plate_number: string | null;
-    model: string | null;
-  };
-  service: {
-    name: string;
-  } | null;
-  documents: Array<{
-    id: number;
-    original_filename: string;
-    source_type: string;
-    kind: DocumentKind;
-    mime_type: string | null;
-    status: string;
-    is_primary: boolean;
-    ocr_confidence: number | null;
-    created_at: string;
-    latest_import_job?: {
-      status?: string | null;
-    } | null;
-    versions: Array<{
-      parsed_payload: Record<string, unknown> | null;
-      field_confidence_map: Record<string, unknown> | null;
-    }>;
-  }>;
-  checks: Array<{
-    id: number;
-    is_resolved: boolean;
-    severity: "normal" | "warning" | "suspicious" | "error";
-    check_type: string;
-    title: string;
-    details: string | null;
-    calculation_payload: Record<string, unknown> | null;
-    created_at: string;
-  }>;
-};
+type RepairDetailLike = Pick<
+  RepairDetail,
+  "id" | "order_number" | "repair_date" | "mileage" | "grand_total" | "vehicle" | "service" | "documents" | "checks"
+>;
 
 type UseRepairDerivedViewModelParams = {
   selectedDocumentId: number | null;

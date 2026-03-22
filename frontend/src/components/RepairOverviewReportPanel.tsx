@@ -1,59 +1,29 @@
 import { Alert, Box, Button, Chip, Grid, Paper, Stack, Typography } from "@mui/material";
+import type { RepairCheck, RepairDetail } from "../shared/repairDetailTypes";
+import type { CheckSeverity } from "../shared/workspaceViewTypes";
 import type { DocumentStatus } from "../shared/workspaceBootstrapTypes";
 import type { ReviewComparisonStatus } from "../shared/repairUiHelpers";
 import type { ReviewRequiredFieldComparisonItem } from "../shared/workspaceFormTypes";
 
-type CheckSeverity = "normal" | "warning" | "suspicious" | "error";
-
 type RepairOverviewReportPanelProps = {
-  selectedRepair: {
-    id: number;
-    order_number: string | null;
-    repair_date: string;
-    mileage: number;
-    work_total: number;
-    parts_total: number;
-    vat_total: number;
-    grand_total: number;
-    expected_total: number | null;
-    status: string;
-    works: Array<unknown>;
-    parts: Array<unknown>;
-    vehicle: {
-      id: number;
-      external_id: string | null;
-      plate_number: string | null;
-      brand: string | null;
-      model: string | null;
-    };
-    service: {
-      id: number;
-      name: string;
-      city: string | null;
-    } | null;
-    executive_report: {
-      headline: string;
-      summary: string;
-      status: string;
-      overall_risk: "low" | "medium" | "high";
-      highlights: string[];
-      findings: Array<{
-        title: string;
-        severity: "low" | "medium" | "high";
-        category: string;
-        summary: string;
-        rationale: string | null;
-        evidence: string[];
-        recommendation: string | null;
-      }>;
-      risk_matrix: Array<{
-        zone: string;
-        level: "low" | "medium" | "high";
-        comment: string;
-      }>;
-      recommendations: string[];
-    };
-  };
+  selectedRepair: Pick<
+    RepairDetail,
+    | "id"
+    | "order_number"
+    | "repair_date"
+    | "mileage"
+    | "work_total"
+    | "parts_total"
+    | "vat_total"
+    | "grand_total"
+    | "expected_total"
+    | "status"
+    | "works"
+    | "parts"
+    | "vehicle"
+    | "service"
+    | "executive_report"
+  >;
   selectedRepairDocument: {
     status: string;
     ocr_confidence: number | null;
@@ -69,16 +39,7 @@ type RepairOverviewReportPanelProps = {
   selectedRepairReportSections: Array<{
     key: string;
     title: string;
-    checks: Array<{
-      id: number;
-      check_type: string;
-      severity: CheckSeverity;
-      title: string;
-      details: string | null;
-      calculation_payload: Record<string, unknown> | null;
-      is_resolved: boolean;
-      created_at: string;
-    }>;
+    checks: RepairCheck[];
   }>;
   showRepairOverviewDetails: boolean;
   onToggleShowDetails: () => void;
@@ -94,26 +55,8 @@ type RepairOverviewReportPanelProps = {
   formatMoney: (value: number | null | undefined) => string | null;
   formatConfidence: (value: number | null) => string;
   formatManualReviewReasons: (reasons: string[]) => string;
-  buildCheckPayloadDetails: (check: {
-    id: number;
-    check_type: string;
-    severity: CheckSeverity;
-    title: string;
-    details: string | null;
-    calculation_payload: Record<string, unknown> | null;
-    is_resolved: boolean;
-    created_at: string;
-  }) => string[];
-  getCheckLinkedRepairId: (check: {
-    id: number;
-    check_type: string;
-    severity: CheckSeverity;
-    title: string;
-    details: string | null;
-    calculation_payload: Record<string, unknown> | null;
-    is_resolved: boolean;
-    created_at: string;
-  }) => number | null;
+  buildCheckPayloadDetails: (check: RepairCheck) => string[];
+  getCheckLinkedRepairId: (check: RepairCheck) => number | null;
   checkSeverityColor: (severity: CheckSeverity) => "default" | "success" | "error" | "warning";
   formatStatus: (value: string) => string;
 };

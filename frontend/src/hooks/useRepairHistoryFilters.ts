@@ -1,28 +1,6 @@
 import { matchesTextSearch } from "../shared/fleetDocumentHelpers";
-import type { DocumentKind } from "../shared/workspaceBootstrapTypes";
-
-type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
-
-type RepairHistoryEntry = {
-  id: number;
-  action_type: string;
-  created_at: string;
-  user_name: string | null;
-  old_value: Record<string, unknown> | null;
-  new_value: Record<string, unknown> | null;
-};
-
-type RepairDocumentHistoryEntry = {
-  id: number;
-  action_type: string;
-  created_at: string;
-  user_name: string | null;
-  document_id: number | null;
-  document_filename: string | null;
-  document_kind: DocumentKind | null;
-  old_value: Record<string, unknown> | null;
-  new_value: Record<string, unknown> | null;
-};
+import type { RepairDocumentHistoryEntry, RepairHistoryEntry } from "../shared/repairDetailTypes";
+import type { HistoryFilter } from "../shared/workspaceViewTypes";
 
 type RepairHistorySource = {
   history: RepairHistoryEntry[];

@@ -6,6 +6,7 @@ import { MenuItem } from "@mui/material";
 import { AuthLandingView } from "./components/AuthLandingView";
 import { HistoryDetailsPreview } from "./components/HistoryDetailsPreview";
 import { WorkspaceMainView } from "./components/WorkspaceMainView";
+import { useAppNavigation } from "./hooks/useAppNavigation";
 import { useAuthSession } from "./hooks/useAuthSession";
 import { useBackupsAdmin } from "./hooks/useBackupsAdmin";
 import { useDocumentsWorkspace } from "./hooks/useDocumentsWorkspace";
@@ -13,44 +14,30 @@ import { useEmployeesAdmin } from "./hooks/useEmployeesAdmin";
 import { useLaborNormsAdmin } from "./hooks/useLaborNormsAdmin";
 import { useOcrAdmin } from "./hooks/useOcrAdmin";
 import { useReviewRulesAdmin } from "./hooks/useReviewRulesAdmin";
+import { useRepairDerivedViewModel } from "./hooks/useRepairDerivedViewModel";
 import { useRepairDocumentsWorkflow } from "./hooks/useRepairDocumentsWorkflow";
 import { useRepairEditingWorkflow } from "./hooks/useRepairEditingWorkflow";
+import { useRepairHistoryFilters } from "./hooks/useRepairHistoryFilters";
+import { useRepairWorkspaceActions } from "./hooks/useRepairWorkspaceActions";
 import { useFleetWorkspace } from "./hooks/useFleetWorkspace";
 import { useHistoricalImportsAdmin } from "./hooks/useHistoricalImportsAdmin";
 import { useRepairReviewWorkflow } from "./hooks/useRepairReviewWorkflow";
 import { useServicesAdmin } from "./hooks/useServicesAdmin";
+import { useWorkspaceDataLifecycle } from "./hooks/useWorkspaceDataLifecycle";
 import { useWorkspaceOperations } from "./hooks/useWorkspaceOperations";
-import { apiRequest, downloadApiFile } from "./shared/api";
+import { apiRequest } from "./shared/api";
 import {
   createVehicleFormFromPayload,
   formatQualityVehicle,
   formatVehicle,
-  getLatestRepairDocumentConfidenceMap,
-  getLatestRepairDocumentPayload,
-  getPayloadExtractedFields,
-  getPayloadExtractedItems,
   inferVehicleTypeFromIdentifiers,
   isAssignmentActive,
   isPlaceholderVehicle,
-  matchesTextSearch,
 } from "./shared/fleetDocumentHelpers";
 import {
-  buildAttentionVisualBars,
   buildDashboardVisualBarWidth,
-  buildQualityVisualBars,
-  buildRepairVisualBars,
 } from "./shared/dashboardVisuals";
-import {
-  areAppRoutesEqual,
-  buildAppRouteFromState,
-  buildAppRouteUrl,
-  readAppRoute,
-  type AdminTab,
-  type AppRoute,
-  type RepairTab,
-  type TechAdminTab,
-  type WorkspaceTab,
-} from "./shared/appRoute";
+import { type AdminTab, type AppRoute, type RepairTab, type TechAdminTab, type WorkspaceTab } from "./shared/appRoute";
 import {
   buildAuditEntryDetails,
   buildDocumentHistoryDetails,
@@ -62,7 +49,6 @@ import {
   formatOcrLineUnit,
   formatWorkLaborNormMeta,
   getCheckLinkedRepairId,
-  groupRepairChecksForReport,
   readCheckResolutionMeta,
   readComparisonReviewMeta,
   readNumberValue,
@@ -133,7 +119,6 @@ import {
   workspaceTabDescriptions,
   workspaceTabReturnLabels,
 } from "./shared/appUiConfig";
-import { loadWorkspaceBootstrapData } from "./shared/loadWorkspaceBootstrap";
 import {
   buildAuditLogQueryString,
   buildServiceQueryString,
@@ -142,9 +127,6 @@ import {
 import {
   getReviewComparisonColor,
   getReviewComparisonLabel,
-  getReviewComparisonStatus,
-  readConfidenceValue,
-  repairHasDocumentsAwaitingOcr,
   resolveRepairDocumentId,
   type ReviewComparisonStatus,
 } from "./shared/repairUiHelpers";
@@ -165,13 +147,11 @@ import type {
   DocumentItem,
   DocumentKind,
   DocumentStatus,
-  DocumentsResponse,
   GlobalSearchResponse,
   ImportJobStatus,
   ReviewQueueCategory,
   ReviewQueueItem,
   ReviewQueueResponse,
-  ServiceItem,
   ServiceStatus,
   ServicesResponse,
   User,
@@ -184,7 +164,6 @@ import type {
 import type {
   DocumentVehicleFormState,
   ReviewRepairFieldsDraft,
-  ReviewRequiredFieldComparisonItem,
   ServiceFormState,
   UploadFormState,
   UserAssignmentFormState,
@@ -193,13 +172,6 @@ import type {
 
 type HistoryFilter = "all" | "repair" | "documents" | "uploads" | "primary" | "comparison";
 type QualityDetailTab = "documents" | "services" | "works" | "parts" | "conflicts";
-
-type DocumentCreateVehicleResponse = {
-  message: string;
-  repair_id: number;
-  created_new_vehicle: boolean;
-  document: DocumentItem;
-};
 
 type CheckSeverity = "normal" | "warning" | "suspicious" | "error";
 
@@ -369,7 +341,6 @@ const historyDetailFormatters: HistoryDetailFormatters = {
 };
 
 export default function App() {
-  const [routeSnapshot, setRouteSnapshot] = useState<AppRoute>(() => readAppRoute(window.location));
   const [user, setUser] = useState<User | null>(null);
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("documents");
   const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>("services");
@@ -382,10 +353,6 @@ export default function App() {
   const [dataQuality, setDataQuality] = useState<DashboardDataQuality | null>(null);
   const [dataQualityDetails, setDataQualityDetails] = useState<DashboardDataQualityDetails | null>(null);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const repairReturnTabRef = useRef<WorkspaceTab>("documents");
-  const repairReturnRouteRef = useRef<AppRoute>({ workspace: "documents" });
-  const repairScrollPositionRef = useRef(0);
-  const [repairHasReturnTarget, setRepairHasReturnTarget] = useState(false);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
   const [reviewQueueCounts, setReviewQueueCounts] = useState<Record<ReviewQueueCategory, number>>({
@@ -400,14 +367,8 @@ export default function App() {
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
   const [selectedRepair, setSelectedRepair] = useState<RepairDetail | null>(null);
   const [documentVehicleForm, setDocumentVehicleForm] = useState<DocumentVehicleFormState>(createEmptyDocumentVehicleForm);
-  const workspaceAutoRefreshInFlightRef = useRef(false);
-  const repairAutoRefreshInFlightRef = useRef(false);
   const attachedFileInputRef = useRef<HTMLInputElement | null>(null);
-  const [bootLoading, setBootLoading] = useState(false);
   const [repairLoading, setRepairLoading] = useState(false);
-  const [repairExportLoading, setRepairExportLoading] = useState(false);
-  const [documentVehicleSaving, setDocumentVehicleSaving] = useState(false);
-  const [checkActionLoadingId, setCheckActionLoadingId] = useState<number | null>(null);
   const [checkComments, setCheckComments] = useState<Record<number, string>>({});
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
   const [historySearch, setHistorySearch] = useState("");
@@ -833,17 +794,114 @@ export default function App() {
     setErrorMessage,
     setSuccessMessage,
   });
-  const selectedReviewItem =
-    reviewQueue.find((item) => item.document.id === selectedDocumentId) ?? null;
-  const selectedRepairDocument = selectedRepair?.documents.find((item) => item.id === selectedDocumentId) ?? null;
-  const selectedRepairDocumentPayload = getLatestRepairDocumentPayload(selectedRepair, selectedDocumentId);
-  const selectedRepairDocumentConfidenceMap = getLatestRepairDocumentConfidenceMap(selectedRepair, selectedDocumentId);
-  const selectedRepairDocumentExtractedFields = getPayloadExtractedFields(selectedRepairDocumentPayload);
-  const selectedRepairDocumentExtractedItems = getPayloadExtractedItems(selectedRepairDocumentPayload);
-  const selectedRepairDocumentOcrServiceName =
-    typeof selectedRepairDocumentExtractedFields?.service_name === "string"
-      ? selectedRepairDocumentExtractedFields.service_name.trim()
-      : "";
+  const appNavigation = useAppNavigation({
+    userRole: user?.role,
+    token,
+    activeWorkspaceTab,
+    setActiveWorkspaceTab,
+    activeAdminTab,
+    setActiveAdminTab,
+    activeTechAdminTab,
+    setActiveTechAdminTab,
+    activeRepairTab,
+    setActiveRepairTab,
+    showTechAdminTab,
+    setShowTechAdminTab,
+    fleetViewMode,
+    setFleetViewMode,
+    selectedFleetVehicleId,
+    setSelectedFleetVehicleId,
+    selectedRepairId: selectedRepair?.id ?? null,
+    selectedDocumentId,
+    setSelectedDocumentId,
+    loadRepairDetail,
+  });
+  const { repairHasReturnTarget, repairReturnTab } = appNavigation;
+
+  function updateBrowserRoute(route: AppRoute, mode: "push" | "replace" = "replace") {
+    appNavigation.updateBrowserRoute(route, mode);
+  }
+
+  function handleWorkspaceTabChange(value: WorkspaceTab) {
+    appNavigation.handleWorkspaceTabChange(value);
+  }
+
+  function handleAdminTabChange(value: AdminTab) {
+    appNavigation.handleAdminTabChange(value);
+  }
+
+  function handleTechAdminTabChange(value: TechAdminTab) {
+    appNavigation.handleTechAdminTabChange(value);
+  }
+
+  function handleRepairTabChange(value: RepairTab) {
+    appNavigation.handleRepairTabChange(value);
+  }
+
+  function openTechAdmin(tab: TechAdminTab = "learning") {
+    appNavigation.openTechAdmin(tab);
+  }
+
+  function closeTechAdmin() {
+    appNavigation.closeTechAdmin();
+  }
+
+  function openReviewRulesAdmin() {
+    appNavigation.openReviewRulesAdmin();
+  }
+
+  function openLaborNormsAdmin() {
+    appNavigation.openLaborNormsAdmin();
+  }
+
+  async function openRepairByIds(documentId: number | null, repairId: number) {
+    await appNavigation.openRepairByIds(documentId, repairId);
+  }
+
+  function returnFromRepairPage() {
+    appNavigation.returnFromRepairPage();
+  }
+  const {
+    selectedReviewItem,
+    selectedRepairDocument,
+    selectedRepairDocumentPayload,
+    selectedRepairDocumentConfidenceMap,
+    selectedRepairDocumentExtractedFields,
+    selectedRepairDocumentOcrServiceName,
+    selectedRepairDocumentWorks,
+    selectedRepairDocumentParts,
+    selectedRepairUnresolvedChecks,
+    selectedRepairAwaitingOcr,
+    selectedRepairHasBlockingFindings,
+    selectedRepairReportSections,
+    selectedRepairDocumentManualReviewReasons,
+    repairVisualBars,
+    repairVisualMax,
+    qualityVisualBars,
+    qualityVisualMax,
+    attentionVisualBars,
+    attentionVisualMax,
+    topAttentionServices,
+    reviewRequiredFieldComparisons,
+    selectedRepairDocumentFieldSnapshots,
+    reviewMissingRequiredFields,
+    selectedRepairComparisonAttentionCount,
+    reviewReadyFieldsCount,
+    canConfirmSelectedReview,
+    uploadMissingRequirements,
+    canLinkVehicleFromSelectedDocument,
+    canCreateVehicleFromSelectedDocument,
+  } = useRepairDerivedViewModel({
+    selectedDocumentId,
+    selectedFile,
+    userRole: user?.role,
+    selectedRepair,
+    reviewQueue,
+    summary,
+    dataQuality,
+    dataQualityDetails,
+    formatMoney,
+  });
   const {
     repairDraft,
     setRepairDraft,
@@ -944,6 +1002,50 @@ export default function App() {
     setSuccessMessage,
   });
   const {
+    repairExportLoading,
+    documentVehicleSaving,
+    checkActionLoadingId,
+    openQualityRepair,
+    openQualityService,
+    handleExportRepair,
+    handleOpenRepair,
+    handleCheckResolution,
+    handleCreateVehicleFromDocument,
+    handleEditService,
+    handleStartRepairEdit,
+    handleCancelRepairEdit,
+  } = useRepairWorkspaceActions({
+    token,
+    userRole: user?.role,
+    selectedRepairId: selectedRepair?.id ?? null,
+    selectedDocumentId,
+    documentVehicleForm,
+    checkComments,
+    setCheckComments,
+    setServiceQuery,
+    setErrorMessage,
+    setSuccessMessage,
+    refreshWorkspace: async () => {
+      if (token) {
+        await loadWorkspace(token);
+      }
+    },
+    openRepairByIds,
+    openServicesAdmin: () => {
+      appNavigation.openAdminTab("services");
+    },
+    loadServices,
+    editService,
+    openRepairOverviewTab: () => {
+      handleRepairTabChange("overview");
+    },
+    startRepairEdit,
+    cancelRepairEdit,
+    setSelectedRepairFromApi: (repair) => {
+      setSelectedRepair(repair as RepairDetail);
+    },
+  });
+  const {
     attachDocumentLoading,
     documentOpenLoadingId,
     primaryDocumentLoadingId,
@@ -978,555 +1080,78 @@ export default function App() {
     setErrorMessage,
     setSuccessMessage,
   });
-  const selectedRepairDocumentWorks = Array.isArray(selectedRepairDocumentExtractedItems?.works)
-    ? selectedRepairDocumentExtractedItems.works
-    : [];
-  const selectedRepairDocumentParts = Array.isArray(selectedRepairDocumentExtractedItems?.parts)
-    ? selectedRepairDocumentExtractedItems.parts
-    : [];
-  const selectedRepairUnresolvedChecks = selectedRepair
-    ? selectedRepair.checks.filter((item) => !item.is_resolved)
-    : [];
-  const selectedRepairAwaitingOcr = repairHasDocumentsAwaitingOcr(selectedRepair);
-  const selectedRepairHasBlockingFindings = selectedRepairUnresolvedChecks.some(
-    (item) => item.severity === "suspicious" || item.severity === "error",
-  );
-  const selectedRepairReportSections = groupRepairChecksForReport(selectedRepairUnresolvedChecks);
-  const selectedRepairDocumentManualReviewReasons =
-    Array.isArray(selectedRepairDocumentPayload?.manual_review_reasons)
-      ? selectedRepairDocumentPayload.manual_review_reasons.filter((item): item is string => typeof item === "string")
-      : [];
-  const repairVisualBars = buildRepairVisualBars(summary, dataQuality);
-  const repairVisualMax = Math.max(...repairVisualBars.map((item) => item.value), 0);
-  const qualityVisualBars = buildQualityVisualBars(dataQuality);
-  const qualityVisualMax = Math.max(...qualityVisualBars.map((item) => item.value), 0);
-  const attentionVisualBars = buildAttentionVisualBars(dataQualityDetails);
-  const attentionVisualMax = Math.max(...attentionVisualBars.map((item) => item.value), 0);
-  const topAttentionServices = dataQualityDetails?.services.slice(0, 5) || [];
-  const reviewRequiredFieldComparisons: ReviewRequiredFieldComparisonItem[] = selectedRepair
-    ? [
-        {
-          key: "vehicle",
-          label: "Машина",
-          currentValue:
-            !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
-            (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
-              ? selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || `ID ${selectedRepair.vehicle.id}`
-              : "",
-          ocrValue:
-            typeof selectedRepairDocumentExtractedFields?.plate_number === "string"
-              ? selectedRepairDocumentExtractedFields.plate_number
-              : typeof selectedRepairDocumentExtractedFields?.vin === "string"
-                ? selectedRepairDocumentExtractedFields.vin
-                : "",
-          currentDisplay:
-            !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
-            (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
-              ? selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || `ID ${selectedRepair.vehicle.id}`
-              : "Не привязана",
-          ocrDisplay:
-            typeof selectedRepairDocumentExtractedFields?.plate_number === "string"
-              ? selectedRepairDocumentExtractedFields.plate_number
-              : typeof selectedRepairDocumentExtractedFields?.vin === "string"
-                ? selectedRepairDocumentExtractedFields.vin
-                : "—",
-          status:
-            !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
-            (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
-              ? "match"
-              : "missing",
-          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "plate_number", "vin"),
-        },
-        {
-          key: "order_number",
-          label: "Номер заказ-наряда",
-          currentValue: selectedRepair.order_number || "",
-          ocrValue: selectedRepairDocumentExtractedFields?.order_number,
-          currentDisplay: selectedRepair.order_number || "—",
-          ocrDisplay: String(selectedRepairDocumentExtractedFields?.order_number || "—"),
-          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "order_number"),
-          status: getReviewComparisonStatus(selectedRepair.order_number, selectedRepairDocumentExtractedFields?.order_number),
-        },
-        {
-          key: "repair_date",
-          label: "Дата ремонта",
-          currentValue: selectedRepair.repair_date || "",
-          ocrValue: selectedRepairDocumentExtractedFields?.repair_date,
-          currentDisplay: selectedRepair.repair_date || "—",
-          ocrDisplay: String(selectedRepairDocumentExtractedFields?.repair_date || "—"),
-          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "repair_date"),
-          status: getReviewComparisonStatus(selectedRepair.repair_date, selectedRepairDocumentExtractedFields?.repair_date),
-        },
-        {
-          key: "service",
-          label: "Сервис",
-          currentValue: selectedRepair.service?.name || "",
-          ocrValue: selectedRepairDocumentExtractedFields?.service_name,
-          currentDisplay: selectedRepair.service?.name || "—",
-          ocrDisplay: String(selectedRepairDocumentExtractedFields?.service_name || "—"),
-          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "service_name"),
-          status: getReviewComparisonStatus(selectedRepair.service?.name, selectedRepairDocumentExtractedFields?.service_name),
-        },
-        {
-          key: "mileage",
-          label: "Пробег",
-          currentValue: selectedRepair.mileage,
-          ocrValue: selectedRepairDocumentExtractedFields?.mileage,
-          currentDisplay: selectedRepair.mileage > 0 ? String(selectedRepair.mileage) : "—",
-          ocrDisplay: String(selectedRepairDocumentExtractedFields?.mileage || "—"),
-          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "mileage"),
-          status: getReviewComparisonStatus(selectedRepair.mileage, selectedRepairDocumentExtractedFields?.mileage, "int"),
-        },
-        {
-          key: "grand_total",
-          label: "Итоговая сумма",
-          currentValue: selectedRepair.grand_total,
-          ocrValue: selectedRepairDocumentExtractedFields?.grand_total,
-          currentDisplay: formatMoney(selectedRepair.grand_total) || "—",
-          ocrDisplay:
-            typeof selectedRepairDocumentExtractedFields?.grand_total === "number"
-              ? formatMoney(selectedRepairDocumentExtractedFields.grand_total) || "—"
-              : "—",
-          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "grand_total"),
-          status: getReviewComparisonStatus(selectedRepair.grand_total, selectedRepairDocumentExtractedFields?.grand_total, "money"),
-        },
-      ]
-    : [];
-  const selectedRepairDocumentFieldSnapshots = [
-    {
-      key: "order_number",
-      label: "Номер заказ-наряда",
-      value: String(selectedRepairDocumentExtractedFields?.order_number || "—"),
-      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "order_number"),
-    },
-    {
-      key: "repair_date",
-      label: "Дата ремонта",
-      value: String(selectedRepairDocumentExtractedFields?.repair_date || "—"),
-      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "repair_date"),
-    },
-    {
-      key: "service_name",
-      label: "Сервис по OCR",
-      value: selectedRepairDocumentOcrServiceName || "—",
-      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "service_name"),
-    },
-    {
-      key: "mileage",
-      label: "Пробег",
-      value: String(selectedRepairDocumentExtractedFields?.mileage || "—"),
-      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "mileage"),
-    },
-    {
-      key: "plate_number",
-      label: "Госномер",
-      value: String(selectedRepairDocumentExtractedFields?.plate_number || "—"),
-      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "plate_number"),
-    },
-    {
-      key: "vin",
-      label: "VIN",
-      value: String(selectedRepairDocumentExtractedFields?.vin || "—"),
-      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "vin"),
-    },
-    {
-      key: "grand_total",
-      label: "Итоговая сумма",
-      value:
-        typeof selectedRepairDocumentExtractedFields?.grand_total === "number"
-          ? formatMoney(selectedRepairDocumentExtractedFields.grand_total) || "—"
-          : "—",
-      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "grand_total"),
-    },
-    {
-      key: "work_total",
-      label: "Работы",
-      value:
-        typeof selectedRepairDocumentExtractedFields?.work_total === "number"
-          ? formatMoney(selectedRepairDocumentExtractedFields.work_total) || "—"
-          : "—",
-      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "work_total"),
-    },
-    {
-      key: "parts_total",
-      label: "Запчасти",
-      value:
-        typeof selectedRepairDocumentExtractedFields?.parts_total === "number"
-          ? formatMoney(selectedRepairDocumentExtractedFields.parts_total) || "—"
-          : "—",
-      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "parts_total"),
-    },
-    {
-      key: "vat_total",
-      label: "НДС",
-      value:
-        typeof selectedRepairDocumentExtractedFields?.vat_total === "number"
-          ? formatMoney(selectedRepairDocumentExtractedFields.vat_total) || "—"
-          : "—",
-      confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "vat_total"),
-    },
-  ].filter((item) => item.value !== "—" || item.confidenceValue !== null);
-  const reviewMissingRequiredFields = reviewRequiredFieldComparisons
-    .filter((item) => item.status === "missing")
-    .map((item) => item.label);
-  const selectedRepairComparisonAttentionCount = reviewRequiredFieldComparisons.filter(
-    (item) => item.status === "missing" || item.status === "mismatch",
-  ).length;
-  const reviewReadyFieldsCount = reviewRequiredFieldComparisons.filter((item) => item.status !== "missing").length;
-  const canConfirmSelectedReview = reviewMissingRequiredFields.length === 0;
-  const uploadMissingRequirements = [
-    !selectedFile ? "файл" : null,
-  ].filter(Boolean) as string[];
-  const canLinkVehicleFromSelectedDocument =
-    selectedDocumentId !== null &&
-    Boolean(selectedRepair) &&
-    isPlaceholderVehicle(selectedRepair?.vehicle.external_id);
-  const canCreateVehicleFromSelectedDocument =
-    user?.role === "admin" &&
-    isPlaceholderVehicle(selectedRepair?.vehicle.external_id) &&
-    selectedDocumentId !== null;
-  const filteredRepairHistory = selectedRepair
-    ? selectedRepair.history.filter((entry) => {
-        if (historyFilter === "documents" || historyFilter === "uploads") {
-          return false;
-        }
-        if (historyFilter === "primary" && entry.action_type !== "primary_document_changed") {
-          return false;
-        }
-        if (historyFilter === "comparison" && entry.action_type !== "document_comparison_reviewed") {
-          return false;
-        }
-        return matchesTextSearch(
-          [
-            entry.user_name,
-            entry.action_type,
-            JSON.stringify(entry.old_value),
-            JSON.stringify(entry.new_value),
-          ],
-          historySearch,
-        );
-      })
-    : [];
-  const filteredDocumentHistory = selectedRepair
-    ? selectedRepair.document_history.filter((entry) => {
-        if (historyFilter === "repair") {
-          return false;
-        }
-        if (
-          historyFilter === "uploads" &&
-          entry.action_type !== "document_uploaded" &&
-          entry.action_type !== "document_attached"
-        ) {
-          return false;
-        }
-        if (
-          historyFilter === "primary" &&
-          entry.action_type !== "set_primary" &&
-          entry.action_type !== "primary_document_changed"
-        ) {
-          return false;
-        }
-        if (historyFilter === "comparison" && !entry.action_type.startsWith("comparison_")) {
-          return false;
-        }
-        return matchesTextSearch(
-          [
-            entry.user_name,
-            entry.action_type,
-            entry.document_filename,
-            entry.document_kind ? formatDocumentKind(entry.document_kind) : null,
-            JSON.stringify(entry.old_value),
-            JSON.stringify(entry.new_value),
-          ],
-          historySearch,
-        );
-      })
-    : [];
-
-  function buildRouteFromState(targetWorkspaceTab: WorkspaceTab = activeWorkspaceTab): AppRoute {
-    return buildAppRouteFromState(
-      {
-        activeWorkspaceTab,
-        activeAdminTab,
-        activeTechAdminTab,
-        activeRepairTab,
-        fleetViewMode,
-        selectedFleetVehicleId,
-        selectedRepairId: selectedRepair?.id ?? null,
-        selectedDocumentId,
-      },
-      targetWorkspaceTab,
-    );
-  }
-
-  function updateBrowserRoute(route: AppRoute, mode: "push" | "replace" = "replace") {
-    const nextUrl = buildAppRouteUrl(route);
-    const currentUrl = `${window.location.pathname}${window.location.search}`;
-    if (currentUrl !== nextUrl) {
-      if (mode === "push") {
-        window.history.pushState({}, "", nextUrl);
-      } else {
-        window.history.replaceState({}, "", nextUrl);
-      }
-    }
-    setRouteSnapshot((current) => (areAppRoutesEqual(current, route) ? current : route));
-  }
-
-  function handleWorkspaceTabChange(value: WorkspaceTab) {
-    if (value === activeWorkspaceTab) {
-      return;
-    }
-    setActiveWorkspaceTab(value);
-    updateBrowserRoute(buildRouteFromState(value), "push");
-  }
-
-  function handleAdminTabChange(value: AdminTab) {
-    setActiveAdminTab(value);
-    if (activeWorkspaceTab === "admin") {
-      updateBrowserRoute({ workspace: "admin", adminTab: value });
-    }
-  }
-
-  function handleTechAdminTabChange(value: TechAdminTab) {
-    setActiveTechAdminTab(value);
-    if (activeWorkspaceTab === "tech_admin") {
-      updateBrowserRoute({ workspace: "tech_admin", techAdminTab: value });
-    }
-  }
-
-  function handleRepairTabChange(value: RepairTab) {
-    setActiveRepairTab(value);
-    if (activeWorkspaceTab === "repair") {
-      updateBrowserRoute({
-        workspace: "repair",
-        repairId: selectedRepair?.id ?? null,
-        repairTab: value,
-        documentId: selectedDocumentId,
-      });
-    }
-  }
-
-  useEffect(() => {
-    if (user?.role === "admin") {
-      return;
-    }
-    if (activeWorkspaceTab === "admin" || activeWorkspaceTab === "tech_admin") {
-      setActiveWorkspaceTab("documents");
-    }
-    if (showTechAdminTab) {
-      setShowTechAdminTab(false);
-    }
-  }, [activeWorkspaceTab, showTechAdminTab, user?.role]);
-
-  useEffect(() => {
-    const handlePopState = () => {
-      setRouteSnapshot(readAppRoute(window.location));
-    };
-
-    window.addEventListener("popstate", handlePopState);
-    return () => {
-      window.removeEventListener("popstate", handlePopState);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (routeSnapshot.workspace === "documents") {
-      if (activeWorkspaceTab !== "documents") {
-        setActiveWorkspaceTab("documents");
-      }
-      return;
-    }
-
-    if (routeSnapshot.workspace === "search") {
-      if (activeWorkspaceTab !== "search") {
-        setActiveWorkspaceTab("search");
-      }
-      return;
-    }
-
-    if (routeSnapshot.workspace === "audit") {
-      if (activeWorkspaceTab !== "audit") {
-        setActiveWorkspaceTab("audit");
-      }
-      return;
-    }
-
-    if (routeSnapshot.workspace === "admin") {
-      if (user?.role !== "admin") {
-        updateBrowserRoute({ workspace: "documents" });
-        return;
-      }
-      if (activeWorkspaceTab !== "admin") {
-        setActiveWorkspaceTab("admin");
-      }
-      if (activeAdminTab !== routeSnapshot.adminTab) {
-        setActiveAdminTab(routeSnapshot.adminTab);
-      }
-      return;
-    }
-
-    if (routeSnapshot.workspace === "tech_admin") {
-      if (user?.role !== "admin") {
-        updateBrowserRoute({ workspace: "documents" });
-        return;
-      }
-      if (!showTechAdminTab) {
-        setShowTechAdminTab(true);
-      }
-      if (activeWorkspaceTab !== "tech_admin") {
-        setActiveWorkspaceTab("tech_admin");
-      }
-      if (activeTechAdminTab !== routeSnapshot.techAdminTab) {
-        setActiveTechAdminTab(routeSnapshot.techAdminTab);
-      }
-      return;
-    }
-
-    if (routeSnapshot.workspace === "fleet") {
-      if (activeWorkspaceTab !== "fleet") {
-        setActiveWorkspaceTab("fleet");
-      }
-      if (routeSnapshot.vehicleId !== null && selectedFleetVehicleId !== routeSnapshot.vehicleId) {
-        setSelectedFleetVehicleId(routeSnapshot.vehicleId);
-      }
-      if (fleetViewMode !== (routeSnapshot.vehicleId !== null ? "detail" : "list")) {
-        setFleetViewMode(routeSnapshot.vehicleId !== null ? "detail" : "list");
-      }
-      return;
-    }
-
-    if (activeWorkspaceTab !== "repair") {
-      setActiveWorkspaceTab("repair");
-    }
-    if (activeRepairTab !== routeSnapshot.repairTab) {
-      setActiveRepairTab(routeSnapshot.repairTab);
-    }
-    if (routeSnapshot.documentId !== null && selectedDocumentId !== routeSnapshot.documentId) {
-      setSelectedDocumentId(routeSnapshot.documentId);
-    }
-    if (!token || routeSnapshot.repairId === null) {
-      return;
-    }
-    const repairMatches = selectedRepair?.id === routeSnapshot.repairId;
-    const documentMatches = routeSnapshot.documentId === null || selectedDocumentId === routeSnapshot.documentId;
-    if (!repairMatches || !documentMatches) {
-      void loadRepairDetail(token, routeSnapshot.repairId, routeSnapshot.documentId, {
-        silent: repairMatches,
-        resetTransientState: !repairMatches,
-      });
-    }
-  }, [
-    activeAdminTab,
-    activeRepairTab,
-    activeTechAdminTab,
-    activeWorkspaceTab,
-    fleetViewMode,
-    selectedDocumentId,
-    selectedFleetVehicleId,
-    selectedRepair?.id,
-    showTechAdminTab,
+  const { bootLoading, loadWorkspace: loadWorkspaceInternal } = useWorkspaceDataLifecycle({
     token,
-    routeSnapshot,
-    user?.role,
-  ]);
+    selectedReviewCategory,
+    laborNormQuery,
+    laborNormScope,
+    laborNormCategory,
+    selectedDocumentId,
+    documents,
+    reviewQueue,
+    selectedRepair,
+    isEditingRepair,
+    lastUploadedDocument,
+    invalidateSession,
+    loadRepairDetail,
+    workspaceState: {
+      setUser,
+      setSummary,
+      setDataQuality,
+      setDataQualityDetails,
+      setVehicles,
+      setDocuments,
+      setReviewQueue,
+      setReviewQueueCounts,
+      setSelectedDocumentId,
+      clearSelectedRepair: () => {
+        setSelectedRepair(null);
+      },
+      setLastUploadedDocument,
+      setErrorMessage,
+      applyBootstrapVehicleList,
+      applyBootstrapUsers,
+      applyBootstrapLaborNorms,
+      applyBootstrapServices,
+      applyBootstrapReviewRules,
+      applyBootstrapOcrAdmin,
+    },
+    resetters: {
+      setShowTechAdminTab,
+      setShowPasswordChange,
+      setActiveTechAdminTab,
+      setActiveQualityTab,
+      resetFleetState,
+      resetOperationsState,
+      resetLaborNormsState,
+      resetReviewRulesState,
+      resetReviewWorkflowState,
+      resetRepairDocumentsWorkflowState,
+      resetRepairEditingState,
+      resetDocumentsWorkspaceState,
+      resetUsersState,
+      resetServicesState,
+      resetOcrAdminState,
+      resetBackupsState,
+      resetHistoricalImportsState,
+      setDocumentVehicleFormToEmpty: () => {
+        setDocumentVehicleForm(createEmptyDocumentVehicleForm());
+      },
+    },
+  });
+  const { filteredRepairHistory, filteredDocumentHistory } = useRepairHistoryFilters({
+    selectedRepair,
+    historyFilter,
+    historySearch,
+    formatDocumentKind: (kind) => formatDocumentKind(kind as DocumentKind),
+  });
 
   async function loadWorkspace(
     activeToken: string,
     reviewCategory: ReviewQueueCategory = selectedReviewCategory,
     options?: { silent?: boolean },
   ) {
-    const silent = options?.silent ?? false;
-    if (!silent) {
-      setBootLoading(true);
-    }
-    try {
-      const {
-        me,
-        dashboard,
-        dataQualityPayload,
-        dataQualityDetailsPayload,
-        vehicleList,
-        recentDocuments,
-        reviewQueueData,
-        laborNormCatalog,
-        laborNormCatalogConfigs,
-        servicesPayload,
-        reviewRulesPayload,
-        ocrRulesPayload,
-        ocrProfileMatchersPayload,
-        ocrLearningPayload,
-        usersPayload,
-        systemStatusPayload,
-      } = await loadWorkspaceBootstrapData(activeToken, reviewCategory, {
-        query: laborNormQuery,
-        scope: laborNormScope,
-        category: laborNormCategory,
-      });
-
-      const applyRecentDocuments = (items: DocumentItem[]) => {
-        setDocuments(items);
-        setLastUploadedDocument((current) => {
-          if (!current) {
-            return current;
-          }
-          return items.find((item) => item.id === current.id) ?? current;
-        });
-      };
-
-      setUser(me);
-      setSummary(dashboard);
-      setDataQuality(dataQualityPayload);
-      setDataQualityDetails(dataQualityDetailsPayload);
-      setVehicles(vehicleList.items);
-      applyBootstrapVehicleList(vehicleList);
-      applyRecentDocuments(recentDocuments.items);
-      applyBootstrapUsers(usersPayload);
-      applyBootstrapLaborNorms({ laborNormCatalog, laborNormCatalogConfigs });
-      setReviewQueue(reviewQueueData.items);
-      setReviewQueueCounts(reviewQueueData.counts);
-      applyBootstrapServices(servicesPayload);
-      applyBootstrapReviewRules(reviewRulesPayload);
-      applyBootstrapOcrAdmin({
-        ocrRulesPayload,
-        ocrProfileMatchersPayload,
-        ocrLearningPayload,
-        systemStatusPayload,
-      });
-      if (selectedDocumentId === null) {
-        const defaultDocumentId =
-          reviewQueueData.items[0]?.document.id ?? recentDocuments.items[0]?.id ?? null;
-        if (defaultDocumentId !== null) {
-          setSelectedDocumentId(defaultDocumentId);
-        }
-      }
-      if (!silent) {
-        setErrorMessage("");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось загрузить рабочее пространство";
-      if (!silent) {
-        setErrorMessage(message);
-      }
-      if (message.toLowerCase().includes("validate credentials")) {
-        invalidateSession();
-        setUser(null);
-      }
-    } finally {
-      if (!silent) {
-        setBootLoading(false);
-      }
-    }
-  }
-
-  async function loadRecentDocuments(activeToken: string) {
-    const recentDocuments = await apiRequest<DocumentsResponse>("/documents?limit=8", { method: "GET" }, activeToken);
-    setDocuments(recentDocuments.items);
-    setLastUploadedDocument((current) => {
-      if (!current) {
-        return current;
-      }
-      return recentDocuments.items.find((item) => item.id === current.id) ?? current;
-    });
+    await loadWorkspaceInternal(activeToken, reviewCategory, options);
   }
 
   async function loadRepairDetail(
@@ -1595,117 +1220,6 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!token) {
-      setUser(null);
-      setShowTechAdminTab(false);
-      setShowPasswordChange(false);
-      setActiveTechAdminTab("learning");
-      setActiveQualityTab("documents");
-      setSummary(null);
-      setDataQuality(null);
-      setDataQualityDetails(null);
-      setVehicles([]);
-      resetFleetState();
-      resetOperationsState();
-      resetLaborNormsState();
-      resetReviewRulesState();
-      resetReviewWorkflowState();
-      resetRepairDocumentsWorkflowState();
-      resetRepairEditingState();
-      setDocuments([]);
-      resetDocumentsWorkspaceState();
-      resetUsersState();
-      resetServicesState();
-      resetOcrAdminState();
-      resetBackupsState();
-      resetHistoricalImportsState();
-      setReviewQueue([]);
-      setReviewQueueCounts({
-        all: 0,
-        suspicious: 0,
-        ocr_error: 0,
-        partial_recognition: 0,
-        employee_confirmation: 0,
-        manual_review: 0,
-      });
-      setSelectedDocumentId(null);
-      setSelectedRepair(null);
-      setDocumentVehicleForm(createEmptyDocumentVehicleForm());
-      return;
-    }
-    void loadWorkspace(token, selectedReviewCategory);
-  }, [selectedReviewCategory, token]);
-
-  useEffect(() => {
-    if (!token) {
-      setSelectedRepair(null);
-      return;
-    }
-    if (selectedDocumentId === null) {
-      return;
-    }
-
-    const selectedRepairId =
-      documents.find((item) => item.id === selectedDocumentId)?.repair.id ??
-      reviewQueue.find((item) => item.document.id === selectedDocumentId)?.repair.id ??
-      (selectedRepair?.documents.some((item) => item.id === selectedDocumentId) ? selectedRepair.id : null);
-
-    if (!selectedRepairId) {
-      setSelectedRepair(null);
-      return;
-    }
-
-    const repairAlreadyLoaded = selectedRepair?.id === selectedRepairId;
-    void loadRepairDetail(token, selectedRepairId, selectedDocumentId, {
-      silent: repairAlreadyLoaded,
-      resetTransientState: !repairAlreadyLoaded,
-    });
-  }, [documents, isEditingRepair, reviewQueue, selectedDocumentId, token]);
-
-  useEffect(() => {
-    if (!token) {
-      workspaceAutoRefreshInFlightRef.current = false;
-      repairAutoRefreshInFlightRef.current = false;
-      return;
-    }
-
-    const shouldRefreshWorkspace =
-      documents.some((document) => isDocumentAwaitingOcr(document.status) || documentHasActiveImportJob(document)) ||
-      (lastUploadedDocument !== null &&
-        (isDocumentAwaitingOcr(lastUploadedDocument.status) || documentHasActiveImportJob(lastUploadedDocument)));
-    const shouldRefreshRepair = repairHasDocumentsAwaitingOcr(selectedRepair);
-
-    if (!shouldRefreshWorkspace && !shouldRefreshRepair) {
-      workspaceAutoRefreshInFlightRef.current = false;
-      repairAutoRefreshInFlightRef.current = false;
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      if (shouldRefreshWorkspace && !workspaceAutoRefreshInFlightRef.current) {
-        workspaceAutoRefreshInFlightRef.current = true;
-        void loadRecentDocuments(token).finally(() => {
-          workspaceAutoRefreshInFlightRef.current = false;
-        });
-      }
-
-      if (shouldRefreshRepair && selectedRepair && !repairAutoRefreshInFlightRef.current) {
-        repairAutoRefreshInFlightRef.current = true;
-        void loadRepairDetail(token, selectedRepair.id, selectedDocumentId, {
-          silent: true,
-          resetTransientState: false,
-        }).finally(() => {
-          repairAutoRefreshInFlightRef.current = false;
-        });
-      }
-    }, 4000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [documents, lastUploadedDocument, selectedDocumentId, selectedRepair, selectedReviewCategory, token]);
-
-  useEffect(() => {
     setDocumentVehicleForm(createVehicleFormFromPayload(selectedRepairDocumentPayload));
   }, [selectedDocumentId, selectedRepairDocumentPayload]);
 
@@ -1718,193 +1232,6 @@ export default function App() {
     selectedRepairDocumentExtractedFields?.vin,
     selectedRepairDocumentOcrServiceName,
   ]);
-
-  async function openRepairByIds(documentId: number | null, repairId: number) {
-    if (activeWorkspaceTab !== "repair") {
-      repairReturnTabRef.current = activeWorkspaceTab;
-      repairReturnRouteRef.current = buildRouteFromState(activeWorkspaceTab);
-      repairScrollPositionRef.current = window.scrollY;
-      setRepairHasReturnTarget(true);
-    }
-    setActiveWorkspaceTab("repair");
-    setActiveRepairTab("overview");
-    updateBrowserRoute({ workspace: "repair", repairId, repairTab: "overview", documentId }, "push");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    if (!token) {
-      return;
-    }
-    await loadRepairDetail(token, repairId, documentId, { resetTransientState: true });
-  }
-
-  function returnFromRepairPage() {
-    const nextTab = repairHasReturnTarget ? repairReturnTabRef.current : "documents";
-    const nextRoute = repairHasReturnTarget ? repairReturnRouteRef.current : ({ workspace: "documents" } as const);
-    setActiveWorkspaceTab(nextTab);
-    updateBrowserRoute(nextRoute, "push");
-    window.requestAnimationFrame(() => {
-      window.scrollTo({ top: repairHasReturnTarget ? repairScrollPositionRef.current : 0, behavior: "auto" });
-    });
-  }
-
-  async function openQualityRepair(documentId: number | null, repairId: number | null) {
-    if (!repairId) {
-      return;
-    }
-    await openRepairByIds(documentId, repairId);
-  }
-
-  async function openQualityService(name: string) {
-    setActiveWorkspaceTab("admin");
-    setActiveAdminTab("services");
-    updateBrowserRoute({ workspace: "admin", adminTab: "services" }, "push");
-    setServiceQuery(name);
-    if (!token) {
-      return;
-    }
-    try {
-      await loadServices(name, "");
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось открыть список сервисов");
-    }
-  }
-
-  async function handleExportRepair() {
-    if (!token || !selectedRepair) {
-      return;
-    }
-    setRepairExportLoading(true);
-    setErrorMessage("");
-    try {
-      await downloadApiFile(`/repairs/${selectedRepair.id}/export`, token, `repair_${selectedRepair.id}.xlsx`);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось выгрузить карточку ремонта");
-    } finally {
-      setRepairExportLoading(false);
-    }
-  }
-
-  async function handleOpenRepair(document: DocumentItem) {
-    await openRepairByIds(document.id, document.repair.id);
-  }
-
-  async function handleOpenReviewQueueItem(item: ReviewQueueItem) {
-    await openRepairByIds(item.document.id, item.repair.id);
-  }
-
-  async function handleCheckResolution(checkId: number, isResolved: boolean) {
-    if (!token || !selectedRepair) {
-      return;
-    }
-
-    setCheckActionLoadingId(checkId);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const updatedRepair = await apiRequest<RepairDetail>(
-        `/repairs/${selectedRepair.id}/checks/${checkId}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            is_resolved: isResolved,
-            comment: checkComments[checkId]?.trim() || null,
-          }),
-        },
-        token,
-      );
-      setSelectedRepair(updatedRepair);
-      setCheckComments((current) => ({ ...current, [checkId]: "" }));
-      setSuccessMessage(isResolved ? "Проверка закрыта" : "Проверка возвращена в работу");
-      await loadWorkspace(token);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось обновить проверку ремонта");
-    } finally {
-      setCheckActionLoadingId(null);
-    }
-  }
-
-  async function handleCreateVehicleFromDocument() {
-    if (!token || !selectedRepair || selectedDocumentId === null || user?.role !== "admin") {
-      return;
-    }
-
-    const normalizedPlate = documentVehicleForm.plate_number.trim();
-    const normalizedVin = documentVehicleForm.vin.trim();
-    if (!normalizedPlate && !normalizedVin) {
-      setErrorMessage("Для создания карточки техники нужен хотя бы госномер или VIN");
-      return;
-    }
-
-    setDocumentVehicleSaving(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-    try {
-      const result = await apiRequest<DocumentCreateVehicleResponse>(
-        `/documents/${selectedDocumentId}/create-vehicle`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            vehicle_type: documentVehicleForm.vehicle_type,
-            plate_number: normalizedPlate || null,
-            vin: normalizedVin || null,
-            brand: documentVehicleForm.brand.trim() || null,
-            model: documentVehicleForm.model.trim() || null,
-            year: documentVehicleForm.year.trim() ? Number(documentVehicleForm.year.trim()) : null,
-            comment: documentVehicleForm.comment.trim() || null,
-          }),
-        },
-        token,
-      );
-      setSuccessMessage(result.message);
-      await loadWorkspace(token);
-      await openRepairByIds(result.document.id, result.repair_id);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось создать карточку техники");
-    } finally {
-      setDocumentVehicleSaving(false);
-    }
-  }
-
-  function openTechAdmin(tab: TechAdminTab = "learning") {
-    setShowTechAdminTab(true);
-    setActiveWorkspaceTab("tech_admin");
-    setActiveTechAdminTab(tab);
-    updateBrowserRoute({ workspace: "tech_admin", techAdminTab: tab }, "push");
-  }
-
-  function closeTechAdmin() {
-    setShowTechAdminTab(false);
-    setActiveTechAdminTab("learning");
-    setActiveWorkspaceTab("admin");
-    updateBrowserRoute({ workspace: "admin", adminTab: activeAdminTab }, "push");
-  }
-
-  function openReviewRulesAdmin() {
-    setActiveWorkspaceTab("admin");
-    setActiveAdminTab("control");
-    updateBrowserRoute({ workspace: "admin", adminTab: "control" }, "push");
-  }
-
-  function openLaborNormsAdmin() {
-    setActiveWorkspaceTab("admin");
-    setActiveAdminTab("labor_norms");
-    updateBrowserRoute({ workspace: "admin", adminTab: "labor_norms" }, "push");
-  }
-
-  function handleEditService(item: ServiceItem) {
-    setActiveWorkspaceTab("admin");
-    setActiveAdminTab("services");
-    updateBrowserRoute({ workspace: "admin", adminTab: "services" }, "push");
-    editService(item);
-  }
-
-  function handleStartRepairEdit() {
-    setActiveRepairTab("overview");
-    startRepairEdit();
-  }
-
-  function handleCancelRepairEdit() {
-    cancelRepairEdit();
-  }
 
   if (!token) {
     return (
@@ -2069,7 +1396,7 @@ export default function App() {
                 selectedDocumentId,
                 onSelectCategory: setSelectedReviewCategory,
                 onOpenReviewQueueItem: (item) => {
-                  void handleOpenReviewQueueItem(item);
+                  void handleOpenRepair(item.document.id, item.repair.id);
                 },
                 onReprocessDocumentById: (documentId, repairId) => {
                   void handleReprocessDocumentById(documentId, repairId);
@@ -2101,7 +1428,7 @@ export default function App() {
                   void handleBatchReprocessDocuments();
                 },
                 onOpenRepair: (document) => {
-                  void handleOpenRepair(document);
+                  void handleOpenRepair(document.id, document.repair.id);
                 },
                 onReprocessDocument: (document) => {
                   void handleReprocessDocument(document);
@@ -2521,7 +1848,7 @@ export default function App() {
               },
             },
             repairProps: {
-              returnLabel: repairHasReturnTarget ? workspaceTabReturnLabels[repairReturnTabRef.current] : null,
+              returnLabel: repairHasReturnTarget ? workspaceTabReturnLabels[repairReturnTab] : null,
               onReturn: repairHasReturnTarget ? returnFromRepairPage : null,
               contentProps: {
                 userRole: user?.role,

@@ -1,12 +1,10 @@
-import { useRef, useState } from "react";
 import {
-  buildUserPayload,
 } from "./shared/adminPayloadBuilders";
-import { MenuItem } from "@mui/material";
 import { AuthLandingView } from "./components/AuthLandingView";
 import { WorkspaceMainView } from "./components/WorkspaceMainView";
 import { useAppBridgeCallbacks } from "./hooks/useAppBridgeCallbacks";
 import { useAppNavigation } from "./hooks/useAppNavigation";
+import { useAppRootState } from "./hooks/useAppRootState";
 import { useAuthSession } from "./hooks/useAuthSession";
 import { useBackupsAdmin } from "./hooks/useBackupsAdmin";
 import { useDocumentsWorkspace } from "./hooks/useDocumentsWorkspace";
@@ -37,7 +35,7 @@ import {
 import {
   buildDashboardVisualBarWidth,
 } from "./shared/dashboardVisuals";
-import { type AdminTab, type AppRoute, type RepairTab, type TechAdminTab, type WorkspaceTab } from "./shared/appRoute";
+import { type RepairTab } from "./shared/appRoute";
 import { buildAuthLandingProps } from "./shared/buildAuthLandingProps";
 import { type HistoryDetailFormatters } from "./shared/historyDetails";
 import { buildWorkspaceLifecycleAdapters } from "./shared/buildWorkspaceLifecycleAdapters";
@@ -103,6 +101,7 @@ import {
 } from "./shared/displayFormatters";
 import {
   createEmptyDocumentVehicleForm,
+  createEmptyUploadForm,
   createEmptyUserAssignmentForm,
   createEmptyUserForm,
   createServiceFormFromItem,
@@ -122,68 +121,21 @@ import {
   workspaceTabDescriptions,
   workspaceTabReturnLabels,
 } from "./shared/appUiConfig";
-import type { RepairDetail, RepairDocumentHistoryEntry, RepairHistoryEntry } from "./shared/repairDetailTypes";
-import type { HistoryFilter, QualityDetailTab } from "./shared/workspaceViewTypes";
-import {
-  buildAuditLogQueryString,
-  buildServiceQueryString,
-  buildUsersQueryString,
-} from "./shared/queryBuilders";
+import type { RepairDetail } from "./shared/repairDetailTypes";
+import type { HistoryFilter } from "./shared/workspaceViewTypes";
 import {
   getReviewComparisonColor,
   getReviewComparisonLabel,
-  resolveRepairDocumentId,
   type ReviewComparisonStatus,
 } from "./shared/repairUiHelpers";
 import type {
-  HistoricalRepairImportResponse,
-  HistoricalWorkReferenceItem,
-  HistoricalWorkReferenceResponse,
-  ImportConflictItem,
-  ImportConflictResolveResponse,
-  ImportConflictsResponse,
-  ImportJobItem,
-  ImportJobsResponse,
-} from "./shared/importAdminTypes";
-import type {
-  DashboardDataQuality,
-  DashboardDataQualityDetails,
-  DashboardSummary,
   DocumentItem,
   DocumentKind,
   DocumentStatus,
-  GlobalSearchResponse,
-  ReviewQueueCategory,
-  ReviewQueueItem,
-  ReviewQueueResponse,
   ServiceStatus,
-  ServicesResponse,
-  User,
   UserAssignment,
-  UserItem,
   UserRole,
-  UsersResponse,
-  Vehicle,
 } from "./shared/workspaceBootstrapTypes";
-import type {
-  DocumentVehicleFormState,
-  ReviewRepairFieldsDraft,
-  ServiceFormState,
-  UploadFormState,
-  UserAssignmentFormState,
-  UserFormState,
-} from "./shared/workspaceFormTypes";
-
-const emptyUploadForm = (): UploadFormState => ({
-  vehicleId: "",
-  documentKind: "order",
-  repairDate: "",
-  mileage: "",
-  orderNumber: "",
-  reason: "",
-  employeeComment: "",
-  notes: "",
-});
 
 // Predeploy marker: uploaded: "В очереди OCR"
 
@@ -200,42 +152,64 @@ const historyDetailFormatters: HistoryDetailFormatters = {
 };
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("documents");
-  const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>("services");
-  const [activeTechAdminTab, setActiveTechAdminTab] = useState<TechAdminTab>("learning");
-  const [activeRepairTab, setActiveRepairTab] = useState<RepairTab>("overview");
-  const [activeQualityTab, setActiveQualityTab] = useState<QualityDetailTab>("documents");
-  const [showQualityDialog, setShowQualityDialog] = useState(false);
-  const [showTechAdminTab, setShowTechAdminTab] = useState(false);
-  const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [dataQuality, setDataQuality] = useState<DashboardDataQuality | null>(null);
-  const [dataQualityDetails, setDataQualityDetails] = useState<DashboardDataQualityDetails | null>(null);
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [documents, setDocuments] = useState<DocumentItem[]>([]);
-  const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
-  const [reviewQueueCounts, setReviewQueueCounts] = useState<Record<ReviewQueueCategory, number>>({
-    all: 0,
-    suspicious: 0,
-    ocr_error: 0,
-    partial_recognition: 0,
-    employee_confirmation: 0,
-    manual_review: 0,
+  const {
+    user,
+    setUser,
+    activeWorkspaceTab,
+    setActiveWorkspaceTab,
+    activeAdminTab,
+    setActiveAdminTab,
+    activeTechAdminTab,
+    setActiveTechAdminTab,
+    activeRepairTab,
+    setActiveRepairTab,
+    activeQualityTab,
+    setActiveQualityTab,
+    showQualityDialog,
+    setShowQualityDialog,
+    showTechAdminTab,
+    setShowTechAdminTab,
+    summary,
+    setSummary,
+    dataQuality,
+    setDataQuality,
+    dataQualityDetails,
+    setDataQualityDetails,
+    vehicles,
+    setVehicles,
+    documents,
+    setDocuments,
+    reviewQueue,
+    setReviewQueue,
+    reviewQueueCounts,
+    setReviewQueueCounts,
+    selectedReviewCategory,
+    setSelectedReviewCategory,
+    selectedDocumentId,
+    setSelectedDocumentId,
+    selectedRepair,
+    setSelectedRepair,
+    documentVehicleForm,
+    setDocumentVehicleForm,
+    attachedFileInputRef,
+    checkComments,
+    setCheckComments,
+    historyFilter,
+    setHistoryFilter,
+    historySearch,
+    setHistorySearch,
+    showRepairOverviewDetails,
+    setShowRepairOverviewDetails,
+    errorMessage,
+    setErrorMessage,
+    successMessage,
+    setSuccessMessage,
+    isEditingRepairRef,
+    syncRepairDraftFromRepairRef,
+    resetRepairDocumentsWorkflowStateRef,
+  } = useAppRootState({
+    createEmptyDocumentVehicleForm,
   });
-  const [selectedReviewCategory, setSelectedReviewCategory] = useState<ReviewQueueCategory>("all");
-  const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
-  const [selectedRepair, setSelectedRepair] = useState<RepairDetail | null>(null);
-  const [documentVehicleForm, setDocumentVehicleForm] = useState<DocumentVehicleFormState>(createEmptyDocumentVehicleForm);
-  const attachedFileInputRef = useRef<HTMLInputElement | null>(null);
-  const [checkComments, setCheckComments] = useState<Record<number, string>>({});
-  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
-  const [historySearch, setHistorySearch] = useState("");
-  const [showRepairOverviewDetails, setShowRepairOverviewDetails] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
-  const isEditingRepairRef = useRef(false);
-  const syncRepairDraftFromRepairRef = useRef<(repair: RepairDetail) => void>(() => {});
-  const resetRepairDocumentsWorkflowStateRef = useRef<() => void>(() => {});
 
   const {
     token,
@@ -278,7 +252,7 @@ export default function App() {
       setActiveRepairTab("overview");
       setShowTechAdminTab(false);
       setLastUploadedDocument(null);
-      resetRepairDocumentsWorkflowState();
+      resetRepairDocumentsWorkflowStateRef.current();
     },
   });
   const {
@@ -320,7 +294,7 @@ export default function App() {
   } = useDocumentsWorkspace({
     token,
     userRole: user?.role,
-    emptyUploadForm,
+    emptyUploadForm: createEmptyUploadForm,
     setErrorMessage,
     setSuccessMessage,
     refreshWorkspace,
@@ -660,9 +634,7 @@ export default function App() {
   });
   const { repairLoading, loadRepairDetail } = useRepairDetailLoader<RepairDetail, DocumentItem>({
     setErrorMessage,
-    setSelectedRepair: (repair) => {
-      setSelectedRepair(repair);
-    },
+    setSelectedRepair,
     setSelectedDocumentId,
     setLastUploadedDocument,
     setCheckComments,
@@ -834,9 +806,7 @@ export default function App() {
     refreshWorkspace,
     openRepairByIds,
     setSelectedRepair,
-    setRepairDraft: (repair) => {
-      syncRepairDraftFromRepair(repair);
-    },
+    setRepairDraft: syncRepairDraftFromRepair,
     setErrorMessage,
     setSuccessMessage,
   });

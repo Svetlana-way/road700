@@ -15,6 +15,7 @@ import type {
   OcrRuleFormState,
   ReviewRuleFormState,
   ServiceFormState,
+  UploadFormState,
   UserAssignmentFormState,
   UserFormState,
 } from "./workspaceFormTypes";
@@ -163,6 +164,19 @@ export function createEmptyDocumentVehicleForm(): DocumentVehicleFormState {
     model: "",
     year: "",
     comment: "",
+  };
+}
+
+export function createEmptyUploadForm(): UploadFormState {
+  return {
+    vehicleId: "",
+    documentKind: "order",
+    repairDate: "",
+    mileage: "",
+    orderNumber: "",
+    reason: "",
+    employeeComment: "",
+    notes: "",
   };
 }
 

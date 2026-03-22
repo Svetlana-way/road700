@@ -1,6 +1,7 @@
 import { matchesTextSearch } from "../shared/fleetDocumentHelpers";
 import type { RepairDocumentHistoryEntry, RepairHistoryEntry } from "../shared/repairDetailTypes";
 import type { HistoryFilter } from "../shared/workspaceViewTypes";
+import type { DocumentKind } from "../shared/workspaceBootstrapTypes";
 
 type RepairHistorySource = {
   history: RepairHistoryEntry[];
@@ -11,7 +12,7 @@ type UseRepairHistoryFiltersParams = {
   selectedRepair: RepairHistorySource | null;
   historyFilter: HistoryFilter;
   historySearch: string;
-  formatDocumentKind: (kind: string) => string;
+  formatDocumentKind: (kind: DocumentKind) => string;
 };
 
 export function useRepairHistoryFilters({

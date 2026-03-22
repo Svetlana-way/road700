@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiRequest, downloadApiFile } from "../shared/api";
+import type { RepairDetail } from "../shared/repairDetailTypes";
 import type { ServiceItem, UserRole } from "../shared/workspaceBootstrapTypes";
 import type { DocumentVehicleFormState } from "../shared/workspaceFormTypes";
 
@@ -31,7 +32,7 @@ type UseRepairWorkspaceActionsParams = {
   openRepairOverviewTab: () => void;
   startRepairEdit: () => void;
   cancelRepairEdit: () => void;
-  setSelectedRepairFromApi: (repair: unknown) => void;
+  setSelectedRepairFromApi: (repair: RepairDetail) => void;
 };
 
 export function useRepairWorkspaceActions({
@@ -116,7 +117,7 @@ export function useRepairWorkspaceActions({
     setErrorMessage("");
     setSuccessMessage("");
     try {
-      const updatedRepair = await apiRequest<unknown>(
+      const updatedRepair = await apiRequest<RepairDetail>(
         `/repairs/${selectedRepairId}/checks/${checkId}`,
         {
           method: "PATCH",

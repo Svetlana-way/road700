@@ -5,6 +5,7 @@ import {
 import { MenuItem } from "@mui/material";
 import { AuthLandingView } from "./components/AuthLandingView";
 import { WorkspaceMainView } from "./components/WorkspaceMainView";
+import { useAppBridgeCallbacks } from "./hooks/useAppBridgeCallbacks";
 import { useAppNavigation } from "./hooks/useAppNavigation";
 import { useAuthSession } from "./hooks/useAuthSession";
 import { useBackupsAdmin } from "./hooks/useBackupsAdmin";
@@ -39,6 +40,7 @@ import {
 import { type AdminTab, type AppRoute, type RepairTab, type TechAdminTab, type WorkspaceTab } from "./shared/appRoute";
 import { buildAuthLandingProps } from "./shared/buildAuthLandingProps";
 import { type HistoryDetailFormatters } from "./shared/historyDetails";
+import { buildWorkspaceLifecycleAdapters } from "./shared/buildWorkspaceLifecycleAdapters";
 import { buildWorkspaceContentProps } from "./shared/buildWorkspaceContentProps";
 import {
   buildDataQualityProps,
@@ -235,10 +237,6 @@ export default function App() {
   const syncRepairDraftFromRepairRef = useRef<(repair: RepairDetail) => void>(() => {});
   const resetRepairDocumentsWorkflowStateRef = useRef<() => void>(() => {});
 
-  async function openRepairByIdsFromDocuments(documentId: number | null, repairId: number) {
-    await openRepairByIds(documentId, repairId);
-  }
-
   const {
     token,
     showPasswordChange,
@@ -283,6 +281,18 @@ export default function App() {
       resetRepairDocumentsWorkflowState();
     },
   });
+  const {
+    openRepairByIdsRef,
+    openTechAdminRef,
+    openReviewRulesAdminRef,
+    openLaborNormsAdminRef,
+    loadWorkspaceRef,
+    openRepairByIdsFromDocuments,
+    openTechAdmin,
+    openReviewRulesAdmin,
+    openLaborNormsAdmin,
+    refreshWorkspace,
+  } = useAppBridgeCallbacks(token);
   const {
     uploadForm,
     selectedFile,
@@ -700,24 +710,6 @@ export default function App() {
     openRepairByIds,
     returnFromRepairPage,
   } = appNavigation;
-
-  function openTechAdmin(tab: TechAdminTab = "learning") {
-    openTechAdminInternal(tab);
-  }
-
-  function openReviewRulesAdmin() {
-    openReviewRulesAdminInternal();
-  }
-
-  function openLaborNormsAdmin() {
-    openLaborNormsAdminInternal();
-  }
-
-  async function refreshWorkspace() {
-    if (token) {
-      await loadWorkspace(token);
-    }
-  }
   const {
     selectedReviewItem,
     selectedRepairDocument,
@@ -785,9 +777,7 @@ export default function App() {
     userRole: user?.role,
     selectedRepair,
     refreshWorkspace,
-    setSelectedRepair: (repair) => {
-      setSelectedRepair(repair as RepairDetail | null);
-    },
+    setSelectedRepair,
     setSelectedDocumentId,
     setActiveWorkspaceTab,
     setErrorMessage,
@@ -843,9 +833,7 @@ export default function App() {
     loadServices,
     refreshWorkspace,
     openRepairByIds,
-    setSelectedRepair: (repair) => {
-      setSelectedRepair(repair as RepairDetail);
-    },
+    setSelectedRepair,
     setRepairDraft: (repair) => {
       syncRepairDraftFromRepair(repair);
     },
@@ -888,9 +876,7 @@ export default function App() {
     },
     startRepairEdit,
     cancelRepairEdit,
-    setSelectedRepairFromApi: (repair) => {
-      setSelectedRepair(repair as RepairDetail);
-    },
+    setSelectedRepairFromApi: setSelectedRepair,
   });
   const {
     attachDocumentLoading,
@@ -924,6 +910,45 @@ export default function App() {
     setSuccessMessage,
   });
   resetRepairDocumentsWorkflowStateRef.current = resetRepairDocumentsWorkflowState;
+  const workspaceLifecycleAdapters = buildWorkspaceLifecycleAdapters({
+    setUser,
+    setSummary,
+    setDataQuality,
+    setDataQualityDetails,
+    setVehicles,
+    setDocuments,
+    setReviewQueue,
+    setReviewQueueCounts,
+    setSelectedDocumentId,
+    setSelectedRepair,
+    setLastUploadedDocument,
+    setErrorMessage,
+    applyBootstrapVehicleList,
+    applyBootstrapUsers,
+    applyBootstrapLaborNorms,
+    applyBootstrapServices,
+    applyBootstrapReviewRules,
+    applyBootstrapOcrAdmin,
+    setShowTechAdminTab,
+    setShowPasswordChange,
+    setActiveTechAdminTab,
+    setActiveQualityTab,
+    resetFleetState,
+    resetOperationsState,
+    resetLaborNormsState,
+    resetReviewRulesState,
+    resetReviewWorkflowState,
+    resetRepairDocumentsWorkflowState,
+    resetRepairEditingState,
+    resetDocumentsWorkspaceState,
+    resetUsersState,
+    resetServicesState,
+    resetOcrAdminState,
+    resetBackupsState,
+    resetHistoricalImportsState,
+    setDocumentVehicleForm,
+    createEmptyDocumentVehicleForm,
+  });
   const { bootLoading, loadWorkspace: loadWorkspaceInternal } = useWorkspaceDataLifecycle({
     token,
     selectedReviewCategory,
@@ -938,65 +963,20 @@ export default function App() {
     lastUploadedDocument,
     invalidateSession,
     loadRepairDetail,
-    workspaceState: {
-      setUser,
-      setSummary,
-      setDataQuality,
-      setDataQualityDetails,
-      setVehicles,
-      setDocuments,
-      setReviewQueue,
-      setReviewQueueCounts,
-      setSelectedDocumentId,
-      clearSelectedRepair: () => {
-        setSelectedRepair(null);
-      },
-      setLastUploadedDocument,
-      setErrorMessage,
-      applyBootstrapVehicleList,
-      applyBootstrapUsers,
-      applyBootstrapLaborNorms,
-      applyBootstrapServices,
-      applyBootstrapReviewRules,
-      applyBootstrapOcrAdmin,
-    },
-    resetters: {
-      setShowTechAdminTab,
-      setShowPasswordChange,
-      setActiveTechAdminTab,
-      setActiveQualityTab,
-      resetFleetState,
-      resetOperationsState,
-      resetLaborNormsState,
-      resetReviewRulesState,
-      resetReviewWorkflowState,
-      resetRepairDocumentsWorkflowState,
-      resetRepairEditingState,
-      resetDocumentsWorkspaceState,
-      resetUsersState,
-      resetServicesState,
-      resetOcrAdminState,
-      resetBackupsState,
-      resetHistoricalImportsState,
-      setDocumentVehicleFormToEmpty: () => {
-        setDocumentVehicleForm(createEmptyDocumentVehicleForm());
-      },
-    },
+    workspaceState: workspaceLifecycleAdapters.workspaceState,
+    resetters: workspaceLifecycleAdapters.resetters,
   });
+  openRepairByIdsRef.current = openRepairByIds;
+  openTechAdminRef.current = openTechAdminInternal;
+  openReviewRulesAdminRef.current = openReviewRulesAdminInternal;
+  openLaborNormsAdminRef.current = openLaborNormsAdminInternal;
+  loadWorkspaceRef.current = loadWorkspaceInternal;
   const { filteredRepairHistory, filteredDocumentHistory } = useRepairHistoryFilters({
     selectedRepair,
     historyFilter,
     historySearch,
-    formatDocumentKind: (kind) => formatDocumentKind(kind as DocumentKind),
+    formatDocumentKind,
   });
-
-  async function loadWorkspace(
-    activeToken: string,
-    reviewCategory: ReviewQueueCategory = selectedReviewCategory,
-    options?: { silent?: boolean },
-  ) {
-    await loadWorkspaceInternal(activeToken, reviewCategory, options);
-  }
 
   useRepairPresentationState({
     selectedDocumentId,

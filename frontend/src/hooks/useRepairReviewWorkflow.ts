@@ -3,6 +3,7 @@ import { buildReviewFieldsPayload, buildServicePayload } from "../shared/adminPa
 import { apiRequest, downloadDocumentFile } from "../shared/api";
 import { isPlaceholderVehicle } from "../shared/fleetDocumentHelpers";
 import { createReviewRepairFieldsDraft, getDocumentPreviewKind } from "../shared/repairUiHelpers";
+import type { RepairDetail } from "../shared/repairDetailTypes";
 import type {
   DocumentItem,
   ServiceItem,
@@ -14,12 +15,7 @@ import type {
 import type { ReviewRepairFieldsDraft, ServiceFormState } from "../shared/workspaceFormTypes";
 
 type RepairDocumentExtractedFields = Record<string, unknown> | null | undefined;
-type RepairReviewRecord = Parameters<typeof createReviewRepairFieldsDraft>[0] & {
-  id: number;
-  service: {
-    name: string;
-  } | null;
-};
+type RepairReviewRecord = RepairDetail;
 type RepairReviewDocument = {
   id: number;
   mime_type: string | null;
@@ -219,7 +215,7 @@ export function useRepairReviewWorkflow({
     setErrorMessage("");
     setSuccessMessage("");
     try {
-      const savedRepair = await apiRequest<RepairReviewRecord>(
+      const savedRepair = await apiRequest<RepairDetail>(
         `/repairs/${selectedRepair.id}/service`,
         {
           method: "PATCH",
@@ -413,7 +409,7 @@ export function useRepairReviewWorkflow({
     try {
       const payload = buildReviewFieldsPayload(reviewFieldDraft);
 
-      const savedRepair = await apiRequest<RepairReviewRecord>(
+      const savedRepair = await apiRequest<RepairDetail>(
         `/repairs/${selectedRepair.id}/review-fields`,
         {
           method: "PATCH",

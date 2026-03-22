@@ -2,15 +2,14 @@ import { useState } from "react";
 import { apiRequest } from "../shared/api";
 import { createRepairDraft, resolveRepairDocumentId, type EditablePartDraft, type EditableRepairDraft, type EditableWorkDraft, type RepairDetailForDraft } from "../shared/repairUiHelpers";
 import type { WorkspaceTab } from "../shared/appRoute";
+import type { RepairDetail } from "../shared/repairDetailTypes";
 
 type RepairDeleteResponse = {
   message: string;
   deleted_repair_id: number;
 };
 
-type RepairEditingRecord = RepairDetailForDraft & {
-  id: number;
-};
+type RepairEditingRecord = RepairDetail;
 
 type UseRepairEditingWorkflowParams = {
   token: string;
@@ -190,7 +189,7 @@ export function useRepairEditingWorkflow({
         })),
       };
 
-      const savedRepair = await apiRequest<RepairEditingRecord>(
+      const savedRepair = await apiRequest<RepairDetail>(
         `/repairs/${selectedRepair.id}`,
         {
           method: "PATCH",
@@ -221,7 +220,7 @@ export function useRepairEditingWorkflow({
     setSuccessMessage("");
 
     try {
-      const savedRepair = await apiRequest<RepairEditingRecord>(
+      const savedRepair = await apiRequest<RepairDetail>(
         `/repairs/${selectedRepair.id}`,
         {
           method: "PATCH",

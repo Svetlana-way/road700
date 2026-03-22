@@ -21,7 +21,7 @@ type RepairDetailForLifecycle = RepairDetailForDraft & {
   id: number;
 };
 
-type WorkspaceStateAppliers = {
+export type WorkspaceStateAppliers = {
   setUser: (value: User | null) => void;
   setSummary: (value: DashboardSummary | null) => void;
   setDataQuality: (value: DashboardDataQuality | null) => void;
@@ -50,7 +50,7 @@ type WorkspaceStateAppliers = {
   }) => void;
 };
 
-type WorkspaceResetters = {
+export type WorkspaceResetters = {
   setShowTechAdminTab: (value: false) => void;
   setShowPasswordChange: (value: false) => void;
   setActiveTechAdminTab: (value: "learning") => void;

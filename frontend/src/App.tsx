@@ -15,6 +15,7 @@ import { useLaborNormsAdmin } from "./hooks/useLaborNormsAdmin";
 import { useOcrAdmin } from "./hooks/useOcrAdmin";
 import { useReviewRulesAdmin } from "./hooks/useReviewRulesAdmin";
 import { useRepairDerivedViewModel } from "./hooks/useRepairDerivedViewModel";
+import { useRepairDetailLoader } from "./hooks/useRepairDetailLoader";
 import { useRepairDocumentsWorkflow } from "./hooks/useRepairDocumentsWorkflow";
 import { useRepairEditingWorkflow } from "./hooks/useRepairEditingWorkflow";
 import { useRepairHistoryFilters } from "./hooks/useRepairHistoryFilters";
@@ -25,7 +26,6 @@ import { useRepairReviewWorkflow } from "./hooks/useRepairReviewWorkflow";
 import { useServicesAdmin } from "./hooks/useServicesAdmin";
 import { useWorkspaceDataLifecycle } from "./hooks/useWorkspaceDataLifecycle";
 import { useWorkspaceOperations } from "./hooks/useWorkspaceOperations";
-import { apiRequest } from "./shared/api";
 import {
   createVehicleFormFromPayload,
   formatQualityVehicle,
@@ -368,13 +368,15 @@ export default function App() {
   const [selectedRepair, setSelectedRepair] = useState<RepairDetail | null>(null);
   const [documentVehicleForm, setDocumentVehicleForm] = useState<DocumentVehicleFormState>(createEmptyDocumentVehicleForm);
   const attachedFileInputRef = useRef<HTMLInputElement | null>(null);
-  const [repairLoading, setRepairLoading] = useState(false);
   const [checkComments, setCheckComments] = useState<Record<number, string>>({});
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
   const [historySearch, setHistorySearch] = useState("");
   const [showRepairOverviewDetails, setShowRepairOverviewDetails] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const isEditingRepairRef = useRef(false);
+  const syncRepairDraftFromRepairRef = useRef<(repair: RepairDetail) => void>(() => {});
+  const resetRepairDocumentsWorkflowStateRef = useRef<() => void>(() => {});
   const {
     token,
     showPasswordChange,
@@ -794,6 +796,20 @@ export default function App() {
     setErrorMessage,
     setSuccessMessage,
   });
+  const { repairLoading, loadRepairDetail } = useRepairDetailLoader<RepairDetail, DocumentItem>({
+    setErrorMessage,
+    setSelectedRepair: (repair) => {
+      setSelectedRepair(repair);
+    },
+    setSelectedDocumentId,
+    setLastUploadedDocument,
+    setCheckComments,
+    setHistoryFilter,
+    setHistorySearch,
+    isEditingRepairRef,
+    syncRepairDraftFromRepairRef,
+    resetRepairDocumentsWorkflowStateRef,
+  });
   const appNavigation = useAppNavigation({
     userRole: user?.role,
     token,
@@ -940,6 +956,8 @@ export default function App() {
     setErrorMessage,
     setSuccessMessage,
   });
+  isEditingRepairRef.current = isEditingRepair;
+  syncRepairDraftFromRepairRef.current = syncRepairDraftFromRepair;
   const {
     reviewActionLoading,
     reviewActionComment,
@@ -1080,6 +1098,7 @@ export default function App() {
     setErrorMessage,
     setSuccessMessage,
   });
+  resetRepairDocumentsWorkflowStateRef.current = resetRepairDocumentsWorkflowState;
   const { bootLoading, loadWorkspace: loadWorkspaceInternal } = useWorkspaceDataLifecycle({
     token,
     selectedReviewCategory,
@@ -1152,71 +1171,6 @@ export default function App() {
     options?: { silent?: boolean },
   ) {
     await loadWorkspaceInternal(activeToken, reviewCategory, options);
-  }
-
-  async function loadRepairDetail(
-    activeToken: string,
-    repairId: number,
-    preferredDocumentId: number | null,
-    options?: { silent?: boolean; resetTransientState?: boolean },
-  ) {
-    const silent = options?.silent ?? false;
-    const resetTransientState = options?.resetTransientState ?? true;
-
-    if (!silent) {
-      setRepairLoading(true);
-      setErrorMessage("");
-    }
-    try {
-      const payload = await apiRequest<RepairDetail>(`/repairs/${repairId}`, { method: "GET" }, activeToken);
-      setSelectedRepair(payload);
-      if (resetTransientState) {
-        setCheckComments({});
-        resetRepairDocumentsWorkflowState();
-        setHistoryFilter("all");
-        setHistorySearch("");
-      }
-      setSelectedDocumentId((current) => resolveRepairDocumentId(payload, preferredDocumentId ?? current));
-      if (!isEditingRepair) {
-        syncRepairDraftFromRepair(payload);
-      }
-      setLastUploadedDocument((current) => {
-        if (!current) {
-          return current;
-        }
-        const refreshedDocument = payload.documents.find((item) => item.id === current.id);
-        if (!refreshedDocument) {
-          return current;
-        }
-        const latestVersion = refreshedDocument.versions[refreshedDocument.versions.length - 1];
-        return {
-          ...current,
-          mime_type: refreshedDocument.mime_type,
-          status: refreshedDocument.status as DocumentStatus,
-          is_primary: refreshedDocument.is_primary,
-          ocr_confidence: refreshedDocument.ocr_confidence,
-          review_queue_priority: refreshedDocument.review_queue_priority,
-          notes: refreshedDocument.notes,
-          created_at: refreshedDocument.created_at,
-          parsed_payload: (latestVersion?.parsed_payload as DocumentItem["parsed_payload"]) ?? current.parsed_payload,
-          repair: {
-            id: payload.id,
-            order_number: payload.order_number,
-            repair_date: payload.repair_date,
-            mileage: payload.mileage,
-            status: payload.status,
-          },
-        };
-      });
-    } catch (error) {
-      if (!silent) {
-        setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить ремонт");
-      }
-    } finally {
-      if (!silent) {
-        setRepairLoading(false);
-      }
-    }
   }
 
   useEffect(() => {

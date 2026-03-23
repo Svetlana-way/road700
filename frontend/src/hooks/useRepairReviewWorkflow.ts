@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { buildReviewFieldsPayload, buildServicePayload } from "../shared/adminPayloadBuilders";
 import { apiRequest, downloadDocumentFile } from "../shared/api";
 import { isPlaceholderVehicle } from "../shared/fleetDocumentHelpers";
@@ -101,8 +101,10 @@ export function useRepairReviewWorkflow({
   const [showReviewServiceEditor, setShowReviewServiceEditor] = useState(false);
   const [reviewDocumentPreviewUrl, setReviewDocumentPreviewUrl] = useState("");
   const [reviewDocumentPreviewLoading, setReviewDocumentPreviewLoading] = useState(false);
+  const reviewDocumentPreviewObjectUrlRef = useRef("");
 
   const reviewDocumentPreviewKind = getDocumentPreviewKind(selectedRepairDocument?.mime_type);
+  const selectedRepairDocumentId = selectedRepairDocument?.id ?? null;
 
   useEffect(() => {
     const nextServiceName = selectedRepair?.service?.name || selectedRepairDocumentOcrServiceName || "";
@@ -136,24 +138,30 @@ export function useRepairReviewWorkflow({
   ]);
 
   useEffect(() => {
-    if (!token || !selectedRepairDocument || !reviewDocumentPreviewKind) {
+    if (!token || !selectedRepairDocumentId || !reviewDocumentPreviewKind) {
+      if (reviewDocumentPreviewObjectUrlRef.current) {
+        URL.revokeObjectURL(reviewDocumentPreviewObjectUrlRef.current);
+        reviewDocumentPreviewObjectUrlRef.current = "";
+      }
       setReviewDocumentPreviewUrl("");
       setReviewDocumentPreviewLoading(false);
       return;
     }
 
     let isMounted = true;
-    let objectUrl = "";
 
     setReviewDocumentPreviewLoading(true);
     setReviewDocumentPreviewUrl("");
-    void downloadDocumentFile(selectedRepairDocument.id, token)
+    void downloadDocumentFile(selectedRepairDocumentId, token)
       .then((url) => {
         if (!isMounted) {
           URL.revokeObjectURL(url);
           return;
         }
-        objectUrl = url;
+        if (reviewDocumentPreviewObjectUrlRef.current) {
+          URL.revokeObjectURL(reviewDocumentPreviewObjectUrlRef.current);
+        }
+        reviewDocumentPreviewObjectUrlRef.current = url;
         setReviewDocumentPreviewUrl(url);
       })
       .catch((error) => {
@@ -169,11 +177,17 @@ export function useRepairReviewWorkflow({
 
     return () => {
       isMounted = false;
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
+    };
+  }, [reviewDocumentPreviewKind, selectedRepairDocumentId, setErrorMessage, token]);
+
+  useEffect(() => {
+    return () => {
+      if (reviewDocumentPreviewObjectUrlRef.current) {
+        URL.revokeObjectURL(reviewDocumentPreviewObjectUrlRef.current);
+        reviewDocumentPreviewObjectUrlRef.current = "";
       }
     };
-  }, [reviewDocumentPreviewKind, selectedRepairDocument, setErrorMessage, token]);
+  }, []);
 
   async function handleReviewAction(action: "employee_confirm" | "confirm" | "send_to_review") {
     if (!token || !selectedReviewItem) {

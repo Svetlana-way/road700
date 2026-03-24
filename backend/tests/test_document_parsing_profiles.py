@@ -75,6 +75,47 @@ class DocumentParsingProfilesTestCase(unittest.TestCase):
         self.assertEqual(parsed["extracted_fields"]["parts_total"], 52559.67)
         self.assertEqual(parsed["extracted_fields"]["grand_total"], 75251.6)
 
+    def test_parse_document_text_extracts_ets_act_fields_from_late_scanned_block(self) -> None:
+        text = """
+ООО "Енисей Трак Сервис"
+СЧЕТ Nº 431 от 03 Февраля 2025 г.
+Счет-фактура Nº у00755 от 03 Февраля 2025 г.
+Документ об отгрузке: у документу , N: акт выполненных работ е80381 от 03.02.25 г.
+ОФИЦИАЛЬНЫЙ ДИЛЕР VOLVO
+Общество с ограниченной ответственностью "Енисей Трак Сервис" ИНН: 2462033163
+Акт выполненных работ Nº 80381 от 03.02.2025
+Заказчик: ООО Транспортная компания "Семьсот дорог" ИНН: 1650251719
+Модель автомобиля
+Гос. номер
+N шасси
+VOLVO FH13A 42T
+K350Bа716
+W130676
+Дата приема автомобиля:
+02.02.2025
+VIN
+Вид ремонта:
+Обслуживание
+X9PRG20A0LW130676
+Выполненные работы по акту выполненных работ Nº 80381
+Пробег(м/ч)
+1 089 300
+Итого работ:
+900,00
+Расходная накладная к акту выполненных работ Nº 80381
+Итого материалов:
+300,00
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="ets_act")
+
+        self.assertEqual(parsed["extracted_fields"]["order_number"], "80381")
+        self.assertIn(parsed["extracted_fields"]["plate_number"], {"К350ВА716", "K350BА716"})
+        self.assertEqual(parsed["extracted_fields"]["vin"], "X9PRG20A0LW130676")
+        self.assertEqual(parsed["extracted_fields"]["mileage"], 1089300)
+        self.assertNotIn("order_number_missing", parsed["manual_review_reasons"])
+        self.assertNotIn("mileage_missing", parsed["manual_review_reasons"])
+
     def test_parse_document_text_extracts_ets_act_line_items_from_compact_text_pdf(self) -> None:
         text = (
             'ОФИЦИАЛЬНЫЙ ДИЛЕР VOLVOОбщество с ограниченной ответственностью "Енисей Трак Сервис" '
@@ -163,6 +204,260 @@ RHEINOL
         self.assertEqual(parsed["extracted_fields"]["parts_total"], 56109.96)
         self.assertEqual(parsed["extracted_fields"]["vat_total"], 14627.99)
         self.assertEqual(parsed["extracted_fields"]["grand_total"], 87767.95)
+
+    def test_parse_document_text_extracts_ets_act_work_items_from_sparse_scanned_summary_block(self) -> None:
+        text = """
+Акт выполненных работ Nº 79605 от 06.01.2025
+Заказчик: ООО Транспортная компания "Семьсот дорог" ИНН: 1650251719
+Модель автомобиля
+Гос. номер
+Nº шасси
+VOLVO FH13A 42T
+a773Hp716
+A816091
+Дата приема автомобиля:
+06.01.2025
+VIN
+Вид ремонта:
+Обслуживание
+YV2RG20A8JA816091
+Выполненные работы по акту выполненных работ Nº 79605
+Пробег (м/ч)
+1 395 182
+N
+Артикул
+Наименование
+1
+Кол. оп.
+Цена
+н/ч
+4
+5
+1200,00
+2 750,00
+1 2 750,00
+1 3 300,00
+Норма
+2
+3
+4
+18200-0
+56000-0
+56100-2
+17906-2
+мойка автомобиля с прицепом
+проверка пневмосистемы
+ремонт воздушной трубки
+диагностика с использованием Tech
+Tool/GD.
+Подсоединение-отсоединение
+диагностического прибсоє включ
+37102-3
+электрические провода и разъемы,
+1 3 300,00
+проверка
+6
+33107-2
+замена реле стартера тепловое
+1 2 750,00
+Итого работ:
+6
+Тринадцать тысяч сто шестьдесят четыре рубля 00 копеек в т.ч. НДС 2 194,00 Руб
+3,00
+0,50
+0,50
+0,50
+0,40
+0,60
+5,50
+Расходная накладная к акту выполненных работ Nº 79605
+N
+Артикул
+Наименование
+Кол-во
+Ед.изм.
+Цена
+1
+2
+4
+5
+шт
+ШТ
+2
+PM
+H.SSM1000UL
+расходные материалы
+втягивающее реле стартера
+(23504037) KRAUF
+3
+4
+6
+Н.БП00027744
+H.10-16
+RU3WUR08901000
+RU3WUR089360
+шланг (990424, 977650)
+1
+іхомут
+спрей заморозка
+0,3
+ОЧИСТИТ.КОНТАКТОВ (0890100)
+0,3
+Итого материалов:
+4,6
+ШТ
+ШТ
+Шт
+шт
+Четыре тысячи девятьсот шестьдесят пять рублей 30 копеек в т.ч. НДС 827,54 Руб
+6
+300,00
+2 566,67
+379,17
+38,50
+1 666,67
+1 178,07
+VOLIO
+с уч мойка
+Состояние ЗН
+Закрыт
+в валюте
+Руб
+Сумма
+T
+3 600,00
+1375,00
+1375,00
+1650,00
+1 320,00
+1 650,00
+10 970,00
+Сумма НДС,
+20%
+8
+720,00
+275,00
+275,00
+330,00
+264,00
+330,00
+2 194,00
+Сумма с учетом
+НДС
+9
+4 320,00
+1 650.00
+1 650,00
+1 980,00
+1 584,00
+1 980,00
+13 164,00
+Сумма
+7
+300,00
+2 566,67
+379,17
+38,50
+500,00
+353,42
+4 137,76
+Сумма НДС,
+20
+8
+60,00
+513,33
+75,83
+7,70
+100.00
+70,68
+827,54
+Сумма с учетом
+НДС
+360.00đ
+3 080.00
+455,00
+46,20
+600,00
+424,10
+4 965,30
+Сумма
+15 107,76
+Сумма НДС,
+20%
+3 021,54
+Сумма с учетом
+НДС
+18 129,30
+Итого по акту выполненных работ :
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="ets_act")
+        works = parsed["extracted_items"]["works"]
+
+        self.assertEqual(len(works), 6)
+        self.assertTrue(any(item["work_code"] == "18200-0" and item["line_total"] == 3600.0 and item["standard_hours"] == 3.0 for item in works))
+        self.assertTrue(any(item["work_code"] == "17906-2" and item["work_name"] == "диагностика с использованием Tech Tool/GD. Подсоединение-отсоединение диагностического прибсоє включ" for item in works))
+        self.assertTrue(any(item["work_code"] == "37102-3" and item["line_total"] == 1320.0 for item in works))
+        self.assertEqual(parsed["extracted_fields"]["work_total"], 10970.0)
+        self.assertEqual(parsed["extracted_fields"]["parts_total"], 4137.76)
+        self.assertEqual(parsed["extracted_fields"]["vat_total"], 3021.54)
+        self.assertEqual(parsed["extracted_fields"]["grand_total"], 18129.3)
+
+    def test_parse_document_text_restores_ets_act_totals_from_invoice_summary_when_act_summary_is_sparse(self) -> None:
+        text = """
+СЧЕТ Nº 431 от 03 Февраля 2025 г.
+Всего к оплате:
+Сумма
+168093-36
+168093-36
+33618-67
+201712-03
+Акт выполненных работ Nº 80381 от 03.02.2025
+Модель автомобиля
+Гос. номер
+N шасси
+VOLVO FH13A 42T
+K350Bа716
+W130676
+Дата приема автомобиля:
+02.02.2025
+VIN
+Вид ремонта:
+Обслуживание
+X9PRG20A0LW130676
+Выполненные работы по акту выполненных работ Nº 80381
+Пробег(м/ч)
+1 089 300
+Итого работ:
+28
+0,30l
+900.00
+0,30
+900.00
+2,20
+6 600,00
+1.00
+3 500,00
+0.20
+700.00
+1,60
+4 800,00
+0,50
+1500,00
+0,60 1 800,00
+0,30
+900,00
+19,40]
+57 940,00
+Шестьдесят девять тысяч пятьсот двадцать восемь рублей 00 копеек в т.ч. НДС 11 588,00 Руб
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="ets_act")
+
+        self.assertEqual(parsed["extracted_fields"]["work_total"], 57940.0)
+        self.assertEqual(parsed["extracted_fields"]["parts_total"], 110153.36)
+        self.assertEqual(parsed["extracted_fields"]["vat_total"], 33618.67)
+        self.assertEqual(parsed["extracted_fields"]["grand_total"], 201712.03)
 
     def test_parse_document_text_extracts_axb_totals_from_profile_specific_blocks(self) -> None:
         text = """
@@ -508,6 +803,145 @@ RUB
         self.assertTrue(any(item["work_name"] == "Перекидка воздушная замена" and item["line_total"] == 1425.0 for item in works))
         self.assertTrue(any(item["part_name"] == "Фильтр топливный DF E-5 с отСТОЙниКОМ" and item["article"] == "C4327369" for item in parts))
 
+    def test_parse_document_text_extracts_axb_invoice_items_without_explicit_invoice_title(self) -> None:
+        text = """
+Заказ-наряд № 0000018636 от 07.02.2025
+Покупатель:
+ТРАНСПОРТНАЯ КОМПАНИЯ "СЕМЬСОТ ДОРОГ"
+По договору:
+Продажа зіч и сервис в RUB от 22.05.23
+На основании:
+Заказ-наряд Nº 0000018636 от 07.02.2025
+Автомобиль: NPFCGSV30PA000016
+в валюте:
+RUB
+N
+1
+2
+Товар
+Датчик ABS SCHMITZ угл. Stellox
+Термосоединитель проводов
+красный 1.5-2.5 Stellox
+Артикул
+8550502SX
+88-01400-SX
+Кол-во Ед.
+1 шт
+2 шт
+Цена
+1 212,00
+48,00
+Итого RUB:
+Скидка
+60,60
+4,80
+Bcero
+1 151,40
+91,20
+6 793,64
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="axb")
+        parts = parsed["extracted_items"]["parts"]
+
+        self.assertEqual(len(parts), 2)
+        self.assertEqual(parts[0]["article"], "8550502SX")
+        self.assertEqual(parts[0]["part_name"], "Датчик ABS SCHMITZ угл. Stellox")
+        self.assertEqual(parts[0]["line_total"], 1151.4)
+        self.assertEqual(parts[1]["article"], "88-01400-SX")
+        self.assertEqual(parts[1]["quantity"], 2.0)
+        self.assertEqual(parts[1]["price"], 48.0)
+
+    def test_parse_document_text_extracts_axb_invoice_items_when_total_marker_uses_ocr_bcero(self) -> None:
+        text = """
+Заказ-наряд № 0000020428 от 26.04.2025
+Счет на оплату Nº 00000002847 от 26.04.2025
+На основании: Заказ-наряд Nº 0000020428 от 26.04.2025
+Автомобиль: KOLUMAN S г/н BO015416 VIN: NLFS3010000057267 ; пробег: 148 985
+в валюте:
+Ng
+2
+4
+Товар
+Прокладка головки соединительной
+пневматической, палм 17х41х9мм
+ТО прицепа.
+Артикул
+095.010
+700700
+Кол-во
+Ед.
+1 шт
+2,8 -
+Цена
+66,00
+3 600,00
+WRUB:
+Скидка
+3,30
+504,00
+Bcero
+62,70
+9 576,00
+12 648,30
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="axb")
+        works = parsed["extracted_items"]["works"]
+        parts = parsed["extracted_items"]["parts"]
+
+        self.assertEqual(len(parts), 1)
+        self.assertEqual(parts[0]["article"], "095010")
+        self.assertEqual(parts[0]["line_total"], 62.7)
+        self.assertEqual(len(works), 1)
+        self.assertEqual(works[0]["work_code"], "700700")
+        self.assertEqual(works[0]["quantity"], 2.8)
+        self.assertEqual(works[0]["line_total"], 9576.0)
+
+    def test_parse_document_text_extracts_axb_parts_from_material_section_without_invoice_block(self) -> None:
+        text = """
+Заказ-наряд № 0000019968 от 06.04.2025
+Автомобиль : DFH4180 гос. номер: C320MT716 VIN: LGAG3DV20P8839078 год вып. 2023 пробег 250 000
+Итого работ:
+38 167,20
+Итого материалов:
+50 712,90
+Расходная накладная к заказ-наряду Nº 0000019968 от 06.04.2025 к причине обращения "Прочее"
+Артикул
+3659445LLC
+Наименование
+МАСЛО Моторное лукоил
+АВАНГАРД ПРОФЕССИОНАЛ LA
+10W-40 (198л)Е6 бочка (2)
+DFZPC4389022
+Фильтр маслянный DF E5
+3506911-91045*
+Шланг тормозной к пневмокамере
+Кол-во
+40
+1
+1
+Ед. изм. Цена
+л/дмЗ 492,00
+шт 6 060,00
+шт 2 220,00
+Bcero
+18 696,00
+5 757,00
+4 427,00
+Итого по странице материалов.
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="axb")
+        parts = parsed["extracted_items"]["parts"]
+
+        self.assertEqual(len(parts), 3)
+        self.assertEqual(parts[0]["article"], "3659445LLC")
+        self.assertEqual(parts[0]["part_name"], "МАСЛО Моторное лукоил АВАНГАРД ПРОФЕССИОНАЛ LA 10W-40 (198л)Е6 бочка (2)")
+        self.assertEqual(parts[0]["line_total"], 18696.0)
+        self.assertEqual(parts[1]["article"], "DFZPC4389022")
+        self.assertEqual(parts[2]["article"], "3506911-91045")
+
     def test_parse_document_text_extracts_antares_items_from_multiline_sections(self) -> None:
         text = """
 ПОСТАВЩИК: Общество с ограниченной ответственностью "Антарес"
@@ -810,6 +1244,53 @@ a9d6fd9b-203c-4ef9-8a13-c892beb08927
         self.assertEqual(parsed["extracted_fields"]["vat_total"], 30553.14)
         self.assertEqual(parsed["extracted_fields"]["grand_total"], 183319.0)
 
+    def test_parse_document_text_prefers_leader_trak_profile_rows_when_generic_items_miss_work_section(self) -> None:
+        text = """
+Общество с ограниченной ответственностью "ЛидерТрак"
+НАРЯД-ЗАКАЗ № ЛТ250012346 от 26.12.2025
+Автомобиль:
+914296-04, гос. номер: 7745ВУ16, шасси: P0000575, VIN: XJY914296P0000575, пробег: 1
+Выполненные сервисные услуги и использованные материалы
+№ Номер
+операции или
+запчасти
+Наименование работ,
+запчастей и материалов
+Кол-во Ед.
+измер.
+Цена за
+единицу
+Сумма
+скидки
+Стоимость
+без налога
+Сумма
+налога
+Стоимость
+с налогом *
+1 ZZ5555 Расходные материалы (шиномонтаж) 1 шт 109,17 0,00 109,17 21,83 131,00
+2 2 ШМ Колесо - смена (односкатное прицеп) 1 н/ч 1 600,00 192,00 1 440,00 288,00 1 728,00
+3 5 ШМ Перебортовка колеса 1,4 н/ч 1 599,86 268,78 2 015,83 403,17 2 419,00
+4 24030632 Замена шпилек полуоси (задняя ось) 3 н/ч 1 600,00 576,00 4 320,00 864,00 5 184,00
+Всего по странице: 7 885,00 1 577,00 9 462,00
+Всего по наряд-заказу: 7 885,00 1 577,00 9 462,00
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="leader_trak")
+        works = parsed["extracted_items"]["works"]
+        parts = parsed["extracted_items"]["parts"]
+
+        self.assertEqual(len(works), 3)
+        self.assertEqual(len(parts), 1)
+        self.assertTrue(any(item["work_name"] == "2 ШМ Колесо - смена (односкатное прицеп)" and item["line_total"] == 1440.0 for item in works))
+        self.assertTrue(any(item["work_name"] == "5 ШМ Перебортовка колеса" and item["standard_hours"] == 1.4 for item in works))
+        self.assertTrue(any(item["work_code"] == "24030632" and item["line_total"] == 4320.0 for item in works))
+        self.assertEqual(parts[0]["article"], "ZZ5555")
+        self.assertEqual(parts[0]["line_total"], 109.17)
+        self.assertAlmostEqual(parsed["extracted_fields"]["work_total"], 7775.83, places=2)
+        self.assertAlmostEqual(parsed["extracted_fields"]["parts_total"], 109.17, places=2)
+        self.assertEqual(parsed["extracted_fields"]["grand_total"], 9462.0)
+
     def test_parse_document_text_extracts_gruzovye_rezervy_items_from_sections(self) -> None:
         text = """
 Заказ-наряд № ГП000215622 от 12 февраля 2026 г.
@@ -918,9 +1399,152 @@ VIN: WSM00000005217870 г/н: вв 3316 16
         parsed = document_processing.parse_document_text(text, db=None, profile_scope="gruzovye_rezervy")
 
         self.assertNotIn("mileage", parsed["extracted_fields"])
-        self.assertIn("mileage_missing", parsed["manual_review_reasons"])
+        self.assertNotIn("mileage_missing", parsed["manual_review_reasons"])
         self.assertEqual(parsed["extracted_fields"]["vin"], "WSM00000005217870")
         self.assertEqual(parsed["extracted_fields"]["plate_number"], "ВВ331616")
+
+    def test_parse_document_text_skips_gruzovye_rezervy_order_and_mileage_review_for_invoice_only_documents(self) -> None:
+        text = """
+Внимание! Оплата данного счета означает согласие с условиями поставки товара.
+Счет на оплату № ГП000002278 от 09 января 2026 г.
+Исполнитель: Общество с ограниченной ответственностью "ГРУЗОВЫЕ РЕЗЕРВЫ"
+Покупатель: ООО ТК "Семьсот дорог"
+Автомобиль: г/н 2278 ОТ 09
+№ Наименование товаров, работ, услуг Кол-во Ед. Цена Сумма
+Материалы:
+1 фильтр масляный 1 шт. 2 038,00 2 038,00
+Итого к оплате: 49 038,00
+В том числе НДС 8 842,92
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="gruzovye_rezervy")
+
+        self.assertNotIn("order_number_missing", parsed["manual_review_reasons"])
+        self.assertNotIn("mileage_missing", parsed["manual_review_reasons"])
+        self.assertEqual(parsed["extracted_fields"]["repair_date"], "2026-01-09")
+        self.assertEqual(parsed["extracted_fields"]["plate_number"], "2278ОТ09")
+        self.assertEqual(parsed["extracted_fields"]["vat_total"], 8842.92)
+        self.assertEqual(parsed["extracted_fields"]["grand_total"], 49038.0)
+
+    def test_parse_document_text_skips_logistics_missing_mileage_for_trailer_documents(self) -> None:
+        text = """
+ПОСТАВЩИК: Общество с ограниченной ответственностью "ЛОГИСТИКА"
+Заказ-наряд № 00000001633 от 30.09.2025
+Автомобиль : П/П Koluman S, Koluman S гос. номер: ВО0156 16 VIN: NLFS3010000057266 год вып. 2022 пробег
+Цена автомототранспортного средства, определяемая по соглашению сторон __________________
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="logistics")
+
+        self.assertNotIn("mileage", parsed["extracted_fields"])
+        self.assertNotIn("mileage_missing", parsed["manual_review_reasons"])
+        self.assertEqual(parsed["extracted_fields"]["plate_number"], "ВО015616")
+        self.assertEqual(parsed["extracted_fields"]["vin"], "NLFS3010000057266")
+
+    def test_parse_document_text_does_not_infer_logistics_mileage_from_plate_digits(self) -> None:
+        text = """
+ПОСТАВЩИК: Общество с ограниченной ответственностью "ЛОГИСТИКА"
+Заказ-наряд № 00000002472 от 14.01.2026
+Автомобиль : DongFen GX, DongFeng GX гос. номер: У026АХ 716 VIN: LGAG3DV29R8846629 год вып. 2024 пробег
+Цена автомототранспортного средства, определяемая по соглашению сторон __________________
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="logistics")
+
+        self.assertNotIn("mileage", parsed["extracted_fields"])
+        self.assertNotIn("mileage_missing", parsed["manual_review_reasons"])
+        self.assertEqual(parsed["extracted_fields"]["plate_number"], "У026АХ716")
+        self.assertEqual(parsed["extracted_fields"]["vin"], "LGAG3DV29R8846629")
+
+    def test_parse_document_text_extracts_logistics_work_and_part_tables(self) -> None:
+        text = """
+ПОСТАВЩИК: Общество с ограниченной ответственностью "ЛОГИСТИКА"
+Заказ-наряд № 00000002864 от 24.02.2026
+Автомобиль : DONGFENG DFH4180, DONGFENG DFH4180 гос. номер: cс113кх716 VIN: LGAG3DV2XP8837385 год вып. 2023 пробег
+462 000
+Выполненные работы по заказ-наряду № 00000002864 от 24.02.2026 к причине обращения "EKAS горит красным"
+№ Артикул Наименование Кол. оп. Цена н/ч Норма н/ч Ставка НДС Всего в т.ч. НДС
+1 2 3 4 5 6 7 8 9 10
+1 Компьютерная
+диагностика
+1 2 786,89 1,000 3400 22% 3 400,01 613,12
+2 Замена датчика нагрузки
+на ось
+1 2 786,89 1,000 3400 22% 3 400,01 613,12
+3 Расходные материалы 1 630,00 1,000 630 22% 768,60 138,60
+Итого работ: 3 на сумму: 7 568,62 1 364,84
+Расходная накладная к заказ-наряду № 00000002864 от 24.02.2026 к причине обращения "EKAS горит красным"
+№ Артикул Наименование Кол-во Ед.изм. Цена Ставка НДС Всего в т.ч. НДС
+1 2 3 4 5 6 7 8 9
+1 096,235 0,572882, Датчик давления, Sampa 1 шт 2 760,00 22% 3 367,20 607,20
+Итого материалов: 1 на сумму: 3 367,20 607,20
+Итого по заказ-наряду : 10 935,82 1 972,04
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="logistics")
+        works = parsed["extracted_items"]["works"]
+        parts = parsed["extracted_items"]["parts"]
+
+        self.assertEqual(len(works), 3)
+        self.assertEqual(len(parts), 1)
+        self.assertTrue(any(item["work_name"] == "Компьютерная диагностика" and item["line_total"] == 3400.01 for item in works))
+        self.assertTrue(any(item["work_name"] == "Замена датчика нагрузки на ось" and item["standard_hours"] == 1.0 for item in works))
+        self.assertTrue(any(item["part_name"] == "Датчик давления, Sampa" and item["line_total"] == 3367.2 for item in parts))
+
+    def test_parse_document_text_extracts_logistics_multiline_materials_across_pages(self) -> None:
+        text = """
+ПОСТАВЩИК: Общество с ограниченной ответственностью "ЛОГИСТИКА"
+Заказ-наряд № 00000000754 от 29.05.2025
+Автомобиль : DongFen GX, DongFeng GX DFH4180 гос. номер: O106XB 716 VIN: LGAG3DV22N8829942 год вып. 2022
+пробег 497 240
+Выполненные работы по заказ-наряду № 00000000754 от 29.05.2025 к причине обращения
+"ТО - 2"
+№ Артикул Наименование Кол. оп. Цена н/ч Норма н/ч Ставка НДС Всего в т.ч. НДС
+1 2 3 4 5 6 7 8 9 10
+1 ТО-2 (500 000) 1 2 333,33 7,700 2800 20% 21 559,97 3 593,33
+2 Проверка и регулировка
+клапанов
+1 2 333,33 2,400 2800 20% 6 719,99 1 120,00
+Итого работ: 2 на сумму: 28 279,96 4 713,33
+Расходная накладная к заказ-наряду № 00000000754 от 29.05.2025 к причине обращения
+"ТО - 2"
+№ Артикул Наименование Кол-во Ед.изм. Цена Ставка НДС Всего в т.ч. НДС
+1 2 3 4 5 6 7 8 9
+1 3659445LLC МАСЛО Моторное ЛУКОЙЛ
+АВАНГАРД ПРОФЕССИОНАЛ LA
+10W-40 (198л)E6 бочка
+40 л 375,38 20% 18 018,24 3 003,04
+2 ZPC5465813 Масляный фильтр Е6 1 шт 6 353,86 20% 7 624,63 1 270,77
+3 C4365703 Топливный фильтр 1 шт 1 527,50 20% 1 833,00 305,50
+4 C1125030-H02B
+0SFG
+Топливный фильтр сепаратора E5, E6 1 шт 7 352,48 20% 8 822,98 1 470,50
+11 Итого по странице материалов: 92 на сумму: 93 438,06 15 573,01
+Расходная накладная к заказ-наряду № 00000000754 от 29.05.2025 к причине
+обращения: ТО - 2 Страница: 2
+№ Артикул Наименование Кол-во Ед.изм. Цена Ставка НДС Всего в т.ч. НДС
+1 2 3 4 5 6 7 8 9
+12 3557139LLC ЛУКОЙЛ АНТИФРИЗ G12++ (205л)
+бочка
+3 л 227,50 20% 819,00 136,50
+13 SC622904 Фильтр КПП маслянный DAF XF-105
+RANG WANG
+1 шт 1 824,33 20% 2 189,20 364,87
+Итого материалов: 96 на сумму: 96 446,26 16 074,38
+Итого по заказ-наряду : 124 726,22 20 787,71
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="logistics")
+        works = parsed["extracted_items"]["works"]
+        parts = parsed["extracted_items"]["parts"]
+
+        self.assertEqual(len(works), 2)
+        self.assertGreaterEqual(len(parts), 6)
+        self.assertTrue(any(item["work_name"] == "ТО-2 (500 000)" and item["line_total"] == 21559.97 for item in works))
+        self.assertTrue(any(item["work_name"] == "Проверка и регулировка клапанов" and item["standard_hours"] == 2.4 for item in works))
+        self.assertTrue(any(item["article"] == "3659445LLC" and item["quantity"] == 40.0 and item["unit_name"] == "л" for item in parts))
+        self.assertTrue(any(item["article"] == "C1125030-H02B0SFG" and item["line_total"] == 8822.98 for item in parts))
+        self.assertTrue(any(item["article"] == "3557139LLC" and item["line_total"] == 819.0 for item in parts))
 
     def test_parse_amount_accepts_common_ocr_separators(self) -> None:
         self.assertEqual(document_processing.parse_amount("201'712-03"), 201712.03)

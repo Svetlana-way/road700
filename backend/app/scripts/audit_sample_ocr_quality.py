@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Iterable
 
 from app.core.paths import PROJECT_ROOT
-from app.services.document_processing import extract_document_text, parse_document_text
+from app.services.document_processing import (
+    extract_document_text,
+    is_gruzovye_rezervy_invoice_only_document,
+    parse_document_text,
+)
 
 DEFAULT_SOURCE_DIR = PROJECT_ROOT / "Заказ-наряды"
 DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "OCR_QUALITY_REPORT.md"
@@ -54,6 +58,7 @@ class AuditRow:
     manual_review_reasons: list[str]
     works_count: int
     parts_count: int
+    invoice_only: bool = False
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -131,18 +136,22 @@ def pct(part: int, total: int) -> str:
 
 def build_doc_flags(row: AuditRow) -> dict[str, bool]:
     fields = row.extracted_fields
+    order_number_ok = bool(fields.get("order_number")) or row.invoice_only
+    mileage_ok = fields.get("mileage") is not None or row.invoice_only
+    work_total_ok = fields.get("work_total") is not None or row.invoice_only
+    works_lines_ok = row.works_count > 0 or row.invoice_only
     return {
-        "order_number": bool(fields.get("order_number")),
+        "order_number": order_number_ok,
         "repair_date": bool(fields.get("repair_date")),
         "service_name": bool(fields.get("service_name")),
         "plate_number": bool(fields.get("plate_number")),
         "vin": bool(fields.get("vin")),
-        "mileage": fields.get("mileage") is not None,
-        "work_total": fields.get("work_total") is not None,
+        "mileage": mileage_ok,
+        "work_total": work_total_ok,
         "parts_total": fields.get("parts_total") is not None,
         "grand_total": fields.get("grand_total") is not None,
         "vat_total": fields.get("vat_total") is not None,
-        "works_lines": row.works_count > 0,
+        "works_lines": works_lines_ok,
         "parts_lines": row.parts_count > 0,
         "manual_review_free": len(row.manual_review_reasons) == 0,
     }
@@ -162,6 +171,7 @@ def audit_documents(source_dir: Path) -> list[AuditRow]:
         extracted_items = parsed.get("extracted_items") if isinstance(parsed.get("extracted_items"), dict) else {}
         works = extracted_items.get("works") if isinstance(extracted_items.get("works"), list) else []
         parts = extracted_items.get("parts") if isinstance(extracted_items.get("parts"), list) else []
+        invoice_only = profile_scope == "gruzovye_rezervy" and is_gruzovye_rezervy_invoice_only_document(text or "")
         rows.append(
             AuditRow(
                 service_label=infer_service_label(path),
@@ -174,6 +184,7 @@ def audit_documents(source_dir: Path) -> list[AuditRow]:
                 manual_review_reasons=[str(item) for item in parsed.get("manual_review_reasons", [])],
                 works_count=len(works),
                 parts_count=len(parts),
+                invoice_only=invoice_only,
             )
         )
     return rows

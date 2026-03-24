@@ -207,7 +207,7 @@ DATE_PATTERNS = [
     r"\b(\d{2}[./-]\d{2}[./-]\d{2,4})\b",
 ]
 MILEAGE_PATTERNS = [
-    rf"(?:{MILEAGE_LABEL_PATTERN}|{ODOMETER_LABEL_PATTERN})(?:\s*\([^)]*\))?\D{{0,40}}(\d[\d\s]{{1,}})",
+    rf"(?:{MILEAGE_LABEL_PATTERN}|{ODOMETER_LABEL_PATTERN})(?:\s*\([^)]*\))?\s*[:№]?\s*(\d[\d\s]{{1,}})",
 ]
 PLATE_PATTERNS = [
     r"([А-ЯA-Z]\s*\d{3}\s*[А-ЯA-Z]{2}\s*\d{2,3})(?!\d)",
@@ -361,6 +361,7 @@ AXB_PART_NAME_KEYWORDS = (
     "палм",
 )
 ARTICLE_TOKEN_PATTERN = re.compile(r"^(?=.*[\d-])[A-Za-zА-Яа-я0-9/_-]{3,}$")
+AXB_ARTICLE_TOKEN_PATTERN = re.compile(r"^(?=.*[\d.-])[A-Za-zА-Яа-я0-9/._-]{3,}$")
 WORK_CODE_TOKEN_PATTERN = re.compile(r"^(?=.*\d)(?=.*[A-Za-zА-Яа-я])[A-Za-zА-Яа-я0-9/_-]{3,}$")
 TEXT_KEYWORD_PATTERN = re.compile(
     "|".join(
@@ -1398,6 +1399,39 @@ def has_explicit_missing_mileage(text: str) -> bool:
     )
 
 
+def has_logistics_blank_mileage_field(text: str) -> bool:
+    section_text = extract_vehicle_section_text(text)
+    return bool(
+        re.search(
+            rf"(?:{MILEAGE_LABEL_PATTERN}|{ODOMETER_LABEL_PATTERN})(?:\s*\([^)]*\))?\s*[:№]?\s*(?:\r?\n\s*)?(?=Цена\s+автомототранспортного\s+средства)",
+            section_text,
+            re.IGNORECASE | re.MULTILINE,
+        )
+    )
+
+
+def is_logistics_trailer_vehicle_context(text: str) -> bool:
+    section_text = extract_vehicle_section_text(text)
+    return bool(
+        re.search(
+            r"\b(?:п/п|полуприцеп|прицеп|koluman|orthaus|schmitz)\b",
+            section_text,
+            re.IGNORECASE,
+        )
+    )
+
+
+def is_gruzovye_rezervy_invoice_only_document(text: str) -> bool:
+    header_text = extract_header_text(text, limit=4000)
+    if not re.search(r"(?:^|\n)\s*счет(?:\s+на\s+оплату)?\b", header_text, re.IGNORECASE):
+        return False
+    if re.search(r"\b(?:заказ[- ]наряд|наряд[- ]заказ|акт(?:\s+выполненных\s+работ)?)\b", text, re.IGNORECASE):
+        return False
+    if re.search(r"(?:^|\n)\s*виды\s+работ:\s*$", text, re.IGNORECASE | re.MULTILINE):
+        return False
+    return True
+
+
 def extract_vehicle_identifiers_from_section(text: str) -> tuple[Optional[str], Optional[str], Optional[int]]:
     section_text = extract_vehicle_section_text(text)
     plate_number = find_plate_candidate(find_pattern_value(PLATE_LABEL_PATTERNS, section_text))
@@ -1424,8 +1458,10 @@ def extract_vehicle_identifiers_from_section(text: str) -> tuple[Optional[str], 
                 window = line
                 if re.search(r"пробег|одометр", line, re.IGNORECASE) and index + 1 < len(vehicle_lines):
                     window = f"{line} {vehicle_lines[index + 1]}"
+                mileage_window = re.split(r"(?:пробег|одометр)", window, maxsplit=1, flags=re.IGNORECASE)
+                search_window = mileage_window[1] if len(mileage_window) > 1 else window
                 for pattern in VEHICLE_ROW_MILEAGE_PATTERNS:
-                    match = re.search(pattern, window, re.IGNORECASE | re.MULTILINE)
+                    match = re.search(pattern, search_window, re.IGNORECASE | re.MULTILINE)
                     if match is None:
                         continue
                     mileage = parse_mileage_candidate(match.group(1))
@@ -1455,6 +1491,304 @@ def extract_service_candidate_from_text(text: str) -> Optional[str]:
         if candidate:
             return candidate[:200]
     return None
+
+
+def extract_ets_act_late_fragment(text: str) -> str:
+    pattern = re.compile(r"Акт\s+выполненных\s+работ", re.IGNORECASE)
+    matches = list(pattern.finditer(text))
+    for match in reversed(matches):
+        fragment = text[match.start() : match.start() + 5000]
+        if re.search(r"Модель\s+автомобиля|Пробег\s*\(м/ч\)|VIN|Гос\.\s*номер", fragment, re.IGNORECASE):
+            return fragment
+    return ""
+
+
+def is_ets_act_work_code_line(line: str) -> bool:
+    normalized_line = normalize_line(line)
+    return bool(
+        re.fullmatch(r"[A-Za-zА-Яа-я0-9.-]{5,}", normalized_line)
+        and "-" in normalized_line
+        and any(char.isdigit() for char in normalized_line)
+    )
+
+
+def is_ets_act_sparse_work_noise_line(line: str) -> bool:
+    normalized_line = normalize_line(line)
+    lower_line = normalized_line.lower()
+    if not normalized_line:
+        return True
+    if lower_line in {"n", "артикул", "наименование", "кол. оп.", "цена", "н/ч", "норма"}:
+        return True
+    if lower_line.startswith("итого работ"):
+        return True
+    if re.fullmatch(r"\d+", normalized_line):
+        return True
+    if parse_amount(normalized_line) is not None:
+        return True
+    if re.search(r"\bруб(?:\.|ля|лей)?\b", lower_line):
+        return True
+    return False
+
+
+def parse_ets_act_sparse_summary_amount(line: str) -> Optional[float]:
+    normalized_line = normalize_line(line)
+    if not normalized_line:
+        return None
+    if re.fullmatch(r"\d{1,2}", normalized_line):
+        return None
+    if normalized_line in {"T", "НДС"}:
+        return None
+    return parse_amount(normalized_line)
+
+
+def extract_ets_act_sparse_summary_blocks(fragment: str) -> list[dict[str, list[float]]]:
+    lines = [normalize_line(line) for line in fragment.splitlines() if normalize_line(line)]
+    blocks: list[dict[str, list[float]]] = []
+    index = 0
+
+    while index < len(lines):
+        if lines[index].lower() != "сумма":
+            index += 1
+            continue
+
+        index += 1
+        net_values: list[float] = []
+        while index < len(lines) and not lines[index].lower().startswith("сумма ндс"):
+            amount_value = parse_ets_act_sparse_summary_amount(lines[index])
+            if amount_value is not None:
+                net_values.append(amount_value)
+            index += 1
+
+        if index >= len(lines):
+            break
+
+        index += 1
+        vat_values: list[float] = []
+        while index < len(lines) and not lines[index].lower().startswith("сумма с учетом"):
+            amount_value = parse_ets_act_sparse_summary_amount(lines[index])
+            if amount_value is not None:
+                vat_values.append(amount_value)
+            index += 1
+
+        if index >= len(lines):
+            break
+
+        index += 1
+        total_values: list[float] = []
+        while index < len(lines) and lines[index].lower() != "сумма" and not lines[index].lower().startswith("итого по акту"):
+            amount_value = parse_ets_act_sparse_summary_amount(lines[index])
+            if amount_value is not None:
+                total_values.append(amount_value)
+            index += 1
+
+        if net_values and vat_values and total_values:
+            blocks.append(
+                {
+                    "net_values": net_values,
+                    "vat_values": vat_values,
+                    "total_values": total_values,
+                }
+            )
+
+    return blocks
+
+
+def extract_ets_act_sparse_work_layout(fragment: str) -> list[tuple[str, str]]:
+    lines = [normalize_line(line) for line in fragment.splitlines() if normalize_line(line)]
+    start_index = next(
+        (index for index, line in enumerate(lines) if line.lower().startswith("выполненные работы по акту выполненных работ")),
+        None,
+    )
+    end_index = next((index for index, line in enumerate(lines) if line.lower().startswith("итого работ")), None)
+    if start_index is None or end_index is None or end_index <= start_index:
+        return []
+
+    section_lines = lines[start_index + 1 : end_index]
+    first_code_index = next((index for index, line in enumerate(section_lines) if is_ets_act_work_code_line(line)), None)
+    if first_code_index is None:
+        return []
+    section_lines = section_lines[first_code_index:]
+
+    layout: list[tuple[str, str]] = []
+    index = 0
+    while index < len(section_lines):
+        if not is_ets_act_work_code_line(section_lines[index]):
+            index += 1
+            continue
+
+        run_start = index
+        while index < len(section_lines) and is_ets_act_work_code_line(section_lines[index]):
+            index += 1
+        code_run = section_lines[run_start:index]
+
+        name_lines: list[str] = []
+        while index < len(section_lines) and not is_ets_act_work_code_line(section_lines[index]):
+            candidate_line = section_lines[index]
+            if not is_ets_act_sparse_work_noise_line(candidate_line):
+                name_lines.append(candidate_line)
+            index += 1
+
+        if len(code_run) > 1:
+            for code_index, code_value in enumerate(code_run):
+                if code_index < len(code_run) - 1 and code_index < len(name_lines):
+                    name_value = name_lines[code_index]
+                else:
+                    tail_lines = name_lines[len(code_run) - 1 :] if len(name_lines) >= len(code_run) - 1 else []
+                    name_value = normalize_line(" ".join(tail_lines))
+                if name_value:
+                    layout.append((normalize_article_value(code_value) or code_value, name_value))
+            continue
+
+        name_value = normalize_line(" ".join(name_lines))
+        if name_value:
+            layout.append((normalize_article_value(code_run[0]) or code_run[0], name_value))
+
+    return layout
+
+
+def extract_ets_act_sparse_work_norms(fragment: str) -> list[float]:
+    lines = [normalize_line(line) for line in fragment.splitlines() if normalize_line(line)]
+    start_index = next((index for index, line in enumerate(lines) if line.lower().startswith("итого работ")), None)
+    end_index = next((index for index, line in enumerate(lines) if line.lower().startswith("расходная накладная")), None)
+    if start_index is None or end_index is None or end_index <= start_index:
+        return []
+
+    norms: list[float] = []
+    for line in lines[start_index + 1 : end_index]:
+        if not re.fullmatch(r"\d+(?:[.,]\d+)?", line) or not re.search(r"[.,]", line):
+            continue
+        norm_value = parse_decimal_value(line)
+        if norm_value is not None:
+            norms.append(norm_value)
+    return norms
+
+
+def extract_ets_act_sparse_scanned_work_items(text: str) -> list[dict[str, object]]:
+    fragment = extract_ets_act_late_fragment(text)
+    if not fragment:
+        return []
+
+    layout = extract_ets_act_sparse_work_layout(fragment)
+    summary_blocks = extract_ets_act_sparse_summary_blocks(fragment)
+    if not layout or not summary_blocks:
+        return []
+
+    work_block = next(
+        (
+            block
+            for block in summary_blocks
+            if len(block["net_values"]) >= len(layout)
+            and len(block["vat_values"]) >= len(layout)
+            and len(block["total_values"]) >= len(layout)
+        ),
+        None,
+    )
+    if work_block is None:
+        return []
+
+    net_values = work_block["net_values"][:-1] if len(work_block["net_values"]) == len(layout) + 1 else work_block["net_values"]
+    total_values = work_block["total_values"][:-1] if len(work_block["total_values"]) == len(layout) + 1 else work_block["total_values"]
+    norms = extract_ets_act_sparse_work_norms(fragment)
+    if len(norms) == len(layout) + 1:
+        norms = norms[:-1]
+
+    item_count = min(len(layout), len(net_values), len(total_values), len(norms) if norms else len(layout))
+    if item_count <= 0:
+        return []
+
+    works: list[dict[str, object]] = []
+    for index in range(item_count):
+        work_code, work_name = layout[index]
+        standard_hours = norms[index] if index < len(norms) else None
+        net_total = net_values[index]
+        price = round(net_total / standard_hours, 2) if standard_hours and standard_hours > 0 else net_total
+        works.append(
+            {
+                "work_code": normalize_article_value(work_code),
+                "work_name": work_name[:500],
+                "quantity": 1.0,
+                "unit_name": None,
+                "price": price,
+                "line_total": net_total,
+                "standard_hours": standard_hours,
+            }
+        )
+
+    return works
+
+
+def extract_ets_act_sparse_scanned_totals(text: str) -> dict[str, float]:
+    fragment = extract_ets_act_late_fragment(text)
+    if not fragment:
+        return {}
+
+    summary_blocks = extract_ets_act_sparse_summary_blocks(fragment)
+    if len(summary_blocks) < 3:
+        return {}
+
+    item_blocks = [block for block in summary_blocks if len(block["net_values"]) >= 2 and len(block["vat_values"]) >= 2 and len(block["total_values"]) >= 2]
+    overall_block = summary_blocks[-1]
+    if len(item_blocks) < 2 or not overall_block["net_values"] or not overall_block["vat_values"] or not overall_block["total_values"]:
+        return {}
+
+    work_total = item_blocks[0]["net_values"][-1]
+    parts_total = item_blocks[1]["net_values"][-1]
+    overall_net_total = overall_block["net_values"][-1]
+    vat_total = overall_block["vat_values"][-1]
+    grand_total = overall_block["total_values"][-1]
+
+    if not amounts_match(round(work_total + parts_total, 2), overall_net_total, tolerance=0.5):
+        return {}
+    if not amounts_match(round(overall_net_total + vat_total, 2), grand_total, tolerance=0.5):
+        return {}
+
+    return {
+        "work_total": work_total,
+        "parts_total": parts_total,
+        "vat_total": vat_total,
+        "grand_total": grand_total,
+    }
+
+
+def extract_ets_act_scanned_header_fields(text: str) -> dict[str, object]:
+    fragment = extract_ets_act_late_fragment(text)
+    if not fragment:
+        return {}
+
+    extracted: dict[str, object] = {}
+
+    order_match = re.search(
+        r"Акт\s+выполненных\s+работ\s*(?:N|№|No|Nº)?\s*(?P<value>[A-Za-zА-Яа-я0-9]{4,})",
+        fragment,
+        re.IGNORECASE,
+    )
+    if order_match:
+        extracted["order_number"] = normalize_identifier_token(order_match.group("value"))
+
+    plate_match = re.search(r"Гос\.\s*номер\s*(?P<value>[^\n\r]{0,24})", fragment, re.IGNORECASE)
+    if plate_match:
+        raw_plate_value = plate_match.group("value")
+        plate_number = find_plate_candidate(raw_plate_value) or find_plate_candidate(normalize_identifier_token(raw_plate_value))
+        if plate_number:
+            extracted["plate_number"] = plate_number
+
+    vin_match = re.search(r"VIN\s*(?P<value>[^\n\r]{0,24})", fragment, re.IGNORECASE)
+    if vin_match:
+        vin = find_vin_candidate(vin_match.group("value")) or find_vin_candidate(fragment)
+        if vin:
+            extracted["vin"] = vin
+
+    mileage_match = re.search(
+        rf"(?:{MILEAGE_LABEL_PATTERN}|{ODOMETER_LABEL_PATTERN})(?:\s*\([^)]*\))?\s*[:№]?\s*(?P<value>\d[\d\s]{{2,}})",
+        fragment,
+        re.IGNORECASE,
+    )
+    if mileage_match:
+        mileage = parse_mileage_candidate(mileage_match.group("value"))
+        if mileage is not None:
+            extracted["mileage"] = mileage
+
+    return extracted
 
 
 def build_section_body_pattern(markers: tuple[str, ...], stop_markers: tuple[str, ...]) -> re.Pattern[str]:
@@ -1844,6 +2178,7 @@ def extract_amount_candidates_from_fragment(fragment: str | None) -> list[float]
 
 def is_axb_invoice_header_line(line: str) -> bool:
     normalized_line = normalize_line(line).lower().rstrip(":")
+    compact_line = normalized_line.replace(" ", "")
     return normalized_line in {
         "артикул",
         "кол-во",
@@ -1858,12 +2193,54 @@ def is_axb_invoice_header_line(line: str) -> bool:
         "в валюте:",
         "в т.ч. ндс",
         "в т ч ндс",
-    }
+    } or "rub" in compact_line
 
 
 def is_axb_invoice_stop_line(line: str) -> bool:
     normalized_line = normalize_line(line).lower()
     return normalized_line.startswith("всего наименований") or normalized_line in {"руководитель", "бухгалтер"}
+
+
+def is_axb_invoice_total_marker(line: str) -> bool:
+    compact_line = re.sub(r"[^A-Za-zА-Яа-яЁё]", "", normalize_line(line)).lower()
+    return compact_line == "всего" or bool(re.fullmatch(r"[bв][cс][eе][rг][oо]", compact_line))
+
+
+def extract_axb_invoice_fragment(text: str) -> str:
+    invoice_fragment = extract_fragment_after_marker(text, r"Счет\s+на\s+оплату", max_chars=7000)
+    if invoice_fragment:
+        return invoice_fragment
+
+    lines = [normalize_line(line) for line in text.splitlines()]
+    for index, line in enumerate(lines):
+        lowered_line = line.lower()
+        if not lowered_line or "товар" in lowered_line or "артикул" in lowered_line:
+            continue
+        if "на основании" not in lowered_line and "покупатель" not in lowered_line:
+            continue
+
+        search_window = "\n".join(lines[index : index + 48]).lower()
+        if "товар" not in search_window or "артикул" not in search_window:
+            continue
+        if "заказ-наряд" not in search_window and "автомобиль" not in search_window:
+            continue
+
+        start_index = max(0, index - 6)
+        while start_index > 0:
+            previous_line = lines[start_index - 1].lower()
+            if not previous_line:
+                break
+            if any(marker in previous_line for marker in ("поставщик", "получатель", "банк получателя", "образец заполнения")):
+                start_index -= 1
+                continue
+            if previous_line.startswith("сч.") or previous_line.startswith("cч.") or re.fullmatch(r"\d{6,}", previous_line):
+                start_index -= 1
+                continue
+            break
+
+        return "\n".join(filter(None, lines[start_index : min(len(lines), start_index + 160)])).strip()
+
+    return ""
 
 
 def parse_axb_quantity_candidate(line: str) -> Optional[tuple[float, Optional[str]]]:
@@ -1946,6 +2323,38 @@ LEADER_TRAK_ROW_PATTERN = re.compile(
     r"(?P<net>\d[\d\s]*(?:[.,]\d{2}))\s+"
     r"(?P<vat>\d[\d\s]*(?:[.,]\d{2}))\s+"
     r"(?P<gross>\d[\d\s]*(?:[.,]\d{2}))$",
+    re.IGNORECASE,
+)
+LOGISTICS_ROW_START_PATTERN = re.compile(r"^\d+\s+\S+", re.IGNORECASE)
+LOGISTICS_WORK_TAIL_PATTERN = re.compile(
+    r"^\d+(?:[.,]\d+)?\s+\d[\d\s]*(?:[.,]\d{2})\s+\d+(?:[.,]\d+)?\s+\d[\d\s]*(?:[.,]\d{0,2})?\s+\d+%\s+\d[\d\s]*(?:[.,]\d{2})\s+\d[\d\s]*(?:[.,]\d{2})$",
+    re.IGNORECASE,
+)
+LOGISTICS_PART_TAIL_PATTERN = re.compile(
+    r"^\d+(?:[.,]\d+)?\s+[A-Za-zА-Яа-я./-]{1,8}\s+\d[\d\s]*(?:[.,]\d{2})\s+\d+%\s+\d[\d\s]*(?:[.,]\d{2})\s+\d[\d\s]*(?:[.,]\d{2})$",
+    re.IGNORECASE,
+)
+LOGISTICS_WORK_ROW_PATTERN = re.compile(
+    r"^\d+\s+"
+    r"(?P<body>.+?)\s+"
+    r"(?P<qty>\d+(?:[.,]\d+)?)\s+"
+    r"(?P<price>\d[\d\s]*(?:[.,]\d{2}))\s+"
+    r"(?P<norm>\d+(?:[.,]\d+)?)\s+"
+    r"(?P<rate>\d[\d\s]*(?:[.,]\d{0,2})?)\s+"
+    r"\d+%\s+"
+    r"(?P<gross>\d[\d\s]*(?:[.,]\d{2}))\s+"
+    r"(?P<vat>\d[\d\s]*(?:[.,]\d{2}))$",
+    re.IGNORECASE,
+)
+LOGISTICS_PART_ROW_PATTERN = re.compile(
+    r"^\d+\s+"
+    r"(?P<body>.+?)\s+"
+    r"(?P<qty>\d+(?:[.,]\d+)?)\s+"
+    r"(?P<unit>[A-Za-zА-Яа-я./-]{1,8})\s+"
+    r"(?P<price>\d[\d\s]*(?:[.,]\d{2}))\s+"
+    r"\d+%\s+"
+    r"(?P<gross>\d[\d\s]*(?:[.,]\d{2}))\s+"
+    r"(?P<vat>\d[\d\s]*(?:[.,]\d{2}))$",
     re.IGNORECASE,
 )
 ANTARES_ROW_START_PATTERN = re.compile(r"^\d+\s+\S+", re.IGNORECASE)
@@ -2092,6 +2501,8 @@ def extract_ets_act_items(text: str) -> dict[str, list[dict[str, object]]]:
 
     works = [payload for payload in (parse_ets_act_work_row(line) for line in work_rows) if payload]
     parts = [payload for payload in (parse_ets_act_part_row(line) for line in part_rows) if payload]
+    if not works:
+        works = extract_ets_act_sparse_scanned_work_items(text)
     return {"works": works, "parts": parts}
 
 
@@ -2359,6 +2770,178 @@ def extract_leader_trak_items(text: str) -> dict[str, list[dict[str, object]]]:
             works.append(payload)
         else:
             parts.append(payload)
+    return {"works": works, "parts": parts}
+
+
+def is_logistics_noise_line(line: str) -> bool:
+    normalized_line = normalize_line(line)
+    lower_line = normalized_line.lower()
+    if not normalized_line:
+        return True
+    if lower_line.startswith("выполненные работы по заказ-наряду"):
+        return True
+    if lower_line.startswith("расходная накладная к заказ-наряду"):
+        return True
+    if lower_line.startswith("итого работ:"):
+        return True
+    if lower_line.startswith("итого материалов:"):
+        return True
+    if lower_line.startswith("итого по странице материалов:"):
+        return True
+    if lower_line.startswith("итого по причине обращения:"):
+        return True
+    if lower_line.startswith("итого по заказ-наряду"):
+        return True
+    if lower_line.startswith("всего по причине обращения:"):
+        return True
+    if lower_line.startswith("всего по заказ-наряду:"):
+        return True
+    if lower_line.startswith("рекомендации:"):
+        return True
+    if normalized_line in {
+        "№ Артикул Наименование Кол. оп. Цена н/ч Норма н/ч Ставка НДС Всего в т.ч. НДС",
+        "№ Артикул Наименование Кол-во Ед.изм. Цена Ставка НДС Всего в т.ч. НДС",
+        "1 2 3 4 5 6 7 8 9",
+        "1 2 3 4 5 6 7 8 9 10",
+    }:
+        return True
+    if re.fullmatch(r"[0-9a-f-]{16,}", lower_line):
+        return True
+    if re.fullmatch(r"страница:\s*\d+", lower_line):
+        return True
+    return False
+
+
+def split_logistics_part_body(value: str) -> tuple[Optional[str], str]:
+    normalized_value = normalize_line(value)
+    tokens = normalized_value.split()
+    if len(tokens) < 2:
+        return None, normalized_value
+
+    article_tokens: list[str] = []
+    for token in tokens:
+        if re.search(r"[А-Яа-я]", token):
+            break
+        article_tokens.append(token)
+
+    if not article_tokens:
+        return None, normalized_value
+
+    part_name = normalize_line(" ".join(tokens[len(article_tokens) :]))
+    article = normalize_article_value("".join(article_tokens))
+    if not part_name:
+        return None, normalized_value
+    return article, part_name
+
+
+def extract_logistics_row_buffers(
+    text: str,
+    *,
+    marker_pattern: str,
+    stop_patterns: tuple[str, ...],
+    tail_pattern: re.Pattern[str],
+    max_chars: int = 30000,
+) -> list[str]:
+    fragment = extract_fragment_after_marker(
+        text,
+        marker_pattern,
+        stop_patterns=stop_patterns,
+        max_chars=max_chars,
+    )
+    if not fragment:
+        return []
+
+    lines = [normalize_line(line) for line in fragment.splitlines() if normalize_line(line)]
+    buffers: list[str] = []
+    current_buffer: list[str] = []
+
+    for line in lines:
+        if is_logistics_noise_line(line):
+            continue
+        if current_buffer and tail_pattern.match(line):
+            current_buffer.append(line)
+            buffers.append(normalize_line(" ".join(current_buffer)))
+            current_buffer = []
+            continue
+        if LOGISTICS_ROW_START_PATTERN.match(line):
+            if current_buffer:
+                buffers.append(normalize_line(" ".join(current_buffer)))
+            current_buffer = [line]
+            continue
+        if current_buffer:
+            current_buffer.append(line)
+
+    if current_buffer:
+        buffers.append(normalize_line(" ".join(current_buffer)))
+    return buffers
+
+
+def parse_logistics_work_row(line: str) -> Optional[dict[str, object]]:
+    match = LOGISTICS_WORK_ROW_PATTERN.match(line)
+    if match is None:
+        return None
+
+    quantity = parse_decimal_value(match.group("qty"))
+    price = parse_amount(match.group("price"))
+    standard_hours = parse_decimal_value(match.group("norm"))
+    line_total = parse_amount(match.group("gross"))
+    work_name = normalize_line(match.group("body"))
+    if quantity is None or price is None or standard_hours is None or line_total is None or not work_name:
+        return None
+
+    return {
+        "work_code": None,
+        "work_name": work_name[:500],
+        "quantity": quantity,
+        "unit_name": None,
+        "price": price,
+        "line_total": line_total,
+        "standard_hours": standard_hours,
+    }
+
+
+def parse_logistics_part_row(line: str) -> Optional[dict[str, object]]:
+    match = LOGISTICS_PART_ROW_PATTERN.match(line)
+    if match is None:
+        return None
+
+    quantity = parse_decimal_value(match.group("qty"))
+    price = parse_amount(match.group("price"))
+    line_total = parse_amount(match.group("gross"))
+    if quantity is None or price is None or line_total is None:
+        return None
+
+    article, part_name = split_logistics_part_body(match.group("body"))
+    if not part_name:
+        return None
+
+    return {
+        "article": article,
+        "part_name": part_name[:500],
+        "quantity": quantity,
+        "unit_name": normalize_unit_name(match.group("unit")),
+        "price": price,
+        "line_total": line_total,
+    }
+
+
+def extract_logistics_items(text: str) -> dict[str, list[dict[str, object]]]:
+    work_rows = extract_logistics_row_buffers(
+        text,
+        marker_pattern=r"Выполненные\s+работы\s+по\s+заказ[- ]наряду",
+        stop_patterns=(r"Итого\s+работ:",),
+        tail_pattern=LOGISTICS_WORK_TAIL_PATTERN,
+    )
+    part_rows = extract_logistics_row_buffers(
+        text,
+        marker_pattern=r"Расходная\s+накладная\s+к\s+заказ[- ]наряду",
+        stop_patterns=(r"Итого\s+материал", r"Итого\s+по\s+причине\s+обращения"),
+        tail_pattern=LOGISTICS_PART_TAIL_PATTERN,
+        max_chars=40000,
+    )
+
+    works = [payload for payload in (parse_logistics_work_row(line) for line in work_rows) if payload]
+    parts = [payload for payload in (parse_logistics_part_row(line) for line in part_rows) if payload]
     return {"works": works, "parts": parts}
 
 
@@ -2710,19 +3293,33 @@ def is_axb_article_candidate(line: str) -> bool:
         return True
     if compact_line.isdigit() and len(compact_line) <= 2:
         return True
+    if WORK_CODE_TOKEN_PATTERN.fullmatch(compact_line) or ARTICLE_TOKEN_PATTERN.fullmatch(compact_line) or AXB_ARTICLE_TOKEN_PATTERN.fullmatch(compact_line):
+        return True
     if parse_amount(normalized_line) is not None:
         return False
     if normalized_line.isdigit() and len(normalized_line) == 1:
         return False
-    if WORK_CODE_TOKEN_PATTERN.fullmatch(compact_line) or ARTICLE_TOKEN_PATTERN.fullmatch(compact_line):
-        return True
     return False
+
+
+def is_axb_material_article_candidate(line: str) -> bool:
+    normalized_line = normalize_line(line)
+    compact_line = normalized_line.replace(" ", "").rstrip("*|")
+    if not compact_line:
+        return False
+    if " " in normalized_line and not compact_line.isdigit():
+        return False
+    if compact_line.isdigit() and len(compact_line) <= 2:
+        return False
+    if WORK_CODE_TOKEN_PATTERN.fullmatch(compact_line) or ARTICLE_TOKEN_PATTERN.fullmatch(compact_line) or AXB_ARTICLE_TOKEN_PATTERN.fullmatch(compact_line):
+        return True
+    return compact_line.isdigit() and len(compact_line) >= 3
 
 
 def extract_axb_invoice_totals(lines: list[str]) -> tuple[list[float], int]:
     total_marker_index = -1
     for index, line in enumerate(lines):
-        if normalize_line(line).lower() == "всего":
+        if is_axb_invoice_total_marker(line):
             total_marker_index = index
 
     if total_marker_index < 0:
@@ -2864,8 +3461,156 @@ def select_axb_batch_prices(
     return best_sequence
 
 
+def extract_axb_material_parts(text: str) -> list[dict[str, object]]:
+    section_pattern = re.compile(
+        r"Расходная\s+накладная\s+к\s+заказ[- ]наряду",
+        re.IGNORECASE,
+    )
+    matches = list(section_pattern.finditer(text))
+    if not matches:
+        return []
+
+    parts: list[dict[str, object]] = []
+    for index, match in enumerate(matches):
+        section_start = match.start()
+        section_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        section_text = text[section_start:section_end]
+        lines = [normalize_line(line) for line in section_text.splitlines() if normalize_line(line)]
+        if not lines:
+            continue
+
+        try:
+            name_header_index = next(index for index, line in enumerate(lines) if line.lower() == "наименование")
+        except StopIteration:
+            continue
+
+        body_lines = lines[name_header_index + 1 :]
+        page_end_index = next(
+            (
+                index
+                for index, line in enumerate(body_lines)
+                if re.search(
+                    r"итого\s+по\s+причине\s+обращения|всего\s+по\s+причине\s+обращения|итого\s+по\s+заказ[- ]наряду|универсальный\s+передаточный",
+                    line,
+                    re.IGNORECASE,
+                )
+            ),
+            len(body_lines),
+        )
+        lookback_lines = [
+            line
+            for line in lines[max(0, name_header_index - 6) : name_header_index]
+            if is_axb_material_article_candidate(line)
+        ]
+        item_lines = lookback_lines + body_lines[:page_end_index]
+
+        raw_items: list[dict[str, object]] = []
+        current_item: Optional[dict[str, object]] = None
+        for line in item_lines:
+            lowered_line = line.lower()
+            if lowered_line in {
+                "артикул",
+                "наименование",
+                "кол-во",
+                "ед.изм.",
+                "ед. изм. цена",
+                "коп-во / едизм. цена скидка",
+            }:
+                continue
+            if any(
+                marker in lowered_line
+                for marker in (
+                    "заказ-наряд",
+                    "на сумму",
+                    "ндс",
+                    "кол-во ед.изм. цена",
+                    "коп-во / едизм. цена",
+                )
+            ):
+                continue
+            if re.search(r"итого\s+по\s+странице\s+материалов|итого\s+материалов", lowered_line, re.IGNORECASE):
+                continue
+            if is_axb_invoice_header_line(line):
+                continue
+            if is_axb_invoice_total_marker(line) or "скидка" in lowered_line:
+                continue
+            if re.fullmatch(r"[nnoо№]+", lowered_line):
+                continue
+            if re.fullmatch(r"\d+", line) and len(line) <= 2:
+                continue
+            if parse_axb_quantity_candidate(line) is not None:
+                continue
+            if re.match(r"^(?:шт|шt|шг|л/дмз|л/дм3|кг|г|м|метр)\b", lowered_line):
+                continue
+            if parse_amount(line) is not None and len(re.findall(r"\d", line)) <= 8:
+                continue
+
+            if is_axb_material_article_candidate(line):
+                normalized_code = normalize_article_value(line) or normalize_text(line)
+                if current_item is None or current_item.get("code") or current_item.get("name_lines"):
+                    current_item = {"code": normalized_code, "name_lines": []}
+                    raw_items.append(current_item)
+                else:
+                    current_item["code"] = normalized_code
+                continue
+
+            if current_item is None:
+                current_item = {"code": None, "name_lines": [line]}
+                raw_items.append(current_item)
+                continue
+
+            current_item.setdefault("name_lines", []).append(line)
+
+        total_marker_index = -1
+        for body_index, line in enumerate(body_lines):
+            if is_axb_invoice_total_marker(line):
+                total_marker_index = body_index
+        if total_marker_index < 0:
+            continue
+
+        line_totals: list[float] = []
+        for line in body_lines[total_marker_index + 1 :]:
+            lowered_line = line.lower()
+            if "ндс" in lowered_line or lowered_line.startswith(("итого по", "итого материалов", "всего по")):
+                break
+            amount = parse_amount(line)
+            if amount is None or amount <= 0:
+                continue
+            line_totals.append(amount)
+
+        if len(line_totals) >= 2 and line_totals[-1] > max(line_totals[:-1]):
+            line_totals = line_totals[:-1]
+        if not line_totals:
+            continue
+
+        named_items = [
+            item
+            for item in raw_items
+            if normalize_line(" ".join(item.get("name_lines", [])))
+        ]
+        if len(named_items) > len(line_totals):
+            named_items = named_items[: len(line_totals)]
+
+        for item_payload, line_total in zip(named_items, line_totals):
+            part_name = normalize_line(" ".join(item_payload.get("name_lines", [])))[:500]
+            if not part_name:
+                continue
+            parts.append(
+                {
+                    "article": normalize_article_value(str(item_payload.get("code"))) if item_payload.get("code") else None,
+                    "part_name": part_name,
+                    "quantity": 1.0,
+                    "unit_name": "шт",
+                    "price": float(line_total),
+                    "line_total": float(line_total),
+                }
+            )
+
+    return parts
+
+
 def extract_axb_invoice_items(text: str) -> dict[str, list[dict[str, object]]]:
-    invoice_fragment = extract_fragment_after_marker(text, r"Счет\s+на\s+оплату", max_chars=7000)
+    invoice_fragment = extract_axb_invoice_fragment(text)
     if not invoice_fragment:
         return {"works": [], "parts": []}
 
@@ -2876,15 +3621,37 @@ def extract_axb_invoice_items(text: str) -> dict[str, list[dict[str, object]]]:
 
     try:
         names_start = next(index for index, line in enumerate(lines) if line.lower() == "товар")
-        names_end = next(index for index, line in enumerate(lines[names_start + 1 :], start=names_start + 1) if line.lower() == "артикул")
+        article_header_index = next(
+            index for index, line in enumerate(lines[names_start + 1 :], start=names_start + 1) if line.lower() == "артикул"
+        )
+        quantity_header_index = next(
+            index for index, line in enumerate(lines[article_header_index + 1 :], start=article_header_index + 1) if line.lower().startswith("кол-во")
+        )
     except StopIteration:
         return {"works": [], "parts": []}
 
-    names = collapse_axb_name_lines(lines[names_start + 1 : names_end], expected_count)
+    pending_codes: list[str] = []
+    trailing_name_lines: list[str] = []
+    seen_non_article_after_header = False
+    for line in lines[article_header_index + 1 : quantity_header_index]:
+        if not seen_non_article_after_header and is_axb_article_candidate(line):
+            normalized_code = normalize_article_value(line) or normalize_text(line)
+            if normalized_code:
+                pending_codes.append(normalized_code)
+            continue
+        seen_non_article_after_header = True
+        if is_axb_article_candidate(line):
+            continue
+        trailing_name_lines.append(line)
+
+    names = collapse_axb_name_lines(
+        lines[names_start + 1 : article_header_index] + trailing_name_lines,
+        expected_count,
+    )
     if len(names) != expected_count:
         return {"works": [], "parts": []}
 
-    body_lines = lines[names_end + 1 :]
+    body_lines = lines[quantity_header_index + 1 :]
     total_marker_index = next((index for index, line in enumerate(body_lines) if line.lower() == "всего"), len(body_lines))
     body_lines = body_lines[:total_marker_index]
     invoice_total_index = next(
@@ -2912,7 +3679,6 @@ def extract_axb_invoice_items(text: str) -> dict[str, list[dict[str, object]]]:
         index += 1
 
     rows: list[dict[str, object]] = []
-    pending_codes: list[str] = []
     body_index = 0
     trailing_amounts: list[float] = []
 
@@ -3053,13 +3819,15 @@ def apply_profile_specific_item_fallbacks(
     normalization_notes: list[str],
 ) -> dict[str, list[dict[str, object]]]:
     normalized_profile_scope = normalize_ocr_rule_code(profile_scope)
-    if normalized_profile_scope not in {"axb", "antares", "ets_act", "sibtrakscan", "leader_trak", "gruzovye_rezervy"}:
+    if normalized_profile_scope not in {"axb", "antares", "ets_act", "sibtrakscan", "leader_trak", "gruzovye_rezervy", "logistics"}:
         return extracted_items
 
     if normalized_profile_scope == "antares":
         fallback_items = extract_antares_items(text)
     elif normalized_profile_scope == "ets_act":
         fallback_items = extract_ets_act_items(text)
+    elif normalized_profile_scope == "logistics":
+        fallback_items = extract_logistics_items(text)
     elif normalized_profile_scope == "sibtrakscan":
         fallback_items = extract_sibtrakscan_items(text)
     elif normalized_profile_scope == "leader_trak":
@@ -3068,11 +3836,38 @@ def apply_profile_specific_item_fallbacks(
         fallback_items = extract_gruzovye_rezervy_items(text)
     else:
         fallback_items = extract_axb_invoice_items(text)
-    fallback_count = len(fallback_items["works"]) + len(fallback_items["parts"])
+        material_parts = extract_axb_material_parts(text)
+        if material_parts and len(material_parts) > len(fallback_items["parts"]):
+            fallback_items = {
+                "works": fallback_items["works"],
+                "parts": material_parts,
+            }
+    header_work_total = float(extracted_fields["work_total"]) if isinstance(extracted_fields.get("work_total"), (int, float)) else None
+    header_parts_total = float(extracted_fields["parts_total"]) if isinstance(extracted_fields.get("parts_total"), (int, float)) else None
+    header_grand_total = float(extracted_fields["grand_total"]) if isinstance(extracted_fields.get("grand_total"), (int, float)) else None
+    current_count = len(extracted_items.get("works") or []) + len(extracted_items.get("parts") or [])
+    fallback_fills_missing_section = (
+        bool(fallback_items["works"]) and not bool(extracted_items.get("works"))
+    ) or (
+        bool(fallback_items["parts"]) and not bool(extracted_items.get("parts"))
+    )
+    fallback_drops_existing_section = (
+        bool(extracted_items.get("works")) and not bool(fallback_items["works"])
+    ) or (
+        bool(extracted_items.get("parts")) and not bool(fallback_items["parts"])
+    )
+    candidate_items = fallback_items
+    if normalized_profile_scope == "ets_act" and fallback_fills_missing_section and fallback_drops_existing_section:
+        candidate_items = {
+            "works": list(fallback_items["works"] or extracted_items.get("works") or []),
+            "parts": list(fallback_items["parts"] or extracted_items.get("parts") or []),
+        }
+
+    fallback_count = len(candidate_items["works"]) + len(candidate_items["parts"])
     if fallback_count == 0:
         return extracted_items
 
-    fallback_work_total, fallback_parts_total = summarize_line_totals(fallback_items)
+    fallback_work_total, fallback_parts_total = summarize_line_totals(candidate_items)
     fallback_grand_total = None
     if fallback_work_total is not None and fallback_parts_total is not None:
         fallback_grand_total = round(fallback_work_total + fallback_parts_total, 2)
@@ -3081,11 +3876,6 @@ def apply_profile_specific_item_fallbacks(
     current_grand_total = None
     if current_work_total is not None and current_parts_total is not None:
         current_grand_total = round(current_work_total + current_parts_total, 2)
-
-    header_work_total = float(extracted_fields["work_total"]) if isinstance(extracted_fields.get("work_total"), (int, float)) else None
-    header_parts_total = float(extracted_fields["parts_total"]) if isinstance(extracted_fields.get("parts_total"), (int, float)) else None
-    header_grand_total = float(extracted_fields["grand_total"]) if isinstance(extracted_fields.get("grand_total"), (int, float)) else None
-    current_count = len(extracted_items.get("works") or []) + len(extracted_items.get("parts") or [])
 
     fallback_matches_header = header_grand_total is not None and amounts_match(fallback_grand_total, header_grand_total, tolerance=3.0)
     current_matches_header = header_grand_total is not None and amounts_match(current_grand_total, header_grand_total, tolerance=3.0)
@@ -3097,6 +3887,8 @@ def apply_profile_specific_item_fallbacks(
     )
 
     if (
+        (fallback_fills_missing_section and not fallback_drops_existing_section)
+        or
         fallback_count > current_count
         or fallback_match_score > current_match_score
         or (fallback_matches_header and not current_matches_header)
@@ -3109,11 +3901,20 @@ def apply_profile_specific_item_fallbacks(
             normalization_notes.append("sibtrakscan_items_restored_from_task_sections")
         elif normalized_profile_scope == "leader_trak":
             normalization_notes.append("leader_trak_items_restored_from_service_table")
+        elif normalized_profile_scope == "logistics":
+            normalization_notes.append("logistics_items_restored_from_tabular_sections")
         elif normalized_profile_scope == "gruzovye_rezervy":
             normalization_notes.append("gruzovye_rezervy_items_restored_from_sections")
         else:
             normalization_notes.append("axb_invoice_items_restored_from_payment_invoice")
-        return fallback_items
+        return candidate_items
+
+    if normalized_profile_scope == "axb" and fallback_items["parts"] and not extracted_items.get("parts"):
+        normalization_notes.append("axb_parts_restored_from_material_sections")
+        return {
+            "works": extracted_items.get("works", []),
+            "parts": fallback_items["parts"],
+        }
 
     return extracted_items
 
@@ -3194,8 +3995,16 @@ def apply_profile_specific_total_fallbacks(
             max_chars=250,
         )
         work_amounts = extract_amount_candidates_from_fragment(work_fragment)
-        if len(work_amounts) >= 3:
-            extracted_fields["work_total"] = work_amounts[-3]
+        work_total_candidate = None
+        if len(work_amounts) >= 8 and work_amounts[-1] > max(work_amounts[:-1]):
+            work_total_candidate = work_amounts[-1]
+        elif len(work_amounts) >= 3:
+            work_total_candidate = work_amounts[-3]
+        if work_total_candidate is not None and (
+            not isinstance(extracted_fields.get("work_total"), (int, float))
+            or float(extracted_fields["work_total"]) < float(work_total_candidate) * 0.5
+        ):
+            extracted_fields["work_total"] = work_total_candidate
             confidence_map["work_total"] = max(confidence_map.get("work_total", 0.0), 0.9)
             normalization_notes.append("work_total_restored_from_ets_act_summary")
 
@@ -3220,6 +4029,69 @@ def apply_profile_specific_total_fallbacks(
                     extracted_fields["parts_total"] = derived_parts_total
                     confidence_map["parts_total"] = max(confidence_map.get("parts_total", 0.0), 0.88)
                     normalization_notes.append("parts_total_derived_from_ets_act_summary")
+
+        invoice_total_fragment = extract_fragment_after_marker(
+            text,
+            r"Всего\s+к\s+оплате:",
+            stop_patterns=(r"Всего\s+наименований", r"Предпр", r"Счет-фактура"),
+            max_chars=180,
+        )
+        invoice_total_amounts = extract_amount_candidates_from_fragment(invoice_total_fragment)
+        if len(invoice_total_amounts) >= 3:
+            if len(invoice_total_amounts) >= 4 and amounts_match(invoice_total_amounts[0], invoice_total_amounts[1], tolerance=0.01):
+                invoice_net_total = invoice_total_amounts[0]
+                invoice_vat_total = invoice_total_amounts[2]
+                invoice_grand_total = invoice_total_amounts[3]
+            else:
+                invoice_net_total = invoice_total_amounts[-3]
+                invoice_vat_total = invoice_total_amounts[-2]
+                invoice_grand_total = invoice_total_amounts[-1]
+
+            if (
+                not isinstance(extracted_fields.get("vat_total"), (int, float))
+                or float(extracted_fields["vat_total"]) < invoice_vat_total * 0.5
+            ):
+                extracted_fields["vat_total"] = invoice_vat_total
+                confidence_map["vat_total"] = max(confidence_map.get("vat_total", 0.0), 0.88)
+                normalization_notes.append("vat_total_restored_from_ets_invoice_summary")
+
+            if (
+                not isinstance(extracted_fields.get("grand_total"), (int, float))
+                or float(extracted_fields["grand_total"]) < invoice_grand_total * 0.5
+            ):
+                extracted_fields["grand_total"] = invoice_grand_total
+                confidence_map["grand_total"] = max(confidence_map.get("grand_total", 0.0), 0.9)
+                normalization_notes.append("grand_total_restored_from_ets_invoice_summary")
+
+            if isinstance(extracted_fields.get("work_total"), (int, float)):
+                derived_parts_total = round(invoice_net_total - float(extracted_fields["work_total"]), 2)
+                if derived_parts_total > 0 and (
+                    not isinstance(extracted_fields.get("parts_total"), (int, float))
+                    or float(extracted_fields["parts_total"]) < derived_parts_total * 0.5
+                ):
+                    extracted_fields["parts_total"] = derived_parts_total
+                    confidence_map["parts_total"] = max(confidence_map.get("parts_total", 0.0), 0.88)
+                    normalization_notes.append("parts_total_derived_from_ets_invoice_summary")
+
+        sparse_totals = extract_ets_act_sparse_scanned_totals(text)
+        if sparse_totals:
+            for field_name, confidence, note in (
+                ("work_total", 0.9, "work_total_restored_from_ets_act_sparse_scan"),
+                ("parts_total", 0.88, "parts_total_restored_from_ets_act_sparse_scan"),
+                ("vat_total", 0.88, "vat_total_restored_from_ets_act_sparse_scan"),
+                ("grand_total", 0.9, "grand_total_restored_from_ets_act_sparse_scan"),
+            ):
+                sparse_value = sparse_totals.get(field_name)
+                if sparse_value is None:
+                    continue
+                current_value = extracted_fields.get(field_name)
+                should_replace = not isinstance(current_value, (int, float))
+                if isinstance(current_value, (int, float)) and float(current_value) < float(sparse_value) * 0.5:
+                    should_replace = True
+                if should_replace:
+                    extracted_fields[field_name] = sparse_value
+                    confidence_map[field_name] = max(confidence_map.get(field_name, 0.0), confidence)
+                    normalization_notes.append(note)
         return
 
     if normalized_profile_scope == "sibtrakscan":
@@ -4267,6 +5139,38 @@ def save_pillow_optimized_image(source_path: Path, output_path: Path) -> bool:
         return False
 
 
+def save_pdf_header_crop_for_ocr(source_path: Path, output_path: Path) -> bool:
+    if not is_pillow_available():
+        return False
+
+    try:
+        with Image.open(source_path) as image:
+            rgb_image = image.convert("RGB")
+            image_width, image_height = rgb_image.size
+            if image_width <= 0 or image_height <= 0:
+                return False
+
+            top = max(0, int(image_height * 0.10))
+            bottom = min(image_height, int(image_height * 0.26))
+            if bottom <= top:
+                return False
+
+            cropped_image = rgb_image.crop((0, top, image_width, bottom))
+            longest_side = max(cropped_image.size)
+            if longest_side and longest_side < 2200:
+                scale = 2200 / float(longest_side)
+                resized_size = (
+                    max(1, int(round(cropped_image.width * scale))),
+                    max(1, int(round(cropped_image.height * scale))),
+                )
+                cropped_image = cropped_image.resize(resized_size, Image.Resampling.LANCZOS)
+
+            cropped_image.save(output_path, format="JPEG", quality=95, optimize=True)
+            return True
+    except Exception:
+        return False
+
+
 def optimize_existing_image_for_ocr(path: Path) -> None:
     temporary_output_path = path.with_name(f"{path.stem}_optimized.jpg")
     if save_pillow_optimized_image(path, temporary_output_path):
@@ -4379,6 +5283,14 @@ def extract_scanned_pdf_text(path: Path) -> tuple[str, str]:
     try:
         ocr_results, backend = run_ocr_backend(image_paths)
         chunks = [select_best_text_variant(ocr_results.get(image_path.as_posix(), "")) for image_path in image_paths]
+
+        header_crop_path = Path(temp_dir.name) / "ocr_page_1_header.jpg"
+        if image_paths and save_pdf_header_crop_for_ocr(image_paths[0], header_crop_path):
+            header_results, _ = run_ocr_backend([header_crop_path])
+            header_text = select_best_text_variant(header_results.get(header_crop_path.as_posix(), ""))
+            if header_text and re.search(r"(?:гос\.?\s*номер|vin|пробег|tc\s*:|автомобиль)", header_text, re.IGNORECASE):
+                chunks.insert(0, header_text)
+
         return "\n".join(filter(None, chunks)).strip(), backend
     finally:
         temp_dir.cleanup()
@@ -4415,6 +5327,7 @@ def extract_document_text(path: Path, source_type: str) -> tuple[str, str, Optio
 
 def parse_document_text(text: str, db: Session | None = None, *, profile_scope: str | None = None) -> dict[str, object]:
     text = select_best_text_variant(text)
+    normalized_profile_scope = normalize_ocr_rule_code(profile_scope)
     header_text = extract_header_text(text)
     vehicle_section_text = extract_vehicle_section_text(text)
     field_search_texts: list[str] = []
@@ -4465,7 +5378,12 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
         confidence_map["mileage"] = 0.9
     else:
         mileage_found = False
-        if not any(has_explicit_missing_mileage(field_text) for field_text in field_search_texts):
+        explicit_missing_mileage = any(has_explicit_missing_mileage(field_text) for field_text in field_search_texts)
+        logistics_blank_mileage = normalized_profile_scope == "logistics" and has_logistics_blank_mileage_field(text)
+        suppress_missing_mileage_review = explicit_missing_mileage or (
+            normalized_profile_scope == "logistics" and is_logistics_trailer_vehicle_context(text)
+        ) or logistics_blank_mileage
+        if not explicit_missing_mileage:
             for field_text in field_search_texts:
                 mileage, mileage_confidence, _ = extract_header_field(
                     field_text,
@@ -4480,7 +5398,7 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
                     confidence_map["mileage"] = float(mileage_confidence or 0.82)
                     mileage_found = True
                     break
-        if not mileage_found:
+        if not mileage_found and not suppress_missing_mileage_review:
             manual_review_reasons.append("mileage_missing")
 
     if section_plate_number:
@@ -4556,6 +5474,24 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
             extracted_fields["service_name"] = service_candidate[:120]
             confidence_map["service_name"] = float(service_name_confidence or 0.58)
 
+    if normalized_profile_scope == "ets_act":
+        ets_scanned_fields = extract_ets_act_scanned_header_fields(text)
+        for field_name, confidence in (
+            ("order_number", 0.9),
+            ("plate_number", 0.88),
+            ("vin", 0.9),
+            ("mileage", 0.88),
+        ):
+            field_value = ets_scanned_fields.get(field_name)
+            if field_value is None or field_name in extracted_fields:
+                continue
+            extracted_fields[field_name] = field_value
+            confidence_map[field_name] = max(confidence_map.get(field_name, 0.0), confidence)
+            if field_name == "order_number":
+                remove_manual_review_reason(manual_review_reasons, "order_number_missing")
+            elif field_name == "mileage":
+                remove_manual_review_reason(manual_review_reasons, "mileage_missing")
+
     for field_name, patterns in TOTAL_PATTERNS.items():
         amount, amount_confidence, _ = extract_header_field(
             text,
@@ -4593,6 +5529,19 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
             confidence_map=confidence_map,
         )
     )
+
+    if normalized_profile_scope == "gruzovye_rezervy" and is_gruzovye_rezervy_invoice_only_document(text):
+        removed_reasons = []
+        if "order_number_missing" in manual_review_reasons:
+            remove_manual_review_reason(manual_review_reasons, "order_number_missing")
+            removed_reasons.append("order_number_missing")
+        if "mileage_missing" in manual_review_reasons:
+            remove_manual_review_reason(manual_review_reasons, "mileage_missing")
+            removed_reasons.append("mileage_missing")
+        if removed_reasons:
+            normalization_notes.append(
+                "gruzovye_rezervy_invoice_only_review_suppressed:" + ",".join(removed_reasons)
+            )
 
     return {
         "extracted_fields": extracted_fields,

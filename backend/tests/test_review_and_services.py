@@ -285,6 +285,34 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             self.assertEqual(service_item.contact, "manual@example.com")
             self.assertEqual(service_item.comment, "Manual comment")
 
+    def test_cannot_assign_employee_to_archived_vehicle(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            archived_vehicle = Vehicle(
+                external_id="truck-archived",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="X999XX116",
+                brand="Archived",
+                model="Truck",
+                status=VehicleStatus.ARCHIVED,
+            )
+            db.add(archived_vehicle)
+            db.commit()
+            archived_vehicle_id = archived_vehicle.id
+
+        response = self.client.post(
+            "/api/users/2/vehicle-assignments",
+            headers=headers,
+            json={
+                "vehicle_id": archived_vehicle_id,
+                "starts_at": "2025-02-01",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"], "Нельзя назначить сотрудника на архивную технику")
+
 
 if __name__ == "__main__":
     unittest.main()

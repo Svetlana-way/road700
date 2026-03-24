@@ -6,9 +6,34 @@ export const API_BASE_URL =
     ? "http://localhost:8000/api"
     : "/api");
 
+function formatApiDetail(detail: unknown): string | null {
+  if (typeof detail === "string" && detail.trim()) {
+    return detail;
+  }
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) {
+    return null;
+  }
+
+  const payload = detail as Record<string, unknown>;
+  const dependency = typeof payload.dependency === "string" ? payload.dependency.trim() : "";
+  const message = typeof payload.message === "string" ? payload.message.trim() : "";
+  if (dependency && message) {
+    return `${dependency}: ${message}`;
+  }
+  if (message) {
+    return message;
+  }
+
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return null;
+  }
+}
+
 async function readApiError(response: Response) {
-  const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
-  return payload?.detail || `Ошибка запроса: ${response.status}`;
+  const payload = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+  return formatApiDetail(payload?.detail) || `Ошибка запроса: ${response.status}`;
 }
 
 export async function loginRequest<T>(username: string, password: string): Promise<T> {

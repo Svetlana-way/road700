@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.api.deps import get_current_admin, get_db
 from app.core.security import get_password_hash
 from app.models.audit import AuditLog
-from app.models.enums import UserRole
+from app.models.enums import UserRole, VehicleStatus
 from app.models.user import User
 from app.models.vehicle import Vehicle, VehicleAssignmentHistory
 from app.schemas.user import (
@@ -23,6 +23,7 @@ from app.schemas.user import (
     UserUpdateRequest,
     UserCreateRequest,
 )
+from app.services.password_reset_tokens import invalidate_password_reset_tokens
 
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -158,6 +159,11 @@ def log_user_event(
 def validate_assignment_dates(starts_at: date, ends_at: date | None) -> None:
     if ends_at is not None and ends_at < starts_at:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Дата окончания не может быть раньше даты начала")
+
+
+def ensure_vehicle_is_assignable(vehicle: Vehicle) -> None:
+    if vehicle.status == VehicleStatus.ARCHIVED:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нельзя назначить сотрудника на архивную технику")
 
 
 def assignment_ranges_overlap(
@@ -313,9 +319,11 @@ def update_user(
         user.role = update_data["role"]
     if "is_active" in update_data and update_data["is_active"] is not None:
         user.is_active = bool(update_data["is_active"])
+    invalidated_tokens = 0
     if "password" in update_data:
         normalized_password = validate_password(update_data.get("password"))
         if normalized_password:
+            invalidated_tokens = invalidate_password_reset_tokens(db, user.id)
             user.password_hash = get_password_hash(normalized_password)
 
     db.add(user)
@@ -332,6 +340,7 @@ def update_user(
             "role": user.role.value,
             "is_active": user.is_active,
             "password_updated": "password" in update_data and bool(normalize_text(update_data.get("password"))),
+            "invalidated_password_reset_tokens": invalidated_tokens,
         },
     )
     db.commit()
@@ -351,6 +360,7 @@ def reset_user_password(
     if normalized_password is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Новый пароль обязателен")
 
+    invalidated_tokens = invalidate_password_reset_tokens(db, user.id)
     user.password_hash = get_password_hash(normalized_password)
     db.add(user)
     log_user_event(
@@ -359,7 +369,7 @@ def reset_user_password(
         target_user=user,
         action_type="user_password_reset",
         old_value=None,
-        new_value={"password_reset": True},
+        new_value={"password_reset": True, "invalidated_password_reset_tokens": invalidated_tokens},
     )
     db.commit()
     db.refresh(user)
@@ -377,6 +387,7 @@ def create_vehicle_assignment(
     vehicle = db.scalar(select(Vehicle).where(Vehicle.id == payload.vehicle_id))
     if vehicle is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Техника не найдена")
+    ensure_vehicle_is_assignable(vehicle)
 
     starts_at = payload.starts_at or date.today()
     ends_at = payload.ends_at

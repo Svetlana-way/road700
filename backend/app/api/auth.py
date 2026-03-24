@@ -22,6 +22,7 @@ from app.schemas.auth import (
 )
 from app.schemas.user import UserRead
 from app.services.email_delivery import send_password_reset_email
+from app.services.password_reset_tokens import invalidate_password_reset_tokens
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -71,6 +72,7 @@ def change_password(
     if current_password == new_password:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Новый пароль должен отличаться от текущего")
 
+    invalidated_tokens = invalidate_password_reset_tokens(db, current_user.id)
     current_user.password_hash = get_password_hash(new_password)
     db.add(current_user)
     db.add(
@@ -80,7 +82,7 @@ def change_password(
             entity_id=str(current_user.id),
             action_type="user_password_changed",
             old_value=None,
-            new_value={"self_service": True},
+            new_value={"self_service": True, "invalidated_password_reset_tokens": invalidated_tokens},
         )
     )
     db.commit()
@@ -100,15 +102,7 @@ def request_password_reset(
         return PasswordResetRequestResponse(message=generic_message, delivery_method="none")
 
     now = datetime.now(timezone.utc)
-    existing_tokens = db.scalars(
-        select(PasswordResetToken).where(
-            PasswordResetToken.user_id == user.id,
-            PasswordResetToken.used_at.is_(None),
-        )
-    ).all()
-    for token_row in existing_tokens:
-        token_row.used_at = now
-        db.add(token_row)
+    invalidate_password_reset_tokens(db, user.id)
 
     raw_token = generate_secure_token()
     reset_token = PasswordResetToken(
@@ -168,6 +162,7 @@ def confirm_password_reset(
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Пользователь недоступен для восстановления пароля")
 
+    invalidate_password_reset_tokens(db, user.id)
     user.password_hash = get_password_hash(new_password)
     token_row.used_at = now
     db.add(user)

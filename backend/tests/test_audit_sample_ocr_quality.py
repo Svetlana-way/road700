@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from app.scripts.audit_sample_ocr_quality import AuditRow, build_doc_flags
+from app.scripts.audit_sample_ocr_quality import AuditRow, audit_documents, build_doc_flags, format_project_path, render_report
 
 
 class AuditSampleOcrQualityTestCase(unittest.TestCase):
@@ -59,6 +62,60 @@ class AuditSampleOcrQualityTestCase(unittest.TestCase):
         self.assertFalse(flags["works_lines"])
         self.assertFalse(flags["parts_lines"])
         self.assertFalse(flags["manual_review_free"])
+
+    def test_format_project_path_keeps_external_path_without_crashing(self) -> None:
+        path = Path("/tmp/ocr-audit-test/sample.pdf")
+
+        formatted = format_project_path(path)
+
+        self.assertEqual(formatted, str(path))
+
+    def test_render_report_uses_passed_source_dir_in_header(self) -> None:
+        row = AuditRow(
+            service_label="Test",
+            profile_scope="default",
+            relative_path="/tmp/ocr-audit-test/sample.pdf",
+            source_type="pdf",
+            extract_source="pdf_text",
+            extract_failure_reason=None,
+            extracted_fields={},
+            manual_review_reasons=[],
+            works_count=0,
+            parts_count=0,
+            invoice_only=False,
+        )
+
+        report = render_report([row], source_dir=Path("/tmp/ocr-audit-test"))
+
+        self.assertIn("Источник: `/tmp/ocr-audit-test`", report)
+
+    def test_audit_documents_parses_without_registry_enrichment(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            sample_path = Path(tmp_dir) / "sample.pdf"
+            sample_path.write_bytes(b"%PDF-1.4")
+
+            with (
+                patch(
+                    "app.services.document_processing.extract_document_text",
+                    return_value=("Заказ-наряд № 1 от 01.01.2026", "pdf_text", None),
+                ),
+                patch(
+                    "app.services.document_processing.parse_document_text",
+                    return_value={
+                        "extracted_fields": {"order_number": "1"},
+                        "manual_review_reasons": [],
+                        "extracted_items": {"works": [], "parts": []},
+                    },
+                ) as parse_mock,
+                patch(
+                    "app.services.document_processing.is_gruzovye_rezervy_invoice_only_document",
+                    return_value=False,
+                ),
+            ):
+                rows = audit_documents(Path(tmp_dir))
+
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(parse_mock.call_args.kwargs["db"])
 
 
 if __name__ == "__main__":

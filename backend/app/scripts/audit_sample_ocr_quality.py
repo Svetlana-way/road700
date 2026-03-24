@@ -7,11 +7,6 @@ from pathlib import Path
 from typing import Iterable
 
 from app.core.paths import PROJECT_ROOT
-from app.services.document_processing import (
-    extract_document_text,
-    is_gruzovye_rezervy_invoice_only_document,
-    parse_document_text,
-)
 
 DEFAULT_SOURCE_DIR = PROJECT_ROOT / "Заказ-наряды"
 DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "OCR_QUALITY_REPORT.md"
@@ -157,7 +152,20 @@ def build_doc_flags(row: AuditRow) -> dict[str, bool]:
     }
 
 
+def format_project_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(path)
+
+
 def audit_documents(source_dir: Path) -> list[AuditRow]:
+    from app.services.document_processing import (
+        extract_document_text,
+        is_gruzovye_rezervy_invoice_only_document,
+        parse_document_text,
+    )
+
     rows: list[AuditRow] = []
     for path in iter_source_files(source_dir):
         source_type = detect_source_type(path)
@@ -176,7 +184,7 @@ def audit_documents(source_dir: Path) -> list[AuditRow]:
             AuditRow(
                 service_label=infer_service_label(path),
                 profile_scope=profile_scope,
-                relative_path=str(path.relative_to(PROJECT_ROOT)),
+                relative_path=format_project_path(path),
                 source_type=source_type,
                 extract_source=extract_source,
                 extract_failure_reason=extract_failure_reason,
@@ -190,11 +198,11 @@ def audit_documents(source_dir: Path) -> list[AuditRow]:
     return rows
 
 
-def build_summary_section(rows: list[AuditRow]) -> list[str]:
+def build_summary_section(rows: list[AuditRow], *, source_dir: Path) -> list[str]:
     lines = [
         "# OCR Quality Report",
         "",
-        f"Источник: `{DEFAULT_SOURCE_DIR.relative_to(PROJECT_ROOT)}`",
+        f"Источник: `{format_project_path(source_dir)}`",
         "",
         "## Summary by Service",
         "",
@@ -287,9 +295,9 @@ def build_document_details(rows: list[AuditRow]) -> list[str]:
     return lines
 
 
-def render_report(rows: list[AuditRow]) -> str:
+def render_report(rows: list[AuditRow], *, source_dir: Path = DEFAULT_SOURCE_DIR) -> str:
     sections: list[str] = []
-    sections.extend(build_summary_section(rows))
+    sections.extend(build_summary_section(rows, source_dir=source_dir))
     sections.extend(build_priority_section(rows))
     sections.extend(build_document_details(rows))
     return "\n".join(sections).strip() + "\n"
@@ -305,7 +313,7 @@ def main() -> None:
         raise FileNotFoundError(f"Sample folder not found: {source_dir}")
 
     rows = audit_documents(source_dir)
-    report_text = render_report(rows)
+    report_text = render_report(rows, source_dir=source_dir)
     output_path.write_text(report_text, encoding="utf-8")
     print(f"Wrote OCR quality report for {len(rows)} documents to {output_path}")
 

@@ -326,6 +326,14 @@ def set_primary_document_for_repair(target_document: Document, documents: list[D
     target_document.repair.source_document_id = target_document.id
 
 
+def ensure_document_can_be_primary(document: Document) -> None:
+    if document.status == DocumentStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Archived documents cannot be primary",
+        )
+
+
 def pick_replacement_primary_document(repair: Repair, archived_document_id: int) -> Document | None:
     candidates = [
         item
@@ -1037,6 +1045,12 @@ def compare_documents(
     left_document = get_visible_document(db, current_user, document_id)
     right_document = get_visible_document(db, current_user, with_document_id)
 
+    if left_document.id == right_document.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot compare a document with itself",
+        )
+
     if left_document.repair_id != right_document.repair_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1091,6 +1105,7 @@ def set_primary_document(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only order documents and repeat scans can be primary",
         )
+    ensure_document_can_be_primary(document)
 
     sibling_documents = db.execute(
         select(Document)
@@ -1152,10 +1167,14 @@ def review_document_comparison(
 
     compared_document = get_visible_document(db, current_admin, document_id)
     primary_document = get_visible_document(db, current_admin, payload.with_document_id)
+    if compared_document.id == primary_document.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot compare a document with itself")
     if compared_document.repair_id != primary_document.repair_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Documents must belong to the same repair")
     if not primary_document.is_primary:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reference document must be primary")
+    ensure_document_can_be_primary(compared_document)
+    ensure_document_can_be_primary(primary_document)
 
     sibling_documents = db.execute(
         select(Document)

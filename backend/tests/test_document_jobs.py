@@ -17,7 +17,7 @@ from app.core.security import get_password_hash
 from app.db.base import Base
 from app.main import app
 from app.models.document import Document
-from app.models.enums import DocumentStatus, ImportStatus, RepairStatus, UserRole
+from app.models.enums import DocumentKind, DocumentStatus, ImportStatus, RepairStatus, UserRole
 from app.models.imports import ImportJob
 from app.models.user import User
 
@@ -150,6 +150,47 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         document_payload = next(item for item in repair_payload["documents"] if item["id"] == document_id)
         self.assertEqual(document_payload["latest_import_job"]["id"], job_id)
         self.assertEqual(document_payload["latest_import_job"]["status"], "queued")
+
+    def test_archived_document_cannot_become_primary(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        repair_id = payload["document"]["repair"]["id"]
+
+        with self.SessionLocal() as db:
+            archived_document = Document(
+                repair_id=repair_id,
+                uploaded_by_user_id=1,
+                original_filename="archived-repeat.pdf",
+                storage_key="documents/test/archived-repeat.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.REPEAT_SCAN,
+                status=DocumentStatus.ARCHIVED,
+                is_primary=False,
+                review_queue_priority=0,
+            )
+            db.add(archived_document)
+            db.commit()
+            archived_document_id = archived_document.id
+
+        response = self.client.post(f"/api/documents/{archived_document_id}/set-primary", headers=headers)
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"], "Archived documents cannot be primary")
+
+    def test_document_cannot_be_compared_with_itself(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+
+        response = self.client.get(
+            f"/api/documents/{document_id}/compare",
+            headers=headers,
+            params={"with_document_id": document_id},
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"], "Cannot compare a document with itself")
 
     def _mark_job_failed(self, db: Session, job_id: int, document_id: int) -> None:
         job = db.get(ImportJob, job_id)

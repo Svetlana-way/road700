@@ -11,3 +11,13 @@
 
   reverse_proxy app:8000
 }
+
+http://46.8.220.177 {
+  encode gzip zstd
+
+  request_body {
+    max_size 100MB
+  }
+
+  reverse_proxy app:8000
+}

@@ -54,6 +54,7 @@ export function useDocumentsWorkspace({
   const uploadFileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [reprocessLoading, setReprocessLoading] = useState(false);
+  const [reprocessLoadingId, setReprocessLoadingId] = useState<number | null>(null);
   const [batchReprocessLoading, setBatchReprocessLoading] = useState(false);
   const [batchReprocessLimit, setBatchReprocessLimit] = useState("50");
   const [batchReprocessStatusFilter, setBatchReprocessStatusFilter] = useState("");
@@ -146,6 +147,7 @@ export function useDocumentsWorkspace({
       return;
     }
     setReprocessLoading(true);
+    setReprocessLoadingId(documentId);
     setErrorMessage("");
     setSuccessMessage("");
     try {
@@ -161,6 +163,7 @@ export function useDocumentsWorkspace({
       setErrorMessage(error instanceof Error ? error.message : "Не удалось повторно распознать документ");
     } finally {
       setReprocessLoading(false);
+      setReprocessLoadingId(null);
     }
   }
 
@@ -249,6 +252,7 @@ export function useDocumentsWorkspace({
     setLastUploadedDocument(null);
     setUploadLoading(false);
     setReprocessLoading(false);
+    setReprocessLoadingId(null);
     setBatchReprocessLoading(false);
     setBatchReprocessLimit("50");
     setBatchReprocessStatusFilter("");
@@ -264,6 +268,7 @@ export function useDocumentsWorkspace({
     uploadFileInputRef,
     uploadLoading,
     reprocessLoading,
+    reprocessLoadingId,
     batchReprocessLoading,
     batchReprocessLimit,
     setBatchReprocessLimit,

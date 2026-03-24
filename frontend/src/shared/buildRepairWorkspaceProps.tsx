@@ -146,6 +146,7 @@ export type BuildRepairWorkspacePropsParams = {
   attachedFileInputRef: RepairDocumentsProps["attachedFileInputRef"];
   attachDocumentLoading: RepairDocumentsProps["attachDocumentLoading"];
   reprocessLoading: RepairDocumentsProps["reprocessLoading"];
+  reprocessLoadingId: RepairDocumentsProps["reprocessLoadingId"];
   selectedDocumentId: RepairDocumentsProps["selectedDocumentId"];
   documentComparisonLoadingId: RepairDocumentsProps["documentComparisonLoadingId"];
   primaryDocumentLoadingId: RepairDocumentsProps["primaryDocumentLoadingId"];
@@ -409,6 +410,7 @@ export function buildRepairWorkspaceProps(params: BuildRepairWorkspacePropsParam
                 attachDocumentLoading: params.attachDocumentLoading,
                 documentOpenLoadingId: params.documentOpenLoadingId,
                 reprocessLoading: params.reprocessLoading,
+                reprocessLoadingId: params.reprocessLoadingId,
                 selectedDocumentId: params.selectedDocumentId,
                 documentComparisonLoadingId: params.documentComparisonLoadingId,
                 primaryDocumentLoadingId: params.primaryDocumentLoadingId,

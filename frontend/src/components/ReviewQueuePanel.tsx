@@ -21,6 +21,7 @@ type ReviewQueuePanelProps = {
   reviewQueue: ReviewQueueItem[];
   userRole: UserRole | null | undefined;
   reprocessLoading: boolean;
+  reprocessLoadingId: number | null;
   selectedDocumentId: number | null;
   onSelectCategory: (category: ReviewQueueCategory) => void;
   onOpenReviewQueueItem: (item: ReviewQueueItem) => void;
@@ -42,6 +43,7 @@ export function ReviewQueuePanel({
   reviewQueue,
   userRole,
   reprocessLoading,
+  reprocessLoadingId,
   selectedDocumentId,
   onSelectCategory,
   onOpenReviewQueueItem,
@@ -148,7 +150,7 @@ export function ReviewQueuePanel({
                         onReprocessDocumentById(item.document.id, item.repair.id);
                       }}
                     >
-                      {reprocessLoading && selectedDocumentId === item.document.id ? "Повтор..." : "Повторить OCR"}
+                      {reprocessLoading && reprocessLoadingId === item.document.id ? "Повтор..." : "Повторить OCR"}
                     </Button>
                   ) : null}
                 </Stack>

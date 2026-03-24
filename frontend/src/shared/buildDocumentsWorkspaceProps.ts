@@ -37,6 +37,7 @@ export type BuildDocumentsWorkspacePropsParams = {
   reviewQueue: ReviewQueueProps["reviewQueue"];
   userRole: ReviewQueueProps["userRole"];
   reprocessLoading: ReviewQueueProps["reprocessLoading"];
+  reprocessLoadingId: ReviewQueueProps["reprocessLoadingId"];
   selectedDocumentId: ReviewQueueProps["selectedDocumentId"];
   setSelectedReviewCategory: ReviewQueueProps["onSelectCategory"];
   handleOpenRepair: (documentId: number, repairId: number) => void | Promise<void>;
@@ -103,6 +104,7 @@ export function buildDocumentsWorkspaceProps(params: BuildDocumentsWorkspaceProp
       reviewQueue: params.reviewQueue,
       userRole: params.userRole,
       reprocessLoading: params.reprocessLoading,
+      reprocessLoadingId: params.reprocessLoadingId,
       selectedDocumentId: params.selectedDocumentId,
       onSelectCategory: params.setSelectedReviewCategory,
       onOpenReviewQueueItem: (item) => {
@@ -129,6 +131,7 @@ export function buildDocumentsWorkspaceProps(params: BuildDocumentsWorkspaceProp
       batchReprocessPrimaryOnly: params.batchReprocessPrimaryOnly,
       batchReprocessLoading: params.batchReprocessLoading,
       reprocessLoading: params.reprocessLoading,
+      reprocessLoadingId: params.reprocessLoadingId,
       repairDeleteLoading: params.repairDeleteLoading,
       documentArchiveLoadingId: params.documentArchiveLoadingId,
       onBatchReprocessLimitChange: params.setBatchReprocessLimit,

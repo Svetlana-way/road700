@@ -28,6 +28,7 @@ type DocumentsListPanelProps = {
   batchReprocessPrimaryOnly: "false" | "true";
   batchReprocessLoading: boolean;
   reprocessLoading: boolean;
+  reprocessLoadingId: number | null;
   repairDeleteLoading: boolean;
   documentArchiveLoadingId: number | null;
   onBatchReprocessLimitChange: (value: string) => void;
@@ -59,6 +60,7 @@ export function DocumentsListPanel({
   batchReprocessPrimaryOnly,
   batchReprocessLoading,
   reprocessLoading,
+  reprocessLoadingId,
   repairDeleteLoading,
   documentArchiveLoadingId,
   onBatchReprocessLimitChange,
@@ -251,7 +253,7 @@ export function DocumentsListPanel({
                         onReprocessDocument(document);
                       }}
                     >
-                      {reprocessLoading && selectedDocumentId === document.id ? "Повтор..." : "Повторить OCR"}
+                      {reprocessLoading && reprocessLoadingId === document.id ? "Повтор..." : "Повторить OCR"}
                     </Button>
                   ) : null}
                   {userRole === "admin" && document.is_primary ? (

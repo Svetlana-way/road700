@@ -187,6 +187,7 @@ export default function App() {
     uploadFileInputRef,
     uploadLoading,
     reprocessLoading,
+    reprocessLoadingId,
     batchReprocessLoading,
     batchReprocessLimit,
     setBatchReprocessLimit,

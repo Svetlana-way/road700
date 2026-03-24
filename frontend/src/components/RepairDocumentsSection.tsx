@@ -19,6 +19,7 @@ type RepairDocumentsSectionProps = {
   attachDocumentLoading: boolean;
   documentOpenLoadingId: number | null;
   reprocessLoading: boolean;
+  reprocessLoadingId: number | null;
   selectedDocumentId: number | null;
   documentComparisonLoadingId: number | null;
   primaryDocumentLoadingId: number | null;
@@ -63,6 +64,7 @@ export function RepairDocumentsSection({
   attachDocumentLoading,
   documentOpenLoadingId,
   reprocessLoading,
+  reprocessLoadingId,
   selectedDocumentId,
   documentComparisonLoadingId,
   primaryDocumentLoadingId,
@@ -211,7 +213,7 @@ export function RepairDocumentsSection({
                       disabled={reprocessLoading || document.status === "archived" || selectedRepair.status === "archived"}
                       onClick={() => onReprocessDocumentById(document.id, selectedRepair.id)}
                     >
-                      {reprocessLoading && selectedDocumentId === document.id ? "Повтор..." : "Повторить OCR"}
+                      {reprocessLoading && reprocessLoadingId === document.id ? "Повтор..." : "Повторить OCR"}
                     </Button>
                   ) : null}
                   {userRole === "admin" &&

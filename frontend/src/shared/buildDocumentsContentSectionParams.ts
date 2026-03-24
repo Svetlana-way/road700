@@ -62,6 +62,7 @@ export function buildDocumentsContentSectionParams(
     reviewQueue: rootState.reviewQueue,
     userRole: rootState.user?.role,
     reprocessLoading: documentsWorkspace.reprocessLoading,
+    reprocessLoadingId: documentsWorkspace.reprocessLoadingId,
     selectedDocumentId: rootState.selectedDocumentId,
     setSelectedReviewCategory: rootState.setSelectedReviewCategory,
     handleOpenRepair: repairWorkspaceActions.handleOpenRepair,

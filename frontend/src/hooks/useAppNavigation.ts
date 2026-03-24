@@ -38,6 +38,7 @@ type UseAppNavigationParams = {
   selectedRepairId: number | null;
   selectedDocumentId: number | null;
   setSelectedDocumentId: (value: number | null) => void;
+  clearSelectedRepair: () => void;
   loadRepairDetail: (
     token: string,
     repairId: number,
@@ -66,6 +67,7 @@ export function useAppNavigation({
   selectedRepairId,
   selectedDocumentId,
   setSelectedDocumentId,
+  clearSelectedRepair,
   loadRepairDetail,
 }: UseAppNavigationParams) {
   const [routeSnapshot, setRouteSnapshot] = useState<AppRoute>(() => readAppRoute(window.location));
@@ -295,7 +297,14 @@ export function useAppNavigation({
     if (routeSnapshot.documentId !== null && selectedDocumentId !== routeSnapshot.documentId) {
       setSelectedDocumentId(routeSnapshot.documentId);
     }
-    if (!token || routeSnapshot.repairId === null) {
+    if (routeSnapshot.repairId === null) {
+      if (selectedDocumentId !== null) {
+        setSelectedDocumentId(null);
+      }
+      clearSelectedRepair();
+      return;
+    }
+    if (!token) {
       return;
     }
     const repairMatches = selectedRepairId === routeSnapshot.repairId;

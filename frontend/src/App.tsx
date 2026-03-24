@@ -576,6 +576,9 @@ export default function App() {
     selectedRepairId: selectedRepair?.id ?? null,
     selectedDocumentId,
     setSelectedDocumentId,
+    clearSelectedRepair: () => {
+      setSelectedRepair(null);
+    },
     loadRepairDetail,
   });
   const {

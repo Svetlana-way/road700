@@ -5543,6 +5543,14 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
                 "gruzovye_rezervy_invoice_only_review_suppressed:" + ",".join(removed_reasons)
             )
 
+    if db is not None:
+        enrich_vehicle_fields_from_registry(
+            db,
+            extracted_fields=extracted_fields,
+            confidence_map=confidence_map,
+            normalization_notes=normalization_notes,
+        )
+
     return {
         "extracted_fields": extracted_fields,
         "extracted_items": extracted_items,

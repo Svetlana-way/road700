@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
+from app.models.enums import VehicleStatus, VehicleType
+from app.models.vehicle import Vehicle
 from app.services import document_processing
 
 
@@ -1144,6 +1146,38 @@ CH
         self.assertTrue(any(item["article"] == "3522210-91000" and item["line_total"] == 41800.0 for item in parts))
         self.assertTrue(any(item["article"] == "YGS1027" and item["quantity"] == 14.0 for item in parts))
         self.assertTrue(any(item["article"] == "3550050-H03R0" and item["price"] == 3789.0 for item in parts))
+
+    def test_parse_document_text_enriches_sibtrakscan_vin_from_vehicle_registry(self) -> None:
+        text = """
+Общество с ограниченной ответственностью "СИБТРАКСКАН"
+ЗАКАЗ-НАРЯД № ЗСТ26002072
+Дата открытия 05.03.2026 г.
+Дата начала работ: 09.03.2026
+Дата закрытия 09.03.2026 г.
+ТРАНСПОРТНОЕ СРЕДСТВО
+Марка: Dongfeng Модель: Dongfeng DFH4180 Гос. ном. знак: С026ВВ716
+Год выпуска: 2023 № шасси: P8834073 № двиг.: 93969613 Пробег: 639 889
+"""
+
+        with self.SessionLocal() as db:
+            db.add(
+                Vehicle(
+                    external_id="sibtrakscan-plate-match",
+                    vehicle_type=VehicleType.TRUCK,
+                    status=VehicleStatus.ACTIVE,
+                    plate_number="с026вв/716",
+                    vin="LGAG3DV29P8834073",
+                    brand="Dongfeng",
+                    model="Dongfeng DFH4180",
+                )
+            )
+            db.commit()
+
+            parsed = document_processing.parse_document_text(text, db=db, profile_scope="sibtrakscan")
+
+        self.assertEqual(parsed["extracted_fields"]["plate_number"], "С026ВВ716")
+        self.assertEqual(parsed["extracted_fields"]["vin"], "LGAG3DV29P8834073")
+        self.assertIn("VIN дополнен по совпадению с реестром техники.", parsed["normalization_notes"])
 
     def test_parse_document_text_extracts_leader_trak_mixed_table_items(self) -> None:
         text = """

@@ -49,7 +49,7 @@ class DocumentParsingProfilesTestCase(unittest.TestCase):
 
         parsed = document_processing.parse_document_text(text, db=None)
 
-        self.assertEqual(parsed["extracted_fields"]["service_name"], 'Общество с ограниченной ответственностью "АХВ Трак Сервис"')
+        self.assertEqual(parsed["extracted_fields"]["service_name"], "ООО «АХВ Трак Сервис»")
         self.assertEqual(parsed["extracted_fields"]["order_number"], "0000019084")
         self.assertEqual(parsed["extracted_fields"]["plate_number"], "C113KX716")
         self.assertEqual(parsed["extracted_fields"]["vin"], "LGAG3DV2XP8837385")
@@ -1178,6 +1178,57 @@ CH
         self.assertEqual(parsed["extracted_fields"]["plate_number"], "С026ВВ716")
         self.assertEqual(parsed["extracted_fields"]["vin"], "LGAG3DV29P8834073")
         self.assertIn("VIN дополнен по совпадению с реестром техники.", parsed["normalization_notes"])
+
+    def test_parse_document_text_prefers_sibtrakscan_close_date_with_db_rules(self) -> None:
+        text = """
+Общество с ограниченной ответственностью "СИБТРАКСКАН"
+ЗАКАЗ-НАРЯД № ЗСТ26001637
+Дата открытия 19.02.2026 г.
+Дата начала работ: 19.02.2026
+Дата окончания работ: 22.02.2026
+Дата закрытия 22.02.2026 г.
+ТРАНСПОРТНОЕ СРЕДСТВО
+Марка: Dongfeng Модель: Dongfeng DFH4180 Гос. ном. знак: С469АС716
+Год выпуска: 2023 № шасси: P8834102 № двиг.: 93970029 Пробег: 506 884
+"""
+
+        with self.SessionLocal() as db:
+            parsed = document_processing.parse_document_text(text, db=db, profile_scope="sibtrakscan")
+
+        self.assertEqual(parsed["extracted_fields"]["repair_date"], "2026-02-22")
+
+    def test_parse_document_text_prefers_gruzovye_rezervy_order_date_with_db_rules(self) -> None:
+        text = """
+Заказ-наряд № ГП000220663 от 10 марта 2026 г.
+Предварительный заказ-наряд № ГП000026502 от 09 марта 2026 г.
+Исполнитель:Общество с ограниченной ответственностью
+"ГРУЗОВЫЕ РЕЗЕРВЫ", ИНН 5504139628
+Шасси:Schmitz, SKO, 24
+VIN:WSM00000005208662 г/н: вв 0473 16
+Заказчик: ООО ТК "Семьсот дорог", ИНН 1650251719 Год выпуска: 2018 Пробег: -
+Дата монтажа: 20.06.18
+"""
+
+        with self.SessionLocal() as db:
+            parsed = document_processing.parse_document_text(text, db=db, profile_scope="gruzovye_rezervy")
+
+        self.assertEqual(parsed["extracted_fields"]["repair_date"], "2026-03-10")
+
+    def test_parse_document_text_prefers_gruzovye_rezervy_invoice_date_over_signature_date_with_db_rules(self) -> None:
+        text = """
+Счет на оплату № ГП000002278 от 09 января 2026 г.
+Поставщик:
+Общество с ограниченной ответственностью "ГРУЗОВЫЕ РЕЗЕРВЫ"
+г/н: с 168 мк
+Документ подписан и передан через оператора ЭДО АО "ПФ "СКБ Контур"
+Дата и время подписания
+12.01.2026 09:30 GMT+03:00
+"""
+
+        with self.SessionLocal() as db:
+            parsed = document_processing.parse_document_text(text, db=db, profile_scope="gruzovye_rezervy")
+
+        self.assertEqual(parsed["extracted_fields"]["repair_date"], "2026-01-09")
 
     def test_parse_document_text_extracts_leader_trak_mixed_table_items(self) -> None:
         text = """

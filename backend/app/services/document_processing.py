@@ -538,6 +538,14 @@ PROFILE_SPECIFIC_OCR_RULE_DEFINITIONS: list[dict[str, object]] = [
     {"profile_scope": "leader_trak", "target_field": "service_name", "pattern": r"(ЛидерТрак)", "value_parser": "raw", "confidence": 0.98, "priority": 1},
     {"profile_scope": "sibtrakscan", "target_field": "service_name", "pattern": r"(СИБТРАКСКАН)", "value_parser": "raw", "confidence": 0.98, "priority": 1},
     {"profile_scope": "gruzovye_rezervy", "target_field": "service_name", "pattern": r"(ГРУЗОВЫЕ\s+РЕЗЕРВЫ)", "value_parser": "raw", "confidence": 0.98, "priority": 1},
+    {"profile_scope": "sibtrakscan", "target_field": "repair_date", "pattern": rf"(?:{DATE_CLOSED_LABEL_PATTERN})\s*[:№]?\s*(\d{{2}}[./-]\d{{2}}[./-]\d{{2,4}})", "value_parser": "date", "confidence": 0.96, "priority": 1},
+    {"profile_scope": "sibtrakscan", "target_field": "repair_date", "pattern": rf"(?:{DATE_CLOSED_LABEL_PATTERN})\s*[:№]?\s*(\d{{1,2}}\s+[А-Яа-я]+\s+\d{{4}})", "value_parser": "date", "confidence": 0.96, "priority": 2},
+    {"profile_scope": "sibtrakscan", "target_field": "repair_date", "pattern": rf"(?:{DATE_COMPLETED_LABEL_PATTERN})\s*[:№]?\s*(\d{{2}}[./-]\d{{2}}[./-]\d{{2,4}})", "value_parser": "date", "confidence": 0.92, "priority": 3},
+    {"profile_scope": "sibtrakscan", "target_field": "repair_date", "pattern": rf"(?:{DATE_COMPLETED_LABEL_PATTERN})\s*[:№]?\s*(\d{{1,2}}\s+[А-Яа-я]+\s+\d{{4}})", "value_parser": "date", "confidence": 0.92, "priority": 4},
+    {"profile_scope": "gruzovye_rezervy", "target_field": "repair_date", "pattern": r"(?:счет(?:\s+на\s+оплату)?)\s*[^\n\r]{0,120}?\bот\b\s*[:№]?\s*(\d{1,2}\s+[А-Яа-я]+\s+\d{4})", "value_parser": "date", "confidence": 0.97, "priority": 1},
+    {"profile_scope": "gruzovye_rezervy", "target_field": "repair_date", "pattern": r"(?:счет(?:\s+на\s+оплату)?)\s*[^\n\r]{0,120}?\bот\b\s*[:№]?\s*(\d{2}[./-]\d{2}[./-]\d{2,4})", "value_parser": "date", "confidence": 0.97, "priority": 2},
+    {"profile_scope": "gruzovye_rezervy", "target_field": "repair_date", "pattern": rf"(?:{ORDER_LABEL_PATTERN}|{REVERSED_ORDER_LABEL_PATTERN})[^\n\r]{{0,120}}?(?:{FROM_LABEL_PATTERN})\s*[:№]?\s*(\d{{1,2}}\s+[А-Яа-я]+\s+\d{{4}})", "value_parser": "date", "confidence": 0.96, "priority": 3},
+    {"profile_scope": "gruzovye_rezervy", "target_field": "repair_date", "pattern": rf"(?:{ORDER_LABEL_PATTERN}|{REVERSED_ORDER_LABEL_PATTERN})[^\n\r]{{0,120}}?(?:{FROM_LABEL_PATTERN})\s*[:№]?\s*(\d{{2}}[./-]\d{{2}}[./-]\d{{2,4}})", "value_parser": "date", "confidence": 0.96, "priority": 4},
 ]
 UNIT_ALIASES = {
     "шт": "шт",
@@ -1066,10 +1074,22 @@ def normalize_ocr_rule_code(value: str | None) -> Optional[str]:
 
 
 def ensure_default_ocr_rules(db: Session) -> None:
-    existing_count = db.scalar(select(func.count(OcrRule.id))) or 0
-    if existing_count > 0:
-        return
+    existing_signatures = {
+        (
+            str(rule.profile_scope),
+            str(rule.target_field),
+            str(rule.pattern),
+        )
+        for rule in db.scalars(select(OcrRule)).all()
+    }
     for item in DEFAULT_OCR_RULE_DEFINITIONS:
+        signature = (
+            str(item["profile_scope"]),
+            str(item["target_field"]),
+            str(item["pattern"]),
+        )
+        if signature in existing_signatures:
+            continue
         db.add(
             OcrRule(
                 profile_scope=str(item["profile_scope"]),
@@ -1081,6 +1101,7 @@ def ensure_default_ocr_rules(db: Session) -> None:
                 is_active=True,
             )
         )
+        existing_signatures.add(signature)
     db.flush()
 
 
@@ -1225,10 +1246,24 @@ def select_ocr_profile_scope(db: Session, document: Document, text: str) -> OcrP
     )
 
 
-def group_ocr_rules_by_field(rules: list[OcrRule]) -> dict[str, list[OcrRule]]:
+def build_ocr_rule_sort_key(rule: OcrRule, *, profile_scope: str | None = None) -> tuple[int, int, int, int]:
+    normalized_profile_scope = normalize_ocr_rule_code(profile_scope)
+    normalized_rule_scope = normalize_ocr_rule_code(rule.profile_scope)
+    if normalized_profile_scope and normalized_rule_scope == normalized_profile_scope:
+        scope_rank = 0
+    elif normalized_rule_scope == "default":
+        scope_rank = 1
+    else:
+        scope_rank = 2
+    return (scope_rank, int(rule.priority), -len(str(rule.pattern or "")), int(rule.id or 0))
+
+
+def group_ocr_rules_by_field(rules: list[OcrRule], *, profile_scope: str | None = None) -> dict[str, list[OcrRule]]:
     grouped: dict[str, list[OcrRule]] = {}
     for rule in rules:
         grouped.setdefault(rule.target_field, []).append(rule)
+    for field_rules in grouped.values():
+        field_rules.sort(key=lambda item: build_ocr_rule_sort_key(item, profile_scope=profile_scope))
     return grouped
 
 
@@ -5340,7 +5375,14 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
     manual_review_reasons = []
     normalization_notes = []
     extracted_items = extract_line_items(text)
-    rule_map = group_ocr_rules_by_field(load_active_ocr_rules(db, profile_scope=profile_scope)) if db is not None else {}
+    rule_map = (
+        group_ocr_rules_by_field(
+            load_active_ocr_rules(db, profile_scope=profile_scope),
+            profile_scope=profile_scope,
+        )
+        if db is not None
+        else {}
+    )
     section_plate_number, section_vin, section_mileage = extract_vehicle_identifiers_from_section(text)
 
     order_number, order_number_confidence, _ = extract_header_field(

@@ -26,6 +26,32 @@ SERVICE_ALIASES = {
     "ООО «Енисей Трак Сервис»": ("ЕТС", "Енисей", "Енисей Трак Сервис"),
     "ООО «ЛидерТрак»": ("Лидер Трак", "Лидертрак"),
 }
+FALLBACK_SERVICE_CATALOG_DEFINITIONS = (
+    {
+        "name": "ООО «АХВ Трак Сервис»",
+        "city": None,
+        "contact": None,
+        "comment": "Источник: встроенный fallback-каталог; карточка сервиса отсутствует в папке `Сервисы`.",
+        "aliases": (
+            "АХВ Трак Сервис",
+            'Общество с ограниченной ответственностью "АХВ Трак Сервис"',
+            "AXB",
+            "АXB",
+            "АХВ",
+        ),
+    },
+    {
+        "name": "ООО «ЛОГИСТИКА»",
+        "city": None,
+        "contact": None,
+        "comment": "Источник: встроенный fallback-каталог; карточка сервиса отсутствует в папке `Сервисы`.",
+        "aliases": (
+            "Логистика",
+            'Общество с ограниченной ответственностью "ЛОГИСТИКА"',
+            'Общество с ограниченной ответственностью "Логистика"',
+        ),
+    },
+)
 
 
 @dataclass(frozen=True)
@@ -181,13 +207,33 @@ def build_entry(path: Path) -> ServiceCatalogEntry:
     )
 
 
+def build_fallback_entry(definition: dict[str, object]) -> ServiceCatalogEntry:
+    name = str(definition["name"])
+    aliases = build_service_aliases(
+        name,
+        extra_aliases=tuple(str(item) for item in definition.get("aliases", ()) if str(item).strip()),
+    )
+    return ServiceCatalogEntry(
+        name=name,
+        city=str(definition["city"]).strip() if definition.get("city") else None,
+        contact=str(definition["contact"]).strip() if definition.get("contact") else None,
+        comment=str(definition["comment"]).strip(),
+        aliases=aliases,
+    )
+
+
 @lru_cache(maxsize=1)
 def get_service_catalog_entries() -> tuple[ServiceCatalogEntry, ...]:
     service_dir = get_service_catalog_dir()
-    if not service_dir.exists():
-        return ()
-    entries = [build_entry(path) for path in sorted(service_dir.glob("*.docx"))]
-    return tuple(entries)
+    entries_by_name = {
+        entry.name: entry
+        for entry in (build_fallback_entry(item) for item in FALLBACK_SERVICE_CATALOG_DEFINITIONS)
+    }
+    if service_dir.exists():
+        for path in sorted(service_dir.glob("*.docx")):
+            entry = build_entry(path)
+            entries_by_name[entry.name] = entry
+    return tuple(sorted(entries_by_name.values(), key=lambda item: item.name.lower()))
 
 
 def get_service_catalog_names() -> tuple[str, ...]:

@@ -24,7 +24,12 @@ from app.models.repair import Repair
 from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle, VehicleAssignmentHistory
-from app.services.service_catalog import ServiceCatalogEntry, ensure_service_catalog_synced
+from app.services.service_catalog import (
+    ServiceCatalogEntry,
+    ensure_service_catalog_synced,
+    find_service_catalog_entry,
+    resolve_service_by_name,
+)
 
 
 class ReviewAndServicesApiTestCase(unittest.TestCase):
@@ -284,6 +289,39 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             self.assertEqual(service_item.city, "Manual City")
             self.assertEqual(service_item.contact, "manual@example.com")
             self.assertEqual(service_item.comment, "Manual comment")
+
+    def test_builtin_fallback_catalog_syncs_axb_and_logistics_services(self) -> None:
+        with self.SessionLocal() as db:
+            ensure_service_catalog_synced(db, commit=False)
+
+            axb_service = db.scalar(select(Service).where(Service.name == "ООО «АХВ Трак Сервис»"))
+            logistics_service = db.scalar(select(Service).where(Service.name == "ООО «ЛОГИСТИКА»"))
+
+            self.assertIsNotNone(axb_service)
+            self.assertIsNotNone(logistics_service)
+            self.assertEqual(axb_service.status, ServiceStatus.CONFIRMED)
+            self.assertEqual(logistics_service.status, ServiceStatus.CONFIRMED)
+
+    def test_builtin_fallback_catalog_resolves_axb_and_logistics_aliases(self) -> None:
+        with self.SessionLocal() as db:
+            axb_entry = find_service_catalog_entry("AXB")
+            logistics_entry = find_service_catalog_entry('Общество с ограниченной ответственностью "ЛОГИСТИКА"')
+
+            self.assertIsNotNone(axb_entry)
+            self.assertIsNotNone(logistics_entry)
+            self.assertEqual(axb_entry.name, "ООО «АХВ Трак Сервис»")
+            self.assertEqual(logistics_entry.name, "ООО «ЛОГИСТИКА»")
+
+            axb_service = resolve_service_by_name(db, "AXB")
+            logistics_service = resolve_service_by_name(
+                db,
+                'Общество с ограниченной ответственностью "ЛОГИСТИКА"',
+            )
+
+            self.assertIsNotNone(axb_service)
+            self.assertIsNotNone(logistics_service)
+            self.assertEqual(axb_service.name, "ООО «АХВ Трак Сервис»")
+            self.assertEqual(logistics_service.name, "ООО «ЛОГИСТИКА»")
 
     def test_cannot_assign_employee_to_archived_vehicle(self) -> None:
         headers = self._get_auth_headers("admin")

@@ -1850,6 +1850,28 @@ VIN: WSM00000005217870 г/н: вв 3316 16
         self.assertEqual(parsed["extracted_fields"]["vat_total"], 8842.92)
         self.assertEqual(parsed["extracted_fields"]["grand_total"], 49038.0)
 
+    def test_parse_document_text_suppresses_leader_trak_invoice_only_noise_items(self) -> None:
+        text = """
+Внимание! Оплата данного счета означает согласие с условиями поставки товара.
+Счет на оплату № ЛТ260002476 от 23.03.2026
+Получатель
+Общество с ограниченной ответственностью "ЛидерТрак"
+Покупатель: ООО ТК "Семьсот дорог"
+Автомобиль: ТР1064938
+№ Наименование товаров, работ, услуг Кол-во Ед. Цена Сумма
+1 н/ч 799,64 179,96
+356,33 1 976,00Итого RUB:
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="leader_trak")
+
+        self.assertEqual(parsed["extracted_items"]["works"], [])
+        self.assertEqual(parsed["extracted_items"]["parts"], [])
+        self.assertNotIn("mileage_missing", parsed["manual_review_reasons"])
+        self.assertNotIn("work_total", parsed["extracted_fields"])
+        self.assertNotIn("parts_total", parsed["extracted_fields"])
+        self.assertIn("leader_trak_invoice_only_review_suppressed:mileage_missing", parsed["normalization_notes"])
+
     def test_parse_document_text_skips_logistics_missing_mileage_for_trailer_documents(self) -> None:
         text = """
 ПОСТАВЩИК: Общество с ограниченной ответственностью "ЛОГИСТИКА"

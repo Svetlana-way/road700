@@ -1492,6 +1492,24 @@ def is_gruzovye_rezervy_invoice_only_document(text: str) -> bool:
     return True
 
 
+def is_leader_trak_invoice_only_document(text: str) -> bool:
+    header_text = extract_header_text(text, limit=5000)
+    if not (
+        re.search(r"внимание!\s*оплата\s+данного\s+счета\s+означает", header_text, re.IGNORECASE)
+        or re.search(r"(?:^|\n)\s*счет(?:\s+на\s+оплату)?\b", header_text, re.IGNORECASE)
+    ):
+        return False
+    if re.search(r"\bнаряд[- ]заказ\b", text, re.IGNORECASE):
+        return False
+    if re.search(
+        r"выполненные\s+сервисные\s+услуги\s+и\s+использованные\s+материалы",
+        text,
+        re.IGNORECASE,
+    ):
+        return False
+    return True
+
+
 def extract_vehicle_identifiers_from_section(text: str) -> tuple[Optional[str], Optional[str], Optional[int]]:
     section_text = extract_vehicle_section_text(text)
     plate_number = find_plate_candidate(find_pattern_value(PLATE_LABEL_PATTERNS, section_text))
@@ -5966,6 +5984,11 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
     if removed_post_fallback_noise_work_count:
         normalization_notes.append(f"noise_work_items_removed_after_fallback:{removed_post_fallback_noise_work_count}")
 
+    if normalized_profile_scope == "leader_trak" and is_leader_trak_invoice_only_document(text):
+        if extracted_items.get("works") or extracted_items.get("parts"):
+            extracted_items = {"works": [], "parts": []}
+            normalization_notes.append("leader_trak_invoice_only_items_suppressed")
+
     normalization_notes.extend(
         reconcile_header_totals_with_line_items(
             extracted_fields=extracted_fields,
@@ -5985,6 +6008,16 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
         if removed_reasons:
             normalization_notes.append(
                 "gruzovye_rezervy_invoice_only_review_suppressed:" + ",".join(removed_reasons)
+            )
+
+    if normalized_profile_scope == "leader_trak" and is_leader_trak_invoice_only_document(text):
+        removed_reasons = []
+        if "mileage_missing" in manual_review_reasons:
+            remove_manual_review_reason(manual_review_reasons, "mileage_missing")
+            removed_reasons.append("mileage_missing")
+        if removed_reasons:
+            normalization_notes.append(
+                "leader_trak_invoice_only_review_suppressed:" + ",".join(removed_reasons)
             )
 
     if db is not None:

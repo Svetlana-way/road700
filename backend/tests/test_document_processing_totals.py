@@ -231,6 +231,76 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
         self.assertEqual(mismatch.calculation_payload["calculated_total_with_vat"], 224051.02)
         self.assertEqual(repair.status, RepairStatus.SUSPICIOUS)
 
+    def test_process_document_resets_stale_totals_when_reparse_does_not_extract_them(self) -> None:
+        self._run_processing(grand_total=189821.0, vat_total=34230.02)
+
+        parsed_payload = {
+            "extracted_fields": {
+                "order_number": "ГП000210722",
+                "repair_date": "2026-01-19",
+                "plate_number": "ВУ296516",
+                "vin": "NLS3DFFSTP1064773",
+                "service_name": "ООО «Грузовые резервы»",
+            },
+            "extracted_items": {
+                "works": [],
+                "parts": [],
+            },
+            "confidence_map": {
+                "order_number": 0.9,
+                "repair_date": 0.9,
+                "plate_number": 0.9,
+                "vin": 0.9,
+                "service_name": 0.9,
+            },
+            "manual_review_reasons": [],
+            "normalization_notes": [],
+        }
+
+        with self.SessionLocal() as db:
+            labor_norm_applicability = SimpleNamespace(
+                eligible=False,
+                scope="none",
+                reason_code="not_applicable",
+                reason="Not applicable in test",
+                brand_family=None,
+                catalog_name=None,
+            )
+            labor_norm_summary = SimpleNamespace(matched_count=0, unmatched_count=0)
+            with (
+                patch.object(document_processing, "LOCAL_STORAGE_ROOT", self.storage_root),
+                patch.object(document_processing, "extract_document_text", return_value=("test text", "mock", None)),
+                patch.object(
+                    document_processing,
+                    "select_ocr_profile_scope",
+                    return_value=OcrProfileSelection("leader_trak", "test", "test"),
+                ),
+                patch.object(document_processing, "parse_document_text", return_value=parsed_payload),
+                patch.object(document_processing, "build_dynamic_work_reference_checks", return_value=[]),
+                patch.object(document_processing, "build_standard_hours_checks", return_value=[]),
+                patch.object(document_processing, "build_repeat_repair_checks", return_value=[]),
+                patch.object(document_processing, "build_duplicate_line_checks", return_value=[]),
+                patch.object(document_processing, "build_expected_total_checks", return_value=(None, [])),
+                patch.object(
+                    document_processing,
+                    "assess_labor_norm_applicability",
+                    return_value=labor_norm_applicability,
+                ),
+                patch.object(
+                    document_processing,
+                    "enrich_work_payloads_with_labor_norms",
+                    return_value=([], labor_norm_summary),
+                ),
+            ):
+                process_document(db, self.document_id)
+                repair = db.get(Repair, 1)
+                self.assertIsNotNone(repair)
+                assert repair is not None
+                self.assertEqual(float(repair.work_total), 0.0)
+                self.assertEqual(float(repair.parts_total), 0.0)
+                self.assertEqual(float(repair.vat_total), 0.0)
+                self.assertEqual(float(repair.grand_total), 0.0)
+
     def test_enrich_work_payloads_marks_local_service_operations_as_outside_catalog(self) -> None:
         works_payload = [
             {

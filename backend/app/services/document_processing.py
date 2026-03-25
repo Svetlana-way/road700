@@ -6385,14 +6385,10 @@ def process_document(db: Session, document_id: int, *, job_id: int | None = None
                 repair.mileage = int(extracted_fields["mileage"])
             if "reason" in extracted_fields:
                 repair.reason = str(extracted_fields["reason"])
-            if "work_total" in extracted_fields:
-                repair.work_total = float(extracted_fields["work_total"])
-            if "parts_total" in extracted_fields:
-                repair.parts_total = float(extracted_fields["parts_total"])
-            if "vat_total" in extracted_fields:
-                repair.vat_total = float(extracted_fields["vat_total"])
-            if "grand_total" in extracted_fields:
-                repair.grand_total = float(extracted_fields["grand_total"])
+            repair.work_total = float(extracted_fields["work_total"]) if "work_total" in extracted_fields else 0.0
+            repair.parts_total = float(extracted_fields["parts_total"]) if "parts_total" in extracted_fields else 0.0
+            repair.vat_total = float(extracted_fields["vat_total"]) if "vat_total" in extracted_fields else 0.0
+            repair.grand_total = float(extracted_fields["grand_total"]) if "grand_total" in extracted_fields else 0.0
             if "service_name" in extracted_fields:
                 service = resolve_service_by_name(db, str(extracted_fields["service_name"]))
                 if service is not None:

@@ -179,7 +179,6 @@ def import_labor_norms_with_session(
         scope=normalized_scope,
         catalog_name=normalized_catalog_name,
         brand_family=normalized_brand_family,
-        auto_match_enabled=False if normalized_scope != DEFAULT_DONGFENG_LABOR_NORM_SCOPE else True,
     )
     suffix = path.suffix.lower()
     if suffix == ".xlsx":

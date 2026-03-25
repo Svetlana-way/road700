@@ -1,5 +1,5 @@
 import { useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
-import { apiRequest } from "../shared/api";
+import { ApiError, apiRequest } from "../shared/api";
 import type { RepairDocumentItem } from "../shared/repairDetailTypes";
 import { resolveRepairDocumentId, type RepairDetailForDraft } from "../shared/repairUiHelpers";
 
@@ -40,7 +40,7 @@ type LastUploadedDocumentLike = {
 
 type UseRepairDetailLoaderParams<TRepair extends RepairDetailLike, TLastUploadedDocument extends LastUploadedDocumentLike> = {
   setErrorMessage: (message: string) => void;
-  setSelectedRepair: (repair: TRepair) => void;
+  setSelectedRepair: (repair: TRepair | null) => void;
   setSelectedDocumentId: Dispatch<SetStateAction<number | null>>;
   setLastUploadedDocument: Dispatch<SetStateAction<TLastUploadedDocument | null>>;
   setCheckComments: Dispatch<SetStateAction<Record<number, string>>>;
@@ -50,6 +50,8 @@ type UseRepairDetailLoaderParams<TRepair extends RepairDetailLike, TLastUploaded
   syncRepairDraftFromRepairRef: MutableRefObject<(repair: TRepair) => void>;
   resetRepairDocumentsWorkflowStateRef: MutableRefObject<() => void>;
 };
+
+export type LoadRepairDetailResult = "loaded" | "not_found" | "error";
 
 export function useRepairDetailLoader<
   TRepair extends RepairDetailLike,
@@ -73,7 +75,7 @@ export function useRepairDetailLoader<
     repairId: number,
     preferredDocumentId: number | null,
     options?: { silent?: boolean; resetTransientState?: boolean },
-  ) {
+  ): Promise<LoadRepairDetailResult> {
     const silent = options?.silent ?? false;
     const resetTransientState = options?.resetTransientState ?? true;
 
@@ -122,10 +124,20 @@ export function useRepairDetailLoader<
           },
         } as TLastUploadedDocument;
       });
+      return "loaded";
     } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        setSelectedRepair(null);
+        setSelectedDocumentId(null);
+        if (!silent) {
+          setErrorMessage("Ремонт больше недоступен");
+        }
+        return "not_found";
+      }
       if (!silent) {
         setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить ремонт");
       }
+      return "error";
     } finally {
       if (!silent) {
         setRepairLoading(false);

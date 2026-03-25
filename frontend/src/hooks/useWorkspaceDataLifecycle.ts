@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import type { LoadRepairDetailResult } from "./useRepairDetailLoader";
 import { loadWorkspaceBootstrapData, type LoadedWorkspaceData } from "../shared/loadWorkspaceBootstrap";
 import { repairHasDocumentsAwaitingOcr, type RepairDetailForDraft } from "../shared/repairUiHelpers";
 import type {
@@ -94,7 +95,7 @@ type UseWorkspaceDataLifecycleParams = {
     repairId: number,
     preferredDocumentId: number | null,
     options?: LoadRepairDetailOptions,
-  ) => Promise<void>;
+  ) => Promise<LoadRepairDetailResult>;
   workspaceState: WorkspaceStateAppliers;
   resetters: WorkspaceResetters;
 };

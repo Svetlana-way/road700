@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { LoadRepairDetailResult } from "./useRepairDetailLoader";
 import {
   areAppRoutesEqual,
   buildAppRouteFromState,
@@ -44,7 +45,7 @@ type UseAppNavigationParams = {
     repairId: number,
     preferredDocumentId: number | null,
     options?: LoadRepairDetailOptions,
-  ) => Promise<void>;
+  ) => Promise<LoadRepairDetailResult>;
 };
 
 export function useAppNavigation({
@@ -76,10 +77,19 @@ export function useAppNavigation({
   const repairScrollPositionRef = useRef(0);
   const [repairHasReturnTarget, setRepairHasReturnTarget] = useState(false);
   const loadRepairDetailRef = useRef(loadRepairDetail);
+  const routeRepairLoadKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     loadRepairDetailRef.current = loadRepairDetail;
   }, [loadRepairDetail]);
+
+  function handleMissingRepairRoute() {
+    clearSelectedRepair();
+    setSelectedDocumentId(null);
+    setActiveRepairTab("overview");
+    setActiveWorkspaceTab("documents");
+    updateBrowserRoute({ workspace: "documents" });
+  }
 
   function buildRouteFromState(targetWorkspaceTab: WorkspaceTab = activeWorkspaceTab): AppRoute {
     return buildAppRouteFromState(
@@ -186,7 +196,10 @@ export function useAppNavigation({
     if (!token) {
       return;
     }
-    await loadRepairDetailRef.current(token, repairId, documentId, { resetTransientState: true });
+    const result = await loadRepairDetailRef.current(token, repairId, documentId, { resetTransientState: true });
+    if (result === "not_found") {
+      handleMissingRepairRoute();
+    }
   }
 
   function returnFromRepairPage() {
@@ -310,10 +323,26 @@ export function useAppNavigation({
     const repairMatches = selectedRepairId === routeSnapshot.repairId;
     const documentMatches = routeSnapshot.documentId === null || selectedDocumentId === routeSnapshot.documentId;
     if (!repairMatches || !documentMatches) {
-      void loadRepairDetailRef.current(token, routeSnapshot.repairId, routeSnapshot.documentId, {
-        silent: repairMatches,
-        resetTransientState: !repairMatches,
-      });
+      const routeLoadKey = `${routeSnapshot.repairId}:${routeSnapshot.documentId ?? "none"}`;
+      if (routeRepairLoadKeyRef.current === routeLoadKey) {
+        return;
+      }
+      routeRepairLoadKeyRef.current = routeLoadKey;
+      void loadRepairDetailRef
+        .current(token, routeSnapshot.repairId, routeSnapshot.documentId, {
+          silent: repairMatches,
+          resetTransientState: !repairMatches,
+        })
+        .then((result) => {
+          if (result === "not_found") {
+            handleMissingRepairRoute();
+          }
+        })
+        .finally(() => {
+          if (routeRepairLoadKeyRef.current === routeLoadKey) {
+            routeRepairLoadKeyRef.current = null;
+          }
+        });
     }
   }, [
     activeAdminTab,

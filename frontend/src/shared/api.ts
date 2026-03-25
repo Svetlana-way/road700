@@ -6,6 +6,16 @@ export const API_BASE_URL =
     ? "http://localhost:8000/api"
     : "/api");
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 function formatApiErrorLocation(location: unknown): string | null {
   if (!Array.isArray(location)) {
     return null;
@@ -104,7 +114,7 @@ export async function loginRequest<T>(username: string, password: string): Promi
   });
 
   if (!response.ok) {
-    throw new Error(await readApiError(response));
+    throw new ApiError(await readApiError(response), response.status);
   }
 
   return (await response.json()) as T;
@@ -125,7 +135,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}, token?
   });
 
   if (!response.ok) {
-    throw new Error(await readApiError(response));
+    throw new ApiError(await readApiError(response), response.status);
   }
 
   return (await response.json()) as T;
@@ -140,7 +150,7 @@ export async function downloadDocumentFile(documentId: number, token: string): P
   });
 
   if (!response.ok) {
-    throw new Error(await readApiError(response));
+    throw new ApiError(await readApiError(response), response.status);
   }
 
   const blob = await response.blob();
@@ -156,7 +166,7 @@ export async function downloadApiFile(path: string, token: string, fallbackFilen
   });
 
   if (!response.ok) {
-    throw new Error(await readApiError(response));
+    throw new ApiError(await readApiError(response), response.status);
   }
 
   const blob = await response.blob();

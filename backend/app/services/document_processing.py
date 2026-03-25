@@ -255,6 +255,15 @@ SERVICE_CANDIDATE_PATTERNS = [
         re.IGNORECASE | re.MULTILINE | re.DOTALL,
     ),
 ]
+REASON_LABEL_PATTERN = fuzzy_phrase_pattern("причина", "обращения")
+REASON_SECTION_PATTERNS = [
+    re.compile(
+        rf"(?:^|\n)\s*(?:{REASON_LABEL_PATTERN})\s*[:№]?\s*(?P<value>.+?)"
+        r"(?=(?:\n\s*(?:Выполненные\s+работы|Расходная\s+накладная|Акт\s+выполненных\s+работ|"
+        r"Перечень\s+работ|№\s+Артикул|Итого\s+работ|Итого\s+по\s+причине\s+обращения)\b)|\Z)",
+        re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    ),
+]
 TOTAL_PATTERNS = {
     "work_total": [
         r"Итого\s+работ:\s*\d+\s+\d+(?:[.,]\d+)?\s+(\d[\d\s]*(?:[.,]\d{2}))\s+\d[\d\s]*(?:[.,]\d{2})\s+\d[\d\s]*(?:[.,]\d{2})",
@@ -635,6 +644,10 @@ def normalize_text(text: str) -> str:
     return re.sub(r"[ \t]+", " ", text).strip()
 
 
+def normalize_multiline_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def score_text_quality(text: str) -> tuple[int, int, int]:
     cyrillic_count = len(re.findall(r"[А-Яа-я]", text))
     alnum_count = len(re.findall(r"[А-Яа-яA-Za-z0-9]", text))
@@ -683,6 +696,17 @@ def select_best_text_variant(text: str) -> str:
             best_variant = candidate
             best_score = candidate_score
     return best_variant
+
+
+def extract_reason_from_text(text: str) -> Optional[str]:
+    for pattern in REASON_SECTION_PATTERNS:
+        match = pattern.search(text)
+        if match is None:
+            continue
+        value = normalize_multiline_text(match.group("value")).strip(' "')
+        if value:
+            return value[:2000]
+    return None
 
 
 def is_vision_ocr_available() -> bool:
@@ -5855,6 +5879,11 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
             extracted_fields["service_name"] = service_candidate[:120]
             confidence_map["service_name"] = float(service_name_confidence or 0.58)
 
+    reason = extract_reason_from_text(text)
+    if reason:
+        extracted_fields["reason"] = reason
+        confidence_map["reason"] = 0.84
+
     if normalized_profile_scope == "ets_act":
         ets_scanned_fields = extract_ets_act_scanned_header_fields(text)
         for field_name, confidence in (
@@ -6287,6 +6316,8 @@ def process_document(db: Session, document_id: int, *, job_id: int | None = None
                     repair.repair_date = parsed_repair_date
             if "mileage" in extracted_fields:
                 repair.mileage = int(extracted_fields["mileage"])
+            if "reason" in extracted_fields:
+                repair.reason = str(extracted_fields["reason"])
             if "work_total" in extracted_fields:
                 repair.work_total = float(extracted_fields["work_total"])
             if "parts_total" in extracted_fields:

@@ -39,6 +39,14 @@ REASON_SIGNAL_RULES = [
         "repair_terms": ("тормоз", "колод", "суппорт", "диск"),
     },
 ]
+PART_WORK_ALIGNMENT_RULES = [
+    {
+        "label": "фонарь",
+        "reason_terms": ("фонар",),
+        "part_terms": ("фонар",),
+        "work_terms": ("фонар",),
+    },
+]
 
 
 def build_repair_executive_report(
@@ -54,6 +62,9 @@ def build_repair_executive_report(
         _append_finding(findings, seen_titles, finding)
 
     for finding in _build_reason_gap_findings(repair):
+        _append_finding(findings, seen_titles, finding)
+
+    for finding in _build_part_work_alignment_findings(repair):
         _append_finding(findings, seen_titles, finding)
 
     for finding in _build_reason_quality_findings(repair):
@@ -298,6 +309,65 @@ def _build_reason_quality_findings(repair: Repair) -> list[dict[str, object]]:
             "recommendation": "Ввести правило: не закрывать заказ-наряды с причиной «прочее» без расшифровки конкретного дефекта.",
         }
     ]
+
+
+def _build_part_work_alignment_findings(repair: Repair) -> list[dict[str, object]]:
+    reason_text = _normalize_text(" ".join(filter(None, [repair.reason, repair.employee_comment])))
+    if not reason_text or not repair.parts:
+        return []
+
+    findings: list[dict[str, object]] = []
+    for rule in PART_WORK_ALIGNMENT_RULES:
+        if not _contains_any(reason_text, rule["reason_terms"]):
+            continue
+
+        matched_parts = [
+            item.part_name
+            for item in repair.parts
+            if _contains_any(_normalize_text(item.part_name), rule["part_terms"])
+        ]
+        if not matched_parts:
+            continue
+
+        matched_works = [
+            item.work_name
+            for item in repair.works
+            if _contains_any(_normalize_text(item.work_name), rule["work_terms"])
+        ]
+        if matched_works:
+            continue
+
+        findings.append(
+            {
+                "title": f"Материал по зоне «{rule['label']}» списан без профильной работы",
+                "severity": "high",
+                "category": "Состав ремонта",
+                "summary": (
+                    "В заказ-наряде есть запчасть по заявленному дефекту, "
+                    "но среди работ нет явной операции по ее замене или ремонту."
+                ),
+                "rationale": (
+                    "Такое расхождение повышает риск неполного отражения ремонта "
+                    "и требует отдельного подтверждения от сервиса."
+                ),
+                "evidence": [
+                    f"Причина обращения: {repair.reason or repair.employee_comment or 'не указана'}",
+                    (
+                        "Работы в заказ-наряде: "
+                        + ", ".join(item.work_name for item in repair.works[:6])
+                        if repair.works
+                        else "Работы в заказ-наряде отсутствуют."
+                    ),
+                    f"Материалы по зоне: {', '.join(matched_parts[:4])}",
+                ],
+                "recommendation": (
+                    f"Запросить у сервиса пояснение, почему по зоне «{rule['label']}» списан материал "
+                    "без отдельной работы, и при необходимости добавить корректную позицию работ."
+                ),
+            }
+        )
+
+    return findings
 
 
 def _build_diagnostics_findings(repair: Repair) -> list[dict[str, object]]:

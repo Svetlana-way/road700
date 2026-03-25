@@ -88,8 +88,22 @@ run_rsync \
 echo "Rebuilding application containers"
 run_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$REMOTE_ENV_FILE' -f docker-compose.server.yml up -d --build app worker caddy"
 
+echo "Reloading Caddy configuration"
+run_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$REMOTE_ENV_FILE' -f docker-compose.server.yml restart caddy"
+
 echo "Container status"
 run_ssh "cd '$REMOTE_DIR' && docker compose --env-file '$REMOTE_ENV_FILE' -f docker-compose.server.yml ps"
 
 echo "Running OCR runtime smoke test"
 run_ssh "cd '$REMOTE_DIR' && chmod +x ./scripts/smoke-test-ocr-runtime.sh && ENV_FILE='$REMOTE_ENV_FILE' COMPOSE_FILE='docker-compose.server.yml' ./scripts/smoke-test-ocr-runtime.sh"
+
+if command -v curl >/dev/null 2>&1; then
+  REMOTE_DOMAIN="$(run_ssh "cd '$REMOTE_DIR' && sed -n 's/^DOMAIN=//p' '$REMOTE_ENV_FILE' | tail -n 1")"
+  if [[ -n "$REMOTE_DOMAIN" ]]; then
+    echo "Running external access smoke test"
+    curl --fail --silent --show-error --max-time 20 "https://$REMOTE_DOMAIN/api/health" >/dev/null
+    curl --fail --silent --show-error --max-time 20 "http://$REMOTE_DOMAIN/api/health" >/dev/null
+    curl --fail --silent --show-error --max-time 20 "http://$REMOTE_HOST/api/health" >/dev/null
+    echo "External access smoke test passed."
+  fi
+fi

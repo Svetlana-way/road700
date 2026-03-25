@@ -267,6 +267,41 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
         self.assertIn("labor_norm_skip:outside_catalog_service", notes)
         self.assertNotIn("labor_norm_match_missing", notes)
 
+    def test_enrich_work_payloads_marks_axb_diagnostic_service_as_outside_catalog(self) -> None:
+        works_payload = [
+            {
+                "work_code": "17010-2",
+                "work_name": "Подсоединение/отсоединение диагностического прибора",
+                "quantity": 0.5,
+                "standard_hours": 0.5,
+                "price": 3420.0,
+                "line_total": 1710.0,
+            }
+        ]
+        applicability = LaborNormApplicability(
+            eligible=True,
+            scope="dongfeng_2025",
+            reason_code="supported",
+            reason="Автоматически выбран каталог Dong Feng 2025",
+            brand_family="dongfeng",
+            catalog_name="Dong Feng 2025",
+        )
+
+        with self.SessionLocal() as db:
+            notes, summary = document_processing.enrich_work_payloads_with_labor_norms(
+                db,
+                works_payload,
+                applicability,
+            )
+
+        reference_payload = works_payload[0]["reference_payload"]
+        self.assertEqual(reference_payload["labor_norm_item_reason_code"], "outside_catalog_service")
+        self.assertEqual(reference_payload["labor_norm_reference_status"], "outside_catalog_service")
+        self.assertFalse(reference_payload["labor_norm_item_applicable"])
+        self.assertEqual(summary.matched_count, 0)
+        self.assertEqual(summary.unmatched_count, 0)
+        self.assertIn("labor_norm_skip:outside_catalog_service", notes)
+
     def test_build_dynamic_work_reference_checks_skips_outside_catalog_service_operations(self) -> None:
         with self.SessionLocal() as db:
             current_repair = db.get(Repair, 1)

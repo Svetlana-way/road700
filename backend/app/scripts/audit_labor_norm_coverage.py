@@ -15,6 +15,7 @@ from app.models.labor_norm import LaborNorm
 from app.services.document_processing import extract_document_text, normalize_line, parse_document_text
 from app.services.labor_norms import (
     build_normalized_name,
+    classify_known_non_catalog_operation,
     find_best_labor_norm_match,
     load_active_labor_norms,
     normalize_labor_norm_scope,
@@ -110,17 +111,13 @@ def classify_unmatched_row(
         r"\bнорма\b",
         r"техническ[а-я]+\s+обслужив",
     )
-    outside_catalog_markers = (
+    multi_operation_markers = (
         "мойка",
         "нормокомплект",
-        "сварочн",
-        "диагностическ прибора",
-        "поиск неисправност",
-        "то прицепа",
-        "калибровка кпп",
-        "сцепления",
+        "ремонт",
+        "топливный фильтр",
+        "диагностическ",
     )
-
     if (
         not has_structured_hint
         and (
@@ -138,13 +135,15 @@ def classify_unmatched_row(
     if raw_name.strip(" .,:;|/-") == "ремонт" or re.fullmatch(r"[\d\s,./-]*ремонт", raw_name):
         return "ocr_noise", "строка содержит только общий тип операции без названия работы"
 
-    if re.match(r"^\d+[,.]\d+", raw_name) and sum(marker in raw_name for marker in outside_catalog_markers) >= 2:
+    if re.match(r"^\d+[,.]\d+", raw_name) and sum(marker in raw_name for marker in multi_operation_markers) >= 2:
         return "ocr_noise", "строка склеена из нескольких операций или числовых колонок OCR"
 
-    if any(marker in raw_name for marker in outside_catalog_markers) or any(
-        marker in normalized_name for marker in outside_catalog_markers
-    ):
-        return "service_outside_catalog", "операция похожа на сервисную услугу или локальную услугу СТО вне каталога Dongfeng"
+    is_non_catalog_service, non_catalog_reason = classify_known_non_catalog_operation(
+        work_code=work_code,
+        work_name=work_name,
+    )
+    if is_non_catalog_service:
+        return "service_outside_catalog", non_catalog_reason or "операция вне каталога нормо-часов"
 
     if work_code and str(work_code).strip() in {"00", "01", "02", "100", "32300", "700700", "150000"}:
         return "service_outside_catalog", "код похож на локальный код сервиса, а не на код нормы производителя"

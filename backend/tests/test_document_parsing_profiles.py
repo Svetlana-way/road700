@@ -1208,6 +1208,9 @@ RUB
         self.assertAlmostEqual(sum(item["line_total"] for item in works), 38167.2, places=2)
         self.assertAlmostEqual(sum(item["line_total"] for item in parts), 50712.9, places=2)
         self.assertTrue(any(item["work_name"] == "Тормозной шланг, замена" and item["line_total"] == 2052.0 for item in works))
+        self.assertTrue(any(item["work_code"] == "250000" and item["standard_hours"] == 4.0 and item["price"] == 3600.0 for item in works))
+        self.assertTrue(any(item["work_code"] == "60131-3" and item["standard_hours"] == 2.3 for item in works))
+        self.assertTrue(any(item["work_code"] == "64300-2" and item["standard_hours"] == 1.2 for item in works))
         self.assertTrue(any(item["article"] == "LN3504" and item["line_total"] == 547.2 for item in parts))
         self.assertTrue(any("МАСЛО Моторное лукоил" in item["part_name"] and "Шланг тормозной" in item["part_name"] for item in parts))
 

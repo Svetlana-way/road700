@@ -6043,8 +6043,12 @@ def process_document(db: Session, document_id: int, *, job_id: int | None = None
                 parts_total = float(extracted_fields.get("parts_total", 0) or 0)
                 vat_total = float(extracted_fields.get("vat_total", 0) or 0)
                 grand_total = float(extracted_fields["grand_total"])
-                calculated_total = round(work_total + parts_total + vat_total, 2)
-                if not amounts_match(calculated_total, grand_total):
+                calculated_total = round(work_total + parts_total, 2)
+                calculated_total_with_vat = round(calculated_total + vat_total, 2)
+                if not amounts_match(calculated_total, grand_total) and not amounts_match(
+                    calculated_total_with_vat,
+                    grand_total,
+                ):
                     checks.append(
                         {
                             "check_type": "ocr_total_mismatch",
@@ -6056,6 +6060,7 @@ def process_document(db: Session, document_id: int, *, job_id: int | None = None
                                 "parts_total": parts_total,
                                 "vat_total": vat_total,
                                 "calculated_total": calculated_total,
+                                "calculated_total_with_vat": calculated_total_with_vat,
                                 "grand_total": grand_total,
                             },
                         }

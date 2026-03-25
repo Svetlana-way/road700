@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 from dataclasses import dataclass
 from pathlib import Path
@@ -223,10 +224,51 @@ def import_labor_norms_with_session(
     return stats
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Import labor norms catalog into Road700.")
+    parser.add_argument(
+        "--path",
+        type=Path,
+        default=DEFAULT_LABOR_NORMS_PATH,
+        help="Path to CSV or XLSX labor norms catalog.",
+    )
+    parser.add_argument(
+        "--scope",
+        default=DEFAULT_DONGFENG_LABOR_NORM_SCOPE,
+        help="Unique catalog scope, for example `dongfeng_2025` or `volvo_fh_approx_vstg_2026`.",
+    )
+    parser.add_argument(
+        "--brand-family",
+        default=DEFAULT_DONGFENG_BRAND_FAMILY,
+        help="Brand family used for matching, for example `dongfeng` or `volvo`.",
+    )
+    parser.add_argument(
+        "--catalog-name",
+        default=DEFAULT_DONGFENG_CATALOG_NAME,
+        help="Human-readable catalog name shown in admin UI.",
+    )
+    return parser
+
+
 def main() -> None:
+    args = build_parser().parse_args()
     with SessionLocal() as db:
-        stats = import_labor_norms_with_session(db)
-    print(stats.as_dict())
+        stats = import_labor_norms_with_session(
+            db,
+            path=args.path.resolve(),
+            scope=args.scope,
+            brand_family=args.brand_family,
+            catalog_name=args.catalog_name,
+        )
+    print(
+        {
+            "path": str(args.path.resolve()),
+            "scope": args.scope,
+            "brand_family": args.brand_family,
+            "catalog_name": args.catalog_name,
+            **stats.as_dict(),
+        }
+    )
 
 
 if __name__ == "__main__":

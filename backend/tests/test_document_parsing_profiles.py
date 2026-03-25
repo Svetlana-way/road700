@@ -55,6 +55,54 @@ class DocumentParsingProfilesTestCase(unittest.TestCase):
         self.assertEqual(parsed["extracted_fields"]["vin"], "LGAG3DV2XP8837385")
         self.assertEqual(parsed["extracted_fields"]["mileage"], 259775)
 
+    def test_sanitize_extracted_items_removes_noise_work_names_but_keeps_real_work_rows(self) -> None:
+        extracted_items = {
+            "works": [
+                {
+                    "work_code": None,
+                    "work_name": "1 н/ч",
+                    "quantity": 1.0,
+                    "unit_name": None,
+                    "price": 799.64,
+                    "line_total": 179.96,
+                },
+                {
+                    "work_code": None,
+                    "work_name": "356,33 1 976,00Итого RUB:",
+                    "quantity": 18.0,
+                    "unit_name": None,
+                    "price": 624.23,
+                    "line_total": 36.0,
+                },
+                {
+                    "work_code": "24030632",
+                    "work_name": "2 ШМ Колесо - смена (односкатное прицеп)",
+                    "quantity": 1.0,
+                    "unit_name": "нч",
+                    "price": 1600.0,
+                    "line_total": 1440.0,
+                },
+                {
+                    "work_code": None,
+                    "work_name": "ТО-2 (500 000)",
+                    "quantity": 9.2,
+                    "unit_name": "нч",
+                    "price": 2343.48,
+                    "line_total": 21559.97,
+                },
+            ],
+            "parts": [],
+        }
+
+        sanitized_items, removed_count = document_processing.sanitize_extracted_items(extracted_items)
+
+        self.assertEqual(removed_count, 2)
+        self.assertEqual(len(sanitized_items["works"]), 2)
+        self.assertEqual(
+            [item["work_name"] for item in sanitized_items["works"]],
+            ["2 ШМ Колесо - смена (односкатное прицеп)", "ТО-2 (500 000)"],
+        )
+
     def test_parse_document_text_extracts_ets_act_vin_and_totals(self) -> None:
         text = (
             'ОФИЦИАЛЬНЫЙ ДИЛЕР VOLVO Общество с ограниченной ответственностью "Енисей Трак Сервис" '

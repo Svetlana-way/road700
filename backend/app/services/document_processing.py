@@ -1903,6 +1903,30 @@ def split_work_code_and_name(value: str) -> tuple[Optional[str], str]:
     return None, normalized_value
 
 
+def is_meaningful_work_name(value: object) -> bool:
+    normalized_value = normalize_line(str(value or ""))
+    lower_value = normalized_value.lower()
+    if not normalized_value:
+        return False
+    if re.fullmatch(r"\d+(?:[.,]\d+)?\s*(?:н/?ч|нч|шт|г|гр|мл|литр|л|кг|м)\b", lower_value):
+        return False
+
+    alpha_tokens = re.findall(r"[A-Za-zА-Яа-я]+", lower_value)
+    if any(token in {"итого", "всего", "ндс", "rub", "руб"} for token in alpha_tokens):
+        return False
+    if any(marker in lower_value for marker in ("итого rub", "всего rub", "сумма ндс", "в т.ч. ндс")):
+        return False
+    return True
+
+
+def sanitize_extracted_items(extracted_items: dict[str, list[dict[str, object]]]) -> tuple[dict[str, list[dict[str, object]]], int]:
+    works = extracted_items.get("works") or []
+    parts = extracted_items.get("parts") or []
+    sanitized_works = [item for item in works if is_meaningful_work_name(item.get("work_name"))]
+    removed_count = len(works) - len(sanitized_works)
+    return {"works": sanitized_works, "parts": list(parts)}, removed_count
+
+
 def is_quantity_token(token: str) -> bool:
     return bool(re.fullmatch(r"\d+(?:[.,]\d+)?", token))
 
@@ -4203,6 +4227,10 @@ def apply_profile_specific_item_fallbacks(
         if material_parts and len(material_parts) >= len(fallback_items["parts"]):
             fallback_items["parts"] = material_parts
 
+    fallback_items, fallback_removed_count = sanitize_extracted_items(fallback_items)
+    if fallback_removed_count:
+        normalization_notes.append(f"noise_work_items_removed_from_profile_fallback:{fallback_removed_count}")
+
     current_count = len(extracted_items.get("works") or []) + len(extracted_items.get("parts") or [])
     fallback_fills_missing_section = (
         bool(fallback_items["works"]) and not bool(extracted_items.get("works"))
@@ -5738,6 +5766,9 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
     manual_review_reasons = []
     normalization_notes = []
     extracted_items = extract_line_items(text)
+    extracted_items, removed_noise_work_count = sanitize_extracted_items(extracted_items)
+    if removed_noise_work_count:
+        normalization_notes.append(f"noise_work_items_removed:{removed_noise_work_count}")
     rule_map = (
         group_ocr_rules_by_field(
             load_active_ocr_rules(db, profile_scope=profile_scope),
@@ -5931,6 +5962,9 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
         extracted_fields=extracted_fields,
         normalization_notes=normalization_notes,
     )
+    extracted_items, removed_post_fallback_noise_work_count = sanitize_extracted_items(extracted_items)
+    if removed_post_fallback_noise_work_count:
+        normalization_notes.append(f"noise_work_items_removed_after_fallback:{removed_post_fallback_noise_work_count}")
 
     normalization_notes.extend(
         reconcile_header_totals_with_line_items(

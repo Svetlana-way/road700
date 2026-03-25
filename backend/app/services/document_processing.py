@@ -44,6 +44,7 @@ from app.services.labor_norms import (
     LaborNormEnrichmentSummary,
     assess_labor_norm_applicability,
     build_normalized_name,
+    classify_known_non_catalog_operation,
     find_best_labor_norm_match,
     normalize_labor_norm_code,
 )
@@ -4570,6 +4571,7 @@ def enrich_work_payloads_with_labor_norms(
     notes: list[str] = []
     matched_count = 0
     unmatched_count = 0
+    applicable_item_count = 0
     for item in works_payload:
         work_name = str(item.get("work_name") or "").strip()
         if not work_name:
@@ -4587,6 +4589,9 @@ def enrich_work_payloads_with_labor_norms(
         reference_payload["labor_norm_scope"] = applicability.scope
         reference_payload["labor_norm_applicability_reason_code"] = applicability.reason_code
         reference_payload["labor_norm_applicability_reason"] = applicability.reason
+        reference_payload["labor_norm_item_applicable"] = applicability.eligible
+        reference_payload["labor_norm_item_reason_code"] = applicability.reason_code
+        reference_payload["labor_norm_item_reason"] = applicability.reason
         if applicability.catalog_name:
             reference_payload["labor_norm_catalog_name"] = applicability.catalog_name
         if applicability.brand_family:
@@ -4597,10 +4602,25 @@ def enrich_work_payloads_with_labor_norms(
             except (TypeError, ValueError):
                 reference_payload.pop("document_standard_hours", None)
 
+        is_non_catalog_service, non_catalog_reason = classify_known_non_catalog_operation(
+            work_code=work_code,
+            work_name=work_name,
+        )
+        if is_non_catalog_service:
+            reference_payload["labor_norm_item_applicable"] = False
+            reference_payload["labor_norm_item_reason_code"] = "outside_catalog_service"
+            reference_payload["labor_norm_item_reason"] = non_catalog_reason
+            reference_payload["labor_norm_reference_status"] = "outside_catalog_service"
+            item["reference_payload"] = reference_payload
+            notes.append("labor_norm_skip:outside_catalog_service")
+            continue
+
         if not applicability.eligible:
+            reference_payload["labor_norm_reference_status"] = "catalog_not_applicable"
             item["reference_payload"] = reference_payload
             continue
 
+        applicable_item_count += 1
         match = find_best_labor_norm_match(
             db,
             work_code=work_code,
@@ -4608,6 +4628,7 @@ def enrich_work_payloads_with_labor_norms(
             scope=applicability.scope,
         )
         if match is None:
+            reference_payload["labor_norm_reference_status"] = "catalog_gap"
             item["reference_payload"] = reference_payload
             unmatched_count += 1
             continue
@@ -4626,6 +4647,7 @@ def enrich_work_payloads_with_labor_norms(
                 "labor_norm_standard_hours": float(match.norm.standard_hours),
                 "labor_norm_match_score": match.score,
                 "labor_norm_matched_by": match.matched_by,
+                "labor_norm_reference_status": "matched",
             }
         )
         item["reference_payload"] = reference_payload
@@ -4634,7 +4656,7 @@ def enrich_work_payloads_with_labor_norms(
 
     if works_payload and not applicability.eligible:
         notes.append(f"labor_norm_skipped:{applicability.reason_code}")
-    elif works_payload and matched_count == 0:
+    elif applicable_item_count > 0 and matched_count == 0:
         notes.append("labor_norm_match_missing")
 
     return notes, LaborNormEnrichmentSummary(
@@ -5169,6 +5191,18 @@ def build_dynamic_work_reference_checks(
         if not isinstance(reference_payload, dict):
             reference_payload = {}
             item["reference_payload"] = reference_payload
+
+        labor_norm_item_reason_code = str(reference_payload.get("labor_norm_item_reason_code") or "").strip()
+        if labor_norm_item_reason_code == "outside_catalog_service":
+            reference_payload["dynamic_work_reference"] = {
+                "comparison_source": "not_applicable",
+                "reason_code": labor_norm_item_reason_code,
+                "reason": reference_payload.get("labor_norm_item_reason"),
+                "sample_lines": 0,
+                "historical_sample_lines": 0,
+                "operational_sample_lines": 0,
+            }
+            continue
 
         if not matches:
             if match_key not in seen_missing_keys:

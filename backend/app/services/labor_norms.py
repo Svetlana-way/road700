@@ -78,6 +78,27 @@ MATCH_STOPWORDS = {
     "деталь",
     "узел",
 }
+KNOWN_NON_CATALOG_SERVICE_KEYWORDS = (
+    "мойка",
+    "нормокомплект",
+    "то прицепа",
+    "сварочн",
+    "поиск неисправности",
+    "параметры проверка",
+)
+KNOWN_NON_CATALOG_HIGH_CONFIDENCE_CODES = {
+    "0101",
+    "32300",
+    "700700",
+    "150000",
+}
+KNOWN_NON_CATALOG_GENERIC_CODES = {
+    "00",
+    "01",
+    "02",
+    "100",
+    "114",
+}
 DEFAULT_DONGFENG_LABOR_NORM_SCOPE = "dongfeng_2025"
 DEFAULT_DONGFENG_BRAND_FAMILY = "dongfeng"
 DEFAULT_DONGFENG_CATALOG_NAME = "Dong Feng 2025"
@@ -153,6 +174,28 @@ def build_normalized_name(*values: Optional[str]) -> str:
 def build_search_text(*values: Optional[str]) -> str:
     parts = [str(value).strip() for value in values if value]
     return " | ".join(parts)
+
+
+def classify_known_non_catalog_operation(
+    *,
+    work_code: Optional[str],
+    work_name: Optional[str],
+) -> tuple[bool, Optional[str]]:
+    normalized_name = normalize_vehicle_match_text(work_name)
+    normalized_name = re.sub(r"[^a-zа-я0-9]+", " ", normalized_name).strip()
+    normalized_code = normalize_labor_norm_code(work_code)
+    keyword_match = any(keyword in normalized_name for keyword in KNOWN_NON_CATALOG_SERVICE_KEYWORDS)
+
+    if normalized_code in KNOWN_NON_CATALOG_HIGH_CONFIDENCE_CODES:
+        return True, "Операция использует локальный сервисный код и не относится к каталогу нормо-часов производителя"
+
+    if keyword_match and normalized_code in KNOWN_NON_CATALOG_GENERIC_CODES:
+        return True, "Операция использует локальный сервисный код и не относится к каталогу нормо-часов производителя"
+
+    if keyword_match:
+        return True, "Операция похожа на локальную сервисную услугу вне каталога нормо-часов производителя"
+
+    return False, None
 
 
 @dataclass

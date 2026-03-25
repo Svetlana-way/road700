@@ -17,12 +17,13 @@ from app.core.security import get_password_hash
 from app.db.base import Base
 from app.models.document import Document
 from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
-from app.models.repair import Repair, RepairCheck
+from app.models.repair import Repair, RepairCheck, RepairWork
 from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.services import document_processing
 from app.services.document_processing import OcrProfileSelection, process_document
+from app.services.labor_norms import LaborNormApplicability
 
 
 class DocumentProcessingTotalsTestCase(unittest.TestCase):
@@ -229,6 +230,101 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
         self.assertEqual(mismatch.calculation_payload["calculated_total"], 189821.0)
         self.assertEqual(mismatch.calculation_payload["calculated_total_with_vat"], 224051.02)
         self.assertEqual(repair.status, RepairStatus.SUSPICIOUS)
+
+    def test_enrich_work_payloads_marks_local_service_operations_as_outside_catalog(self) -> None:
+        works_payload = [
+            {
+                "work_code": "0101",
+                "work_name": "Мойка технологическая седельного тягача",
+                "quantity": 0.45,
+                "standard_hours": 0.45,
+                "price": 3600.0,
+                "line_total": 1539.0,
+            }
+        ]
+        applicability = LaborNormApplicability(
+            eligible=True,
+            scope="dongfeng_2025",
+            reason_code="supported",
+            reason="Автоматически выбран каталог Dong Feng 2025",
+            brand_family="dongfeng",
+            catalog_name="Dong Feng 2025",
+        )
+
+        with self.SessionLocal() as db:
+            notes, summary = document_processing.enrich_work_payloads_with_labor_norms(
+                db,
+                works_payload,
+                applicability,
+            )
+
+        reference_payload = works_payload[0]["reference_payload"]
+        self.assertEqual(reference_payload["labor_norm_item_reason_code"], "outside_catalog_service")
+        self.assertEqual(reference_payload["labor_norm_reference_status"], "outside_catalog_service")
+        self.assertFalse(reference_payload["labor_norm_item_applicable"])
+        self.assertEqual(summary.matched_count, 0)
+        self.assertEqual(summary.unmatched_count, 0)
+        self.assertIn("labor_norm_skip:outside_catalog_service", notes)
+        self.assertNotIn("labor_norm_match_missing", notes)
+
+    def test_build_dynamic_work_reference_checks_skips_outside_catalog_service_operations(self) -> None:
+        with self.SessionLocal() as db:
+            current_repair = db.get(Repair, 1)
+            vehicle = db.get(Vehicle, 1)
+            admin = db.get(User, 1)
+            self.assertIsNotNone(current_repair)
+            self.assertIsNotNone(vehicle)
+            self.assertIsNotNone(admin)
+            assert current_repair is not None
+            assert vehicle is not None
+            assert admin is not None
+
+            historical_repair = Repair(
+                order_number="HIST-1",
+                repair_date=date(2026, 1, 10),
+                vehicle_id=vehicle.id,
+                service_id=None,
+                created_by_user_id=admin.id,
+                mileage=120000,
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+                is_partially_recognized=False,
+            )
+            db.add(historical_repair)
+            db.flush()
+            db.add(
+                RepairWork(
+                    repair_id=historical_repair.id,
+                    work_code="99999-9",
+                    work_name="Историческая работа",
+                    quantity=1.0,
+                    price=1000.0,
+                    line_total=1000.0,
+                )
+            )
+            db.commit()
+
+            works_payload = [
+                {
+                    "work_code": "0101",
+                    "work_name": "Мойка технологическая седельного тягача",
+                    "quantity": 0.45,
+                    "standard_hours": 0.45,
+                    "price": 3600.0,
+                    "line_total": 1539.0,
+                    "reference_payload": {
+                        "labor_norm_item_reason_code": "outside_catalog_service",
+                        "labor_norm_item_reason": "Операция использует локальный сервисный код и не относится к каталогу нормо-часов производителя",
+                    },
+                }
+            ]
+
+            checks = document_processing.build_dynamic_work_reference_checks(db, current_repair, works_payload)
+
+        self.assertEqual(checks, [])
+        dynamic_reference = works_payload[0]["reference_payload"]["dynamic_work_reference"]
+        self.assertEqual(dynamic_reference["comparison_source"], "not_applicable")
+        self.assertEqual(dynamic_reference["reason_code"], "outside_catalog_service")
 
 
 if __name__ == "__main__":

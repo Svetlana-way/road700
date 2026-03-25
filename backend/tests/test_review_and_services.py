@@ -183,6 +183,74 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["document_status"], "needs_review")
         self.assertEqual(payload["repair_status"], "in_review")
 
+    def test_employee_can_access_own_preliminary_repair_after_server_vehicle_relink(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            self.assertIsNotNone(employee)
+
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            foreign_vehicle = Vehicle(
+                external_id="truck-foreign",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="B456CD116",
+                brand="Sitrak",
+                model="C7H",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, foreign_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-UPL-001",
+                repair_date=date(2025, 1, 16),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=employee.id,
+                mileage=1000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=employee.id,
+                original_filename="uploaded-order.pdf",
+                storage_key="documents/test/uploaded-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.UPLOADED,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            repair.vehicle_id = foreign_vehicle.id
+            db.commit()
+            repair_id = repair.id
+            document_id = document.id
+
+        repair_response = self.client.get(f"/api/repairs/{repair_id}", headers=headers)
+        self.assertEqual(repair_response.status_code, 200, repair_response.text)
+        self.assertEqual(repair_response.json()["id"], repair_id)
+
+        documents_response = self.client.get("/api/documents?limit=8", headers=headers)
+        self.assertEqual(documents_response.status_code, 200, documents_response.text)
+        visible_document_ids = [item["id"] for item in documents_response.json()["items"]]
+        self.assertIn(document_id, visible_document_ids)
+
     def test_admin_created_service_keeps_confirmed_status(self) -> None:
         headers = self._get_auth_headers("admin")
 

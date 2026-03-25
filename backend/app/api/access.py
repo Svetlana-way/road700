@@ -40,6 +40,6 @@ def get_repair_visibility_clause(current_user: User):
         Repair.vehicle_id.in_(get_allowed_vehicle_ids_query(current_user)),
         and_(
             Repair.created_by_user_id == current_user.id,
-            Repair.vehicle.has(Vehicle.external_id == PLACEHOLDER_EXTERNAL_ID),
+            Repair.is_preliminary.is_(True),
         ),
     )

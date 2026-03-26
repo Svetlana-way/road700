@@ -1013,6 +1013,102 @@ Bcero
         self.assertEqual(parts[1]["article"], "DFZPC4389022")
         self.assertEqual(parts[2]["article"], "3506911-91045")
 
+    def test_parse_document_text_extracts_axb_parts_from_followup_material_page_after_empty_first_page(self) -> None:
+        text = """
+Заказ-наряд № 0000021658 от 02.07.2025
+TC : SCHMITZ CARGOBULL 9084 гос. номер: BB044416, VIN: WSM00000003313941, год вып. 2018, пробег 1 480 125
+Итого работ:
+43 023,60
+Итого материалов:
+36
+38
+Две тысячи четыреста пятьдесят рублей 54 копейки в т.ч. НДС 408,42 RUB
+Расходная накладная к заказ-наряду Nº 0000021658 от 02.07.2025
+Артикул
+Наименование
+Кол-во Ед.изм. Цена
+Итого по странице материалов:
+на сумму:
+0,00
+Bcero
+0,00
+0,00
+No
+1
+1
+Артикул
+2
+Наименование
+3
+Кол-во
+4
+Ед.изм.
+1100083
+Болт амортизатора с гайкой (Schmitz), MANSONS
+188-01400-SX
+Термосоединитель проводов красный 1.5-2.5 Stellox
+318012
+Провод ПУГВ 1х1.5 Красный
+318015
+Провод ПУГВ 1х1.5 Черный
+8801413SX
+Разъем плоский с уплотнительной резинкой
+159060020
+Хомут стяжка пластиковая 200х4,8
+13844CP
+Лампа накаливания 5W 24V
+015555102
+Электро соединитель торцевой 1,5-2,5 синий
+75954
+Изолента Терминатор малая автомобильная
+Цена Скидка
+шт 522,00
+52,20
+шт 44,82
+35,86
+метр 36,00
+3,60
+метр 36,00
+3,60
+шт 204,00
+10,20
+шт 7,20
+шт 3,60
+32,40
+1,62
+шт 48,00
+7,20
+шт 222,00
+11,10
+Итого по странице материалов:
+Итого материалов:
+36
+38
+на сумму:
+76,78
+Bcero
+991,80
+681,26
+68,40
+68,40
+193,80
+68,40
+30,78
+136,80
+210,90
+2 450,54
+408,42
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="axb")
+        parts = parsed["extracted_items"]["parts"]
+
+        self.assertEqual(len(parts), 1)
+        self.assertEqual(parts[0]["article"], None)
+        self.assertIn("Болт амортизатора", parts[0]["part_name"])
+        self.assertIn("Изолента Терминатор", parts[0]["part_name"])
+        self.assertEqual(parts[0]["line_total"], 2450.54)
+
     def test_parse_document_text_restores_axb_totals_from_ocr_windows_around_markers(self) -> None:
         text = """
 Заказ-наряд Nº 0000019968 от 06.04.2025
@@ -1433,6 +1529,7 @@ CH
 
         parsed = document_processing.parse_document_text(text, db=None, profile_scope="sibtrakscan")
 
+        self.assertEqual(parsed["extracted_fields"]["chassis_number"], "P8834073")
         self.assertEqual(parsed["extracted_fields"]["work_total"], 28654.14)
         self.assertEqual(parsed["extracted_fields"]["parts_total"], 107494.2)
         self.assertEqual(parsed["extracted_fields"]["grand_total"], 136148.34)
@@ -1516,6 +1613,40 @@ CH
 
         self.assertEqual(parsed["extracted_fields"]["plate_number"], "С026ВВ716")
         self.assertEqual(parsed["extracted_fields"]["vin"], "LGAG3DV29P8834073")
+        self.assertIn("VIN дополнен по совпадению с реестром техники.", parsed["normalization_notes"])
+
+    def test_parse_document_text_enriches_sibtrakscan_vin_from_vehicle_registry_by_chassis_suffix(self) -> None:
+        text = """
+Общество с ограниченной ответственностью "СИБТРАКСКАН"
+ЗАКАЗ-НАРЯД № ЗСТ26001637
+Дата открытия 19.02.2026 г.
+Дата начала работ: 19.02.2026
+Дата закрытия 22.02.2026 г.
+ТРАНСПОРТНОЕ СРЕДСТВО
+Марка: Dongfeng Модель: Dongfeng DFH4180
+Год выпуска: 2023 № шасси: P8834102 № двиг.: 93970029 Пробег: 506 884
+"""
+
+        with self.SessionLocal() as db:
+            db.add(
+                Vehicle(
+                    external_id="sibtrakscan-chassis-match",
+                    vehicle_type=VehicleType.TRUCK,
+                    status=VehicleStatus.ACTIVE,
+                    plate_number="С999АА716",
+                    vin="LGAG3DV21P8834102",
+                    brand="Dongfeng",
+                    model="Dongfeng DFH4180",
+                )
+            )
+            db.commit()
+
+            parsed = document_processing.parse_document_text(text, db=db, profile_scope="sibtrakscan")
+
+        self.assertEqual(parsed["extracted_fields"]["chassis_number"], "P8834102")
+        self.assertEqual(parsed["extracted_fields"]["vin"], "LGAG3DV21P8834102")
+        self.assertEqual(parsed["extracted_fields"]["plate_number"], "С999АА716")
+        self.assertIn("Госномер дополнен по совпадению с реестром техники.", parsed["normalization_notes"])
         self.assertIn("VIN дополнен по совпадению с реестром техники.", parsed["normalization_notes"])
 
     def test_parse_document_text_prefers_sibtrakscan_close_date_with_db_rules(self) -> None:

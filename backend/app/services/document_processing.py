@@ -226,6 +226,9 @@ VIN_LABEL_PATTERNS = [
     rf"(?:\bvin\b|vin)\s*[:№]?\s*(?P<value>[A-HJ-NPR-Z0-9]{{17}})",
     rf"(?:\bvin\b|vin)[^\n\r]{{0,60}}?(?P<value>[A-HJ-NPR-Z0-9]{{17}})",
 ]
+CHASSIS_LABEL_PATTERNS = [
+    r"(?:№\s*шасси|шасси|рама)\s*[:№]?\s*(?P<value>[A-Z0-9-]{6,20})",
+]
 MILEAGE_SECTION_PATTERNS = [
     rf"(?:{MILEAGE_LABEL_PATTERN}|{ODOMETER_LABEL_PATTERN})(?:\s*\([^)]*\))?\s*[:№]?\s*(?P<value>\d[\d\s]{{0,}})",
 ]
@@ -984,10 +987,12 @@ def find_vehicle_by_identifiers(
     *,
     plate_number: str | None,
     vin: str | None,
+    chassis_number: str | None = None,
 ) -> Vehicle | None:
     normalized_plate = normalize_compare_token(plate_number)
     normalized_vin = normalize_compare_token(vin)
-    if not normalized_plate and not normalized_vin:
+    normalized_chassis = normalize_compare_token(chassis_number)
+    if not normalized_plate and not normalized_vin and not normalized_chassis:
         return None
 
     vehicles = db.scalars(select(Vehicle)).all()
@@ -1000,6 +1005,9 @@ def find_vehicle_by_identifiers(
         vehicle_plate = normalize_compare_token(vehicle.plate_number)
         vehicle_vin = normalize_compare_token(vehicle.vin)
         if normalized_vin and vehicle_vin == normalized_vin:
+            exact_matches[vehicle.id] = vehicle
+            continue
+        if normalized_chassis and vehicle_vin and vehicle_vin.endswith(normalized_chassis):
             exact_matches[vehicle.id] = vehicle
             continue
         if normalized_plate and vehicle_plate == normalized_plate:
@@ -1036,6 +1044,7 @@ def enrich_vehicle_fields_from_registry(
         db,
         plate_number=str(extracted_fields.get("plate_number")) if extracted_fields.get("plate_number") else None,
         vin=str(extracted_fields.get("vin")) if extracted_fields.get("vin") else None,
+        chassis_number=str(extracted_fields.get("chassis_number")) if extracted_fields.get("chassis_number") else None,
     )
     if vehicle is None:
         return
@@ -1070,6 +1079,7 @@ def auto_link_repair_vehicle_from_registry(
         db,
         plate_number=str(extracted_fields.get("plate_number")) if extracted_fields.get("plate_number") else None,
         vin=str(extracted_fields.get("vin")) if extracted_fields.get("vin") else None,
+        chassis_number=str(extracted_fields.get("chassis_number")) if extracted_fields.get("chassis_number") else None,
     )
     if matched_vehicle is None or matched_vehicle.id == repair.vehicle_id:
         return
@@ -1429,6 +1439,25 @@ def find_vin_candidate(value: str | None) -> Optional[str]:
         if match is None:
             continue
         normalized = normalize_identifier_token(match.group(1))
+        if normalized:
+            return normalized
+    return None
+
+
+def find_chassis_candidate(value: str | None) -> Optional[str]:
+    if not value:
+        return None
+    normalized_value = normalize_ocr_code_token(normalize_text(value)).upper()
+    for pattern in CHASSIS_LABEL_PATTERNS:
+        match = re.search(pattern, normalized_value, re.IGNORECASE | re.MULTILINE)
+        if match is None:
+            continue
+        normalized = normalize_identifier_token(match.group("value"))
+        if normalized and 6 <= len(normalized) <= 17:
+            return normalized
+    standalone_match = re.search(r"(?<![A-Z0-9])([A-Z]\d{6,8})(?![A-Z0-9])", normalized_value)
+    if standalone_match is not None:
+        normalized = normalize_identifier_token(standalone_match.group(1))
         if normalized:
             return normalized
     return None
@@ -3766,22 +3795,20 @@ def extract_axb_work_items(text: str) -> list[dict[str, object]]:
     return works
 
 
-def extract_axb_material_section_entries(section_text: str) -> list[dict[str, Optional[str]]]:
-    lines = [normalize_line(line) for line in section_text.splitlines() if normalize_line(line)]
-    if not lines:
-        return []
-
+def _extract_axb_material_section_entries_from_lines(
+    lines: list[str],
+    *,
+    name_header_index: int,
+) -> list[dict[str, Optional[str]]]:
     try:
-        name_header_index = next(index for index, line in enumerate(lines) if line.lower() == "наименование")
-    except StopIteration:
+        body_lines = lines[name_header_index + 1 :]
+    except IndexError:
         return []
-
     lookback_codes = [
         normalize_article_value(line) or normalize_text(line)
         for line in lines[max(0, name_header_index - 8) : name_header_index]
         if is_axb_material_article_candidate(line)
     ]
-    body_lines = lines[name_header_index + 1 :]
     body_end_index = next(
         (
             index
@@ -3847,6 +3874,18 @@ def extract_axb_material_section_entries(section_text: str) -> list[dict[str, Op
             }
         )
     return normalized_entries
+
+
+def extract_axb_material_section_entries(section_text: str) -> list[dict[str, Optional[str]]]:
+    lines = [normalize_line(line) for line in section_text.splitlines() if normalize_line(line)]
+    if not lines:
+        return []
+
+    try:
+        name_header_index = next(index for index, line in enumerate(lines) if line.lower() == "наименование")
+    except StopIteration:
+        return []
+    return _extract_axb_material_section_entries_from_lines(lines, name_header_index=name_header_index)
 
 
 def extract_axb_material_section_amounts(section_text: str) -> list[float]:
@@ -4004,6 +4043,41 @@ def extract_axb_material_parts(text: str, *, expected_parts_total: Optional[floa
             }
         )
 
+    if parts:
+        return parts
+
+    lines = [normalize_line(line) for line in text.splitlines() if normalize_line(line)]
+    name_header_indexes = [index for index, line in enumerate(lines) if line.lower() == "наименование"]
+    if len(name_header_indexes) < 2:
+        return parts
+
+    fallback_name_header_index = name_header_indexes[-1]
+    fallback_entries = _extract_axb_material_section_entries_from_lines(lines, name_header_index=fallback_name_header_index)
+    if not fallback_entries:
+        return parts
+
+    fallback_slice = "\n".join(lines[max(0, fallback_name_header_index - 8) :])
+    fallback_amounts = extract_axb_material_section_amounts(fallback_slice)
+    fallback_total = None
+    if expected_parts_total is not None and any(
+        amounts_match(amount, float(expected_parts_total), tolerance=0.2) for amount in fallback_amounts
+    ):
+        fallback_total = float(expected_parts_total)
+    elif fallback_amounts:
+        fallback_total = max(fallback_amounts)
+    if fallback_total is None:
+        return parts
+
+    parts.append(
+        {
+            "article": fallback_entries[0]["article"] if len(fallback_entries) == 1 else None,
+            "part_name": "; ".join(str(item["part_name"]) for item in fallback_entries if item.get("part_name"))[:500],
+            "quantity": 1.0,
+            "unit_name": "шт",
+            "price": float(fallback_total),
+            "line_total": float(fallback_total),
+        }
+    )
     return parts
 
 
@@ -5796,6 +5870,7 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
         else {}
     )
     section_plate_number, section_vin, section_mileage = extract_vehicle_identifiers_from_section(text)
+    section_chassis_number = find_chassis_candidate(vehicle_section_text) or find_chassis_candidate(header_text)
 
     order_number, order_number_confidence, _ = extract_header_field(
         header_text,
@@ -5894,6 +5969,10 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
                     extracted_fields["vin"] = normalized_vin
                     confidence_map["vin"] = float(vin_confidence or 0.88)
                     break
+
+    if section_chassis_number:
+        extracted_fields["chassis_number"] = section_chassis_number
+        confidence_map["chassis_number"] = 0.78
 
     resolved_service_match = find_service_name_in_text(text, db=db) if db is not None else find_service_name_in_text(text)
     service_name, service_name_confidence, _ = extract_header_field(

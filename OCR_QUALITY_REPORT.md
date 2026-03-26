@@ -6,18 +6,17 @@
 
 | Service | Profile | Docs | Order | Plate | VIN | Mileage | Work total | Parts total | Grand total | Work lines | Part lines | Manual review free |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| AXB | axb | 9 | 67% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 0% |
+| AXB | axb | 9 | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% |
 | Антарес | antares | 10 | 100% | 100% | 90% | 100% | 100% | 100% | 100% | 100% | 100% | 100% |
 | Грузовые резервы | gruzovye_rezervy | 15 | 100% | 100% | 93% | 53% | 100% | 100% | 100% | 100% | 100% | 100% |
 | ЕТС | ets_act | 10 | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% |
 | ЛидерТрак | leader_trak | 24 | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% |
-| Логистика | logistics | 10 | 100% | 100% | 100% | 50% | 100% | 100% | 100% | 100% | 100% | 80% |
-| СибТракСкан | sibtrakscan | 17 | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% |
+| Логистика | logistics | 10 | 100% | 100% | 100% | 50% | 100% | 100% | 100% | 100% | 100% | 100% |
+| СибТракСкан | sibtrakscan | 17 | 100% | 100% | 0% | 100% | 100% | 100% | 100% | 100% | 100% | 100% |
 
 ## Priority Queue
 
-- `AXB` / `axb`: score 18 on 9 docs. Main issues: service_name_suspicious, order_number_missing.
-- `Логистика` / `logistics`: score 4 on 10 docs. Main issues: service_name_suspicious.
+- No obvious problem clusters found in the current sample set.
 
 ## Document Details
 
@@ -27,10 +26,10 @@
 - Profile: `axb`
 - Extract source: `pdf_vision_ocr`
 - Extract failure: `-`
-- Header: order `PFCGSV30PA000038`, date `2025-05-02`, plate `ВУ167016`, vin `NPFCGSV30PA000038`, mileage `296723`
+- Header: order `0000020577`, date `2025-05-02`, plate `ВУ167016`, vin `NPFCGSV30PA000038`, mileage `296723`
 - Totals: work `27975.6`, parts `39090.6`, vat `-`, grand `67066.2`
 - Line items: works `6`, parts `2`
-- Manual review: `service_name_suspicious`
+- Manual review: `-`
 
 ### `Заказ-наряды/Заказ наряды АXB/Док-ты У026АХ716 и ВУ693416-1-3.pdf`
 
@@ -39,9 +38,9 @@
 - Extract source: `pdf_vision_ocr`
 - Extract failure: `-`
 - Header: order `0000018948`, date `2025-02-21`, plate `У026AX716`, vin `LGAG3DV29R8846629`, mileage `153635`
-- Totals: work `24130.0`, parts `9364.15`, vat `-`, grand `13385.82`
-- Line items: works `8`, parts `5`
-- Manual review: `service_name_suspicious`
+- Totals: work `24130.0`, parts `56184.9`, vat `-`, grand `80314.9`
+- Line items: works `8`, parts `1`
+- Manual review: `-`
 
 ### `Заказ-наряды/Заказ наряды АXB/ЗН С113КХ716.pdf`
 
@@ -49,10 +48,10 @@
 - Profile: `axb`
 - Extract source: `pdf_vision_ocr`
 - Extract failure: `-`
-- Header: order `-`, date `2025-02-26`, plate `C113KX716`, vin `LGAG3DV2XP8837385`, mileage `259775`
+- Header: order `0000019084`, date `2025-02-26`, plate `C113KX716`, vin `LGAG3DV2XP8837385`, mileage `259775`
 - Totals: work `11172.0`, parts `20901.9`, vat `-`, grand `32073.9`
 - Line items: works `9`, parts `7`
-- Manual review: `order_number_missing, service_name_suspicious`
+- Manual review: `-`
 
 ### `Заказ-наряды/Заказ наряды АXB/О106ХВ716.pdf`
 
@@ -63,7 +62,7 @@
 - Header: order `0000019380`, date `2025-03-11`, plate `0106XB716`, vin `LGAG3DV22N8829942`, mileage `431068`
 - Totals: work `8208.0`, parts `27029.34`, vat `-`, grand `35237.34`
 - Line items: works `8`, parts `2`
-- Manual review: `service_name_suspicious`
+- Manual review: `-`
 
 ### `Заказ-наряды/Заказ наряды АXB/О894УХ716 и ВВ149116-.pdf`
 
@@ -74,7 +73,7 @@
 - Header: order `0000018125`, date `2025-01-15`, plate `0894УХ716`, vin `LGAG3DV20P8831661`, mileage `329100`
 - Totals: work `1425.0`, parts `718.2`, vat `-`, grand `1425.0`
 - Line items: works `2`, parts `3`
-- Manual review: `service_name_suspicious`
+- Manual review: `-`
 
 ### `Заказ-наряды/Заказ наряды АXB/вв044416.pdf`
 
@@ -82,10 +81,10 @@
 - Profile: `axb`
 - Extract source: `pdf_vision_ocr`
 - Extract failure: `-`
-- Header: order `-`, date `2025-07-02`, plate `BB044416`, vin `WSM00000003313941`, mileage `1480125`
+- Header: order `0000021658`, date `2025-07-02`, plate `BB044416`, vin `WSM00000003313941`, mileage `1480125`
 - Totals: work `43023.6`, parts `2450.54`, vat `-`, grand `45474.14`
-- Line items: works `7`, parts `4`
-- Manual review: `order_number_missing, service_name_suspicious`
+- Line items: works `2`, parts `1`
+- Manual review: `-`
 
 ### `Заказ-наряды/Заказ наряды АXB/во0154.pdf`
 
@@ -93,10 +92,10 @@
 - Profile: `axb`
 - Extract source: `pdf_vision_ocr`
 - Extract failure: `-`
-- Header: order `LFS3010000057267`, date `2025-04-26`, plate `BO015416`, vin `NLFS3010000057267`, mileage `148985`
+- Header: order `0000020428`, date `2025-04-26`, plate `BO015416`, vin `NLFS3010000057267`, mileage `148985`
 - Totals: work `12585.6`, parts `62.7`, vat `-`, grand `12648.3`
 - Line items: works `4`, parts `1`
-- Manual review: `service_name_suspicious`
+- Manual review: `-`
 
 ### `Заказ-наряды/Заказ наряды АXB/ву008616.pdf`
 
@@ -104,10 +103,10 @@
 - Profile: `axb`
 - Extract source: `pdf_vision_ocr`
 - Extract failure: `-`
-- Header: order `PFCGSV30РА000016`, date `2025-02-07`, plate `ВУ008616`, vin `NPFCGSV30PA000016`, mileage `104257`
-- Totals: work `5551.04`, parts `1242.6`, vat `-`, grand `6793.64`
-- Line items: works `5`, parts `2`
-- Manual review: `service_name_suspicious`
+- Header: order `0000018636`, date `2025-02-07`, plate `ВУ008616`, vin `NPFCGSV30PA000016`, mileage `104257`
+- Totals: work `5510.0`, parts `1283.64`, vat `-`, grand `6793.64`
+- Line items: works `4`, parts `2`
+- Manual review: `-`
 
 ### `Заказ-наряды/Заказ наряды АXB/с320мт716-1-3.pdf`
 
@@ -115,10 +114,10 @@
 - Profile: `axb`
 - Extract source: `pdf_vision_ocr`
 - Extract failure: `-`
-- Header: order `-`, date `2025-04-06`, plate `C320MT716`, vin `LGAG3DV20P8839078`, mileage `250000`
-- Totals: work `38167.2`, parts `8452.15`, vat `14813.35`, grand `14813.35`
-- Line items: works `1`, parts `1`
-- Manual review: `order_number_missing, service_name_suspicious`
+- Header: order `0000019968`, date `2025-04-06`, plate `C320MT716`, vin `LGAG3DV20P8839078`, mileage `250000`
+- Totals: work `38167.2`, parts `50712.9`, vat `14813.35`, grand `88880.1`
+- Line items: works `9`, parts `5`
+- Manual review: `-`
 
 ### `Заказ-наряды/Заказ наряды Антарес/Заказ-наряд № A0000017944 от 04.01.2025.pdf`
 
@@ -236,7 +235,7 @@
 - Profile: `gruzovye_rezervy`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ГП000209931`, date `2018-10-01`, plate `ВВ331616`, vin `WSM00000005217870`, mileage `-`
+- Header: order `ГП000209931`, date `2026-01-15`, plate `ВВ331616`, vin `WSM00000005217870`, mileage `-`
 - Totals: work `94250.0`, parts `74485.0`, vat `30427.67`, grand `168735.0`
 - Line items: works `16`, parts `23`
 - Manual review: `-`
@@ -280,7 +279,7 @@
 - Profile: `gruzovye_rezervy`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ГП000216970`, date `2018-03-02`, plate `ВВ036416`, vin `WSM00000005199072`, mileage `-`
+- Header: order `ГП000216970`, date `2026-02-18`, plate `ВВ036416`, vin `WSM00000005199072`, mileage `-`
 - Totals: work `50530.0`, parts `123386.0`, vat `31361.91`, grand `173916.0`
 - Line items: works `8`, parts `9`
 - Manual review: `-`
@@ -291,7 +290,7 @@
 - Profile: `gruzovye_rezervy`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ГП000216973`, date `2029-11-19`, plate `С573НО716`, vin `LGAG3DV29P8839063`, mileage `447228`
+- Header: order `ГП000216973`, date `2026-02-18`, plate `С573НО716`, vin `LGAG3DV29P8839063`, mileage `447228`
 - Totals: work `64170.0`, parts `228650.0`, vat `52803.62`, grand `292820.0`
 - Line items: works `15`, parts `23`
 - Manual review: `-`
@@ -324,7 +323,7 @@
 - Profile: `gruzovye_rezervy`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ГП000213970`, date `2018-03-21`, plate `ВВ036616`, vin `WSM00000005199079`, mileage `-`
+- Header: order `ГП000213970`, date `2026-02-03`, plate `ВВ036616`, vin `WSM00000005199079`, mileage `-`
 - Totals: work `9300.0`, parts `33160.0`, vat `7656.72`, grand `42460.0`
 - Line items: works `3`, parts `3`
 - Manual review: `-`
@@ -379,7 +378,7 @@
 - Profile: `gruzovye_rezervy`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ГП000220663`, date `2018-06-20`, plate `ВВ047316`, vin `WSM00000005208662`, mileage `-`
+- Header: order `ГП000220663`, date `2026-03-10`, plate `ВВ047316`, vin `WSM00000005208662`, mileage `-`
 - Totals: work `79750.0`, parts `102001.0`, vat `32774.8`, grand `181751.0`
 - Line items: works `14`, parts `31`
 - Manual review: `-`
@@ -390,7 +389,7 @@
 - Profile: `gruzovye_rezervy`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `-`, date `2026-01-12`, plate `2278ОТ09`, vin `-`, mileage `-`
+- Header: order `-`, date `2026-01-09`, plate `2278ОТ09`, vin `-`, mileage `-`
 - Totals: work `-`, parts `2038.0`, vat `8842.92`, grand `49038.0`
 - Line items: works `0`, parts `5`
 - Manual review: `-`
@@ -401,7 +400,7 @@
 - Profile: `ets_act`
 - Extract source: `pdf_vision_ocr`
 - Extract failure: `-`
-- Header: order `80381`, date `2021-12-08`, plate `К350ВА716`, vin `X9PRG20A0LW130676`, mileage `1089300`
+- Header: order `80381`, date `2025-02-03`, plate `К350ВА716`, vin `X9PRG20A0LW130676`, mileage `1089300`
 - Totals: work `57940.0`, parts `110153.36`, vat `33618.67`, grand `201712.03`
 - Line items: works `17`, parts `1`
 - Manual review: `-`
@@ -412,7 +411,7 @@
 - Profile: `ets_act`
 - Extract source: `pdf_vision_ocr`
 - Extract failure: `-`
-- Header: order `79605`, date `2021-12-08`, plate `А773НР716`, vin `YV2RG20A8JA816091`, mileage `1395182`
+- Header: order `79605`, date `2025-01-06`, plate `А773НР716`, vin `YV2RG20A8JA816091`, mileage `1395182`
 - Totals: work `10970.0`, parts `4137.76`, vat `3021.54`, grand `18129.3`
 - Line items: works `6`, parts `1`
 - Manual review: `-`
@@ -855,7 +854,7 @@
 - Header: order `00000000754`, date `2025-05-29`, plate `O106XB716`, vin `LGAG3DV22N8829942`, mileage `497240`
 - Totals: work `28279.96`, parts `96446.26`, vat `20787.71`, grand `124726.22`
 - Line items: works `2`, parts `13`
-- Manual review: `service_name_suspicious`
+- Manual review: `-`
 
 ### `Заказ-наряды/Заказ наряды Логистика /Заказ-наряд № 906 от 20.06.2025.pdf`
 
@@ -877,7 +876,7 @@
 - Header: order `00000000986`, date `2025-07-01`, plate `С163МК716`, vin `LGAG3DV22P8837316`, mileage `345520`
 - Totals: work `18199.98`, parts `35744.55`, vat `-`, grand `53944.53`
 - Line items: works `5`, parts `5`
-- Manual review: `service_name_suspicious`
+- Manual review: `-`
 
 ### `Заказ-наряды/Заказ наряды СибТракСкан/026.pdf`
 
@@ -885,7 +884,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26002072`, date `2026-03-09`, plate `С026ВВ716`, vin `LGAG3DV29P8834073`, mileage `639889`
+- Header: order `ЗСТ26002072`, date `2026-03-09`, plate `С026ВВ716`, vin `-`, mileage `639889`
 - Totals: work `23487.0`, parts `88110.0`, vat `24551.34`, grand `136148.34`
 - Line items: works `7`, parts `6`
 - Manual review: `-`
@@ -896,7 +895,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26001966`, date `2026-03-02`, plate `У860АР716`, vin `LGAG3DV20R8846633`, mileage `350000`
+- Header: order `ЗСТ26001966`, date `2026-03-02`, plate `У860АР716`, vin `-`, mileage `350000`
 - Totals: work `42123.0`, parts `92924.96`, vat `29710.57`, grand `164758.53`
 - Line items: works `12`, parts `10`
 - Manual review: `-`
@@ -907,7 +906,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26001368`, date `2026-02-12`, plate `С577КУ716`, vin `LGAG3DV29P8837457`, mileage `496708`
+- Header: order `ЗСТ26001368`, date `2026-02-12`, plate `С577КУ716`, vin `-`, mileage `496708`
 - Totals: work `86526.06`, parts `122876.36`, vat `37761.1`, grand `209402.42`
 - Line items: works `11`, parts `23`
 - Manual review: `-`
@@ -918,7 +917,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26000827`, date `2026-01-31`, plate `С602РН716`, vin `LGAG3DV25P8841313`, mileage `396236`
+- Header: order `ЗСТ26000827`, date `2026-01-31`, plate `С602РН716`, vin `-`, mileage `396236`
 - Totals: work `85570.35`, parts `168182.98`, vat `45758.81`, grand `253753.33`
 - Line items: works `13`, parts `22`
 - Manual review: `-`
@@ -929,7 +928,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26001202`, date `2026-02-08`, plate `У146ВВ716`, vin `LGAG3DV2XR8843173`, mileage `300878`
+- Header: order `ЗСТ26001202`, date `2026-02-08`, plate `У146ВВ716`, vin `-`, mileage `300878`
 - Totals: work `34923.0`, parts `61293.9`, vat `21167.72`, grand `117384.62`
 - Line items: works `6`, parts `9`
 - Manual review: `-`
@@ -940,7 +939,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26001203`, date `2026-02-08`, plate `С392МО716`, vin `LGAG3DV28P8839121`, mileage `320417`
+- Header: order `ЗСТ26001203`, date `2026-02-08`, plate `С392МО716`, vin `-`, mileage `320417`
 - Totals: work `52078.14`, parts `158603.36`, vat `37991.75`, grand `37991.75`
 - Line items: works `11`, parts `14`
 - Manual review: `-`
@@ -951,7 +950,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26001680`, date `2026-02-20`, plate `С087АР716`, vin `LGAG3DV25P8834118`, mileage `601000`
+- Header: order `ЗСТ26001680`, date `2026-02-20`, plate `С087АР716`, vin `-`, mileage `601000`
 - Totals: work `48238.35`, parts `151672.43`, vat `36049.49`, grand `199910.78`
 - Line items: works `6`, parts `20`
 - Manual review: `-`
@@ -962,7 +961,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26001637`, date `2026-02-19`, plate `С469АС716`, vin `LGAG3DV21P8834102`, mileage `506884`
+- Header: order `ЗСТ26001637`, date `2026-02-19`, plate `С469АС716`, vin `-`, mileage `506884`
 - Totals: work `30894.06`, parts `48887.84`, vat `14386.9`, grand `8.36`
 - Line items: works `7`, parts `3`
 - Manual review: `-`
@@ -973,7 +972,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26000747`, date `2026-01-26`, plate `С775АУ716`, vin `LGAG3DV28P8833724`, mileage `501178`
+- Header: order `ЗСТ26000747`, date `2026-01-26`, plate `С775АУ716`, vin `-`, mileage `501178`
 - Totals: work `121023.0`, parts `121741.78`, vat `53408.25`, grand `296173.03`
 - Line items: works `9`, parts `32`
 - Manual review: `-`
@@ -984,7 +983,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26001771`, date `2026-02-25`, plate `У837АР716`, vin `LGAG3DV26R8846409`, mileage `308860`
+- Header: order `ЗСТ26001771`, date `2026-02-25`, plate `У837АР716`, vin `-`, mileage `308860`
 - Totals: work `53070.0`, parts `119942.65`, vat `31199.0`, grand `173012.65`
 - Line items: works `8`, parts `23`
 - Manual review: `-`
@@ -995,7 +994,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26002101`, date `2026-03-06`, plate `У650ВА716`, vin `LGAG3DV29R8833458`, mileage `340151`
+- Header: order `ЗСТ26002101`, date `2026-03-06`, plate `У650ВА716`, vin `-`, mileage `340151`
 - Totals: work `51285.3`, parts `90530.93`, vat `25573.42`, grand `141816.23`
 - Line items: works `10`, parts `11`
 - Manual review: `-`
@@ -1006,7 +1005,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26002064`, date `2026-03-05`, plate `С789ВЕ716`, vin `LGAG3DV21P8833869`, mileage `505213`
+- Header: order `ЗСТ26002064`, date `2026-03-05`, plate `С789ВЕ716`, vin `-`, mileage `505213`
 - Totals: work `42723.0`, parts `62776.65`, vat `23209.92`, grand `128709.57`
 - Line items: works `7`, parts `8`
 - Manual review: `-`
@@ -1017,7 +1016,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26002165`, date `2026-03-09`, plate `О661ТХ716`, vin `LGAG3DV27P8832001`, mileage `565696`
+- Header: order `ЗСТ26002165`, date `2026-03-09`, plate `О661ТХ716`, vin `-`, mileage `565696`
 - Totals: work `7320.0`, parts `68832.4`, vat `13732.4`, grand `2.0`
 - Line items: works `1`, parts `1`
 - Manual review: `-`
@@ -1028,7 +1027,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26002226`, date `2026-03-11`, plate `С026ВВ716`, vin `LGAG3DV29P8834073`, mileage `639889`
+- Header: order `ЗСТ26002226`, date `2026-03-11`, plate `С026ВВ716`, vin `-`, mileage `639889`
 - Totals: work `9000.0`, parts `66992.17`, vat `16718.27`, grand `92710.44`
 - Line items: works `3`, parts `5`
 - Manual review: `-`
@@ -1039,7 +1038,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26000018`, date `2026-01-03`, plate `У875ВА716`, vin `LGAG3DV25R8846627`, mileage `298826`
+- Header: order `ЗСТ26000018`, date `2026-01-03`, plate `У875ВА716`, vin `-`, mileage `298826`
 - Totals: work `70788.06`, parts `170690.84`, vat `43545.39`, grand `43545.39`
 - Line items: works `7`, parts `13`
 - Manual review: `-`
@@ -1050,7 +1049,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26000105`, date `2026-01-08`, plate `О750СХ716`, vin `LGAG3DV26N8829880`, mileage `523689`
+- Header: order `ЗСТ26000105`, date `2026-01-08`, plate `О750СХ716`, vin `-`, mileage `523689`
 - Totals: work `28698.06`, parts `138143.08`, vat `30086.11`, grand `166841.14`
 - Line items: works `6`, parts `4`
 - Manual review: `-`
@@ -1061,7 +1060,7 @@
 - Profile: `sibtrakscan`
 - Extract source: `pdf_text`
 - Extract failure: `-`
-- Header: order `ЗСТ26000126`, date `2026-01-09`, plate `У026АХ716`, vin `LGAG3DV29R8846629`, mileage `346491`
+- Header: order `ЗСТ26000126`, date `2026-01-09`, plate `У026АХ716`, vin `-`, mileage `346491`
 - Totals: work `43080.0`, parts `91673.33`, vat `29645.74`, grand `164399.07`
 - Line items: works `13`, parts `7`
 - Manual review: `-`

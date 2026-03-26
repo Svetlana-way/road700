@@ -3769,7 +3769,8 @@ def split_axb_leading_item_code(line: str) -> tuple[Optional[str], str]:
     code = (match.group("code") or "").rstrip("*|")
     inline_name = normalize_line(match.group("name") or "")
     compact_code = code.replace(" ", "")
-    if not compact_code or parse_amount(compact_code) is not None or not any(char.isdigit() for char in compact_code):
+    is_numeric_article = compact_code.isdigit() and len(compact_code) >= 5
+    if not compact_code or (parse_amount(compact_code) is not None and not is_numeric_article) or not any(char.isdigit() for char in compact_code):
         return None, normalized_line
     if inline_name.startswith(("(", "[", "{")):
         return None, normalized_line
@@ -3802,6 +3803,8 @@ def split_axb_leading_work_code(line: str) -> tuple[Optional[str], str]:
     code = match.group("code") or ""
     compact_code = code.replace(" ", "")
     if not compact_code or not any(char.isdigit() for char in compact_code):
+        return None, normalized_line
+    if re.fullmatch(r"(?:то|to)[-_]?\d+", compact_code, re.IGNORECASE):
         return None, normalized_line
     if not (WORK_CODE_TOKEN_PATTERN.fullmatch(compact_code) or ARTICLE_TOKEN_PATTERN.fullmatch(compact_code)):
         return None, normalized_line
@@ -3931,7 +3934,7 @@ def extract_axb_compact_work_items(text: str) -> list[dict[str, object]]:
 
     works: list[dict[str, object]] = []
     for row_payload in compact_rows:
-        work_name = normalize_line(" ".join(str(line) for line in row_payload.get("name_lines", [])))[:500]
+        work_name = clean_axb_work_name(" ".join(str(line) for line in row_payload.get("name_lines", [])))[:500]
         if not work_name:
             continue
         standard_hours = row_payload.get("standard_hours")
@@ -3948,6 +3951,61 @@ def extract_axb_compact_work_items(text: str) -> list[dict[str, object]]:
         )
 
     return works
+
+
+def extract_axb_work_line_totals_from_summary(
+    summary_lines: list[str],
+    *,
+    expected_work_total: Optional[float] = None,
+) -> list[float]:
+    candidate_amounts: list[float] = []
+    for line in summary_lines:
+        normalized_line = normalize_line(line)
+        lowered_line = normalized_line.lower()
+        if not normalized_line:
+            continue
+        if any(marker in lowered_line for marker in ("расходная накладная", "итого материалов", "итого по заказ")):
+            break
+        if re.fullmatch(r"\d+", normalized_line):
+            continue
+        candidate_amounts.extend(extract_amount_candidates_from_fragment(normalized_line))
+
+    if not candidate_amounts:
+        return []
+
+    vat_counter: dict[int, int] = {}
+    for amount in candidate_amounts:
+        amount_key = int(round(amount * 100))
+        vat_counter[amount_key] = vat_counter.get(amount_key, 0) + 1
+
+    line_totals: list[float] = []
+    for amount in candidate_amounts:
+        if expected_work_total is not None and amounts_match(amount, expected_work_total, tolerance=0.01):
+            continue
+        if amount <= 100:
+            continue
+        vat_candidate = round(amount / 6, 2)
+        vat_key = int(round(vat_candidate * 100))
+        if vat_counter.get(vat_key, 0) <= 0:
+            continue
+        vat_counter[vat_key] -= 1
+        line_totals.append(float(amount))
+
+    return line_totals
+
+
+def clean_axb_work_name(name: str) -> str:
+    cleaned = normalize_line(name)
+    cleaned = re.sub(r"^скидка\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"[З3з]\s*\d[\d\s]*(?:[.,]\d{2})\s+\d+(?:[.,]\d+)?\s*Рем\w*",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\b[З3з]\s*\d[\d\s]*(?:[.,]\d{2})\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b\d+(?:[.,]\d+)?\s*Рем\w*\b", " ", cleaned, flags=re.IGNORECASE)
+    return normalize_line(cleaned).strip(" -:;,|[]")
 
 
 def score_axb_material_entries(entries: list[dict[str, Optional[str]]]) -> int:
@@ -4043,17 +4101,11 @@ def extract_axb_work_items(text: str) -> list[dict[str, object]]:
     if total_marker_index < 0:
         return extract_axb_compact_work_items(text)
 
-    line_totals: list[float] = []
-    for line in totals_lines[total_marker_index + 1 :]:
-        lowered_line = line.lower()
-        if "ндс" in lowered_line and line_totals:
-            break
-        line_totals.extend(extract_amount_candidates_from_fragment(line))
-
-    while line_totals and float(line_totals[0]).is_integer() and line_totals[0] <= 20:
-        line_totals = line_totals[1:]
-    if len(line_totals) >= 2 and line_totals[-1] > max(line_totals[:-1]):
-        line_totals = line_totals[:-1]
+    expected_work_total = extract_largest_amount_from_fragment(work_totals_fragment)
+    line_totals = extract_axb_work_line_totals_from_summary(
+        totals_lines[total_marker_index + 1 :],
+        expected_work_total=expected_work_total,
+    )
     if not line_totals:
         return extract_axb_compact_work_items(text)
 
@@ -4075,19 +4127,28 @@ def extract_axb_work_items(text: str) -> list[dict[str, object]]:
             continue
         if lowered_line in {"n", "№", "артикул", "наименование", "кол. оп.", "цена н/ч", "норма", "н/ч", "скидка", "ремонт"}:
             continue
+        if lowered_line.startswith(("nº ", "№ ", "цена н/ч")):
+            continue
         if re.fullmatch(r"\d+", line):
             continue
         if parse_axb_quantity_candidate(line) is not None:
             continue
         if re.fullmatch(r"\d+(?:[.,]\d+)?\s*ремонт", lowered_line):
             continue
+        if parse_axb_standard_hours_candidate(line) is not None:
+            continue
         if parse_amount(line) is not None:
             continue
-        if re.fullmatch(r"[З3]\s*\d[\d\s]*(?:[.,]\d{2})", line):
+        if extract_axb_rate_candidate(line) is not None:
             continue
-        if is_axb_article_candidate(line):
+        compact_row = re.sub(r"^\d{1,2}\s+", "", line)
+        _inline_code, inline_name = split_axb_leading_work_code(compact_row)
+        normalized_candidate_line = normalize_line(inline_name or compact_row)
+        if not normalized_candidate_line:
             continue
-        filtered_name_lines.append((index, line))
+        if " " not in normalized_candidate_line and is_axb_article_candidate(normalized_candidate_line):
+            continue
+        filtered_name_lines.append((index, normalized_candidate_line))
 
     grouped_name_lines = [[line] for _index, line in filtered_name_lines]
     grouped_positions = [[index] for index, _line in filtered_name_lines]
@@ -4110,7 +4171,7 @@ def extract_axb_work_items(text: str) -> list[dict[str, object]]:
     works: list[dict[str, object]] = []
     previous_group_end = -1
     for group_index, (name_group, position_group, line_total) in enumerate(zip(grouped_name_lines, grouped_positions, line_totals)):
-        work_name = normalize_line(" ".join(name_group))[:500]
+        work_name = clean_axb_work_name(" ".join(name_group))[:500]
         if not work_name:
             previous_group_end = position_group[-1]
             continue
@@ -4129,7 +4190,7 @@ def extract_axb_work_items(text: str) -> list[dict[str, object]]:
                 continue
             if is_axb_article_candidate(line):
                 normalized_code = normalize_article_value(line) or normalize_text(line)
-                if normalized_code:
+                if normalized_code and any(char.isdigit() for char in normalized_code):
                     work_code = normalized_code
 
         standard_hours: Optional[float] = None
@@ -4217,13 +4278,13 @@ def _extract_axb_material_section_entries_from_lines(
             "no",
         }:
             continue
-        if any(marker in lowered_line for marker in ("кол-во", "ед. изм", "едизм", "скидка")):
+        if any(marker in lowered_line for marker in ("кол-во", "ед. изм", "ед.изм", "едизм", "скидка")):
             continue
-        if re.fullmatch(r"\d+", line):
+        if re.fullmatch(r"\d{1,2}", line):
             continue
         if parse_axb_quantity_candidate(line) is not None:
             continue
-        if parse_amount(line) is not None:
+        if parse_amount(line) is not None and not is_axb_material_article_candidate(line):
             continue
         if re.match(r"^(?:шт|шт\.|л/дмз|л/дм3|л|кг|г|м)\b", lowered_line):
             continue
@@ -4257,6 +4318,87 @@ def _extract_axb_material_section_entries_from_lines(
     return normalized_entries
 
 
+def extract_axb_batched_material_section_entries_from_lines(
+    lines: list[str],
+    *,
+    name_header_index: int,
+) -> list[dict[str, Optional[str]]]:
+    try:
+        body_lines = lines[name_header_index + 1 :]
+    except IndexError:
+        return []
+
+    body_end_index = next(
+        (
+            index
+            for index, line in enumerate(body_lines)
+            if is_axb_invoice_total_marker(line)
+            or re.search(
+                r"итого\s+по\s+странице\s+материалов|итого\s+материалов|всего\s+по\s+причине|итого\s+по\s+заказ[- ]наряду",
+                line,
+                re.IGNORECASE,
+            )
+        ),
+        len(body_lines),
+    )
+
+    codes: list[str] = []
+    name_lines: list[str] = []
+    for line in body_lines[:body_end_index]:
+        lowered_line = line.lower()
+        if lowered_line in {
+            "артикул",
+            "наименование",
+            "кол-во",
+            "ед. изм. цена",
+            "1 скидка",
+            "no",
+        }:
+            continue
+        if any(marker in lowered_line for marker in ("кол-во", "ед. изм", "ед.изм", "едизм", "скидка")):
+            continue
+
+        code, inline_name = split_axb_leading_item_code(line)
+        if code:
+            codes.append(code)
+            if inline_name:
+                name_lines.append(inline_name)
+            continue
+
+        if re.fullmatch(r"\d{1,2}", line):
+            continue
+        if parse_axb_quantity_candidate(line) is not None:
+            continue
+        if parse_amount(line) is not None and not is_axb_material_article_candidate(line):
+            continue
+        if re.match(r"^(?:шт|шт\.|л/дмз|л/дм3|л|кг|г|м)\b", lowered_line):
+            continue
+        if not re.search(r"[A-Za-zА-Яа-я]", line):
+            continue
+
+        name_lines.append(line)
+
+    if not codes or len(name_lines) < len(codes):
+        return []
+
+    merged_names = collapse_axb_name_lines(name_lines, len(codes))
+    if len(merged_names) != len(codes):
+        return []
+
+    entries: list[dict[str, Optional[str]]] = []
+    for code, part_name in zip(codes, merged_names):
+        normalized_name = normalize_line(part_name)[:500]
+        if not normalized_name:
+            continue
+        entries.append(
+            {
+                "article": normalize_article_value(code) or normalize_text(code),
+                "part_name": normalized_name,
+            }
+        )
+    return entries
+
+
 def extract_axb_material_section_entries(section_text: str) -> list[dict[str, Optional[str]]]:
     lines = [normalize_line(line) for line in section_text.splitlines() if normalize_line(line)]
     if not lines:
@@ -4266,11 +4408,14 @@ def extract_axb_material_section_entries(section_text: str) -> list[dict[str, Op
     best_entries: list[dict[str, Optional[str]]] = []
     best_score = float("-inf")
     for header_index in header_indexes:
-        entries = _extract_axb_material_section_entries_from_lines(lines, name_header_index=header_index)
-        entry_score = score_axb_material_entries(entries)
-        if entries and entry_score > best_score:
-            best_entries = entries
-            best_score = entry_score
+        for entries in (
+            _extract_axb_material_section_entries_from_lines(lines, name_header_index=header_index),
+            extract_axb_batched_material_section_entries_from_lines(lines, name_header_index=header_index),
+        ):
+            entry_score = score_axb_material_entries(entries)
+            if entries and entry_score > best_score:
+                best_entries = entries
+                best_score = entry_score
     return best_entries
 
 
@@ -4314,6 +4459,11 @@ def choose_axb_material_line_totals(
             break
         prefix.append(amount)
 
+    if len(prefix) >= expected_count:
+        direct_totals = prefix[:expected_count]
+        if amounts_match(round(sum(direct_totals), 2), section_total, tolerance=3.0):
+            return direct_totals
+
     if len(prefix) < expected_count * 2:
         return []
 
@@ -4323,6 +4473,51 @@ def choose_axb_material_line_totals(
     if not amounts_match(round(sum(candidate_totals), 2), section_total, tolerance=3.0):
         return []
     return candidate_totals
+
+
+def select_axb_material_section_total(
+    raw_amounts: list[float],
+    *,
+    expected_count: int,
+    expected_parts_total: Optional[float],
+) -> Optional[float]:
+    if not raw_amounts:
+        return None
+
+    candidate_totals: list[float] = []
+    seen_candidates: set[float] = set()
+    for amount in raw_amounts:
+        normalized_amount = round(float(amount), 2)
+        if normalized_amount <= 0 or normalized_amount in seen_candidates:
+            continue
+        seen_candidates.add(normalized_amount)
+        candidate_totals.append(normalized_amount)
+
+    def candidate_sort_key(amount: float) -> tuple[int, float]:
+        is_expected_total = int(
+            expected_parts_total is not None and amounts_match(amount, float(expected_parts_total), tolerance=0.2)
+        )
+        return (is_expected_total, amount)
+
+    for candidate_total in sorted(candidate_totals, key=candidate_sort_key, reverse=True):
+        if choose_axb_material_line_totals(
+            raw_amounts,
+            expected_count=expected_count,
+            section_total=candidate_total,
+        ):
+            return candidate_total
+
+    if expected_parts_total is not None and any(
+        amounts_match(amount, float(expected_parts_total), tolerance=0.2) for amount in raw_amounts
+    ):
+        return float(expected_parts_total)
+
+    smaller_candidates = [
+        amount
+        for amount in candidate_totals
+        if expected_parts_total is None or amount < float(expected_parts_total) - 0.01
+    ]
+    return max(smaller_candidates) if smaller_candidates else None
 
 
 def parse_axb_standard_hours_candidate(line: str) -> Optional[float]:
@@ -4400,12 +4595,11 @@ def extract_axb_material_parts(text: str, *, expected_parts_total: Optional[floa
             continue
 
         raw_amounts = extract_axb_material_section_amounts(section_text)
-        section_total_candidates = [
-            amount
-            for amount in raw_amounts
-            if expected_parts_total is None or amount < float(expected_parts_total) - 0.01
-        ]
-        section_total = max(section_total_candidates) if section_total_candidates else None
+        section_total = select_axb_material_section_total(
+            raw_amounts,
+            expected_count=len(section_entries),
+            expected_parts_total=expected_parts_total,
+        )
         if section_total is None and expected_parts_total is not None:
             section_total = float(expected_parts_total)
         line_totals = choose_axb_material_line_totals(

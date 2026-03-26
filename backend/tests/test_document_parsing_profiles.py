@@ -1102,11 +1102,13 @@ Bcero
 
         parts = document_processing.extract_axb_material_parts(text, expected_parts_total=2450.54)
 
-        self.assertEqual(len(parts), 1)
-        self.assertEqual(parts[0]["article"], None)
-        self.assertIn("Болт амортизатора", parts[0]["part_name"])
-        self.assertIn("Изолента Терминатор", parts[0]["part_name"])
-        self.assertGreater(parts[0]["line_total"], 0)
+        self.assertEqual(len(parts), 9)
+        self.assertAlmostEqual(sum(item["line_total"] for item in parts), 2450.54, places=2)
+        self.assertEqual(parts[0]["article"], "1100083")
+        self.assertEqual(parts[0]["part_name"], "Болт амортизатора с гайкой (Schmitz), MANSONS")
+        self.assertTrue(any(item["article"] == "318012" and item["line_total"] == 68.4 for item in parts))
+        self.assertTrue(any(item["article"] == "015555102" and "Электро соединитель торцевой" in item["part_name"] for item in parts))
+        self.assertTrue(any(item["article"] == "75954" and "Изолента Терминатор" in item["part_name"] for item in parts))
 
     def test_parse_document_text_extracts_axb_parts_when_tesseract_merges_material_header_row(self) -> None:
         text = """
@@ -1206,6 +1208,139 @@ Knorr-Bremse
         self.assertTrue(any(item["work_code"] == "137102-3" and item["standard_hours"] == 1.5 for item in works))
         self.assertTrue(any(item["work_name"] == "Установка болта крепления амортизатора" for item in works))
         self.assertTrue(any(item["work_name"] == "Электропроводка заднего фонаря ремонт замена" for item in works))
+
+    def test_parse_document_text_extracts_axb_work_items_from_sparse_split_ocr_rows(self) -> None:
+        text = """
+Заказ-наряд Nº 0000021658 от 02.07.2025
+TC : SCHMITZ CARGOBULL 9084 гос. номер: BB044416, VIN: WSM00000003313941, год вып. 2018, пробег 1 480 125
+Выполненные работы по заказ-наряду Nº 0000021658 от 02.07.2025
+N
+Артикул
+Наименование
+Кол. оп.
+Цена н/ч Норма
+1
+2
+3
+1 Скидка
+700700
+8
+ТО прицепа
+З 600,00
+2,800 Ремонт
+Диагностика
+З 600,00
+504,00
+0,500 Ремонт
+90,00
+полуприцепа TEBS G2
+Knorr-Bremse
+3
+Установка болта
+2
+3 600,00
+0,200 Ремонт
+72,00
+крепления амортизатора
+100
+Нормокомплект
+Тормозные колодки
+0,2
+з 600,00
+0,400 Ремоні
+14.40
+снятие/установка на
+3
+з 600,00
+0,900 Ремоні
+486,00
+одном колесе
+6
+Поиск неисправности в
+1
+3 600,00
+0,500 Ремонт
+90,00
+работе освещения
+7
+137102-3
+Электрические провода
+1
+3 600,00
+1,500 Ремонт
+и разъемы, проверка,
+270,00
+очистка
+8
+Электропроводка
+1
+3 600,00
+0,500 Ремонт
+90,00
+заднего фонаря ремонт
+9
+35102-2
+Лампа фары (любая)
+1
+З 600,00
+0,100 Ремонт
+18,00
+10
+рабок неисправности в
+1
+3 600,00
+1,000 Ремонт
+180,00
+электрооборудования
+11
+Электропроводка
+1
+З 600,00
+2,500 Ремонт
+450,00
+ремонт
+Итого работ: L
+13,2
+на сумму: 2 264,40
+Сорок три тысячи двадцать три рубля 60 копеек в т.ч. НДС 7 170,60 RUB
+Всего
+9
+9 576,00
+1 710,00
+Тв т.ч. НДС
+10
+1 596,00
+285,00
+1 368,00
+228.00
+273,60
+9 234,00
+45,60
+1 539,00
+1 710,00
+5 130,00
+285,00
+855,00
+1710,00
+342,00
+3 420,00
+285,00
+57,00
+570,00
+8 550,00
+43 023,60
+1 425,00
+7 170,60
+"""
+
+        works = document_processing.extract_axb_work_items(text)
+
+        self.assertEqual(len(works), 11)
+        self.assertAlmostEqual(sum(item["line_total"] for item in works), 43023.6, places=2)
+        self.assertTrue(any(item["work_name"] == "ТО прицепа" and item["line_total"] == 9576.0 for item in works))
+        self.assertTrue(any(item["work_name"] == "Диагностика полуприцепа TEBS G2" and item["line_total"] == 1710.0 for item in works))
+        self.assertTrue(any(item["work_name"] == "Лампа фары (любая)" and item["line_total"] == 342.0 for item in works))
+        self.assertTrue(any(item["work_code"] == "137102-3" and item["line_total"] == 5130.0 for item in works))
 
     def test_parse_document_text_aggregates_axb_materials_from_inline_tesseract_rows_when_section_total_is_only_in_header(self) -> None:
         text = """

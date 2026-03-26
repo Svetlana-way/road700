@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from openpyxl import Workbook
+
 from app.services import document_processing
 
 
@@ -108,6 +110,27 @@ class DocumentOcrRuntimeTestCase(unittest.TestCase):
         self.assertEqual(text, "")
         self.assertEqual(extracted_from, "pdf_text")
         self.assertEqual(failure_reason, "pdf_renderer_unavailable")
+
+    def test_extract_document_text_reads_xlsx_workbook_rows(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".xlsx") as spreadsheet_file:
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet["A1"] = 'Общество с ограниченной ответственностью "КЛЕВЕР ТРАК"'
+            sheet["A2"] = "Заказ-наряд № КТ262600020 от 13.01.2026"
+            sheet["A3"] = "Итого по заказ-наряду :"
+            sheet["B3"] = 116990.92
+            workbook.save(spreadsheet_file.name)
+
+            text, extracted_from, failure_reason = document_processing.extract_document_text(
+                Path(spreadsheet_file.name),
+                "xlsx",
+            )
+
+        self.assertIn("КЛЕВЕР ТРАК", text)
+        self.assertIn("КТ262600020", text)
+        self.assertIn("116990.92", text)
+        self.assertEqual(extracted_from, "xlsx_text")
+        self.assertIsNone(failure_reason)
 
     def test_run_tesseract_ocr_invokes_tesseract_cli(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".jpg") as image_file, patch.object(

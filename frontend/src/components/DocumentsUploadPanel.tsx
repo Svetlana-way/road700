@@ -195,14 +195,14 @@ export function DocumentsUploadPanel({
                     <Box>
                       <Typography variant="subtitle1">Файл документа</Typography>
                       <Typography className="muted-copy">
-                        Поддерживаются PDF и изображения. Все файлы загружаются и распознаются на сервере. Для PDF с текстовым слоем OCR срабатывает автоматически, для фото и сканов запускается серверное распознавание.
+                        Поддерживаются PDF, изображения и .xlsx заказ-наряды. Все файлы загружаются и распознаются на сервере. Для PDF с текстовым слоем OCR срабатывает автоматически, для фото и сканов запускается серверное распознавание, для Excel берется текст табличных листов.
                       </Typography>
                     </Box>
                     <input
                       ref={uploadFileInputRef}
                       hidden
                       type="file"
-                      accept=".pdf,image/*"
+                      accept=".pdf,.xlsx,image/*"
                       onClick={(event) => {
                         event.currentTarget.value = "";
                       }}

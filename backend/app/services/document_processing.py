@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+from openpyxl import load_workbook
 try:
     from PIL import Image, ImageChops
 except ImportError:  # pragma: no cover - optional dependency during bootstrap
@@ -538,6 +539,15 @@ DEFAULT_OCR_PROFILE_MATCHER_DEFINITIONS: list[dict[str, object]] = [
         "priority": 70,
     },
     {
+        "profile_scope": "klever_trak",
+        "title": "Клевер Трак XLSX order form",
+        "source_type": "xlsx",
+        "filename_pattern": None,
+        "text_pattern": r"КЛЕВЕР\s+ТРАК|Заказ-наряд\s*№\s*КТ\d{6,}",
+        "service_name_pattern": None,
+        "priority": 75,
+    },
+    {
         "profile_scope": "sibtrakscan",
         "title": "СибТракСкан order form",
         "source_type": "pdf",
@@ -554,6 +564,7 @@ PROFILE_SPECIFIC_OCR_RULE_DEFINITIONS: list[dict[str, object]] = [
     {"profile_scope": "leader_trak", "target_field": "service_name", "pattern": r"(ЛидерТрак)", "value_parser": "raw", "confidence": 0.98, "priority": 1},
     {"profile_scope": "leader_trak", "target_field": "order_number", "pattern": r"План\s+ремонта\s*№\s*([A-Za-zА-Яа-я0-9/_-]{3,})", "value_parser": "raw", "confidence": 0.97, "priority": 1},
     {"profile_scope": "leader_trak", "target_field": "order_number", "pattern": r"Предварительный\s+счет\s+на\s+оплату\s*№\s*([A-Za-zА-Яа-я0-9/_-]{3,})", "value_parser": "raw", "confidence": 0.92, "priority": 2},
+    {"profile_scope": "klever_trak", "target_field": "service_name", "pattern": r"(КЛЕВЕР\s*ТРАК)", "value_parser": "raw", "confidence": 0.98, "priority": 1},
     {"profile_scope": "sibtrakscan", "target_field": "service_name", "pattern": r"(СИБТРАКСКАН)", "value_parser": "raw", "confidence": 0.98, "priority": 1},
     {"profile_scope": "gruzovye_rezervy", "target_field": "service_name", "pattern": r"(ГРУЗОВЫЕ\s+РЕЗЕРВЫ)", "value_parser": "raw", "confidence": 0.98, "priority": 1},
     {"profile_scope": "sibtrakscan", "target_field": "repair_date", "pattern": rf"(?:{DATE_CLOSED_LABEL_PATTERN})\s*[:№]?\s*(\d{{2}}[./-]\d{{2}}[./-]\d{{2,4}})", "value_parser": "date", "confidence": 0.96, "priority": 1},
@@ -2689,6 +2700,33 @@ LOGISTICS_PART_ROW_PATTERN = re.compile(
     r"(?P<vat>\d[\d\s]*(?:[.,]\d{2}))$",
     re.IGNORECASE,
 )
+KLEVER_TRAK_ROW_START_PATTERN = re.compile(r"^\d+\s+\S+", re.IGNORECASE)
+KLEVER_TRAK_WORK_ROW_PATTERN = re.compile(
+    r"^\d+\s+"
+    r"(?P<body>.+?)\s+"
+    r"(?P<qty>\d+(?:[.,]\d+)?)\s+"
+    r"(?P<price>\d[\d\s]*(?:[.,]\d{1,2})?)\s+"
+    r"(?P<norm>\d+(?:[.,]\d+)?)\s+"
+    r"(?P<unit>н/?ч)\s+"
+    r"(?P<gross>\d[\d\s]*(?:[.,]\d{1,2})?)\s+"
+    r"(?P<vat>\d[\d\s]*(?:[.,]\d{1,2})?)$",
+    re.IGNORECASE,
+)
+KLEVER_TRAK_PART_ROW_PATTERN = re.compile(
+    r"^\d+\s+"
+    r"(?P<body>.+?)\s+"
+    r"(?P<qty>\d+(?:[.,]\d+)?)\s+"
+    r"(?P<unit>[A-Za-zА-Яа-я./-]{1,8})\s+"
+    r"(?P<price>\d[\d\s]*(?:[.,]\d{1,2})?)\s+"
+    r"(?P<gross>\d[\d\s]*(?:[.,]\d{1,2})?)\s+"
+    r"(?P<vat>\d[\d\s]*(?:[.,]\d{1,2})?)$",
+    re.IGNORECASE,
+)
+KLEVER_TRAK_VEHICLE_ROW_PATTERN = re.compile(
+    r"(?:^|\n)\s*\d{2}\.\d{2}\.\d{4}\s+.+?\s+(?P<mileage>\d[\d\s]{2,})\s+"
+    r"(?:нет|да)\s+(?P<vin>[A-HJ-NPR-Z0-9]{17})\s+(?P<plate>[А-ЯA-Z0-9 ]{6,16})(?=\s*(?:\n|$))",
+    re.IGNORECASE,
+)
 ANTARES_ROW_START_PATTERN = re.compile(r"^\d+\s+\S+", re.IGNORECASE)
 ANTARES_PART_TAIL_PATTERN = re.compile(
     r"^\d+(?:[.,]\d+)?\s+(?:шт\.?|кг|л|м|мл|г|гр|ед\.?|компл\.?|к-т)\b",
@@ -3374,6 +3412,163 @@ def extract_logistics_items(text: str) -> dict[str, list[dict[str, object]]]:
 
     works = [payload for payload in (parse_logistics_work_row(line) for line in work_rows) if payload]
     parts = [payload for payload in (parse_logistics_part_row(line) for line in part_rows) if payload]
+    return {"works": works, "parts": parts}
+
+
+def is_klever_trak_noise_line(line: str) -> bool:
+    normalized_line = normalize_line(line)
+    lower_line = normalized_line.lower()
+    if not normalized_line:
+        return True
+    if lower_line.startswith("выполненные работы по заказ-наряду"):
+        return True
+    if lower_line.startswith("расходная накладная к заказ-наряду"):
+        return True
+    if lower_line.startswith("итого работ:"):
+        return True
+    if lower_line.startswith("итого материалов:"):
+        return True
+    if lower_line.startswith("итого по заказ-наряду"):
+        return True
+    if lower_line.startswith("всего по заказ-наряду:"):
+        return True
+    if lower_line.startswith("рекомендации:"):
+        return True
+    if lower_line.startswith("страница:"):
+        return True
+    if normalized_line in {
+        "№ Артикул Наименование Кол. оп. Цена н/ч Норма н/ч Всего в т.ч. НДС",
+        "№ Артикул Наименование Кол-во Ед.изм. Цена Всего в т.ч. НДС",
+        "1 2 3 4 5 6 7 8 9",
+        "1 2 3 4 5 6 7 8",
+    }:
+        return True
+    return False
+
+
+def split_klever_trak_work_body(value: str) -> tuple[Optional[str], str]:
+    normalized_value = normalize_line(value)
+    tokens = normalized_value.split()
+    if len(tokens) >= 3 and ARTICLE_TOKEN_PATTERN.fullmatch(tokens[0]) and re.fullmatch(r"\d{4,}", tokens[1]):
+        article = normalize_article_value(tokens[0] + tokens[1])
+        name = normalize_line(" ".join(tokens[2:]))
+        if name:
+            return article, name
+    return split_work_code_and_name(normalized_value)
+
+
+def split_klever_trak_part_body(value: str) -> tuple[Optional[str], str]:
+    normalized_value = normalize_line(value)
+    tokens = normalized_value.split()
+    if len(tokens) >= 3 and ARTICLE_TOKEN_PATTERN.fullmatch(tokens[0]) and re.fullmatch(r"\d{4,}", tokens[1]):
+        article = normalize_article_value(tokens[0] + tokens[1])
+        name = normalize_line(" ".join(tokens[2:]))
+        if name:
+            return article, name
+    if len(tokens) >= 2 and ARTICLE_TOKEN_PATTERN.fullmatch(tokens[0]) and any(char.isdigit() for char in tokens[0]):
+        article = normalize_article_value(tokens[0])
+        name = normalize_line(" ".join(tokens[1:]))
+        if name:
+            return article, name
+    return None, normalized_value
+
+
+def extract_klever_trak_row_buffers(
+    text: str,
+    *,
+    marker_pattern: str,
+    stop_patterns: tuple[str, ...],
+    max_chars: int = 30000,
+) -> list[str]:
+    fragment = extract_fragment_after_marker(
+        text,
+        marker_pattern,
+        stop_patterns=stop_patterns,
+        max_chars=max_chars,
+    )
+    if not fragment:
+        return []
+
+    lines = [normalize_line(line) for line in fragment.splitlines() if normalize_line(line)]
+    return [
+        line
+        for line in lines
+        if KLEVER_TRAK_ROW_START_PATTERN.match(line) and not is_klever_trak_noise_line(line)
+    ]
+
+
+def parse_klever_trak_work_row(line: str) -> Optional[dict[str, object]]:
+    normalized_line = normalize_line(line)
+    tokens = normalized_line.split()
+    if len(tokens) < 8 or not tokens[0].isdigit():
+        return None
+
+    quantity = parse_decimal_value(tokens[-6])
+    price = parse_amount(tokens[-5])
+    standard_hours = parse_decimal_value(tokens[-4])
+    unit_name = normalize_unit_name(tokens[-3])
+    line_total = parse_amount(tokens[-2])
+    vat_total = parse_amount(tokens[-1])
+    if quantity is None or price is None or standard_hours is None or line_total is None or vat_total is None:
+        return None
+
+    work_code, work_name = split_klever_trak_work_body(" ".join(tokens[1:-6]))
+    if not work_name:
+        return None
+
+    return {
+        "work_code": normalize_article_value(work_code),
+        "work_name": work_name[:500],
+        "quantity": quantity,
+        "unit_name": unit_name,
+        "price": price,
+        "line_total": line_total,
+        "standard_hours": standard_hours,
+    }
+
+
+def parse_klever_trak_part_row(line: str) -> Optional[dict[str, object]]:
+    normalized_line = normalize_line(line)
+    tokens = normalized_line.split()
+    if len(tokens) < 7 or not tokens[0].isdigit():
+        return None
+
+    quantity = parse_decimal_value(tokens[-5])
+    unit_name = normalize_unit_name(tokens[-4])
+    price = parse_amount(tokens[-3])
+    line_total = parse_amount(tokens[-2])
+    vat_total = parse_amount(tokens[-1])
+    if quantity is None or unit_name is None or price is None or line_total is None or vat_total is None:
+        return None
+
+    article, part_name = split_klever_trak_part_body(" ".join(tokens[1:-5]))
+    if not part_name:
+        return None
+
+    return {
+        "article": article,
+        "part_name": part_name[:500],
+        "quantity": quantity,
+        "unit_name": unit_name,
+        "price": price,
+        "line_total": line_total,
+    }
+
+
+def extract_klever_trak_items(text: str) -> dict[str, list[dict[str, object]]]:
+    work_rows = extract_klever_trak_row_buffers(
+        text,
+        marker_pattern=r"Выполненные\s+работы\s+по\s+заказ[- ]наряду",
+        stop_patterns=(r"Итого\s+работ:",),
+    )
+    part_rows = extract_klever_trak_row_buffers(
+        text,
+        marker_pattern=r"Расходная\s+накладная\s+к\s+заказ[- ]наряду",
+        stop_patterns=(r"Итого\s+материал", r"Итого\s+по\s+заказ[- ]наряду"),
+        max_chars=40000,
+    )
+    works = [payload for payload in (parse_klever_trak_work_row(line) for line in work_rows) if payload]
+    parts = [payload for payload in (parse_klever_trak_part_row(line) for line in part_rows) if payload]
     return {"works": works, "parts": parts}
 
 
@@ -5059,7 +5254,7 @@ def apply_profile_specific_item_fallbacks(
     normalization_notes: list[str],
 ) -> dict[str, list[dict[str, object]]]:
     normalized_profile_scope = normalize_ocr_rule_code(profile_scope)
-    if normalized_profile_scope not in {"axb", "antares", "ets_act", "sibtrakscan", "leader_trak", "gruzovye_rezervy", "logistics"}:
+    if normalized_profile_scope not in {"axb", "antares", "ets_act", "sibtrakscan", "leader_trak", "gruzovye_rezervy", "logistics", "klever_trak"}:
         return extracted_items
 
     header_work_total = float(extracted_fields["work_total"]) if isinstance(extracted_fields.get("work_total"), (int, float)) else None
@@ -5072,6 +5267,8 @@ def apply_profile_specific_item_fallbacks(
         fallback_items = extract_ets_act_items(text)
     elif normalized_profile_scope == "logistics":
         fallback_items = extract_logistics_items(text)
+    elif normalized_profile_scope == "klever_trak":
+        fallback_items = extract_klever_trak_items(text)
     elif normalized_profile_scope == "sibtrakscan":
         fallback_items = extract_sibtrakscan_items(text)
     elif normalized_profile_scope == "leader_trak":
@@ -5152,6 +5349,8 @@ def apply_profile_specific_item_fallbacks(
                 normalization_notes.append("leader_trak_items_restored_from_service_table")
         elif normalized_profile_scope == "logistics":
             normalization_notes.append("logistics_items_restored_from_tabular_sections")
+        elif normalized_profile_scope == "klever_trak":
+            normalization_notes.append("klever_trak_items_restored_from_spreadsheet_rows")
         elif normalized_profile_scope == "gruzovye_rezervy":
             normalization_notes.append("gruzovye_rezervy_items_restored_from_sections")
         else:
@@ -5177,6 +5376,49 @@ def apply_profile_specific_total_fallbacks(
     normalization_notes: list[str],
 ) -> None:
     normalized_profile_scope = normalize_ocr_rule_code(profile_scope)
+    if normalized_profile_scope == "klever_trak":
+        work_amounts = extract_amount_candidates_from_fragment(
+            extract_fragment_after_marker(
+                text,
+                r"Итого\s+работ:",
+                stop_patterns=(r"Расходная\s+накладная", r"Итого\s+материал", r"Итого\s+по\s+заказ[- ]наряду"),
+                max_chars=180,
+            )
+        )
+        if len(work_amounts) >= 2:
+            extracted_fields["work_total"] = work_amounts[0]
+            confidence_map["work_total"] = max(confidence_map.get("work_total", 0.0), 0.92)
+            normalization_notes.append("work_total_restored_from_klever_trak_summary")
+
+        parts_amounts = extract_amount_candidates_from_fragment(
+            extract_fragment_after_marker(
+                text,
+                r"Итого\s+материал(?:ов|ы):",
+                stop_patterns=(r"Итого\s+по\s+заказ[- ]наряду", r"Всего\s+по\s+заказ[- ]наряду"),
+                max_chars=180,
+            )
+        )
+        if len(parts_amounts) >= 2:
+            extracted_fields["parts_total"] = parts_amounts[0]
+            confidence_map["parts_total"] = max(confidence_map.get("parts_total", 0.0), 0.92)
+            normalization_notes.append("parts_total_restored_from_klever_trak_summary")
+
+        overall_amounts = extract_amount_candidates_from_fragment(
+            extract_fragment_after_marker(
+                text,
+                r"Итого\s+по\s+заказ[- ]наряду",
+                stop_patterns=(r"Всего\s+по\s+заказ[- ]наряду", r"Мастер-приемщик", r"Рекомендации"),
+                max_chars=180,
+            )
+        )
+        if len(overall_amounts) >= 2:
+            extracted_fields["grand_total"] = overall_amounts[0]
+            extracted_fields["vat_total"] = overall_amounts[1]
+            confidence_map["grand_total"] = max(confidence_map.get("grand_total", 0.0), 0.94)
+            confidence_map["vat_total"] = max(confidence_map.get("vat_total", 0.0), 0.9)
+            normalization_notes.append("grand_total_restored_from_klever_trak_summary")
+        return
+
     if normalized_profile_scope == "antares":
         work_amounts = extract_amount_candidates_from_fragment(
             extract_fragment_after_marker(
@@ -6666,12 +6908,48 @@ def extract_axb_raw_scanned_pdf_text(path: Path) -> str:
         temp_dir.cleanup()
 
 
+def format_spreadsheet_cell_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        if value.hour == value.minute == value.second == value.microsecond == 0:
+            return value.strftime("%d.%m.%Y")
+        return value.strftime("%d.%m.%Y %H:%M:%S")
+    if isinstance(value, date):
+        return value.strftime("%d.%m.%Y")
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).replace("\xa0", " ").strip()
+
+
+def extract_spreadsheet_text(path: Path) -> str:
+    workbook = load_workbook(path, data_only=True, read_only=True)
+    try:
+        chunks: list[str] = []
+        multiple_sheets = len(workbook.worksheets) > 1
+        for sheet in workbook.worksheets:
+            if multiple_sheets:
+                chunks.append(f"Лист: {sheet.title}")
+            for row in sheet.iter_rows(values_only=True):
+                values = [format_spreadsheet_cell_value(value) for value in row]
+                values = [value for value in values if value]
+                if values:
+                    chunks.append(" ".join(values))
+        return "\n".join(chunks).strip()
+    finally:
+        workbook.close()
+
+
 def extract_document_text(path: Path, source_type: str) -> tuple[str, str, Optional[str]]:
     if source_type == "image":
         if get_available_ocr_backend() is None:
             return "", "manual_review", "image_ocr_unavailable"
         text, backend = extract_image_text(path)
         return text, f"image_{backend}_ocr", None if text else "image_text_not_found"
+
+    if source_type == "xlsx":
+        text = extract_spreadsheet_text(path)
+        return text, "xlsx_text", None if text else "xlsx_text_not_found"
 
     text = select_best_text_variant(extract_pdf_text(path))
     extracted_from = "pdf_text"
@@ -6984,6 +7262,15 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
             if field_name == "order_number":
                 remove_manual_review_reason(manual_review_reasons, "order_number_missing")
             elif field_name == "mileage":
+                remove_manual_review_reason(manual_review_reasons, "mileage_missing")
+
+    if normalized_profile_scope == "klever_trak":
+        klever_match = KLEVER_TRAK_VEHICLE_ROW_PATTERN.search(text)
+        if klever_match is not None:
+            mileage = parse_mileage_candidate(klever_match.group("mileage"))
+            if mileage is not None:
+                extracted_fields["mileage"] = mileage
+                confidence_map["mileage"] = max(confidence_map.get("mileage", 0.0), 0.9)
                 remove_manual_review_reason(manual_review_reasons, "mileage_missing")
 
     for field_name, patterns in TOTAL_PATTERNS.items():

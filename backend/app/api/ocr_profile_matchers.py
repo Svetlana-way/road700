@@ -20,7 +20,7 @@ from app.services.document_processing import normalize_ocr_rule_code
 
 router = APIRouter(prefix="/ocr-profile-matchers", tags=["ocr-profile-matchers"])
 
-ALLOWED_SOURCE_TYPES = {"pdf", "image"}
+ALLOWED_SOURCE_TYPES = {"pdf", "image", "xlsx"}
 
 
 def normalize_optional_text(value: str | None) -> str | None:

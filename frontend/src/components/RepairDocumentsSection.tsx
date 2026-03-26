@@ -138,7 +138,7 @@ export function RepairDocumentsSection({
                   ref={attachedFileInputRef}
                   hidden
                   type="file"
-                  accept=".pdf,image/*"
+                  accept=".pdf,.xlsx,image/*"
                   onClick={(event) => {
                     event.currentTarget.value = "";
                   }}

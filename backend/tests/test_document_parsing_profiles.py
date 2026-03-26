@@ -37,6 +37,7 @@ class DocumentParsingProfilesTestCase(unittest.TestCase):
         self.assertIn("ets_act", profile_scopes)
         self.assertIn("ets_invoice", profile_scopes)
         self.assertIn("gruzovye_rezervy", profile_scopes)
+        self.assertIn("klever_trak", profile_scopes)
         self.assertIn("sibtrakscan", profile_scopes)
 
     def test_parse_document_text_prefers_full_labeled_service_name_for_axb_text(self) -> None:
@@ -2478,6 +2479,84 @@ RANG WANG
         self.assertTrue(any(item["article"] == "3659445LLC" and item["quantity"] == 40.0 and item["unit_name"] == "л" for item in parts))
         self.assertTrue(any(item["article"] == "C1125030-H02B0SFG" and item["line_total"] == 8822.98 for item in parts))
         self.assertTrue(any(item["article"] == "3557139LLC" and item["line_total"] == 819.0 for item in parts))
+
+    def test_parse_document_text_extracts_klever_trak_xlsx_layout(self) -> None:
+        text = """
+Общество с ограниченной ответственностью "КЛЕВЕР ТРАК"
+Общество с ограниченной ответственностью "КЛЕВЕР ТРАК", ИНН 1650419584, КПП 165001001, 423806, Татарстан Респ, г.о. город Набережные Челны, г Набережные Челны, пр-кт Казанский, д. 148, этаж 1, помещ. 11
+Заказ-наряд № КТ262600020 от 13.01.2026
+Дата печати: Модель автомобиля Модель двигателя Фактический пробег, км Открытые технич. акции VIN номер Гос. номер
+13.01.2026 MAN TGX 18.400 4X2 BLS 670 000 нет Z0W06XZZ8MV003424 К524ВВ 716
+Причина обращения:
+-ТО,
+-цилиндр подъёма кабины
+-Чистка пневмосистемы равенолом
+Выполненные работы по заказ-наряду №  КТ262600020 от 13.01.2026
+№ Артикул Наименование Кол. оп. Цена н/ч Норма н/ч Всего в т.ч. НДС
+1 277A0306430000000 Диагностич. память автомоб. в целом считать, сохранить, удалить 1 1931.66 1.6 Н/Ч 3090.66 557.33
+2 084A0504560000000 Элемент сухого воздушного фильтра Обновление , , , 1 1931.66 0.1 Н/Ч 193.17 34.83
+3 619C0154500000000 Салонный фильтр/пылевой фильтр Обновление 1 1931.66 0.1 Н/Ч 193.17 34.83
+4 125D 4500000000 Топл.фильтр груб.очистки Racor/Separ Обновление , , , 1 1931.66 0.3 Н/Ч 579.5 104.5
+5 125D0104500000000 Фильтрующий элемент Обновление , , , 1 1931.66 0.3 Н/Ч 579.5 104.5
+6 WDAA060530R300000 Замена моторного масла и масляного фильтра 1 1931.66 1.1 Н/Ч 2124.83 383.17
+7 018A150450RF0000V Возд фильтр масл модуля Обновление Двигатель D20/D26 cr , , 1 1931.66 0.3 Н/Ч 579.5 104.5
+8 618550000000 Кабина Опрокидывать вперед/назад , , , 1 1931.66 0.2 Н/Ч 386.33 69.67
+9 Смазка транспортного средства, за исключением Тягово-сцепного устройства 1 1931.66 0.3 Н/Ч 579.5 104.5
+10 ЦБ00001103 Смазка Тягово-сцепного устройства 1 1931.66 0.2 Н/Ч 386.33 69.67
+11 ЦБ00002686 Технологическая Мойка сцепки 1 1931.66 1 Н/Ч 1931.66 348.33
+12 18655018 Гидроцилиндр подъема кабины, Замените 1 1931.66 1.5 Н/Ч 2897.49 522.5
+13 1100000173 Очистка топливной системы и топливного бака 1 1931.66 5 Н/Ч 9658.3 1741.66
+14 521B4503910R00000 521B450450 Четырехконтурный защитный клапан Обновление 1 1931.66 1.2 Н/Ч 2317.99 418
+15 Доработка пневмолинии 4 1931.66 1 Н/Ч 7726.64 1393.33
+16 521C200888000000V Уст-во подготовки сж. возд. EAM Выполнить регенерацию 1 1931.66 5 Н/Ч 9658.3 1741.66
+17 ВТ00014523 Головка ПАЛМ ТЯГАЧ - замена 2 1931.66 0.3 Н/Ч 1159 209
+Итого работ: 21 на сумму: 44041.87 7941.98
+Расходная накладная к заказ-наряду №  КТ262600020 от 13.01.2026
+№ Артикул Наименование Кол-во Ед.изм. Цена Всего в т.ч. НДС
+1 253133837 Масло GazpromneftDieselUltra 5W-30 205л 45 л/дм3 533.54 24009.3 4329.55
+2 81965030512 Круглое уплотнение 7,5X2,6-EPDM1-70 1 шт 422.08 422.08 76.11
+3 F026402150 Фильтр топливный дизельный (вставка) 1 шт 1254.75 1254.75 226.27
+4 000055397 Смазка Литол ГАЗПРОМНЕФТЬ 18 кг (ведро 20 л) 1 кг 661.11 661.11 119.22
+5 50014085 Сменный эл. топлив.фильтра 1 шт 2005.5 2005.5 361.65
+6 35130170040 Картридж осушителя с маслоотделителем Foton 1 шт 3316.25 3316.25 598.01
+7 F026407051 Фильтр масляный MAN D 2066, D 2676 1 шт 1461.42 1461.42 263.53
+8 09864B0006 Фильтр воздушный TGA,TGS,TGX. 1 шт 4725 4725 852.05
+9 R58706 Салонный фильтр MAN 1 шт 859.95 859.95 155.07
+10 SOE518 Фильтр сапуна MAN 1 шт 2646 2646 477.15
+11 5555 Материалы для обслуживания 0.3 шт 517.13 155.14 27.98
+12 00000109 ПЭТ бутылка 5л 1 шт 51.62 51.62 9.31
+13 M4723002 Цилиндр подъема кабины MAN 1 шт 21525 21525 3881.56
+14 TBC3521BAA Головка соединительная ПАЛМ (красн) с клапаном М16х1,5 внутр. 2 шт 539 1078 194.39
+15 ШГф9 Гофра для баков ф9 (НИКО) 2 м 17.5 35 6.31
+16 18021609 Клапан защитный четырехконтурный MAN TGA 1 шт 5764.45 5764.45 1039.49
+17 LR008Pr Смазка высокопроникающая L-Ross OSS 400мл 1 шт 406 406 73.21
+18 ФР-00001209 Titan ATF D iii, 20л жидкость для автомат. трансмиссий FUCHS 4 л/дм3 643.12 2572.48 463.89
+Итого материалов: 66.3 на сумму: 72949.05 13154.75
+Итого по заказ-наряду : 116990.92 21096.73
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="klever_trak")
+        works = parsed["extracted_items"]["works"]
+        parts = parsed["extracted_items"]["parts"]
+
+        self.assertEqual(parsed["extracted_fields"]["service_name"], "ООО «КЛЕВЕР ТРАК»")
+        self.assertEqual(parsed["extracted_fields"]["order_number"], "КТ262600020")
+        self.assertEqual(parsed["extracted_fields"]["repair_date"], "2026-01-13")
+        self.assertEqual(parsed["extracted_fields"]["plate_number"], "К524ВВ716")
+        self.assertEqual(parsed["extracted_fields"]["vin"], "Z0W06XZZ8MV003424")
+        self.assertEqual(parsed["extracted_fields"]["mileage"], 670000)
+        self.assertEqual(parsed["extracted_fields"]["work_total"], 44041.87)
+        self.assertEqual(parsed["extracted_fields"]["parts_total"], 72949.05)
+        self.assertEqual(parsed["extracted_fields"]["grand_total"], 116990.92)
+        self.assertEqual(parsed["extracted_fields"]["vat_total"], 21096.73)
+        self.assertEqual(len(works), 17)
+        self.assertEqual(len(parts), 18)
+        self.assertTrue(any(item["work_name"] == "Замена моторного масла и масляного фильтра" and item["standard_hours"] == 1.1 for item in works))
+        self.assertTrue(any(item["work_name"] == "Смазка транспортного средства, за исключением Тягово-сцепного устройства" and item["work_code"] is None for item in works))
+        self.assertTrue(any(item["article"] == "253133837" and item["quantity"] == 45.0 and item["unit_name"] == "л/дм3" for item in parts))
+        self.assertTrue(any(item["article"] == "P-00001209" and item["line_total"] == 2572.48 for item in parts))
+        self.assertNotIn("mileage_missing", parsed["manual_review_reasons"])
+        self.assertNotIn("service_name_suspicious", parsed["manual_review_reasons"])
 
     def test_parse_amount_accepts_common_ocr_separators(self) -> None:
         self.assertEqual(document_processing.parse_amount("201'712-03"), 201712.03)

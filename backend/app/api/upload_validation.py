@@ -22,6 +22,10 @@ IMAGE_SUFFIXES = {
 IMAGE_MAGIC_READ_SIZE = 32
 PDF_SIGNATURE = b"%PDF-"
 ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+XLSX_CONTENT_TYPES = {
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/octet-stream",
+}
 HEIF_BRANDS = {
     b"heic",
     b"heix",
@@ -104,9 +108,17 @@ def detect_document_source_type(upload: UploadFile) -> str:
             )
         return "image"
 
+    if content_type in XLSX_CONTENT_TYPES or suffix == ".xlsx":
+        if not header.startswith(ZIP_SIGNATURES):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Uploaded file is not a valid XLSX document",
+            )
+        return "xlsx"
+
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Only PDF files and images are supported",
+        detail="Only PDF files, images, and XLSX spreadsheets are supported",
     )
 
 

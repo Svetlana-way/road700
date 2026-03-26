@@ -358,36 +358,44 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             self.assertEqual(service_item.contact, "manual@example.com")
             self.assertEqual(service_item.comment, "Manual comment")
 
-    def test_builtin_fallback_catalog_syncs_axb_and_logistics_services(self) -> None:
+    def test_builtin_fallback_catalog_syncs_axb_logistics_and_klever_services(self) -> None:
         with self.SessionLocal() as db:
             ensure_service_catalog_synced(db, commit=False)
 
             axb_service = db.scalar(select(Service).where(Service.name == "ООО «АХВ Трак Сервис»"))
             logistics_service = db.scalar(select(Service).where(Service.name == "ООО «ЛОГИСТИКА»"))
+            klever_service = db.scalar(select(Service).where(Service.name == "ООО «КЛЕВЕР ТРАК»"))
 
             self.assertIsNotNone(axb_service)
             self.assertIsNotNone(logistics_service)
+            self.assertIsNotNone(klever_service)
             self.assertEqual(axb_service.status, ServiceStatus.CONFIRMED)
             self.assertEqual(logistics_service.status, ServiceStatus.CONFIRMED)
+            self.assertEqual(klever_service.status, ServiceStatus.CONFIRMED)
 
-    def test_builtin_fallback_catalog_resolves_axb_and_logistics_aliases(self) -> None:
+    def test_builtin_fallback_catalog_resolves_axb_logistics_and_klever_aliases(self) -> None:
         with self.SessionLocal() as db:
             axb_entry = find_service_catalog_entry("AXB")
             logistics_entry = find_service_catalog_entry('Общество с ограниченной ответственностью "ЛОГИСТИКА"')
+            klever_entry = find_service_catalog_entry("Клевер Трак")
 
             self.assertIsNotNone(axb_entry)
             self.assertIsNotNone(logistics_entry)
+            self.assertIsNotNone(klever_entry)
             self.assertEqual(axb_entry.name, "ООО «АХВ Трак Сервис»")
             self.assertEqual(logistics_entry.name, "ООО «ЛОГИСТИКА»")
+            self.assertEqual(klever_entry.name, "ООО «КЛЕВЕР ТРАК»")
 
             axb_service = resolve_service_by_name(db, "AXB")
             logistics_service = resolve_service_by_name(
                 db,
                 'Общество с ограниченной ответственностью "ЛОГИСТИКА"',
             )
+            klever_service = resolve_service_by_name(db, "Клевер Трак")
 
             self.assertIsNotNone(axb_service)
             self.assertIsNotNone(logistics_service)
+            self.assertIsNotNone(klever_service)
             self.assertEqual(axb_service.name, "ООО «АХВ Трак Сервис»")
             self.assertEqual(logistics_service.name, "ООО «ЛОГИСТИКА»")
 

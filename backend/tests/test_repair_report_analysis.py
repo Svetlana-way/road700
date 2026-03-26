@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from datetime import date
 
-from app.models.enums import CatalogStatus, RepairStatus
-from app.models.repair import Repair, RepairPart, RepairWork
+from app.models.enums import CatalogStatus, CheckSeverity, RepairStatus
+from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.services.repair_report_analysis import build_repair_executive_report
 
 
@@ -112,6 +112,77 @@ class RepairReportAnalysisTestCase(unittest.TestCase):
         self.assertFalse(
             any(item["title"] == "Материал по зоне «фонарь» списан без профильной работы" for item in report["findings"])
         )
+
+    def test_report_flags_incomplete_work_table_when_line_sum_mismatches_header_total(self) -> None:
+        repair = self._build_repair(
+            works=[
+                RepairWork(
+                    work_code="137102-3",
+                    work_name="Электрические провода и разъемы, проверка, очистка",
+                    quantity=1.5,
+                    standard_hours=1.5,
+                    actual_hours=1.5,
+                    price=3600,
+                    line_total=5130,
+                    status=CatalogStatus.PRELIMINARY,
+                )
+            ],
+            parts=[],
+        )
+        repair.work_total = 43023.6
+        repair.grand_total = 43023.6
+        repair.checks = [
+            RepairCheck(
+                repair_id=1,
+                check_type="ocr_work_lines_total_mismatch",
+                severity=CheckSeverity.SUSPICIOUS,
+                title="Сумма строк работ не совпадает с итогом работ",
+                details="Нужна ручная проверка работ в заказ-наряде",
+                calculation_payload={"lines_total": 33105.6, "header_total": 43023.6},
+                is_resolved=False,
+            )
+        ]
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={},
+            manual_review_reason_labels={},
+        )
+
+        finding = next((item for item in report["findings"] if item["title"] == "Табличная часть работ распознана неполно"), None)
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding["severity"], "high")
+        self.assertIn("не сходится", finding["summary"])
+        self.assertTrue(any("77%" in evidence for evidence in finding["evidence"]))
+
+    def test_report_flags_total_mismatch_as_ocr_risk(self) -> None:
+        repair = self._build_repair(works=[], parts=[])
+        repair.checks = [
+            RepairCheck(
+                repair_id=1,
+                check_type="ocr_total_mismatch",
+                severity=CheckSeverity.SUSPICIOUS,
+                title="Сумма строк не совпадает с итоговой суммой",
+                details="Нужна ручная проверка итогов заказ-наряда",
+                calculation_payload={
+                    "calculated_total": 15000.0,
+                    "calculated_total_with_vat": 18000.0,
+                    "grand_total": 17000.0,
+                },
+                is_resolved=False,
+            )
+        ]
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={},
+            manual_review_reason_labels={},
+        )
+
+        finding = next((item for item in report["findings"] if item["title"] == "Итоги документа не сходятся после OCR-разбора"), None)
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding["severity"], "high")
+        self.assertEqual(finding["category"], "Документ и OCR")
 
 
 if __name__ == "__main__":

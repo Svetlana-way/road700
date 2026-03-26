@@ -245,6 +245,65 @@ def _build_custom_check_finding(check: RepairCheck) -> dict[str, object] | None:
             "recommendation": "Проверить работу вручную и по возможности пополнить справочник подтвержденных операций после закрытия ремонта.",
         }
 
+    if check.check_type in {"ocr_work_lines_total_mismatch", "ocr_part_lines_total_mismatch"}:
+        lines_total = payload.get("lines_total")
+        header_total = payload.get("header_total")
+        line_kind = "работ" if check.check_type == "ocr_work_lines_total_mismatch" else "материалов"
+        ratio_text = ""
+        if isinstance(lines_total, (int, float)) and isinstance(header_total, (int, float)) and float(header_total) > 0:
+            ratio = round((float(lines_total) / float(header_total)) * 100)
+            ratio_text = f"Распознано примерно {ratio}% от итога по шапке."
+        return {
+            "title": f"Табличная часть {line_kind} распознана неполно",
+            "severity": "high" if check.severity == CheckSeverity.SUSPICIOUS else SEVERITY_LEVELS.get(check.severity.value, "medium"),
+            "category": "Документ и OCR",
+            "summary": (
+                f"Сумма распознанных строк {line_kind} не сходится с итогом документа, "
+                "поэтому часть анализа по составу ремонта может быть неполной."
+            ),
+            "rationale": (
+                "При таком расхождении нельзя считать табличную часть надежно разобранной: "
+                "часть строк могла быть потеряна, склеена OCR или неверно распределена по позициям."
+            ),
+            "evidence": [
+                check.details or "",
+                f"Сумма распознанных строк: {_format_money(float(lines_total))}" if isinstance(lines_total, (int, float)) else "",
+                f"Итог по шапке: {_format_money(float(header_total))}" if isinstance(header_total, (int, float)) else "",
+                ratio_text,
+            ],
+            "recommendation": (
+                "Запросить более качественный PDF или проверить табличную часть вручную, "
+                "потому что текущий OCR-разбор не покрывает весь состав документа."
+            ),
+        }
+
+    if check.check_type == "ocr_total_mismatch":
+        calculated_total = payload.get("calculated_total")
+        calculated_total_with_vat = payload.get("calculated_total_with_vat")
+        grand_total = payload.get("grand_total")
+        return {
+            "title": "Итоги документа не сходятся после OCR-разбора",
+            "severity": "high",
+            "category": "Документ и OCR",
+            "summary": "Итоговая сумма заказ-наряда не подтверждается автоматически рассчитанной суммой по распознанным полям.",
+            "rationale": "Обычно это означает ошибку OCR в шапке или неполный разбор строк работ и материалов.",
+            "evidence": [
+                check.details or "",
+                (
+                    f"Работы + материалы: {_format_money(float(calculated_total))}"
+                    if isinstance(calculated_total, (int, float))
+                    else ""
+                ),
+                (
+                    f"Работы + материалы + НДС: {_format_money(float(calculated_total_with_vat))}"
+                    if isinstance(calculated_total_with_vat, (int, float))
+                    else ""
+                ),
+                f"Итог документа: {_format_money(float(grand_total))}" if isinstance(grand_total, (int, float)) else "",
+            ],
+            "recommendation": "Перепроверить шапку документа и суммы строк вручную до использования отчёта как основания для управленческого решения.",
+        }
+
     return None
 
 

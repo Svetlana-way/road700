@@ -549,6 +549,8 @@ PROFILE_SPECIFIC_OCR_RULE_DEFINITIONS: list[dict[str, object]] = [
     {"profile_scope": "ets_act", "target_field": "service_name", "pattern": r"(Енисей\s*Трак\s*Сервис)", "value_parser": "raw", "confidence": 0.98, "priority": 1},
     {"profile_scope": "ets_invoice", "target_field": "service_name", "pattern": r"(Енисей\s*Трак\s*Сервис)", "value_parser": "raw", "confidence": 0.98, "priority": 1},
     {"profile_scope": "leader_trak", "target_field": "service_name", "pattern": r"(ЛидерТрак)", "value_parser": "raw", "confidence": 0.98, "priority": 1},
+    {"profile_scope": "leader_trak", "target_field": "order_number", "pattern": r"План\s+ремонта\s*№\s*([A-Za-zА-Яа-я0-9/_-]{3,})", "value_parser": "raw", "confidence": 0.97, "priority": 1},
+    {"profile_scope": "leader_trak", "target_field": "order_number", "pattern": r"Предварительный\s+счет\s+на\s+оплату\s*№\s*([A-Za-zА-Яа-я0-9/_-]{3,})", "value_parser": "raw", "confidence": 0.92, "priority": 2},
     {"profile_scope": "sibtrakscan", "target_field": "service_name", "pattern": r"(СИБТРАКСКАН)", "value_parser": "raw", "confidence": 0.98, "priority": 1},
     {"profile_scope": "gruzovye_rezervy", "target_field": "service_name", "pattern": r"(ГРУЗОВЫЕ\s+РЕЗЕРВЫ)", "value_parser": "raw", "confidence": 0.98, "priority": 1},
     {"profile_scope": "sibtrakscan", "target_field": "repair_date", "pattern": rf"(?:{DATE_CLOSED_LABEL_PATTERN})\s*[:№]?\s*(\d{{2}}[./-]\d{{2}}[./-]\d{{2,4}})", "value_parser": "date", "confidence": 0.96, "priority": 1},
@@ -1966,6 +1968,28 @@ def is_meaningful_work_name(value: object) -> bool:
     return True
 
 
+def is_meaningful_part_name(value: object) -> bool:
+    normalized_value = normalize_line(str(value or ""))
+    lower_value = normalized_value.lower()
+    if not normalized_value:
+        return False
+    if not re.search(r"[A-Za-zА-Яа-я]", normalized_value):
+        return False
+    if any(marker in lower_value for marker in ("итого", "всего", "ндс", "rub", "руб")):
+        return False
+    if re.fullmatch(r"\d+(?:[.,]\d+)?\s*(?:шт|г|гр|мл|литр|л|кг|м)\b", lower_value):
+        return False
+    return True
+
+
+def has_meaningful_leader_trak_items(extracted_items: dict[str, list[dict[str, object]]]) -> bool:
+    works = extracted_items.get("works") or []
+    parts = extracted_items.get("parts") or []
+    return any(is_meaningful_work_name(item.get("work_name")) for item in works) or any(
+        is_meaningful_part_name(item.get("part_name")) for item in parts
+    )
+
+
 def sanitize_extracted_items(extracted_items: dict[str, list[dict[str, object]]]) -> tuple[dict[str, list[dict[str, object]]], int]:
     works = extracted_items.get("works") or []
     parts = extracted_items.get("parts") or []
@@ -2482,6 +2506,18 @@ LEADER_TRAK_ROW_PATTERN = re.compile(
     r"(?P<gross>\d[\d\s]*(?:[.,]\d{2}))$",
     re.IGNORECASE,
 )
+LEADER_TRAK_INVOICE_ROW_PATTERN = re.compile(
+    r"(?P<row>\d{1,3})\s*"
+    r"(?P<body>.+?)\s*"
+    r"(?P<qty>\d+(?:[.,]\d+)?)\s+"
+    r"(?P<unit>н/ч|шт|г|гр|мл|литр|л|кг|м)\s+"
+    r"(?P<price>\d[\d\s]*(?:[.,]\d{2})?)\s+"
+    r"(?P<discount>\d[\d\s]*(?:[.,]\d{2}))\s+"
+    r"(?P<vat>\d[\d\s]*(?:[.,]\d{2}))\s+"
+    r"(?P<total>\d[\d\s]*(?:[.,]\d{2}))"
+    r"(?=(?:\s*\d{1,3}\s*[A-Za-zА-Яа-яЁё№(]|Итого\s+RUB:|$))",
+    re.IGNORECASE | re.DOTALL,
+)
 LOGISTICS_ROW_START_PATTERN = re.compile(r"^\d+\s+\S+", re.IGNORECASE)
 LOGISTICS_WORK_TAIL_PATTERN = re.compile(
     r"^\d+(?:[.,]\d+)?\s+\d[\d\s]*(?:[.,]\d{2})\s+\d+(?:[.,]\d+)?\s+\d[\d\s]*(?:[.,]\d{0,2})?\s+\d+%\s+\d[\d\s]*(?:[.,]\d{2})\s+\d[\d\s]*(?:[.,]\d{2})$",
@@ -2872,6 +2908,32 @@ def extract_leader_trak_row_buffers(text: str) -> list[str]:
     return buffers
 
 
+def extract_leader_trak_invoice_fragment(text: str) -> str:
+    fragment = extract_fragment_after_marker(
+        text,
+        r"№\s*Товар\s+Артикул\s+Кол-во\s+Ед\.\s+Цена\s+Скидка\s+НДС\s+Всего",
+        stop_patterns=(r"Итого\s+RUB:", r"Всего\s+наименований", r"Сумма\s+прописью"),
+        max_chars=25000,
+    )
+    if fragment:
+        return fragment
+    return ""
+
+
+def extract_leader_trak_order_number(text: str) -> Optional[str]:
+    for pattern in (
+        r"План\s+ремонта\s*№\s*([A-Za-zА-Яа-я0-9/_-]{3,})",
+        r"Предварительный\s+счет\s+на\s+оплату\s*№\s*([A-Za-zА-Яа-я0-9/_-]{3,})",
+    ):
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match is None:
+            continue
+        order_number = normalize_line(match.group(1))
+        if is_plausible_order_number(order_number):
+            return order_number
+    return None
+
+
 def parse_leader_trak_row(line: str) -> Optional[tuple[str, dict[str, object]]]:
     match = LEADER_TRAK_ROW_PATTERN.match(line)
     if match is None:
@@ -2915,6 +2977,76 @@ def parse_leader_trak_row(line: str) -> Optional[tuple[str, dict[str, object]]]:
     )
 
 
+def parse_leader_trak_invoice_row(fragment: str) -> Optional[tuple[str, dict[str, object]]]:
+    match = LEADER_TRAK_INVOICE_ROW_PATTERN.match(fragment)
+    if match is None:
+        return None
+
+    quantity = parse_decimal_value(match.group("qty"))
+    unit_name = normalize_unit_name(match.group("unit"))
+    price = parse_amount(match.group("price"))
+    vat_total = parse_amount(match.group("vat"))
+    gross_total = parse_amount(match.group("total"))
+    if quantity is None or unit_name is None or price is None or vat_total is None or gross_total is None:
+        return None
+
+    net_total = round(gross_total - vat_total, 2)
+    if net_total <= 0:
+        return None
+
+    code_value, name_value = split_leader_trak_body(match.group("body"))
+    if not name_value:
+        return None
+
+    if unit_name == "нч":
+        return (
+            "works",
+            {
+                "work_code": normalize_article_value(code_value),
+                "work_name": name_value[:500],
+                "quantity": quantity,
+                "unit_name": unit_name,
+                "price": price,
+                "line_total": net_total,
+                "standard_hours": quantity,
+            },
+        )
+
+    return (
+        "parts",
+        {
+            "article": normalize_article_value(code_value),
+            "part_name": name_value[:500],
+            "quantity": quantity,
+            "unit_name": unit_name,
+            "price": price,
+            "line_total": net_total,
+        },
+    )
+
+
+def extract_leader_trak_invoice_items(text: str) -> dict[str, list[dict[str, object]]]:
+    fragment = normalize_line(extract_leader_trak_invoice_fragment(text))
+    if not fragment:
+        return {"works": [], "parts": []}
+
+    works: list[dict[str, object]] = []
+    parts: list[dict[str, object]] = []
+    for match in LEADER_TRAK_INVOICE_ROW_PATTERN.finditer(fragment):
+        parsed_row = parse_leader_trak_invoice_row(match.group(0))
+        if parsed_row is None:
+            continue
+        item_kind, payload = parsed_row
+        if item_kind == "works":
+            works.append(payload)
+        else:
+            parts.append(payload)
+
+    if len(works) + len(parts) < 2:
+        return {"works": [], "parts": []}
+    return {"works": works, "parts": parts}
+
+
 def extract_leader_trak_items(text: str) -> dict[str, list[dict[str, object]]]:
     works: list[dict[str, object]] = []
     parts: list[dict[str, object]] = []
@@ -2927,7 +3059,11 @@ def extract_leader_trak_items(text: str) -> dict[str, list[dict[str, object]]]:
             works.append(payload)
         else:
             parts.append(payload)
-    return {"works": works, "parts": parts}
+    service_items = {"works": works, "parts": parts}
+    invoice_items = extract_leader_trak_invoice_items(text)
+    if is_leader_trak_invoice_only_document(text) and (invoice_items["works"] or invoice_items["parts"]):
+        return invoice_items
+    return service_items
 
 
 def is_logistics_noise_line(line: str) -> bool:
@@ -4649,7 +4785,10 @@ def apply_profile_specific_item_fallbacks(
         elif normalized_profile_scope == "sibtrakscan":
             normalization_notes.append("sibtrakscan_items_restored_from_task_sections")
         elif normalized_profile_scope == "leader_trak":
-            normalization_notes.append("leader_trak_items_restored_from_service_table")
+            if is_leader_trak_invoice_only_document(text):
+                normalization_notes.append("leader_trak_items_restored_from_invoice_table")
+            else:
+                normalization_notes.append("leader_trak_items_restored_from_service_table")
         elif normalized_profile_scope == "logistics":
             normalization_notes.append("logistics_items_restored_from_tabular_sections")
         elif normalized_profile_scope == "gruzovye_rezervy":
@@ -4921,6 +5060,20 @@ def apply_profile_specific_total_fallbacks(
             confidence_map["vat_total"] = max(confidence_map.get("vat_total", 0.0), 0.9)
             confidence_map["grand_total"] = max(confidence_map.get("grand_total", 0.0), 0.92)
             normalization_notes.append("leader_trak_totals_restored_from_summary")
+
+        invoice_summary_fragment = extract_fragment_after_marker(
+            text,
+            r"Итого\s+RUB:",
+            stop_patterns=(r"Всего\s+наименований", r"Сумма\s+прописью"),
+            max_chars=160,
+        )
+        invoice_summary_amounts = extract_amount_candidates_from_fragment(invoice_summary_fragment)
+        if len(invoice_summary_amounts) >= 3:
+            extracted_fields["vat_total"] = invoice_summary_amounts[-2]
+            extracted_fields["grand_total"] = invoice_summary_amounts[-1]
+            confidence_map["vat_total"] = max(confidence_map.get("vat_total", 0.0), 0.9)
+            confidence_map["grand_total"] = max(confidence_map.get("grand_total", 0.0), 0.92)
+            normalization_notes.append("leader_trak_totals_restored_from_invoice_summary")
         return
 
     if normalized_profile_scope != "axb":
@@ -6283,6 +6436,13 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
         extracted_fields["reason"] = reason
         confidence_map["reason"] = 0.84
 
+    if normalized_profile_scope == "leader_trak" and "order_number" not in extracted_fields:
+        leader_trak_order_number = extract_leader_trak_order_number(header_text or text)
+        if leader_trak_order_number:
+            extracted_fields["order_number"] = leader_trak_order_number
+            confidence_map["order_number"] = max(confidence_map.get("order_number", 0.0), 0.9)
+            remove_manual_review_reason(manual_review_reasons, "order_number_missing")
+
     if normalized_profile_scope == "ets_act":
         ets_scanned_fields = extract_ets_act_scanned_header_fields(text)
         for field_name, confidence in (
@@ -6335,7 +6495,7 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
         normalization_notes.append(f"noise_work_items_removed_after_fallback:{removed_post_fallback_noise_work_count}")
 
     if normalized_profile_scope == "leader_trak" and is_leader_trak_invoice_only_document(text):
-        if extracted_items.get("works") or extracted_items.get("parts"):
+        if (extracted_items.get("works") or extracted_items.get("parts")) and not has_meaningful_leader_trak_items(extracted_items):
             extracted_items = {"works": [], "parts": []}
             normalization_notes.append("leader_trak_invoice_only_items_suppressed")
 

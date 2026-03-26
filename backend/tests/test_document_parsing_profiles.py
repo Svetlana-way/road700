@@ -1982,6 +1982,53 @@ a9d6fd9b-203c-4ef9-8a13-c892beb08927
         self.assertAlmostEqual(parsed["extracted_fields"]["parts_total"], 109.17, places=2)
         self.assertEqual(parsed["extracted_fields"]["grand_total"], 9462.0)
 
+    def test_parse_document_text_extracts_leader_trak_preliminary_invoice_items(self) -> None:
+        text = """
+Внимание! Оплата данного счета означает согласие с условиями поставки товара.
+Предварительный счет на оплату № ЛТ000002399 от 25.03.2026
+Получатель
+Общество с ограниченной ответственностью "ЛидерТрак"
+Покупатель: ООО ТК "Семьсот дорог"
+На основании: План ремонта № ЛТ000002711 от 25.03.2026
+Автомобиль: 2399 ОТ 25
+№ Товар Артикул Кол-во Ед. Цена Скидка НДС Всего
+1Масло моторное частично синтетическое VDS-4,5 10W30 (208л)37 литр 590,16 1 091,80 4 563,74 25 308,01
+2Смазка консистентная Gazpromneft Grease LX EP, ведро 18 кг.0,2 шт 543,55 5,44 22,72 125,99
+3 Расходные материалы (тягач) 1 шт 309,84 0,00 68,16 378,00
+4 Комплект фильтров для ТО 1 шт 9 388,52 0,00 2 065,47 11 453,99
+5 Шайба медная пробки поддона картера 1 шт 288,71 28,87 57,16 317,00
+6Мойка портальная, ручная ,(автопоезд 16 м. п/п) 0,8 н/ч 2 200 176,00 348,48 1 932,48
+7 ДВИГАТЕЛЬ. МАСЛО И ФИЛЬТР. ЗАМЕНА. 0,4 н/ч 2 100 84,00 166,32 922,32
+8 БАЗОВЫЙ СЕРВИС 1,2 н/ч 2 100 252,00 498,96 2 766,96
+9ТОПЛИВНЫЙ ФИЛЬТР ТОНКОЙ ОЧИСТКИ. ЗАМЕНА ОДНОГО. ВКЛЮЧАЕТ ПРОКАЧКУ. 0,2 н/ч 2 100 42,00 83,16 461,16
+10ТОПЛИВНЫЙ ФИЛЬТР ГРУБОЙ ОЧИСТКИ. ЗАМЕНА0,3 н/ч 2 100 63,00 124,74 691,74
+11СМАЗКА ОПОРНО-СЦЕПНОГО УСТРОЙСТВА0,1 н/ч 2 100 21,00 41,58 230,58
+Итого RUB: 1 764,11 8 040,49 44 588,23
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="leader_trak")
+        works = parsed["extracted_items"]["works"]
+        parts = parsed["extracted_items"]["parts"]
+
+        self.assertEqual(parsed["extracted_fields"]["service_name"], "ООО «ЛидерТрак»")
+        self.assertEqual(parsed["extracted_fields"]["order_number"], "ЛТ000002711")
+        self.assertEqual(parsed["extracted_fields"]["repair_date"], "2026-03-25")
+        self.assertEqual(parsed["extracted_fields"]["plate_number"], "2399ОТ25")
+        self.assertEqual(len(works), 6)
+        self.assertEqual(len(parts), 5)
+        self.assertTrue(any(item["work_name"] == "БАЗОВЫЙ СЕРВИС" and item["line_total"] == 2268.0 for item in works))
+        self.assertTrue(any(item["work_name"] == "СМАЗКА ОПОРНО-СЦЕПНОГО УСТРОЙСТВА" and item["standard_hours"] == 0.1 for item in works))
+        self.assertTrue(any(item["part_name"] == "Комплект фильтров для ТО" and item["line_total"] == 9388.52 for item in parts))
+        self.assertTrue(any(item["part_name"] == "Масло моторное частично синтетическое VDS-4,5 10W30 (208л)" and item["quantity"] == 37.0 for item in parts))
+        self.assertAlmostEqual(parsed["extracted_fields"]["work_total"], 5742.0, places=2)
+        self.assertAlmostEqual(parsed["extracted_fields"]["parts_total"], 30805.74, places=2)
+        self.assertEqual(parsed["extracted_fields"]["vat_total"], 8040.49)
+        self.assertEqual(parsed["extracted_fields"]["grand_total"], 44588.23)
+        self.assertNotIn("mileage_missing", parsed["manual_review_reasons"])
+        self.assertNotIn("order_number_missing", parsed["manual_review_reasons"])
+        self.assertIn("leader_trak_items_restored_from_invoice_table", parsed["normalization_notes"])
+        self.assertIn("leader_trak_totals_restored_from_invoice_summary", parsed["normalization_notes"])
+
     def test_parse_document_text_extracts_gruzovye_rezervy_items_from_sections(self) -> None:
         text = """
 Заказ-наряд № ГП000215622 от 12 февраля 2026 г.

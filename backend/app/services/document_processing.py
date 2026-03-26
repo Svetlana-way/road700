@@ -4059,6 +4059,16 @@ def score_axb_material_entries(entries: list[dict[str, Optional[str]]]) -> int:
     return score
 
 
+def has_polluted_axb_material_entry_names(entries: list[dict[str, Optional[str]]]) -> bool:
+    for entry in entries:
+        part_name = normalize_line(str(entry.get("part_name") or ""))
+        if not part_name:
+            continue
+        if len(extract_amount_candidates_from_fragment(part_name)) >= 2:
+            return True
+    return False
+
+
 def clean_axb_inline_material_name(name: str) -> str:
     cleaned = normalize_line(re.sub(r"[\[\]|_]+", " ", name)).strip(" -:;,")
     cleaned = re.sub(r"\b(?:шт|шт\.|метр|мер|едиизм|едизм|tm)\b.*$", "", cleaned, flags=re.IGNORECASE).strip(" -:;,")
@@ -4612,11 +4622,30 @@ def extract_axb_material_parts(text: str, *, expected_parts_total: Optional[floa
         section_text = text[section_start:section_end]
         section_entries = extract_axb_material_section_entries(section_text)
         inline_entries = extract_axb_inline_material_entries(section_text)
+        inline_totals = [
+            float(entry["line_total"])
+            for entry in inline_entries
+            if isinstance(entry.get("line_total"), (int, float))
+        ]
         inline_score = score_axb_material_entries(
             [{"article": entry.get("article"), "part_name": entry.get("part_name")} for entry in inline_entries]
         )
         section_score = score_axb_material_entries(section_entries)
-        use_inline_entries = bool(inline_entries) and inline_score > section_score
+        inline_totals_match_expected = (
+            expected_parts_total is not None
+            and len(inline_totals) == len(inline_entries)
+            and len(inline_entries) >= 2
+            and amounts_match(round(sum(inline_totals), 2), float(expected_parts_total), tolerance=3.0)
+        )
+        use_inline_entries = bool(inline_entries) and (
+            inline_score > section_score
+            or inline_totals_match_expected
+            or (
+                len(inline_entries) > len(section_entries)
+                and len(inline_totals) == len(inline_entries)
+                and has_polluted_axb_material_entry_names(section_entries)
+            )
+        )
         if use_inline_entries:
             section_entries = [
                 {"article": entry.get("article"), "part_name": entry.get("part_name")}
@@ -4639,7 +4668,6 @@ def extract_axb_material_parts(text: str, *, expected_parts_total: Optional[floa
             section_total=section_total,
         )
         if use_inline_entries:
-            inline_totals = [float(entry["line_total"]) for entry in inline_entries if isinstance(entry.get("line_total"), (int, float))]
             if len(inline_totals) == len(section_entries):
                 line_totals = inline_totals
                 if section_total is not None and not amounts_match(round(sum(line_totals), 2), section_total, tolerance=3.0):

@@ -1168,6 +1168,44 @@ TC : SCHMITZ CARGOBULL 9084 гос. номер: BB044416, VIN: WSM00000003313941
         self.assertIn("Болт амортизатора", parts[0]["part_name"])
         self.assertIn("Изолента Терминатор", parts[0]["part_name"])
 
+    def test_parse_document_text_prefers_axb_inline_material_rows_when_they_match_expected_total(self) -> None:
+        text = """
+Заказ-наряд № 0000021658 от 02.07.2025
+TC : SCHMITZ CARGOBULL 9084 гос. номер: BB044416, VIN: WSM00000003313941, год вып. 2018, пробег 1 480 125
+Расходная накладная к заказ-наряду № 0000021658 от 02.07.2025
+№ Артикул Наименование Кол-во | Ед.изм. | Цена | Скидка Всего вт.ч. НДС
+й 2 3 4 5 6 7 8 9
+Итого no странице материалов: 0 на сумму:| 0,00 0,00 0,00
+№ | Артикул - Наименование Кол-во | Ед.изм. | Цена Скидка Всего т. НДС]
+1 2 3 4 5 6 7 8 9
+1 1100083 Болт амортизатора с гайкой 2 шт| 522,00 52,20 991,80 165,30
+(Schmitz), MANSONS
+2 {88-01400-SX Термосоединитель проводов 16 шт] 44,82 35,86 681,26 113,54
+красный 1.5-2.5 Stellox
+3 1318012 Провод ПУГВ 1х1.5 Красный 2 метр| 36,00 3,60 68,40 11,40
+4 1318015 Провод ПУГВ 1х1.5 Черный 2 mM} 36,00 3,60 68,40 11,40
+5 |8801413$Х Разъем плоский с уплотнительной 1 шт| 204,00 10,20 193,80 32,30
+резинкой
+6 159060020 Хомут стяжка пластиковая 200x4,8 10 шт| 7,20 3,60 68,40 11,40
+7 1[13844СР Лампа накаливания! 5W 24V 1 шт| 32,40 1,62 30,78 5,13
+8 1015555102 Электро соединитель торцевой 3 wT} 48,00 7,20 136,80 22,80
+1,5-2,5 синий
+9 175954 Изолента Терминатор малая 1 wT} 222,00 11,10 210,90 35,15
+автомобильная
+Итого по странице материалов: 36 на сумму:| 76,78 1 458, 74 243,12
+Итого материалов: 38 на сумму: 128,98 2450,54 408,42
+"""
+
+        parts = document_processing.extract_axb_material_parts(text, expected_parts_total=2450.54)
+
+        self.assertEqual(len(parts), 9)
+        self.assertAlmostEqual(sum(item["line_total"] for item in parts), 2450.54, places=2)
+        self.assertEqual(parts[0]["article"], "1100083")
+        self.assertEqual(parts[0]["part_name"], "Болт амортизатора с гайкой")
+        self.assertTrue(any(item["article"] == "88-01400-SX" and item["line_total"] == 681.26 for item in parts))
+        self.assertTrue(any(item["article"] == "1015555102" and "Электро соединитель торцевой" in item["part_name"] for item in parts))
+        self.assertTrue(any(item["article"] == "175954" and "Изолента Терминатор" in item["part_name"] for item in parts))
+
     def test_parse_document_text_extracts_axb_work_items_from_tesseract_compact_rows(self) -> None:
         text = """
 Заказ-наряд № 0000021658 от 02.07.2025

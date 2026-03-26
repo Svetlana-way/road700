@@ -1100,14 +1100,150 @@ Bcero
 408,42
 """
 
-        parsed = document_processing.parse_document_text(text, db=None, profile_scope="axb")
-        parts = parsed["extracted_items"]["parts"]
+        parts = document_processing.extract_axb_material_parts(text, expected_parts_total=2450.54)
 
         self.assertEqual(len(parts), 1)
         self.assertEqual(parts[0]["article"], None)
         self.assertIn("Болт амортизатора", parts[0]["part_name"])
         self.assertIn("Изолента Терминатор", parts[0]["part_name"])
+        self.assertGreater(parts[0]["line_total"], 0)
+
+    def test_parse_document_text_extracts_axb_parts_when_tesseract_merges_material_header_row(self) -> None:
+        text = """
+Заказ-наряд № 0000021658 от 02.07.2025
+TC : SCHMITZ CARGOBULL 9084 гос. номер: BB044416, VIN: WSM00000003313941, год вып. 2018, пробег 1 480 125
+Итого работ:
+43 023,60
+Итого материалов:
+36
+38
+Две тысячи четыреста пятьдесят рублей 54 копейки в т.ч. НДС 408,42 RUB
+Расходная накладная к заказ-наряду Nº 0000021658 от 02.07.2025
+[№ | Артикл | Наименование | Кол-во | Едиизм. | Цена | Скидка | Всего [вт.ч. НДС]
+1100083
+Болт амортизатора с гайкой (Schmitz), MANSONS
+188-01400-SX
+Термосоединитель проводов красный 1.5-2.5 Stellox
+318012
+318015
+8801413SX
+Провод ПУГВ 1х1.5 Красный
+Провод ПУГВ 1х1.5 Черный
+Разъем плоский с уплотнительной резинкой
+159060020
+13844CP
+015555102
+75954
+Хомут стяжка пластиковая 200х4,8
+Лампа накаливания 5W 24V
+Электро соединитель торцевой 1,5-2,5 синий
+Изолента Терминатор малая автомобильная
+Цена Скидка
+шт 522,00
+52,20
+шт 44,82
+35,86
+метр 36,00
+3,60
+метр 36,00
+3,60
+шт 204,00
+10,20
+шт 7,20
+шт 3,60
+32,40
+1,62
+шт 48,00
+7,20
+шт 222,00
+11,10
+"""
+
+        parts = document_processing.extract_axb_material_parts(text, expected_parts_total=2450.54)
+
+        self.assertEqual(len(parts), 1)
         self.assertEqual(parts[0]["line_total"], 2450.54)
+        self.assertIn("Болт амортизатора", parts[0]["part_name"])
+        self.assertIn("Изолента Терминатор", parts[0]["part_name"])
+
+    def test_parse_document_text_extracts_axb_work_items_from_tesseract_compact_rows(self) -> None:
+        text = """
+Заказ-наряд № 0000021658 от 02.07.2025
+TC : SCHMITZ CARGOBULL 9084 гос. номер: BB044416, VIN: WSM00000003313941, год вып. 2018, пробег 1 480 125
+Выполненные работы no заказ-наряду № 0000021658 от 02.07.2025
+№ | Артикул | Наименование | Кол. оп. [Ценамч| Норма | мч | Скидка | Всего Jars. НДС]
+аб |’ рШ 9 |1 |
+3 600,00
+2 Диагностика 1! 3600,00 0,500) Ремонт | 90,00 1710,00 285,00
+полуприцепа ТЕВ$ С2 2:
+Knorr-Bremse
+3 Установка болта 3 600,00 Ремонт 72,00 1 368,00 228,00
+крепления амортизатора
+| 4 0 == |Нормокомлет _ | 0,2] 3600,00] 0,400] Ремонт | 14,40 | 273,60] 45.60]
+Тормозные колодки 3! 3600,00 0,900} Ремонт 486,00 9 234,00 1 539,00
+снятие/установка на
+одном колесе
+Поиск неисправности в 1| 3600,00 Ремонт 90,00 1 710,00 285,00
+работе освещения .
+7 137102-3 Электрические провода 1! 3600,00 1,500} Ремонт | 270,00 5 130,00 855,00
+и разъемы, проверка,
+очистка
+Электропроводка 1} 3600,00 Ремонт 90,00 1 710,00 285,00
+заднего фонаря ремонт
+замена
+10 Поиск неисправности в 1; 3600,00 1,000| Ремонт | 180,00 3420,00 570,00
+работе
+электрооборудования
+11 Электропроводка 1| 3600,00 2,500} Ремонт | 450,00 8 550,00 1425,00
+ремонт
+Итого работ: |____ 13,2] насумму:| 2 264,40| 43023,60] 7170,60
+"""
+
+        works = document_processing.extract_axb_work_items(text)
+
+        self.assertEqual(len(works), 9)
+        self.assertAlmostEqual(sum(item["line_total"] for item in works), 33105.6, places=2)
+        self.assertTrue(any(item["work_code"] == "137102-3" and item["standard_hours"] == 1.5 for item in works))
+        self.assertTrue(any(item["work_name"] == "Установка болта крепления амортизатора" for item in works))
+        self.assertTrue(any(item["work_name"] == "Электропроводка заднего фонаря ремонт замена" for item in works))
+
+    def test_parse_document_text_aggregates_axb_materials_from_inline_tesseract_rows_when_section_total_is_only_in_header(self) -> None:
+        text = """
+Заказ-наряд № 0000021658 от 02.07.2025
+TC : SCHMITZ CARGOBULL 9084 гос. номер: BB044416, VIN: WSM00000003313941, год вып. 2018, пробег 1 480 125
+Итого материалов:
+36
+38
+Две тысячи четыреста пятьдесят рублей 54 копейки в т.ч. НДС 408,42 RUB
+Расходная накладная к заказ-наряду № 0000021658 от 02.07.2025
+[№ | Артикл | Наименование | Кол-во [ Едизм. | Цена | Скидка | Всею [втч.НДС]
+ПОСТ Е О ОЕ ИЯ ПОС ОИ ОЕ ОО МОС ОО ПОЗ ООС
+Итого по странице mamepuanos;|_____O| ___Hagymmy| 000 | 000 000]
+[№ [ Артикл | - Наименование | Кол-во | Едиизм. | Цена | Скидка | Всего [вт.ч. НДС]
+О ПЕ ОЕ ЗИ ПО ЗО ПОС: ОИ ОС: О ОО А ООС: ОНИ ООС:
+ПИ УНИИ ОИ ПО ВО eT
+(Schmitz), MANSONS
+PE PMO ры еее | ee | LOE
+красный 1.5-2.5 Stellox
+Г3 [318012 [Провод ПУГВ 1х1.5 Красный |_| мер] 36,0 | 360 | 68.40] - 11.40]
+Г4 [318015 Провод ПУГВ 1х1.5 Ченый | Tm 36,0 | 360 | 68,40] 11.40]
+И И ПИ ПИ ПО ПБ ПИБ ПИБ
+резинкой
+| 6 159060020 ____ [Хомут стяжка пластиковая 2004,8 | 40| - шт 7,20 | 360 | 68,40] - 11,40]
+И-П И В ee
+1,5-2,5 синий
+pS ЕЕ ИИ ПО о И ПО ПИБ
+автомобильная
+Итого материалов: |_____38]| ____насумму:| 128,98| 2450,54] 408,42]
+"""
+
+        parts = document_processing.extract_axb_material_parts(text, expected_parts_total=2450.54)
+
+        self.assertEqual(len(parts), 1)
+        self.assertEqual(parts[0]["line_total"], 2450.54)
+        self.assertIn("Провод ПУГВ 1х1.5 Красный", parts[0]["part_name"])
+        self.assertIn("Хомут стяжка пластиковая", parts[0]["part_name"])
+        self.assertNotIn("Итого по странице", parts[0]["part_name"])
 
     def test_parse_document_text_restores_axb_totals_from_ocr_windows_around_markers(self) -> None:
         text = """

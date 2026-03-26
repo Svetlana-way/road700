@@ -3,19 +3,24 @@ from __future__ import annotations
 import argparse
 import re
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.core.paths import PROJECT_ROOT
-from app.db.session import SessionLocal
+from app.db.base import Base
 from app.models.labor_norm import LaborNorm
+from app.scripts.import_labor_norms import import_labor_norms_with_session
 from app.services.document_processing import extract_document_text, normalize_line, parse_document_text
 from app.services.labor_norms import (
     build_normalized_name,
     classify_known_non_catalog_operation,
+    default_labor_norms_path,
     find_best_labor_norm_match,
     load_active_labor_norms,
     normalize_labor_norm_scope,
@@ -58,6 +63,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT_PATH), help="Markdown output file path")
     parser.add_argument("--profile-scope", default="axb", help="Profile scope passed into parse_document_text")
     parser.add_argument("--labor-scope", default="dongfeng_2025", help="Labor norm scope used for matching")
+    parser.add_argument("--catalog-path", default=None, help="Optional path to local labor norm catalog (.xlsx or .csv)")
     parser.add_argument("--limit", type=int, default=None, help="Maximum number of source files to audit")
     return parser
 
@@ -80,6 +86,37 @@ def format_project_path(path: Path) -> str:
         return str(path.relative_to(PROJECT_ROOT))
     except ValueError:
         return str(path)
+
+
+def resolve_catalog_path(labor_scope: str, catalog_path: str | None) -> Path:
+    if catalog_path:
+        return Path(catalog_path).expanduser().resolve()
+
+    normalized_scope = normalize_labor_norm_scope(labor_scope) or labor_scope
+    known_paths = {
+        "dongfeng_2025": default_labor_norms_path(PROJECT_ROOT),
+        "man_tgx_approx_srt_2026": PROJECT_ROOT / "backend" / "data" / "labor_norms" / "man_tgx_approx_srt_2026.csv",
+        "volvo_fh_approx_vstg_2026": PROJECT_ROOT / "backend" / "data" / "labor_norms" / "volvo_fh_approx_vstg_2026.csv",
+    }
+    return known_paths.get(normalized_scope, default_labor_norms_path(PROJECT_ROOT))
+
+
+@contextmanager
+def build_audit_session(*, labor_scope: str, catalog_path: Path) -> Iterable[Session]:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    Base.metadata.create_all(bind=engine)
+    try:
+        with SessionLocal() as db:
+            import_labor_norms_with_session(db, path=catalog_path, scope=labor_scope, catalog_name=labor_scope)
+            yield db
+    finally:
+        engine.dispose()
 
 
 def normalize_audit_text(value: str) -> str:
@@ -422,10 +459,13 @@ def main() -> None:
 
     source_dir = Path(args.path).expanduser().resolve()
     output_path = Path(args.output).expanduser().resolve()
+    catalog_path = resolve_catalog_path(str(args.labor_scope), args.catalog_path)
     if not source_dir.exists():
         raise FileNotFoundError(f"Sample folder not found: {source_dir}")
+    if not catalog_path.exists():
+        raise FileNotFoundError(f"Labor norm catalog not found: {catalog_path}")
 
-    with SessionLocal() as db:
+    with build_audit_session(labor_scope=str(args.labor_scope), catalog_path=catalog_path) as db:
         rows = audit_documents(
             source_dir,
             profile_scope=str(args.profile_scope),

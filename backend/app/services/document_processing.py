@@ -58,6 +58,7 @@ TESSERACT_BINARY = "tesseract"
 PDFTOPPM_BINARY = "pdftoppm"
 SIPS_BINARY = "sips"
 TESSERACT_LANGUAGE = "rus+eng"
+TESSERACT_PAGE_SEGMENTATION_MODES = ("6", "4")
 
 OCR_CONFUSABLE_CHARSETS = {
     "а": "аa4@",
@@ -699,6 +700,36 @@ def select_best_text_variant(text: str) -> str:
         candidate_score = score_text_quality(candidate)
         if candidate_score > best_score:
             best_variant = candidate
+            best_score = candidate_score
+    return best_variant
+
+
+def score_tesseract_ocr_variant(text: str) -> tuple[int, int, int, int, int]:
+    normalized_text = select_best_text_variant(text)
+    keyword_hits, cyrillic_count, alnum_count = score_text_quality(normalized_text)
+    amount_hits = len(re.findall(r"\d[\d\s]*(?:[.,]\d{2})", normalized_text))
+    table_hits = len(
+        re.findall(
+            r"(?:ремонт|итого|всего|артикул|наименование|кол[-. ]?во|норма|гос\.?\s*номер|vin|пробег)",
+            normalized_text,
+            re.IGNORECASE,
+        )
+    )
+    return (table_hits, amount_hits, keyword_hits, cyrillic_count, alnum_count)
+
+
+def select_best_tesseract_ocr_variant(candidates: list[str]) -> str:
+    non_empty_candidates = [candidate for candidate in candidates if candidate and candidate.strip()]
+    if not non_empty_candidates:
+        return ""
+
+    best_variant = select_best_text_variant(non_empty_candidates[0])
+    best_score = score_tesseract_ocr_variant(non_empty_candidates[0])
+    for candidate in non_empty_candidates[1:]:
+        candidate_variant = select_best_text_variant(candidate)
+        candidate_score = score_tesseract_ocr_variant(candidate)
+        if candidate_score > best_score:
+            best_variant = candidate_variant
             best_score = candidate_score
     return best_variant
 
@@ -4110,7 +4141,7 @@ def extract_axb_work_items(text: str) -> list[dict[str, object]]:
         return extract_axb_compact_work_items(text)
 
     work_body_match = re.search(
-        r"Выполненные\s+работы\s+по\s+заказ[- ]наряду(?P<body>.*?)(?:Итого\s+работ:)",
+        r"Выполненные\s+работы\s+(?:по|no|No|ho|но)?\s*заказ[- ]наряду(?P<body>.*?)(?:Итого\s+работ:)",
         text,
         re.IGNORECASE | re.MULTILINE | re.DOTALL,
     )
@@ -6194,24 +6225,31 @@ def run_tesseract_ocr(image_paths: list[Path]) -> dict[str, str]:
 
     payload: dict[str, str] = {}
     for image_path in image_paths:
-        command = [
-            TESSERACT_BINARY,
-            image_path.as_posix(),
-            "stdout",
-            "-l",
-            TESSERACT_LANGUAGE,
-            "--psm",
-            "6",
-        ]
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or "Tesseract OCR command failed")
-        payload[image_path.as_posix()] = result.stdout
+        variants: list[str] = []
+        last_error = "Tesseract OCR command failed"
+        for psm in TESSERACT_PAGE_SEGMENTATION_MODES:
+            command = [
+                TESSERACT_BINARY,
+                image_path.as_posix(),
+                "stdout",
+                "-l",
+                TESSERACT_LANGUAGE,
+                "--psm",
+                str(psm),
+            ]
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                last_error = result.stderr.strip() or last_error
+                continue
+            variants.append(result.stdout)
+        if not variants:
+            raise RuntimeError(last_error)
+        payload[image_path.as_posix()] = select_best_tesseract_ocr_variant(variants)
     return payload
 
 

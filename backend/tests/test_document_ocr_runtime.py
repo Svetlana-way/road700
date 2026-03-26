@@ -115,17 +115,36 @@ class DocumentOcrRuntimeTestCase(unittest.TestCase):
             "is_tesseract_ocr_available",
             return_value=True,
         ), patch("app.services.document_processing.subprocess.run") as subprocess_run:
-            subprocess_run.return_value.returncode = 0
-            subprocess_run.return_value.stdout = "OCR output"
-            subprocess_run.return_value.stderr = ""
+            subprocess_run.side_effect = [
+                unittest.mock.Mock(returncode=0, stdout="шум", stderr=""),
+                unittest.mock.Mock(returncode=0, stdout="Заказ-наряд VIN 123 Артикул 9 576,00", stderr=""),
+            ]
 
             payload = document_processing.run_tesseract_ocr([Path(image_file.name)])
 
-        self.assertEqual(payload[image_file.name], "OCR output")
-        command = subprocess_run.call_args.args[0]
-        self.assertEqual(command[0], document_processing.TESSERACT_BINARY)
-        self.assertEqual(command[2], "stdout")
-        self.assertIn(document_processing.TESSERACT_LANGUAGE, command)
+        self.assertEqual(payload[image_file.name], "Заказ-наряд VIN 123 Артикул 9 576,00")
+        first_command = subprocess_run.call_args_list[0].args[0]
+        second_command = subprocess_run.call_args_list[1].args[0]
+        self.assertEqual(first_command[0], document_processing.TESSERACT_BINARY)
+        self.assertEqual(first_command[2], "stdout")
+        self.assertIn(document_processing.TESSERACT_LANGUAGE, first_command)
+        self.assertEqual(first_command[-1], "6")
+        self.assertEqual(second_command[-1], "4")
+
+    def test_extract_axb_compact_work_items_accepts_no_marker_variant(self) -> None:
+        text = """
+Выполненные работы no заказ-наряду № 0000021658 от 02.07.2025
+1 1700700 ТО прицепа 1| 3600,00 2,800 Ремонт 504,00 9 576,00 1 596,00
+Итого работ:
+13,2 на сумму: 2 264,40 43 023,60 7 170,60
+"""
+
+        works = document_processing.extract_axb_compact_work_items(text)
+
+        self.assertEqual(len(works), 1)
+        self.assertEqual(works[0]["work_code"], "1700700")
+        self.assertEqual(works[0]["work_name"], "ТО прицепа")
+        self.assertAlmostEqual(works[0]["line_total"], 9576.0, places=2)
 
     def test_ensure_ocr_runtime_raises_on_missing_dependencies(self) -> None:
         with patch.object(

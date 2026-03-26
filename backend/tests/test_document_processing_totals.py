@@ -15,9 +15,9 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.security import get_password_hash
 from app.db.base import Base
-from app.models.document import Document
+from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
-from app.models.repair import Repair, RepairCheck, RepairWork
+from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle
@@ -215,6 +215,77 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
                 self.assertIsNotNone(repair)
                 return checks, repair
 
+    @staticmethod
+    def _make_axb_payload(
+        *,
+        works_count: int,
+        parts_count: int,
+        work_total: float,
+        parts_total: float,
+        works_sum: float,
+        parts_sum: float,
+    ) -> dict[str, object]:
+        works_line_total = round(works_sum / works_count, 2) if works_count else 0.0
+        parts_line_total = round(parts_sum / parts_count, 2) if parts_count else 0.0
+        works = [
+            {
+                "work_code": f"W-{index + 1}",
+                "work_name": f"Работа {index + 1}",
+                "quantity": 1.0,
+                "price": works_line_total,
+                "line_total": works_line_total,
+            }
+            for index in range(works_count)
+        ]
+        if works:
+            works[-1]["line_total"] = round(works_sum - works_line_total * (works_count - 1), 2)
+            works[-1]["price"] = works[-1]["line_total"]
+
+        parts = [
+            {
+                "article": f"P-{index + 1}",
+                "part_name": f"Запчасть {index + 1}",
+                "quantity": 1.0,
+                "unit_name": "шт",
+                "price": parts_line_total,
+                "line_total": parts_line_total,
+            }
+            for index in range(parts_count)
+        ]
+        if parts:
+            parts[-1]["line_total"] = round(parts_sum - parts_line_total * (parts_count - 1), 2)
+            parts[-1]["price"] = parts[-1]["line_total"]
+
+        return {
+            "extracted_fields": {
+                "order_number": "AXB-001",
+                "repair_date": "2026-01-19",
+                "plate_number": "ВУ296516",
+                "vin": "NLS3DFFSTP1064773",
+                "service_name": "ООО «Грузовые резервы»",
+                "work_total": work_total,
+                "parts_total": parts_total,
+                "vat_total": 0.0,
+                "grand_total": round(work_total + parts_total, 2),
+            },
+            "extracted_items": {
+                "works": works,
+                "parts": parts,
+            },
+            "confidence_map": {
+                "order_number": 0.9,
+                "repair_date": 0.9,
+                "plate_number": 0.9,
+                "vin": 0.9,
+                "service_name": 0.9,
+                "work_total": 0.9,
+                "parts_total": 0.9,
+                "grand_total": 0.9,
+            },
+            "manual_review_reasons": [],
+            "normalization_notes": [],
+        }
+
     def test_process_document_accepts_grand_total_without_readding_vat(self) -> None:
         checks, repair = self._run_processing(grand_total=189821.0, vat_total=34230.02)
 
@@ -230,6 +301,158 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
         self.assertEqual(mismatch.calculation_payload["calculated_total"], 189821.0)
         self.assertEqual(mismatch.calculation_payload["calculated_total_with_vat"], 224051.02)
         self.assertEqual(repair.status, RepairStatus.SUSPICIOUS)
+
+    def test_process_document_retries_axb_scanned_pdf_with_raw_tesseract_when_primary_parse_is_weak(self) -> None:
+        primary_payload = self._make_axb_payload(
+            works_count=9,
+            parts_count=1,
+            work_total=43023.6,
+            parts_total=2450.54,
+            works_sum=33105.6,
+            parts_sum=2450.54,
+        )
+        fallback_payload = self._make_axb_payload(
+            works_count=11,
+            parts_count=9,
+            work_total=43023.6,
+            parts_total=2450.54,
+            works_sum=43023.6,
+            parts_sum=2450.54,
+        )
+
+        def parse_side_effect(text: str, db=None, profile_scope=None) -> dict[str, object]:
+            if text == "primary axb text":
+                return primary_payload
+            if text == "fallback axb text":
+                return fallback_payload
+            raise AssertionError(f"Unexpected parse text: {text}")
+
+        with self.SessionLocal() as db:
+            labor_norm_applicability = SimpleNamespace(
+                eligible=False,
+                scope="none",
+                reason_code="not_applicable",
+                reason="Not applicable in test",
+                brand_family=None,
+                catalog_name=None,
+            )
+            labor_norm_summary = SimpleNamespace(matched_count=0, unmatched_count=0)
+            with (
+                patch.object(document_processing, "LOCAL_STORAGE_ROOT", self.storage_root),
+                patch.object(
+                    document_processing,
+                    "extract_document_text",
+                    return_value=("primary axb text", "pdf_tesseract_ocr", None),
+                ),
+                patch.object(
+                    document_processing,
+                    "select_ocr_profile_scope",
+                    return_value=OcrProfileSelection("axb", "test", "test"),
+                ),
+                patch.object(document_processing, "parse_document_text", side_effect=parse_side_effect),
+                patch.object(
+                    document_processing,
+                    "extract_axb_raw_scanned_pdf_text",
+                    return_value="fallback axb text",
+                ) as fallback_text_mock,
+                patch.object(document_processing, "build_dynamic_work_reference_checks", return_value=[]),
+                patch.object(document_processing, "build_standard_hours_checks", return_value=[]),
+                patch.object(document_processing, "build_repeat_repair_checks", return_value=[]),
+                patch.object(document_processing, "build_duplicate_line_checks", return_value=[]),
+                patch.object(document_processing, "build_expected_total_checks", return_value=(None, [])),
+                patch.object(
+                    document_processing,
+                    "assess_labor_norm_applicability",
+                    return_value=labor_norm_applicability,
+                ),
+                patch.object(
+                    document_processing,
+                    "enrich_work_payloads_with_labor_norms",
+                    return_value=([], labor_norm_summary),
+                ),
+            ):
+                process_document(db, self.document_id)
+                repair = db.get(Repair, 1)
+                versions = db.scalars(
+                    select(DocumentVersion).where(DocumentVersion.document_id == self.document_id)
+                ).all()
+                works = db.scalars(select(RepairWork).where(RepairWork.repair_id == 1)).all()
+                parts = db.scalars(select(RepairPart).where(RepairPart.repair_id == 1)).all()
+
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            self.assertEqual(repair.status, RepairStatus.IN_REVIEW)
+            self.assertEqual(len(works), 11)
+            self.assertEqual(len(parts), 9)
+            self.assertEqual(float(repair.work_total), 43023.6)
+            self.assertEqual(float(repair.parts_total), 2450.54)
+            self.assertEqual(len(versions), 1)
+            self.assertEqual(versions[0].parsed_payload["extracted_from"], "pdf_tesseract_ocr_axb_raw_fallback")
+            self.assertIn(
+                "Для AXB применён резервный OCR-проход без постобработки изображений.",
+                versions[0].parsed_payload["normalization_notes"],
+            )
+            fallback_text_mock.assert_called_once()
+
+    def test_process_document_skips_axb_raw_tesseract_when_primary_parse_is_consistent(self) -> None:
+        primary_payload = self._make_axb_payload(
+            works_count=11,
+            parts_count=9,
+            work_total=43023.6,
+            parts_total=2450.54,
+            works_sum=43023.6,
+            parts_sum=2450.54,
+        )
+
+        with self.SessionLocal() as db:
+            labor_norm_applicability = SimpleNamespace(
+                eligible=False,
+                scope="none",
+                reason_code="not_applicable",
+                reason="Not applicable in test",
+                brand_family=None,
+                catalog_name=None,
+            )
+            labor_norm_summary = SimpleNamespace(matched_count=0, unmatched_count=0)
+            with (
+                patch.object(document_processing, "LOCAL_STORAGE_ROOT", self.storage_root),
+                patch.object(
+                    document_processing,
+                    "extract_document_text",
+                    return_value=("primary axb text", "pdf_tesseract_ocr", None),
+                ),
+                patch.object(
+                    document_processing,
+                    "select_ocr_profile_scope",
+                    return_value=OcrProfileSelection("axb", "test", "test"),
+                ),
+                patch.object(document_processing, "parse_document_text", return_value=primary_payload) as parse_mock,
+                patch.object(document_processing, "extract_axb_raw_scanned_pdf_text") as fallback_text_mock,
+                patch.object(document_processing, "build_dynamic_work_reference_checks", return_value=[]),
+                patch.object(document_processing, "build_standard_hours_checks", return_value=[]),
+                patch.object(document_processing, "build_repeat_repair_checks", return_value=[]),
+                patch.object(document_processing, "build_duplicate_line_checks", return_value=[]),
+                patch.object(document_processing, "build_expected_total_checks", return_value=(None, [])),
+                patch.object(
+                    document_processing,
+                    "assess_labor_norm_applicability",
+                    return_value=labor_norm_applicability,
+                ),
+                patch.object(
+                    document_processing,
+                    "enrich_work_payloads_with_labor_norms",
+                    return_value=([], labor_norm_summary),
+                ),
+            ):
+                process_document(db, self.document_id)
+                versions = db.scalars(
+                    select(DocumentVersion).where(DocumentVersion.document_id == self.document_id)
+                ).all()
+
+            self.assertEqual(len(versions), 1)
+            self.assertEqual(versions[0].parsed_payload["extracted_from"], "pdf_tesseract_ocr")
+            fallback_text_mock.assert_not_called()
+            self.assertEqual(parse_mock.call_count, 1)
 
     def test_process_document_resets_stale_totals_when_reparse_does_not_extract_them(self) -> None:
         self._run_processing(grand_total=189821.0, vat_total=34230.02)

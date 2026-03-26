@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
 from app.core.paths import PROJECT_ROOT
+from app.db.base import Base
+from app.scripts.import_vehicles import import_vehicles_with_session
 
 DEFAULT_SOURCE_DIR = PROJECT_ROOT / "Заказ-наряды"
 DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "OCR_QUALITY_REPORT.md"
@@ -54,12 +61,18 @@ class AuditRow:
     works_count: int
     parts_count: int
     invoice_only: bool = False
+    mileage_not_required: bool = False
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Audit OCR quality on local sample documents")
     parser.add_argument("--path", default=str(DEFAULT_SOURCE_DIR), help="Folder with source sample documents")
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT_PATH), help="Markdown output file path")
+    parser.add_argument(
+        "--with-registry",
+        action="store_true",
+        help="Use in-memory vehicle registry import during audit to reflect production VIN enrichment",
+    )
     return parser
 
 
@@ -132,7 +145,7 @@ def pct(part: int, total: int) -> str:
 def build_doc_flags(row: AuditRow) -> dict[str, bool]:
     fields = row.extracted_fields
     order_number_ok = bool(fields.get("order_number")) or row.invoice_only
-    mileage_ok = fields.get("mileage") is not None or row.invoice_only
+    mileage_ok = fields.get("mileage") is not None or row.invoice_only or row.mileage_not_required
     work_total_ok = fields.get("work_total") is not None or row.invoice_only
     works_lines_ok = row.works_count > 0 or row.invoice_only
     return {
@@ -141,6 +154,7 @@ def build_doc_flags(row: AuditRow) -> dict[str, bool]:
         "service_name": bool(fields.get("service_name")),
         "plate_number": bool(fields.get("plate_number")),
         "vin": bool(fields.get("vin")),
+        "chassis_number": bool(fields.get("chassis_number")),
         "mileage": mileage_ok,
         "work_total": work_total_ok,
         "parts_total": fields.get("parts_total") is not None,
@@ -159,42 +173,81 @@ def format_project_path(path: Path) -> str:
         return str(path)
 
 
-def audit_documents(source_dir: Path) -> list[AuditRow]:
+@contextmanager
+def build_registry_audit_session() -> Iterable[Session | None]:
+    from app.scripts.import_vehicles import DEFAULT_TRAILERS_PATH, DEFAULT_TRUCKS_PATH
+
+    if not DEFAULT_TRUCKS_PATH.exists() or not DEFAULT_TRAILERS_PATH.exists():
+        yield None
+        return
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    Base.metadata.create_all(bind=engine)
+    try:
+        with SessionLocal() as db:
+            import_vehicles_with_session(db)
+            yield db
+    finally:
+        engine.dispose()
+
+
+@contextmanager
+def null_audit_session() -> Iterable[Session | None]:
+    yield None
+
+
+def audit_documents(source_dir: Path, *, use_registry_enrichment: bool = False) -> list[AuditRow]:
     from app.services.document_processing import (
         extract_document_text,
+        has_explicit_missing_mileage,
+        has_logistics_blank_mileage_field,
         is_gruzovye_rezervy_invoice_only_document,
+        is_logistics_trailer_vehicle_context,
         parse_document_text,
     )
 
     rows: list[AuditRow] = []
-    for path in iter_source_files(source_dir):
-        source_type = detect_source_type(path)
-        text, extract_source, extract_failure_reason = extract_document_text(path, source_type)
-        profile_scope = infer_profile_scope(path, text or "")
-        parsed = parse_document_text(text, db=None, profile_scope=profile_scope) if text else {
-            "extracted_fields": {},
-            "manual_review_reasons": ["text_missing"],
-            "extracted_items": {"works": [], "parts": []},
-        }
-        extracted_items = parsed.get("extracted_items") if isinstance(parsed.get("extracted_items"), dict) else {}
-        works = extracted_items.get("works") if isinstance(extracted_items.get("works"), list) else []
-        parts = extracted_items.get("parts") if isinstance(extracted_items.get("parts"), list) else []
-        invoice_only = profile_scope == "gruzovye_rezervy" and is_gruzovye_rezervy_invoice_only_document(text or "")
-        rows.append(
-            AuditRow(
-                service_label=infer_service_label(path),
-                profile_scope=profile_scope,
-                relative_path=format_project_path(path),
-                source_type=source_type,
-                extract_source=extract_source,
-                extract_failure_reason=extract_failure_reason,
-                extracted_fields=parsed.get("extracted_fields") if isinstance(parsed.get("extracted_fields"), dict) else {},
-                manual_review_reasons=[str(item) for item in parsed.get("manual_review_reasons", [])],
-                works_count=len(works),
-                parts_count=len(parts),
-                invoice_only=invoice_only,
+    session_factory = build_registry_audit_session if use_registry_enrichment else null_audit_session
+    with session_factory() as db:
+        for path in iter_source_files(source_dir):
+            source_type = detect_source_type(path)
+            text, extract_source, extract_failure_reason = extract_document_text(path, source_type)
+            profile_scope = infer_profile_scope(path, text or "")
+            parsed = parse_document_text(text, db=db, profile_scope=profile_scope) if text else {
+                "extracted_fields": {},
+                "manual_review_reasons": ["text_missing"],
+                "extracted_items": {"works": [], "parts": []},
+            }
+            extracted_items = parsed.get("extracted_items") if isinstance(parsed.get("extracted_items"), dict) else {}
+            works = extracted_items.get("works") if isinstance(extracted_items.get("works"), list) else []
+            parts = extracted_items.get("parts") if isinstance(extracted_items.get("parts"), list) else []
+            invoice_only = profile_scope == "gruzovye_rezervy" and is_gruzovye_rezervy_invoice_only_document(text or "")
+            mileage_not_required = has_explicit_missing_mileage(text or "") or (
+                profile_scope == "logistics"
+                and (has_logistics_blank_mileage_field(text or "") or is_logistics_trailer_vehicle_context(text or ""))
             )
-        )
+            rows.append(
+                AuditRow(
+                    service_label=infer_service_label(path),
+                    profile_scope=profile_scope,
+                    relative_path=format_project_path(path),
+                    source_type=source_type,
+                    extract_source=extract_source,
+                    extract_failure_reason=extract_failure_reason,
+                    extracted_fields=parsed.get("extracted_fields") if isinstance(parsed.get("extracted_fields"), dict) else {},
+                    manual_review_reasons=[str(item) for item in parsed.get("manual_review_reasons", [])],
+                    works_count=len(works),
+                    parts_count=len(parts),
+                    invoice_only=invoice_only,
+                    mileage_not_required=mileage_not_required,
+                )
+            )
     return rows
 
 
@@ -206,8 +259,8 @@ def build_summary_section(rows: list[AuditRow], *, source_dir: Path) -> list[str
         "",
         "## Summary by Service",
         "",
-        "| Service | Profile | Docs | Order | Plate | VIN | Mileage | Work total | Parts total | Grand total | Work lines | Part lines | Manual review free |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Service | Profile | Docs | Order | Plate | VIN | Chassis | Mileage | Work total | Parts total | Grand total | Work lines | Part lines | Manual review free |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
 
     grouped: dict[tuple[str, str], list[AuditRow]] = defaultdict(list)
@@ -226,6 +279,7 @@ def build_summary_section(rows: list[AuditRow], *, source_dir: Path) -> list[str
                     pct(sum(flag["order_number"] for flag in flags), len(group_rows)),
                     pct(sum(flag["plate_number"] for flag in flags), len(group_rows)),
                     pct(sum(flag["vin"] for flag in flags), len(group_rows)),
+                    pct(sum(flag["chassis_number"] for flag in flags), len(group_rows)),
                     pct(sum(flag["mileage"] for flag in flags), len(group_rows)),
                     pct(sum(flag["work_total"] for flag in flags), len(group_rows)),
                     pct(sum(flag["parts_total"] for flag in flags), len(group_rows)),
@@ -285,7 +339,7 @@ def build_document_details(rows: list[AuditRow]) -> list[str]:
                 f"- Profile: `{row.profile_scope}`",
                 f"- Extract source: `{row.extract_source}`",
                 f"- Extract failure: `{row.extract_failure_reason or '-'}`",
-                f"- Header: order `{fields.get('order_number', '-')}`, date `{fields.get('repair_date', '-')}`, plate `{fields.get('plate_number', '-')}`, vin `{fields.get('vin', '-')}`, mileage `{fields.get('mileage', '-')}`",
+                f"- Header: order `{fields.get('order_number', '-')}`, date `{fields.get('repair_date', '-')}`, plate `{fields.get('plate_number', '-')}`, vin `{fields.get('vin', '-')}`, chassis `{fields.get('chassis_number', '-')}`, mileage `{fields.get('mileage', '-')}`",
                 f"- Totals: work `{fields.get('work_total', '-')}`, parts `{fields.get('parts_total', '-')}`, vat `{fields.get('vat_total', '-')}`, grand `{fields.get('grand_total', '-')}`",
                 f"- Line items: works `{row.works_count}`, parts `{row.parts_count}`",
                 f"- Manual review: `{reasons}`",
@@ -312,7 +366,7 @@ def main() -> None:
     if not source_dir.exists():
         raise FileNotFoundError(f"Sample folder not found: {source_dir}")
 
-    rows = audit_documents(source_dir)
+    rows = audit_documents(source_dir, use_registry_enrichment=bool(args.with_registry))
     report_text = render_report(rows, source_dir=source_dir)
     output_path.write_text(report_text, encoding="utf-8")
     print(f"Wrote OCR quality report for {len(rows)} documents to {output_path}")

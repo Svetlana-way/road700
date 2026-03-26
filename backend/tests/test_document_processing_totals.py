@@ -454,6 +454,101 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
             fallback_text_mock.assert_not_called()
             self.assertEqual(parse_mock.call_count, 1)
 
+    def test_process_document_auto_creates_vehicle_from_ocr_when_registry_has_no_match(self) -> None:
+        with self.SessionLocal() as db:
+            placeholder_vehicle = Vehicle(
+                external_id=document_processing.PLACEHOLDER_VEHICLE_EXTERNAL_ID,
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="IMPORT-QUEUE",
+                vin=None,
+                brand="System",
+                model="Batch import placeholder",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(placeholder_vehicle)
+            db.flush()
+
+            repair = db.get(Repair, 1)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            repair.vehicle_id = placeholder_vehicle.id
+            db.add(repair)
+            db.commit()
+
+        parsed_payload = {
+            "extracted_fields": {
+                "order_number": "AXB-TRAILER-001",
+                "repair_date": "2026-01-19",
+                "plate_number": "BB044416",
+                "vin": "WSM00000003313941",
+                "service_name": "ООО «Грузовые резервы»",
+            },
+            "extracted_items": {"works": [], "parts": []},
+            "confidence_map": {
+                "order_number": 0.9,
+                "repair_date": 0.9,
+                "plate_number": 0.9,
+                "vin": 0.9,
+                "service_name": 0.9,
+            },
+            "manual_review_reasons": [],
+            "normalization_notes": [],
+        }
+        ocr_text = (
+            "ТС : SCHMITZ CARGOBULL 9084 гос. номер: BB044416, VIN: WSM00000003313941, "
+            "год вып. 2018, пробег 1 480 125"
+        )
+
+        with self.SessionLocal() as db:
+            labor_norm_applicability = SimpleNamespace(
+                eligible=False,
+                scope="none",
+                reason_code="not_applicable",
+                reason="Not applicable in test",
+                brand_family=None,
+                catalog_name=None,
+            )
+            labor_norm_summary = SimpleNamespace(matched_count=0, unmatched_count=0)
+            with (
+                patch.object(document_processing, "LOCAL_STORAGE_ROOT", self.storage_root),
+                patch.object(document_processing, "extract_document_text", return_value=(ocr_text, "mock", None)),
+                patch.object(
+                    document_processing,
+                    "select_ocr_profile_scope",
+                    return_value=OcrProfileSelection("axb", "test", "test"),
+                ),
+                patch.object(document_processing, "parse_document_text", return_value=parsed_payload),
+                patch.object(document_processing, "build_dynamic_work_reference_checks", return_value=[]),
+                patch.object(document_processing, "build_standard_hours_checks", return_value=[]),
+                patch.object(document_processing, "build_repeat_repair_checks", return_value=[]),
+                patch.object(document_processing, "build_duplicate_line_checks", return_value=[]),
+                patch.object(document_processing, "build_expected_total_checks", return_value=(None, [])),
+                patch.object(
+                    document_processing,
+                    "assess_labor_norm_applicability",
+                    return_value=labor_norm_applicability,
+                ),
+                patch.object(
+                    document_processing,
+                    "enrich_work_payloads_with_labor_norms",
+                    return_value=([], labor_norm_summary),
+                ),
+            ):
+                process_document(db, self.document_id)
+                repair = db.get(Repair, 1)
+                vehicles = db.scalars(select(Vehicle).order_by(Vehicle.id.asc())).all()
+
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            self.assertNotEqual(repair.vehicle.external_id, document_processing.PLACEHOLDER_VEHICLE_EXTERNAL_ID)
+            self.assertEqual(repair.vehicle.vehicle_type, VehicleType.TRAILER)
+            self.assertEqual(repair.vehicle.plate_number, "BB044416")
+            self.assertEqual(repair.vehicle.vin, "WSM00000003313941")
+            self.assertEqual(repair.vehicle.brand, "SCHMITZ")
+            self.assertEqual(repair.vehicle.model, "CARGOBULL 9084")
+            self.assertEqual(repair.vehicle.year, 2018)
+            self.assertEqual(len(vehicles), 3)
+
     def test_process_document_resets_stale_totals_when_reparse_does_not_extract_them(self) -> None:
         self._run_processing(grand_total=189821.0, vat_total=34230.02)
 

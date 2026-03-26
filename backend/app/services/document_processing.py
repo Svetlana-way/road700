@@ -30,6 +30,8 @@ from app.models.enums import (
     DocumentStatus,
     ImportStatus,
     RepairStatus,
+    VehicleStatus,
+    VehicleType,
 )
 from app.models.imports import ImportJob
 from app.models.ocr_profile_matcher import OcrProfileMatcher
@@ -1122,6 +1124,112 @@ def auto_link_repair_vehicle_from_registry(
     normalization_notes.append(
         f"Ремонт автоматически перепривязан к технике {matched_vehicle.plate_number or matched_vehicle.id} по совпадению с реестром."
     )
+
+
+def infer_vehicle_type_from_document_text(text: str) -> VehicleType:
+    vehicle_section = extract_vehicle_section_text(text)
+    if re.search(
+        r"\b(?:п/п|полуприцеп|прицеп|schmitz|cargobull|koluman|orthaus|krone|kogel|wielton|тонар|рефрижератор)\b",
+        vehicle_section,
+        re.IGNORECASE,
+    ):
+        return VehicleType.TRAILER
+    return VehicleType.TRUCK
+
+
+def extract_vehicle_year_from_document_text(text: str) -> Optional[int]:
+    vehicle_section = extract_vehicle_section_text(text)
+    match = re.search(r"год\s+вып\.?\s*(?P<value>20\d{2}|19\d{2})", vehicle_section, re.IGNORECASE)
+    if match is None:
+        return None
+    try:
+        return int(match.group("value"))
+    except ValueError:
+        return None
+
+
+def extract_vehicle_brand_model_from_document_text(text: str) -> tuple[Optional[str], Optional[str]]:
+    vehicle_section = extract_vehicle_section_text(text)
+    descriptor_match = re.search(
+        r"(?:ТС|Автомобиль)\s*:\s*(?P<value>.*?)(?=\b(?:гос\.?\s*номер|vin|пробег|год\s+вып)\b|$)",
+        vehicle_section,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if descriptor_match is None:
+        return None, None
+
+    descriptor = normalize_line(descriptor_match.group("value")).strip(" ,.;:-")
+    if not descriptor:
+        return None, None
+
+    descriptor = re.sub(r"\b(?:п/п|полуприцеп|прицеп)\b\s*", "", descriptor, flags=re.IGNORECASE).strip(" ,.;:-")
+    if not descriptor:
+        return None, None
+
+    tokens = descriptor.split()
+    if not tokens:
+        return None, None
+
+    brand = tokens[0].upper()
+    model = " ".join(tokens[1:]).strip() or None
+    return brand[:120], model[:255] if model else None
+
+
+def auto_create_repair_vehicle_from_document(
+    repair: Repair,
+    document: Document,
+    *,
+    extracted_fields: dict[str, object],
+    text: str,
+    normalization_notes: list[str],
+) -> bool:
+    vehicle = repair.vehicle
+    if vehicle is None or vehicle.external_id != PLACEHOLDER_VEHICLE_EXTERNAL_ID:
+        return False
+
+    plate_number = str(extracted_fields.get("plate_number")) if extracted_fields.get("plate_number") else None
+    vin = str(extracted_fields.get("vin")) if extracted_fields.get("vin") else None
+    chassis_number = str(extracted_fields.get("chassis_number")) if extracted_fields.get("chassis_number") else None
+
+    normalized_plate = find_plate_candidate(plate_number) or normalize_identifier_token(plate_number)
+    normalized_vin = find_vin_candidate(vin) or normalize_identifier_token(vin)
+    normalized_chassis = find_chassis_candidate(chassis_number) or normalize_identifier_token(chassis_number)
+
+    # Safe OCR auto-create requires a strong hardware identifier.
+    if not normalized_vin and not normalized_chassis:
+        return False
+
+    vehicle_type = infer_vehicle_type_from_document_text(text)
+    brand, model = extract_vehicle_brand_model_from_document_text(text)
+    year = extract_vehicle_year_from_document_text(text)
+
+    created_vehicle = Vehicle(
+        external_id=None,
+        vehicle_type=vehicle_type,
+        vin=normalized_vin,
+        plate_number=normalized_plate,
+        brand=brand,
+        model=model,
+        year=year,
+        status=VehicleStatus.ACTIVE,
+        comment="Карточка техники автоматически создана из OCR документа.",
+        source_payload={
+            "created_from": "document_ocr_auto_create",
+            "created_from_document_id": document.id,
+            "created_from_repair_id": repair.id,
+            "plate_number": normalized_plate,
+            "vin": normalized_vin,
+            "chassis_number": normalized_chassis,
+            "brand": brand,
+            "model": model,
+            "year": year,
+        },
+    )
+    repair.vehicle = created_vehicle
+    normalization_notes.append(
+        "Для техники не найдено совпадение в реестре, создана новая карточка по OCR документа."
+    )
+    return True
 
 
 def parse_decimal_value(value: str) -> Optional[float]:
@@ -7284,6 +7392,18 @@ def process_document(db: Session, document_id: int, *, job_id: int | None = None
                 extracted_fields=extracted_fields,
                 normalization_notes=normalization_notes,
             )
+            if repair.vehicle is not None and repair.vehicle.external_id == PLACEHOLDER_VEHICLE_EXTERNAL_ID:
+                created_vehicle = auto_create_repair_vehicle_from_document(
+                    repair,
+                    document,
+                    extracted_fields=extracted_fields,
+                    text=text,
+                    normalization_notes=normalization_notes,
+                )
+                if created_vehicle:
+                    db.add(repair.vehicle)
+                    db.flush()
+                    repair.vehicle_id = repair.vehicle.id
             enrich_vehicle_fields_from_repair(
                 repair,
                 extracted_fields=extracted_fields,

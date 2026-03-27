@@ -2218,6 +2218,7 @@ FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пр�
 Рекомендации:
 акб1-1065а
 неисправности по вибрации по кабине на момент осмотра не обнаружено, подушки двс в норме
+С условиями Программы "Exchange Program" заказчик ознакомлен
 НЕ ДЕЛАЕМ:
 1. Забиты глушители на модуляторах
 """
@@ -2231,6 +2232,11 @@ FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пр�
         self.assertEqual(
             parsed["extracted_fields"]["employee_comment"],
             "акб1-1065а неисправности по вибрации по кабине на момент осмотра не обнаружено, подушки двс в норме",
+        )
+        self.assertIn("exchange_program_present", parsed["normalization_notes"])
+        self.assertEqual(
+            parsed["service_not_done"],
+            ["Забиты глушители на модуляторах"],
         )
 
     def test_parse_document_text_extracts_gruzovye_rezervy_items_from_sections(self) -> None:

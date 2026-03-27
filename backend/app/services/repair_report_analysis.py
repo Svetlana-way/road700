@@ -40,6 +40,7 @@ REASON_SIGNAL_RULES = [
         "repair_terms": ("тормоз", "колод", "суппорт", "диск"),
     },
 ]
+BRAKE_TERMS = ("тормоз", "колод", "суппорт", "диск")
 PART_WORK_ALIGNMENT_RULES = [
     {
         "label": "фонарь",
@@ -94,6 +95,8 @@ NON_ORIGINAL_PART_TERMS = (
     "reman",
     "восстанов",
 )
+VOLVO_FAMILY_TERMS = ("volvo", "fh", "fm")
+SUSPICIOUS_OIL_TERMS = ("dongfeng", "diesel ultra cs")
 
 
 def build_repair_executive_report(
@@ -117,6 +120,15 @@ def build_repair_executive_report(
     for finding in _build_unresolved_symptom_findings(repair):
         _append_finding(findings, seen_titles, finding)
 
+    for finding in _build_oil_compatibility_findings(repair):
+        _append_finding(findings, seen_titles, finding)
+
+    for finding in _build_scope_expansion_findings(repair):
+        _append_finding(findings, seen_titles, finding)
+
+    for finding in _build_out_of_scope_brake_findings(repair):
+        _append_finding(findings, seen_titles, finding)
+
     for finding in _build_reason_quality_findings(repair):
         _append_finding(findings, seen_titles, finding)
 
@@ -133,6 +145,12 @@ def build_repair_executive_report(
         _append_finding(findings, seen_titles, finding)
 
     for finding in _build_document_quality_findings(repair, source_payload, manual_review_reason_labels):
+        _append_finding(findings, seen_titles, finding)
+
+    for finding in _build_document_program_findings(source_payload):
+        _append_finding(findings, seen_titles, finding)
+
+    for finding in _build_service_not_done_findings(source_payload):
         _append_finding(findings, seen_titles, finding)
 
     findings.sort(key=lambda item: (-LEVEL_ORDER[str(item["severity"])], str(item["title"])))
@@ -454,6 +472,98 @@ def _build_unresolved_symptom_findings(repair: Repair) -> list[dict[str, object]
     return findings
 
 
+def _build_oil_compatibility_findings(repair: Repair) -> list[dict[str, object]]:
+    vehicle_text = _normalize_text(" ".join(filter(None, [_get_vehicle_attr(repair, "brand"), _get_vehicle_attr(repair, "model")])))
+    if not vehicle_text or not _contains_any(vehicle_text, VOLVO_FAMILY_TERMS):
+        return []
+
+    suspicious_oils = [
+        item
+        for item in repair.parts
+        if "масло" in _normalize_text(item.part_name) and _contains_any(_normalize_text(item.part_name), SUSPICIOUS_OIL_TERMS)
+    ]
+    if not suspicious_oils:
+        return []
+
+    total = sum(float(item.line_total or 0) for item in suspicious_oils)
+    return [
+        {
+            "title": "Моторное масло требует проверки на соответствие Volvo",
+            "severity": "high",
+            "category": "Состав ремонта",
+            "summary": "В заказ-наряде для техники семейства Volvo/FH указано моторное масло DONGFENG. Нужно отдельно подтвердить соответствие спецификации двигателя.",
+            "rationale": "Для управленческого контроля это критично, потому что неподходящее масло влияет на ресурс двигателя и может стать предметом претензии к сервису.",
+            "evidence": [
+                f"Техника: {_truncate_text(' '.join(filter(None, [_get_vehicle_attr(repair, 'brand'), _get_vehicle_attr(repair, 'model')])), 120)}",
+                "Масло: " + ", ".join(item.part_name for item in suspicious_oils[:2]),
+                f"Сумма по строкам масла: {_format_money(total)}",
+            ],
+            "recommendation": "Запросить у сервиса подтверждение допуска масла для Volvo и отдельно проверить соответствие спецификации уровня VDS-4/VDS-4.5.",
+        }
+    ]
+
+
+def _build_scope_expansion_findings(repair: Repair) -> list[dict[str, object]]:
+    reason_text = _normalize_text(repair.reason or "")
+    if not reason_text or len(repair.works) < 8:
+        return []
+
+    grouped_works = [bucket for bucket in _group_work_buckets(repair) if float(bucket["total"]) > 0]
+    dominant_buckets = [bucket for bucket in grouped_works if bucket["label"] != "Прочие работы"]
+    if len(dominant_buckets) < 3:
+        return []
+
+    top_scope = "; ".join(
+        f"{bucket['label']} ({bucket['count']} строк)"
+        for bucket in dominant_buckets[:4]
+    )
+    return [
+        {
+            "title": "Объем работ шире исходной заявки",
+            "severity": "medium",
+            "category": "Соответствие дефекта и ремонта",
+            "summary": "Состав заказ-наряда охватывает несколько ремонтных зон и выглядит заметно шире кратко описанной причины обращения.",
+            "rationale": "Такой профиль ремонта не всегда ошибочен, но требует проверки, были ли дополнительные работы согласованы с заказчиком.",
+            "evidence": [
+                f"Причина обращения: {_truncate_text(repair.reason or 'не указана', 180)}",
+                f"Основные зоны работ: {top_scope}",
+                f"Всего работ в заказ-наряде: {len(repair.works)}",
+            ],
+            "recommendation": "Проверить, какие из дополнительных работ были заранее согласованы, а какие появились уже в ходе ремонта.",
+        }
+    ]
+
+
+def _build_out_of_scope_brake_findings(repair: Repair) -> list[dict[str, object]]:
+    reason_text = _normalize_text(repair.reason or "")
+    if not repair.works or _contains_any(reason_text, BRAKE_TERMS):
+        return []
+
+    brake_works = [work for work in repair.works if _contains_any(_normalize_text(work.work_name), BRAKE_TERMS)]
+    if not brake_works:
+        return []
+
+    brake_total = sum(float(item.line_total or 0) for item in brake_works)
+    if brake_total <= 0:
+        return []
+
+    return [
+        {
+            "title": "Тормозные работы не следуют из исходной жалобы",
+            "severity": "medium",
+            "category": "Соответствие дефекта и ремонта",
+            "summary": "В заявке нет явной жалобы на тормозную систему, но в заказ-наряд включены тормозные работы с отдельной стоимостью.",
+            "rationale": "Такой блок может быть обоснован дефектовкой, но без отдельного пояснения выглядит как дополнительный объем ремонта вне первоначального обращения.",
+            "evidence": [
+                f"Причина обращения: {_truncate_text(repair.reason or 'не указана', 180)}",
+                "Тормозные работы: " + ", ".join(item.work_name for item in brake_works[:3]),
+                f"Сумма тормозных работ: {_format_money(brake_total)}",
+            ],
+            "recommendation": "Запросить обоснование тормозных работ и подтверждение, что необходимость их выполнения была согласована отдельно.",
+        }
+    ]
+
+
 def _build_part_work_alignment_findings(repair: Repair) -> list[dict[str, object]]:
     reason_text = _normalize_text(" ".join(filter(None, [repair.reason, repair.employee_comment])))
     if not reason_text or not repair.parts:
@@ -673,6 +783,44 @@ def _build_document_quality_findings(
     return findings
 
 
+def _build_document_program_findings(source_payload: dict) -> list[dict[str, object]]:
+    notes = source_payload.get("normalization_notes")
+    normalization_notes = [str(item) for item in notes] if isinstance(notes, list) else []
+    if "exchange_program_present" not in normalization_notes:
+        return []
+
+    return [
+        {
+            "title": "Документ содержит отметку об Exchange Program",
+            "severity": "medium",
+            "category": "Состав ремонта",
+            "summary": "В тексте заказ-наряда есть оговорка об Exchange Program, то есть документ допускает использование восстановленных запасных частей.",
+            "rationale": "Для управленческого контроля это важно: такая замена должна быть понятна и согласована до закрытия ремонта.",
+            "evidence": ["В тексте документа найдена отметка об Exchange Program."],
+            "recommendation": "Проверить, какие именно узлы или запчасти были поставлены по схеме Exchange Program и было ли это согласовано.",
+        }
+    ]
+
+
+def _build_service_not_done_findings(source_payload: dict) -> list[dict[str, object]]:
+    raw_items = source_payload.get("service_not_done")
+    items = [str(item) for item in raw_items] if isinstance(raw_items, list) else []
+    if not items:
+        return []
+
+    return [
+        {
+            "title": "Сервис сам зафиксировал нерешённые замечания",
+            "severity": "medium",
+            "category": "Соответствие дефекта и ремонта",
+            "summary": "В документе есть блок «НЕ ДЕЛАЕМ», то есть сервис прямо указал работы или замечания, которые остались вне выполненного ремонта.",
+            "rationale": "Для управленческого контроля это важно: часть технических замечаний документально перенесена на будущее и не вошла в текущий результат ремонта.",
+            "evidence": [f"НЕ ДЕЛАЕМ: {', '.join(items[:3])}"],
+            "recommendation": "Проверить, какие замечания из блока «НЕ ДЕЛАЕМ» критичны для эксплуатации и нужно ли оформлять их отдельным согласованием.",
+        }
+    ]
+
+
 def _build_summary(
     repair: Repair,
     findings: list[dict[str, object]],
@@ -800,7 +948,15 @@ def _build_findings_section(findings: list[dict[str, object]]) -> dict[str, obje
 def _build_financial_risk_section(repair: Repair, findings: list[dict[str, object]]) -> dict[str, object]:
     items, suspicious_total = _collect_financial_risk_items(repair, findings)
     if suspicious_total > 0:
-        items.insert(0, f"По прямым сигналам объём спорных затрат оценивается до {_format_money(suspicious_total)}.")
+        gross_total = _estimate_gross_risk_total(repair, suspicious_total)
+        if gross_total > suspicious_total:
+            items.insert(
+                0,
+                "По прямым сигналам объём спорных затрат оценивается до "
+                f"{_format_money(suspicious_total)} без НДС, или примерно {_format_money(gross_total)} с НДС.",
+            )
+        else:
+            items.insert(0, f"По прямым сигналам объём спорных затрат оценивается до {_format_money(suspicious_total)}.")
     if not items:
         items = ["Прямых финансовых сигналов с понятной суммой система не нашла."]
 
@@ -937,6 +1093,7 @@ def _collect_financial_risk_items(
 ) -> tuple[list[str], float]:
     items: list[str] = []
     suspicious_total = 0.0
+    counted_work_keys: set[int] = set()
 
     if repair.expected_total is not None:
         delta = float(repair.grand_total or 0) - float(repair.expected_total)
@@ -959,7 +1116,7 @@ def _collect_financial_risk_items(
     ambiguous_works = _collect_ambiguous_works(repair)
     if ambiguous_works:
         ambiguous_total = sum(float(item.line_total or 0) for item in ambiguous_works)
-        suspicious_total += ambiguous_total
+        suspicious_total += _sum_unique_work_totals(ambiguous_works, counted_work_keys)
         items.append(
             f"Работы с расплывчатыми формулировками составляют {_format_money(ambiguous_total)}."
         )
@@ -969,9 +1126,20 @@ def _collect_financial_risk_items(
     ]
     if non_original_works:
         non_original_total = sum(float(item.line_total or 0) for item in non_original_works)
-        suspicious_total += non_original_total
+        suspicious_total += _sum_unique_work_totals(non_original_works, counted_work_keys)
         items.append(
             f"Строки с признаками аналоговых или восстановленных комплектующих составляют {_format_money(non_original_total)}."
+        )
+
+    brake_works = [
+        work for work in repair.works
+        if _contains_any(_normalize_text(work.work_name), BRAKE_TERMS)
+    ]
+    if brake_works and not _contains_any(_normalize_text(repair.reason or ""), BRAKE_TERMS):
+        brake_total = sum(float(item.line_total or 0) for item in brake_works)
+        suspicious_total += _sum_unique_work_totals(brake_works, counted_work_keys)
+        items.append(
+            f"Тормозные работы вне исходной жалобы составляют {_format_money(brake_total)}."
         )
 
     high_findings = [item for item in findings if str(item["severity"]) == "high"]
@@ -1004,6 +1172,15 @@ def _collect_hour_deviations(repair: Repair) -> list[dict[str, object]]:
             }
         )
     return deviations
+
+
+def _estimate_gross_risk_total(repair: Repair, net_total: float) -> float:
+    base_total = float(repair.work_total or 0) + float(repair.parts_total or 0)
+    vat_total = float(repair.vat_total or 0)
+    if net_total <= 0 or base_total <= 0 or vat_total <= 0:
+        return net_total
+    vat_ratio = vat_total / base_total
+    return round(net_total * (1 + vat_ratio), 2)
 
 
 def _build_highlights(repair: Repair, findings: list[dict[str, object]]) -> list[str]:
@@ -1150,6 +1327,25 @@ def _normalize_text(value: str) -> str:
 
 def _contains_any(text: str, needles: Iterable[str]) -> bool:
     return any(needle in text for needle in needles)
+
+
+def _sum_unique_work_totals(works: Iterable[object], seen_keys: set[int]) -> float:
+    total = 0.0
+    for work in works:
+        key = id(work)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        total += float(getattr(work, "line_total", 0) or 0)
+    return total
+
+
+def _get_vehicle_attr(repair: Repair, attr_name: str) -> str | None:
+    vehicle = getattr(repair, "vehicle", None)
+    value = getattr(vehicle, attr_name, None) if vehicle is not None else None
+    if value is None:
+        return None
+    return str(value)
 
 
 def _format_money(value: float) -> str:

@@ -767,6 +767,7 @@ def extract_recommendations_from_text(text: str) -> Optional[str]:
             r"НЕ\s+ДЕЛАЕМ\s*:",
             r"После\s+подписания",
             r"Сервисные\s+услуги\s+сдал",
+            r"С\s+условиями\s+Программы",
         ),
         max_chars=2000,
     )
@@ -778,6 +779,40 @@ def extract_recommendations_from_text(text: str) -> Optional[str]:
     if not cleaned_lines:
         return None
     return " ".join(cleaned_lines)[:2000]
+
+
+def detect_document_flags(text: str) -> list[str]:
+    normalized = normalize_multiline_text(text).lower()
+    flags: list[str] = []
+    if "exchange program" in normalized:
+        flags.append("exchange_program_present")
+    return flags
+
+
+def extract_not_done_items_from_text(text: str) -> list[str]:
+    fragment = extract_fragment_after_marker(
+        text,
+        r"НЕ\s+ДЕЛАЕМ\s*:",
+        stop_patterns=(
+            r"После\s+подписания",
+            r"Сервисные\s+услуги\s+сдал",
+            r"Страница\s+\d+\s+из\s+\d+",
+        ),
+        max_chars=2000,
+    )
+    if not fragment:
+        return []
+
+    items: list[str] = []
+    for raw_line in fragment.splitlines():
+        line = normalize_multiline_text(raw_line).strip()
+        if not line:
+            continue
+        line = re.sub(r"^\d+[.)]\s*", "", line).strip()
+        if not line:
+            continue
+        items.append(line[:300])
+    return items[:6]
 
 
 def is_vision_ocr_available() -> bool:
@@ -7106,6 +7141,7 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
     confidence_map = {}
     manual_review_reasons = []
     normalization_notes = []
+    normalization_notes.extend(detect_document_flags(text))
     extracted_items = extract_line_items(text)
     extracted_items, removed_noise_work_count = sanitize_extracted_items(extracted_items)
     if removed_noise_work_count:
@@ -7264,6 +7300,7 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
     if employee_comment:
         extracted_fields["employee_comment"] = employee_comment
         confidence_map["employee_comment"] = 0.8
+    service_not_done = extract_not_done_items_from_text(text)
 
     if normalized_profile_scope == "leader_trak" and "order_number" not in extracted_fields:
         leader_trak_order_number = extract_leader_trak_order_number(header_text or text)
@@ -7382,6 +7419,7 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
         "confidence_map": confidence_map,
         "manual_review_reasons": manual_review_reasons,
         "normalization_notes": normalization_notes,
+        "service_not_done": service_not_done,
     }
 
 
@@ -7917,6 +7955,7 @@ def process_document(db: Session, document_id: int, *, job_id: int | None = None
                 "extracted_items": extracted_items,
                 "manual_review_reasons": manual_review_reasons,
                 "normalization_notes": normalization_notes,
+                "service_not_done": parsed.get("service_not_done", []),
                 "labor_norm_applicability": {
                     "eligible": labor_norm_applicability.eligible,
                     "scope": labor_norm_applicability.scope,

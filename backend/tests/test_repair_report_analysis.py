@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
+from types import SimpleNamespace
 
 from app.models.enums import CatalogStatus, CheckSeverity, RepairStatus
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
@@ -238,7 +239,204 @@ class RepairReportAnalysisTestCase(unittest.TestCase):
 
         finance_section = next((item for item in report["full_report_sections"] if item["key"] == "financial_risks"), None)
         self.assertIsNotNone(finance_section)
-        self.assertTrue(any("спорных затрат" in line for line in finance_section["items"]))
+        self.assertTrue(any("2 268,33 ₽" in line for line in finance_section["items"]))
+
+    def test_report_flags_suspicious_oil_for_volvo_family_vehicle(self) -> None:
+        repair = self._build_repair(
+            works=[],
+            parts=[
+                RepairPart(
+                    article="ZZ000253133903",
+                    part_name="Масло моторное синтетическое DONGFENG Diesel Ultra CS, EURO-6 10W40, бочка 205 л.",
+                    quantity=37,
+                    unit_name="литр",
+                    price=447.16,
+                    line_total=15717.50,
+                    status=CatalogStatus.CONFIRMED,
+                )
+            ],
+        )
+        repair.order_number = "ЛТ250012276"
+        repair.__dict__["vehicle"] = SimpleNamespace(brand="FH13A42T", model=None)
+        repair.parts_total = 15717.50
+        repair.grand_total = 15717.50
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={},
+            manual_review_reason_labels={},
+        )
+
+        finding = next(
+            (item for item in report["findings"] if item["title"] == "Моторное масло требует проверки на соответствие Volvo"),
+            None,
+        )
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding["severity"], "high")
+
+    def test_report_flags_exchange_program_from_document_notes(self) -> None:
+        repair = self._build_repair(works=[], parts=[])
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={"normalization_notes": ["exchange_program_present"]},
+            manual_review_reason_labels={},
+        )
+
+        finding = next(
+            (item for item in report["findings"] if item["title"] == "Документ содержит отметку об Exchange Program"),
+            None,
+        )
+        self.assertIsNotNone(finding)
+
+    def test_report_flags_service_not_done_and_shows_gross_risk_estimate(self) -> None:
+        repair = self._build_repair(
+            works=[
+                RepairWork(
+                    work_code="30",
+                    work_name="Обтекатель лев. - ремонт",
+                    quantity=1,
+                    standard_hours=1.0,
+                    actual_hours=1.0,
+                    price=2100,
+                    line_total=1890.0,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="31",
+                    work_name="Индукция. слесарные работы.",
+                    quantity=1,
+                    standard_hours=1.0,
+                    actual_hours=1.0,
+                    price=2100,
+                    line_total=1890.0,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+            ],
+            parts=[],
+        )
+        repair.work_total = 3780.0
+        repair.parts_total = 0
+        repair.vat_total = 756.0
+        repair.grand_total = 4536.0
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={"service_not_done": ["Забиты глушители на модуляторах"]},
+            manual_review_reason_labels={},
+        )
+
+        finding = next(
+            (item for item in report["findings"] if item["title"] == "Сервис сам зафиксировал нерешённые замечания"),
+            None,
+        )
+        self.assertIsNotNone(finding)
+
+        finance_section = next((item for item in report["full_report_sections"] if item["key"] == "financial_risks"), None)
+        self.assertIsNotNone(finance_section)
+        self.assertTrue(any("с НДС" in line for line in finance_section["items"]))
+
+    def test_report_flags_scope_expansion_and_brake_work_outside_reason(self) -> None:
+        repair = self._build_repair(
+            works=[
+                RepairWork(
+                    work_code="1",
+                    work_name="БАЗОВЫЙ СЕРВИС",
+                    quantity=1.2,
+                    standard_hours=1.2,
+                    actual_hours=1.2,
+                    price=2100,
+                    line_total=2268.33,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="2",
+                    work_name="ЩЕТКА СТЕКЛООЧИСТИТЕЛЯ ВЕТРОВОГО СТЕКЛА. ЗАМЕНА.",
+                    quantity=0.4,
+                    standard_hours=0.4,
+                    actual_hours=0.4,
+                    price=2100,
+                    line_total=755.83,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="3",
+                    work_name="ТОРМОЗНЫЕ КОЛОДКИ ВЕДУЩЕЙ ОСИ. ЗАМЕНА. КОЛЕСА СНЯТЫ.",
+                    quantity=1.8,
+                    standard_hours=1.8,
+                    actual_hours=1.8,
+                    price=2100,
+                    line_total=3401.67,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="4",
+                    work_name="ТОРМОЗНЫЕ КОЛОДКИ ПЕРЕДНЕГО КОЛЕСА. ЗАМЕНА. БАРАБАН СНЯТ.",
+                    quantity=1.8,
+                    standard_hours=1.8,
+                    actual_hours=1.8,
+                    price=2100,
+                    line_total=3401.67,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="5",
+                    work_name="Продольная рулевая тяга - смена",
+                    quantity=2.2,
+                    standard_hours=2.2,
+                    actual_hours=2.2,
+                    price=2100,
+                    line_total=4158.33,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="6",
+                    work_name="Трубка - компрессор - смена",
+                    quantity=1.5,
+                    standard_hours=1.5,
+                    actual_hours=1.5,
+                    price=2100,
+                    line_total=2835.0,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="7",
+                    work_name="Обтекатель лев. - ремонт",
+                    quantity=1,
+                    standard_hours=1.0,
+                    actual_hours=1.0,
+                    price=2100,
+                    line_total=1890.0,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="8",
+                    work_name="Индукция. слесарные работы.",
+                    quantity=1,
+                    standard_hours=1.0,
+                    actual_hours=1.0,
+                    price=2100,
+                    line_total=1890.0,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+            ],
+            parts=[],
+        )
+        repair.reason = "ТО основное. Вибрация по кабине. Заменить щетки стеклоочистителей."
+        repair.work_total = 20600.83
+        repair.grand_total = 20600.83
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={},
+            manual_review_reason_labels={},
+        )
+
+        self.assertTrue(any(item["title"] == "Объем работ шире исходной заявки" for item in report["findings"]))
+        self.assertTrue(any(item["title"] == "Тормозные работы не следуют из исходной жалобы" for item in report["findings"]))
+        finance_section = next((item for item in report["full_report_sections"] if item["key"] == "financial_risks"), None)
+        self.assertIsNotNone(finance_section)
+        self.assertTrue(any("6 803,34 ₽" in line for line in finance_section["items"]))
 
 
 if __name__ == "__main__":

@@ -77,6 +77,20 @@ MATCH_STOPWORDS = {
     "детали",
     "деталь",
     "узел",
+    "демонтаж",
+    "монтаж",
+    "снятие",
+    "установка",
+    "установки",
+    "установить",
+    "проверка",
+    "регулировка",
+    "дисковые",
+    "дисковый",
+    "дисковая",
+    "одна",
+    "ось",
+    "сборе",
 }
 KNOWN_NON_CATALOG_SERVICE_KEYWORDS = (
     "мойка",
@@ -89,6 +103,7 @@ KNOWN_NON_CATALOG_SERVICE_KEYWORDS = (
     "параметры проверка",
     "подсоединение отсоединение диагностического прибора",
     "подсоединение-отсоединение диагностического прибора",
+    "диагностического прибора",
     "схождение колес",
     "юстировка колес",
     "перекидка воздушная",
@@ -96,7 +111,15 @@ KNOWN_NON_CATALOG_SERVICE_KEYWORDS = (
     "палм",
     "разьем",
     "разъем",
+    "электропроводка",
+    "электрооборудован",
     "ремонт электропроводки",
+    "компьютерная диагностика",
+    "диагностика abs прицепа",
+    "диагностика полуприцепа tebs g2",
+    "осмотр по бланку инспекции осмотра",
+    "осмотр п п по бланку инспекции осмотра",
+    "расходные материалы",
 )
 KNOWN_NON_CATALOG_HIGH_CONFIDENCE_CODES = {
     "0101",
@@ -180,6 +203,25 @@ def tokenize_match_text(value: Optional[str]) -> list[str]:
     return tokens
 
 
+def extract_labor_norm_code_from_text(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    match = re.match(r"^\s*(?:код\s+)?([0-9]{8})(?=\D|$)", str(value), re.IGNORECASE)
+    if not match:
+        return None
+    return normalize_labor_norm_code(match.group(1))
+
+
+def work_name_conflicts_with_norm_name(work_name: Optional[str], norm_name: Optional[str]) -> bool:
+    work_tokens = set(tokenize_match_text(work_name))
+    if len(work_tokens) < 2:
+        return False
+    norm_tokens = set(tokenize_match_text(norm_name))
+    if not norm_tokens:
+        return False
+    return not bool(work_tokens & norm_tokens)
+
+
 def build_normalized_name(*values: Optional[str]) -> str:
     tokens: list[str] = []
     for value in values:
@@ -191,6 +233,22 @@ def build_normalized_name(*values: Optional[str]) -> str:
 def build_search_text(*values: Optional[str]) -> str:
     parts = [str(value).strip() for value in values if value]
     return " | ".join(parts)
+
+
+def iter_labor_norm_match_variants(norm: LaborNorm) -> list[str]:
+    variants: list[str] = []
+
+    def add_variant(value: Optional[str]) -> None:
+        normalized = build_normalized_name(value)
+        if normalized and normalized not in variants:
+            variants.append(normalized)
+
+    add_variant(norm.name_ru)
+    for raw_alias in (norm.name_ru_alt or "").split(";"):
+        add_variant(raw_alias)
+    add_variant(norm.name_en)
+    add_variant(norm.normalized_name)
+    return variants
 
 
 def classify_known_non_catalog_operation(
@@ -524,30 +582,48 @@ def score_labor_norm_match(
 ) -> Optional[LaborNormMatch]:
     normalized_work_code = normalize_labor_norm_code(work_code)
     if normalized_work_code and normalized_work_code == norm.code:
+        if work_name_conflicts_with_norm_name(work_name, norm.name_ru):
+            return None
         return LaborNormMatch(norm=norm, score=1.0, matched_by="code")
+
+    embedded_work_code = extract_labor_norm_code_from_text(work_name)
+    if embedded_work_code and embedded_work_code == norm.code:
+        return LaborNormMatch(norm=norm, score=0.99, matched_by="embedded_code")
 
     work_tokens = set(tokenize_match_text(work_name))
     if not work_tokens:
         return None
 
-    norm_tokens = set((norm.normalized_name or "").split())
-    if not norm_tokens:
-        norm_tokens = set(tokenize_match_text(norm.name_ru))
-    intersections = work_tokens & norm_tokens
-    if not intersections:
+    variant_names = iter_labor_norm_match_variants(norm)
+    variant_scores: list[tuple[float, set[str], str]] = []
+    for variant_name in variant_names:
+        variant_tokens = set(variant_name.split())
+        if not variant_tokens:
+            continue
+        intersections = work_tokens & variant_tokens
+        if not intersections:
+            continue
+        coverage = len(intersections) / len(work_tokens)
+        specificity = len(intersections) / len(variant_tokens)
+        variant_scores.append((round(coverage * 0.75 + specificity * 0.25, 4), variant_tokens, variant_name))
+
+    if not variant_scores:
         return None
 
-    coverage = len(intersections) / len(work_tokens)
-    specificity = len(intersections) / len(norm_tokens)
-    score = round(coverage * 0.75 + specificity * 0.25, 4)
+    score, norm_tokens, _best_variant_name = max(
+        variant_scores,
+        key=lambda item: (item[0], len(work_tokens & item[1]), -len(item[1])),
+    )
 
     normalized_work_name = " ".join(sorted(work_tokens))
     matched_by = "name_tokens"
-    if normalized_work_name and normalized_work_name == norm.normalized_name:
+    if normalized_work_name and any(normalized_work_name == variant for variant in variant_names):
         score = max(score, 0.94)
-        matched_by = "normalized_name"
-    elif normalized_work_name and (
-        normalized_work_name in norm.normalized_name or norm.normalized_name in normalized_work_name
+        matched_by = "name_variant"
+    elif normalized_work_name and any(
+        normalized_work_name in variant or variant in normalized_work_name
+        for variant in variant_names
+        if variant
     ):
         score = min(0.93, score + 0.08)
         matched_by = "name_contains"
@@ -597,7 +673,7 @@ def find_best_labor_norm_match(
     ):
         return None
 
-    if best.matched_by == "code":
+    if best.matched_by in {"code", "embedded_code"}:
         return best
     if best.score >= 0.9:
         return best

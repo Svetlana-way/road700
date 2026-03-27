@@ -6,7 +6,11 @@ from tempfile import TemporaryDirectory
 
 from sqlalchemy import text
 
-from app.scripts.audit_labor_norm_coverage import build_audit_session, resolve_catalog_path
+from app.scripts.audit_labor_norm_coverage import (
+    build_audit_session,
+    classify_unmatched_row,
+    resolve_catalog_path,
+)
 
 
 class AuditLaborNormCoverageTestCase(unittest.TestCase):
@@ -40,6 +44,26 @@ class AuditLaborNormCoverageTestCase(unittest.TestCase):
                 norm_count = db.execute(text("select count(*) from labor_norms where scope = 'test_scope'")).scalar_one()
 
         self.assertEqual(norm_count, 1)
+
+    def test_classify_unmatched_row_marks_signature_footer_as_ocr_noise(self) -> None:
+        category, reason = classify_unmatched_row(
+            work_name="Руководитель документов бухгалтер",
+            work_code="5",
+            standard_hours=None,
+        )
+
+        self.assertEqual(category, "ocr_noise")
+        self.assertIn("подпись", reason)
+
+    def test_classify_unmatched_row_marks_electrical_repair_as_outside_catalog(self) -> None:
+        category, reason = classify_unmatched_row(
+            work_name="Электропроводка заднего фонаря ремонт",
+            work_code=None,
+            standard_hours=0.5,
+        )
+
+        self.assertEqual(category, "service_outside_catalog")
+        self.assertIn("вне каталога", reason)
 
 
 if __name__ == "__main__":

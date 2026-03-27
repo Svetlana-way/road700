@@ -114,6 +114,14 @@ def read_csv_rows(path: Path) -> list[dict[str, object]]:
     return rows
 
 
+def overlay_paths_for_scope(scope: str) -> list[Path]:
+    normalized_scope = normalize_labor_norm_scope(scope)
+    if normalized_scope == DEFAULT_DONGFENG_LABOR_NORM_SCOPE:
+        overlay_path = PROJECT_ROOT / "backend" / "data" / "labor_norms" / "dongfeng_2025_overrides.csv"
+        return [overlay_path] if overlay_path.exists() else []
+    return []
+
+
 def upsert_labor_norm(
     db: Session,
     *,
@@ -187,6 +195,9 @@ def import_labor_norms_with_session(
         source_rows = read_csv_rows(path)
     else:
         raise ValueError(f"Unsupported labor norms file format: {path.suffix}")
+
+    for overlay_path in overlay_paths_for_scope(normalized_scope):
+        source_rows.extend(read_csv_rows(overlay_path))
 
     for row in source_rows:
         code = normalize_labor_norm_code(normalize_text(row.get("code")))

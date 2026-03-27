@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.models.labor_norm_catalog import LaborNormCatalog
+from app.models.labor_norm import LaborNorm
 from app.scripts.import_labor_norms import import_labor_norms_with_session
 from app.services.labor_norms import upsert_labor_norm_catalog
 
@@ -84,6 +85,16 @@ class ImportLaborNormsTestCase(unittest.TestCase):
                 )
                 self.assertIsNotNone(catalog)
                 self.assertTrue(catalog.auto_match_enabled)
+
+    def test_default_dongfeng_import_applies_override_aliases(self) -> None:
+        with self.SessionLocal() as db:
+            stats = import_labor_norms_with_session(db)
+            self.assertGreater(stats.updated, 0)
+
+            norm = db.scalar(select(LaborNorm).where(LaborNorm.scope == "dongfeng_2025", LaborNorm.code == "11170102"))
+
+        self.assertIsNotNone(norm)
+        self.assertIn("тонкой очистки", norm.name_ru_alt or "")
 
 
 if __name__ == "__main__":

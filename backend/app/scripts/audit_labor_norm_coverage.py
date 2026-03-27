@@ -148,6 +148,12 @@ def classify_unmatched_row(
         r"\bнорма\b",
         r"техническ[а-я]+\s+обслужив",
     )
+    footer_patterns = (
+        r"\bруководител[ья]\b",
+        r"\bбухгалтер\b",
+        r"документо",
+        r"должност",
+    )
     multi_operation_markers = (
         "мойка",
         "нормокомплект",
@@ -168,6 +174,9 @@ def classify_unmatched_row(
 
     if any(re.search(pattern, raw_name) for pattern in header_patterns):
         return "ocr_noise", "строка похожа на шапку, служебный текст или заголовок таблицы"
+
+    if any(re.search(pattern, raw_name) for pattern in footer_patterns):
+        return "ocr_noise", "строка похожа на подпись, должность или нижний колонтитул документа"
 
     if raw_name.strip(" .,:;|/-") == "ремонт" or re.fullmatch(r"[\d\s,./-]*ремонт", raw_name):
         return "ocr_noise", "строка содержит только общий тип операции без названия работы"

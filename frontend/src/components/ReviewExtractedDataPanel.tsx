@@ -55,7 +55,10 @@ export function ReviewExtractedDataPanel({
               <Paper className="ocr-line-card" key={`review-field-${item.key}`} elevation={0}>
                 <Stack spacing={1}>
                   <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="flex-start">
-                    <Typography className="metric-label">{item.label}</Typography>
+                    <Stack spacing={0.5}>
+                      <Typography className="metric-label">{item.label}</Typography>
+                      <Chip size="small" variant="outlined" label={item.sourceLabel} sx={{ alignSelf: "flex-start" }} />
+                    </Stack>
                     <Chip
                       size="small"
                       variant="outlined"

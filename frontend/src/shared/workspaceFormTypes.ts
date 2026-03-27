@@ -142,6 +142,8 @@ export type ReviewRequiredFieldComparisonItem = {
   ocrValue: unknown;
   currentDisplay: string;
   ocrDisplay: string;
+  currentSourceLabel: string;
+  ocrSourceLabel: string;
   confidenceValue: number | null;
   status: ReviewComparisonStatus;
 };
@@ -150,5 +152,6 @@ export type ReviewExtractedFieldSnapshot = {
   key: string;
   label: string;
   value: string;
+  sourceLabel: string;
   confidenceValue: number | null;
 };

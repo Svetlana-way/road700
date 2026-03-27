@@ -1,4 +1,5 @@
 import {
+  getExtractedFieldSourceLabel,
   getLatestRepairDocumentConfidenceMap,
   getLatestRepairDocumentPayload,
   getPayloadExtractedFields,
@@ -124,6 +125,13 @@ export function useRepairDerivedViewModel({
               : typeof selectedRepairDocumentExtractedFields?.vin === "string"
                 ? selectedRepairDocumentExtractedFields.vin
                 : "—",
+          currentSourceLabel: "Карточка ремонта",
+          ocrSourceLabel:
+            typeof selectedRepairDocumentExtractedFields?.plate_number === "string"
+              ? getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "plate_number")
+              : typeof selectedRepairDocumentExtractedFields?.vin === "string"
+                ? getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "vin")
+                : "Документ",
           status:
             !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
             (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
@@ -138,6 +146,8 @@ export function useRepairDerivedViewModel({
           ocrValue: selectedRepairDocumentExtractedFields?.order_number,
           currentDisplay: selectedRepair.order_number || "—",
           ocrDisplay: String(selectedRepairDocumentExtractedFields?.order_number || "—"),
+          currentSourceLabel: "Карточка ремонта",
+          ocrSourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "order_number"),
           confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "order_number"),
           status: getReviewComparisonStatus(selectedRepair.order_number, selectedRepairDocumentExtractedFields?.order_number),
         },
@@ -148,6 +158,8 @@ export function useRepairDerivedViewModel({
           ocrValue: selectedRepairDocumentExtractedFields?.repair_date,
           currentDisplay: selectedRepair.repair_date || "—",
           ocrDisplay: String(selectedRepairDocumentExtractedFields?.repair_date || "—"),
+          currentSourceLabel: "Карточка ремонта",
+          ocrSourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "repair_date"),
           confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "repair_date"),
           status: getReviewComparisonStatus(selectedRepair.repair_date, selectedRepairDocumentExtractedFields?.repair_date),
         },
@@ -158,6 +170,8 @@ export function useRepairDerivedViewModel({
           ocrValue: selectedRepairDocumentExtractedFields?.service_name,
           currentDisplay: selectedRepair.service?.name || "—",
           ocrDisplay: String(selectedRepairDocumentExtractedFields?.service_name || "—"),
+          currentSourceLabel: "Карточка ремонта",
+          ocrSourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "service_name"),
           confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "service_name"),
           status: getReviewComparisonStatus(selectedRepair.service?.name, selectedRepairDocumentExtractedFields?.service_name),
         },
@@ -168,6 +182,8 @@ export function useRepairDerivedViewModel({
           ocrValue: selectedRepairDocumentExtractedFields?.mileage,
           currentDisplay: selectedRepair.mileage > 0 ? String(selectedRepair.mileage) : "—",
           ocrDisplay: String(selectedRepairDocumentExtractedFields?.mileage || "—"),
+          currentSourceLabel: "Карточка ремонта",
+          ocrSourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "mileage"),
           confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "mileage"),
           status: getReviewComparisonStatus(selectedRepair.mileage, selectedRepairDocumentExtractedFields?.mileage, "int"),
         },
@@ -181,6 +197,8 @@ export function useRepairDerivedViewModel({
             typeof selectedRepairDocumentExtractedFields?.grand_total === "number"
               ? formatMoney(selectedRepairDocumentExtractedFields.grand_total) || "—"
               : "—",
+          currentSourceLabel: "Карточка ремонта",
+          ocrSourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "grand_total"),
           confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "grand_total"),
           status: getReviewComparisonStatus(selectedRepair.grand_total, selectedRepairDocumentExtractedFields?.grand_total, "money"),
         },
@@ -191,36 +209,42 @@ export function useRepairDerivedViewModel({
       key: "order_number",
       label: "Номер заказ-наряда",
       value: String(selectedRepairDocumentExtractedFields?.order_number || "—"),
+      sourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "order_number"),
       confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "order_number"),
     },
     {
       key: "repair_date",
       label: "Дата ремонта",
       value: String(selectedRepairDocumentExtractedFields?.repair_date || "—"),
+      sourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "repair_date"),
       confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "repair_date"),
     },
     {
       key: "service_name",
       label: "Сервис по OCR",
       value: selectedRepairDocumentOcrServiceName || "—",
+      sourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "service_name"),
       confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "service_name"),
     },
     {
       key: "mileage",
       label: "Пробег",
       value: String(selectedRepairDocumentExtractedFields?.mileage || "—"),
+      sourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "mileage"),
       confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "mileage"),
     },
     {
       key: "plate_number",
       label: "Госномер",
       value: String(selectedRepairDocumentExtractedFields?.plate_number || "—"),
+      sourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "plate_number"),
       confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "plate_number"),
     },
     {
       key: "vin",
       label: "VIN",
       value: String(selectedRepairDocumentExtractedFields?.vin || "—"),
+      sourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "vin"),
       confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "vin"),
     },
     {
@@ -230,6 +254,7 @@ export function useRepairDerivedViewModel({
         typeof selectedRepairDocumentExtractedFields?.grand_total === "number"
           ? formatMoney(selectedRepairDocumentExtractedFields.grand_total) || "—"
           : "—",
+      sourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "grand_total"),
       confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "grand_total"),
     },
     {
@@ -239,6 +264,7 @@ export function useRepairDerivedViewModel({
         typeof selectedRepairDocumentExtractedFields?.work_total === "number"
           ? formatMoney(selectedRepairDocumentExtractedFields.work_total) || "—"
           : "—",
+      sourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "work_total"),
       confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "work_total"),
     },
     {
@@ -248,6 +274,7 @@ export function useRepairDerivedViewModel({
         typeof selectedRepairDocumentExtractedFields?.parts_total === "number"
           ? formatMoney(selectedRepairDocumentExtractedFields.parts_total) || "—"
           : "—",
+      sourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "parts_total"),
       confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "parts_total"),
     },
     {
@@ -257,6 +284,7 @@ export function useRepairDerivedViewModel({
         typeof selectedRepairDocumentExtractedFields?.vat_total === "number"
           ? formatMoney(selectedRepairDocumentExtractedFields.vat_total) || "—"
           : "—",
+      sourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "vat_total"),
       confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "vat_total"),
     },
   ].filter((item) => item.value !== "—" || item.confidenceValue !== null);

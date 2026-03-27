@@ -157,6 +157,108 @@ export function getPayloadExtractedItems(payload: Record<string, unknown> | null
   };
 }
 
+function getPayloadNormalizationNotes(payload: Record<string, unknown> | null | undefined) {
+  const rawValue = payload?.normalization_notes;
+  if (!Array.isArray(rawValue)) {
+    return [];
+  }
+  return rawValue.filter((item): item is string => typeof item === "string");
+}
+
+function getPayloadProfileScopeLabel(payload: Record<string, unknown> | null | undefined) {
+  const rawValue = payload?.ocr_profile_scope;
+  if (typeof rawValue !== "string" || !rawValue.trim()) {
+    return "OCR";
+  }
+  return rawValue
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function getPayloadBaseSourceLabel(payload: Record<string, unknown> | null | undefined) {
+  const extractedFrom = typeof payload?.extracted_from === "string" ? payload.extracted_from.toLowerCase() : "";
+  if (extractedFrom.includes("xlsx")) {
+    return "Excel документ";
+  }
+  if (extractedFrom.includes("pdf_text")) {
+    return "Текстовый PDF";
+  }
+  if (extractedFrom.includes("pdf")) {
+    return "PDF OCR";
+  }
+  if (extractedFrom.includes("image") || extractedFrom.includes("ocr")) {
+    return "OCR документа";
+  }
+  return "Документ";
+}
+
+function payloadHasNormalizationNote(
+  payload: Record<string, unknown> | null | undefined,
+  pattern: string | RegExp,
+) {
+  const notes = getPayloadNormalizationNotes(payload);
+  return notes.some((note) => (typeof pattern === "string" ? note === pattern : pattern.test(note)));
+}
+
+export function getExtractedFieldSourceLabel(
+  payload: Record<string, unknown> | null | undefined,
+  fieldKey: string,
+) {
+  const profileLabel = getPayloadProfileScopeLabel(payload);
+  const baseSourceLabel = getPayloadBaseSourceLabel(payload);
+
+  if (fieldKey === "plate_number") {
+    if (payloadHasNormalizationNote(payload, "Госномер дополнен по карточке техники.")) {
+      return "Карточка техники";
+    }
+    if (payloadHasNormalizationNote(payload, "Госномер дополнен по совпадению с реестром техники.")) {
+      return "Реестр техники";
+    }
+    if (payloadHasNormalizationNote(payload, "Госномер дополнен по имени файла или пути источника.")) {
+      return "Имя файла / путь";
+    }
+  }
+
+  if (fieldKey === "vin") {
+    if (payloadHasNormalizationNote(payload, "VIN дополнен по карточке техники.")) {
+      return "Карточка техники";
+    }
+    if (payloadHasNormalizationNote(payload, "VIN дополнен по совпадению с реестром техники.")) {
+      return "Реестр техники";
+    }
+    if (payloadHasNormalizationNote(payload, "VIN дополнен по имени файла или пути источника.")) {
+      return "Имя файла / путь";
+    }
+  }
+
+  if (fieldKey === "order_number" && payloadHasNormalizationNote(payload, "Номер документа дополнен по имени файла или пути источника.")) {
+    return "Имя файла / путь";
+  }
+
+  if (fieldKey === "repair_date" && payloadHasNormalizationNote(payload, "Дата ремонта дополнена по имени файла или пути источника.")) {
+    return "Имя файла / путь";
+  }
+
+  if (fieldKey === "service_name") {
+    if (payloadHasNormalizationNote(payload, /^Сервис распознан по тексту документа:/)) {
+      return "Текст документа + справочник сервисов";
+    }
+    if (payloadHasNormalizationNote(payload, "Сервис дополнен по папке источника документа.")) {
+      return "Папка источника";
+    }
+  }
+
+  if (
+    ["work_total", "parts_total", "vat_total", "grand_total"].includes(fieldKey) &&
+    payloadHasNormalizationNote(payload, new RegExp(`^${fieldKey}_restored_|^${fieldKey}_derived_|^leader_trak_totals_restored_`))
+  ) {
+    return `Профиль OCR: ${profileLabel}`;
+  }
+
+  return baseSourceLabel;
+}
+
 export function createVehicleFormFromPayload(
   payload: Record<string, unknown> | null | undefined,
 ): DocumentVehicleFormStateLike {

@@ -86,8 +86,20 @@ export function ReviewRequiredFieldsPanel({
                       />
                     </Stack>
                   </Stack>
-                  <Typography>В ремонте: {item.currentDisplay}</Typography>
-                  <Typography className="muted-copy">OCR: {item.ocrDisplay}</Typography>
+                  <Stack spacing={0.5}>
+                    <Typography>В ремонте: {item.currentDisplay}</Typography>
+                    <Chip size="small" variant="outlined" label={`Источник: ${item.currentSourceLabel}`} sx={{ alignSelf: "flex-start" }} />
+                  </Stack>
+                  <Stack spacing={0.5}>
+                    <Typography className="muted-copy">OCR: {item.ocrDisplay}</Typography>
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      color="default"
+                      label={`Источник OCR: ${item.ocrSourceLabel}`}
+                      sx={{ alignSelf: "flex-start" }}
+                    />
+                  </Stack>
                 </Stack>
               </Paper>
             </Grid>

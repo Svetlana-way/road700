@@ -1381,6 +1381,156 @@ Knorr-Bremse
         self.assertTrue(any(item["work_name"] == "Лампа фары (любая)" and item["line_total"] == 342.0 for item in works))
         self.assertTrue(any(item["work_code"] == "137102-3" and item["line_total"] == 5130.0 for item in works))
 
+    def test_extract_axb_work_items_selects_repeated_line_totals_by_expected_total(self) -> None:
+        text = """
+Заказ-наряд Nº 0000018636 от 07.02.2025
+Выполненные работы по заказ-наряду Nº 0000018636 от 07.02.2025 к причине
+обращения "Прочее"
+No
+Артикул
+Наименование
+Диагностика TEBS G2
+Knorr-Bremse
+Диагностика/проверка
+датчика ABS
+Датчик ABS, замена
+Ремонт электропроводки
+Итого работ:
+Цена н/ч Норма
+H/ч
+2 900,00
+0,500 Ремонт
+2 900,00
+0,500 Ремонт
+2 900,00
+0,500 Ремонт
+2 900,00
+0,500 Ремонт
+Всего
+1 377,50
+1377,50
+1 377,50
+1377,50
+5 510,00
+Тв т. ч. НДС
+229,58
+229,58
+229,50
+918,32
+"""
+
+        works = document_processing.extract_axb_work_items(text, expected_work_total=5510.0)
+
+        self.assertEqual(len(works), 4)
+        self.assertAlmostEqual(sum(item["line_total"] for item in works), 5510.0, places=2)
+        self.assertEqual(works[-1]["work_name"], "Ремонт электропроводки")
+
+    def test_extract_axb_work_items_falls_back_to_single_sparse_work_when_header_total_is_known(self) -> None:
+        text = """
+Заказ-наряд Nº 0000018125 от 15.01.2025
+Выполненные работы по заказ-наряду Nº 0000018125 от 15.01.2025 к причине
+обращения "Прочее"
+N
+1
+1
+Артикул
+Наименование
+2
+3
+(нагностика с
+Кол. оп. Цена н/ч Норма н/ч
+5
+ТСкидка
+3 000,00
+0,500 Ремонт
+75,00
+Всего
+9
+1425,00
+Тв т.4. НДС]
+10
+237,50K
+іспользованием ПС
+DongFeng
+Итого работ:
+на сумму:
+75,00
+1 425,00 /
+237,50
+"""
+
+        works = document_processing.extract_axb_work_items(text, expected_work_total=1425.0)
+
+        self.assertEqual(len(works), 1)
+        self.assertAlmostEqual(works[0]["line_total"], 1425.0, places=2)
+        self.assertIn("DongFeng", works[0]["work_name"])
+
+    def test_parse_document_text_prefers_axb_profile_work_items_when_invoice_rows_are_noisy(self) -> None:
+        text = """
+Заказ-наряд Nº 0000018636 от 07.02.2025
+TC : SCHMITZ CARGOBULL гос. номер: ВУ008616, VIN: NPFCGSV30PA000016, пробег 104 257
+Выполненные работы по заказ-наряду Nº 0000018636 от 07.02.2025 к причине
+обращения "Прочее"
+No
+Артикул
+Наименование
+Диагностика TEBS G2
+Knorr-Bremse
+Диагностика/проверка
+датчика ABS
+Датчик ABS, замена
+Ремонт электропроводки
+Итого работ:
+Цена н/ч Норма
+H/ч
+2 900,00
+0,500 Ремонт
+2 900,00
+0,500 Ремонт
+2 900,00
+0,500 Ремонт
+2 900,00
+0,500 Ремонт
+Всего
+1 377,50
+1377,50
+1 377,50
+1377,50
+5 510,00
+Тв т. ч. НДС
+229,58
+229,58
+229,50
+918,32
+Расходная накладная к заказ-наряду Nº 0000018636 от 07.02.2025 к причине
+обращения "Прочее"
+Артикул
+8550502SX
+88-01400-SX
+215473
+Наименование
+Датчик ABS SCHMITZ угл. Stellox
+Термосоединитель проводов красный 1.5-2.5 Stellox
+Стяжка черная 3,6 300мм
+Итого материалов:
+на сумму:
+67,56
+Одна тысяча двести восемьдесят три рубля 64 копейки в т.ч. НДС 213,94 RUB
+Итого по причине обращения:
+1 283,64
+213,94
+6 793,64
+1 132,26
+Итого по заказ-наряду : 6 793,64 1 132,26
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="axb")
+        works = parsed["extracted_items"]["works"]
+
+        self.assertEqual(len(works), 4)
+        self.assertAlmostEqual(sum(item["line_total"] for item in works), 5510.0, places=2)
+        self.assertFalse(any("Бухгалтер" in item["work_name"] for item in works))
+
     def test_parse_document_text_aggregates_axb_materials_from_inline_tesseract_rows_when_section_total_is_only_in_header(self) -> None:
         text = """
 Заказ-наряд № 0000021658 от 02.07.2025

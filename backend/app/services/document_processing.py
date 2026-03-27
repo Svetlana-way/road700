@@ -4385,6 +4385,103 @@ def extract_axb_work_line_totals_from_summary(
     return line_totals
 
 
+def extract_axb_expected_work_line_totals_from_summary(
+    summary_lines: list[str],
+    *,
+    expected_work_total: float,
+    name_line_hint_count: int,
+) -> list[float]:
+    normalized_lines: list[str] = []
+    candidate_amounts: list[float] = []
+    for line in summary_lines:
+        normalized_line = normalize_line(line)
+        lowered_line = normalized_line.lower()
+        if not normalized_line:
+            continue
+        if any(marker in lowered_line for marker in ("расходная накладная", "итого материалов", "итого по заказ")):
+            break
+        normalized_lines.append(normalized_line)
+        if re.fullmatch(r"\d+", normalized_line):
+            continue
+        candidate_amounts.extend(extract_amount_candidates_from_fragment(normalized_line))
+
+    if not candidate_amounts:
+        return []
+
+    gross_section_amounts: list[float] = []
+    gross_section_started = False
+    for line in normalized_lines:
+        lowered_line = line.lower()
+        if "всего" in lowered_line:
+            gross_section_started = True
+            continue
+        if gross_section_started and "ндс" in lowered_line:
+            break
+        if not gross_section_started:
+            continue
+        if re.fullmatch(r"\d+", line):
+            continue
+        gross_section_amounts.extend(extract_amount_candidates_from_fragment(line))
+
+    filtered_candidates = [
+        float(amount)
+        for amount in (gross_section_amounts or candidate_amounts)
+        if amount > 100 and amount <= float(expected_work_total) + 3.0
+    ]
+    if not filtered_candidates:
+        return []
+
+    target_cents = int(round(float(expected_work_total) * 100))
+    tolerance_cents = 300
+    subset_candidates = [
+        amount
+        for amount in filtered_candidates
+        if not amounts_match(amount, float(expected_work_total), tolerance=0.2)
+    ]
+    subset_states: dict[int, list[int]] = {0: []}
+    for index, amount in enumerate(subset_candidates):
+        amount_cents = int(round(amount * 100))
+        if amount_cents <= 0 or amount_cents > target_cents + tolerance_cents:
+            continue
+        for current_sum, current_indexes in list(subset_states.items()):
+            new_sum = current_sum + amount_cents
+            if new_sum > target_cents + tolerance_cents:
+                continue
+            new_indexes = current_indexes + [index]
+            existing_indexes = subset_states.get(new_sum)
+            if existing_indexes is None or len(new_indexes) > len(existing_indexes):
+                subset_states[new_sum] = new_indexes
+
+    best_sum = None
+    best_indexes: list[int] | None = None
+    for reachable_sum, indexes in subset_states.items():
+        if not indexes:
+            continue
+        if abs(reachable_sum - target_cents) > tolerance_cents:
+            continue
+        if best_sum is None:
+            best_sum = reachable_sum
+            best_indexes = indexes
+            continue
+        current_delta = abs(reachable_sum - target_cents)
+        best_delta = abs(best_sum - target_cents)
+        if current_delta < best_delta or (current_delta == best_delta and len(indexes) > len(best_indexes or [])):
+            best_sum = reachable_sum
+            best_indexes = indexes
+    if best_indexes:
+        return [subset_candidates[index] for index in best_indexes]
+
+    if name_line_hint_count <= 4:
+        single_total = next(
+            (amount for amount in filtered_candidates if amounts_match(amount, float(expected_work_total), tolerance=0.2)),
+            None,
+        )
+        if single_total is not None:
+            return [float(single_total)]
+
+    return []
+
+
 def clean_axb_work_name(name: str) -> str:
     cleaned = normalize_line(name)
     cleaned = re.sub(r"^скидка\s+", "", cleaned, flags=re.IGNORECASE)
@@ -4484,32 +4581,7 @@ def extract_axb_inline_material_entries(section_text: str) -> list[dict[str, obj
     return entries
 
 
-def extract_axb_work_items(text: str) -> list[dict[str, object]]:
-    work_totals_fragment = extract_fragment_after_marker(
-        text,
-        r"Итого\s+работ:",
-        stop_patterns=(r"Расходная\s+накладная", r"Итого\s+материал", r"Итого\s+по\s+заказ[- ]наряду"),
-        max_chars=1400,
-    )
-    if not work_totals_fragment:
-        return extract_axb_compact_work_items(text)
-
-    totals_lines = [normalize_line(line) for line in work_totals_fragment.splitlines() if normalize_line(line)]
-    total_marker_index = -1
-    for index, line in enumerate(totals_lines):
-        if is_axb_invoice_total_marker(line):
-            total_marker_index = index
-    if total_marker_index < 0:
-        return extract_axb_compact_work_items(text)
-
-    expected_work_total = extract_largest_amount_from_fragment(work_totals_fragment)
-    line_totals = extract_axb_work_line_totals_from_summary(
-        totals_lines[total_marker_index + 1 :],
-        expected_work_total=expected_work_total,
-    )
-    if not line_totals:
-        return extract_axb_compact_work_items(text)
-
+def extract_axb_work_items(text: str, *, expected_work_total: Optional[float] = None) -> list[dict[str, object]]:
     work_body_match = re.search(
         r"Выполненные\s+работы\s+(?:по|no|No|ho|но)?\s*заказ[- ]наряду(?P<body>.*?)(?:Итого\s+работ:)",
         text,
@@ -4525,6 +4597,10 @@ def extract_axb_work_items(text: str) -> list[dict[str, object]]:
         if "выполненные работы по заказ-наряду" in lowered_line or lowered_line.startswith("обращения "):
             continue
         if "к причине" in lowered_line:
+            continue
+        if any(marker in lowered_line for marker in ("кол. оп.", "цена н/ч", "норма н/ч")):
+            continue
+        if any(marker in lowered_line for marker in ("скидк", "всего", "ндс")):
             continue
         if lowered_line in {"n", "№", "артикул", "наименование", "кол. оп.", "цена н/ч", "норма", "н/ч", "скидка", "ремонт"}:
             continue
@@ -4550,6 +4626,54 @@ def extract_axb_work_items(text: str) -> list[dict[str, object]]:
         if " " not in normalized_candidate_line and is_axb_article_candidate(normalized_candidate_line):
             continue
         filtered_name_lines.append((index, normalized_candidate_line))
+    work_totals_fragment = extract_fragment_after_marker(
+        text,
+        r"Итого\s+работ:",
+        stop_patterns=(r"Расходная\s+накладная", r"Итого\s+материал", r"Итого\s+по\s+заказ[- ]наряду"),
+        max_chars=1400,
+    )
+    if not work_totals_fragment:
+        return extract_axb_compact_work_items(text)
+
+    totals_lines = [normalize_line(line) for line in work_totals_fragment.splitlines() if normalize_line(line)]
+    explicit_expected_work_total = expected_work_total
+    total_marker_index = -1
+    for index, line in enumerate(totals_lines):
+        if is_axb_invoice_total_marker(line):
+            total_marker_index = index
+    if total_marker_index < 0 and explicit_expected_work_total is not None:
+        total_marker_index = 0
+    if total_marker_index < 0:
+        return extract_axb_compact_work_items(text)
+
+    expected_work_total = expected_work_total or extract_largest_amount_from_fragment(work_totals_fragment)
+    if explicit_expected_work_total is not None:
+        line_totals = extract_axb_expected_work_line_totals_from_summary(
+            totals_lines[total_marker_index + 1 :],
+            expected_work_total=float(expected_work_total),
+            name_line_hint_count=len(filtered_name_lines),
+        )
+    else:
+        line_totals = extract_axb_work_line_totals_from_summary(
+            totals_lines[total_marker_index + 1 :],
+            expected_work_total=expected_work_total,
+        )
+    if not line_totals:
+        if explicit_expected_work_total is not None and 0 < len(filtered_name_lines) <= 4:
+            aggregated_work_name = clean_axb_work_name(" ".join(line for _index, line in filtered_name_lines))[:500]
+            if aggregated_work_name:
+                return [
+                    {
+                        "work_code": None,
+                        "work_name": aggregated_work_name,
+                        "quantity": 1.0,
+                        "standard_hours": None,
+                        "unit_name": "усл",
+                        "price": float(explicit_expected_work_total),
+                        "line_total": float(explicit_expected_work_total),
+                    }
+                ]
+        return extract_axb_compact_work_items(text)
 
     grouped_name_lines = [[line] for _index, line in filtered_name_lines]
     grouped_positions = [[index] for index, _line in filtered_name_lines]
@@ -5335,8 +5459,37 @@ def apply_profile_specific_item_fallbacks(
     else:
         fallback_items = extract_axb_invoice_items(text)
         profile_work_items = extract_axb_work_items(text)
+        tuned_profile_work_items = (
+            extract_axb_work_items(text, expected_work_total=header_work_total)
+            if header_work_total is not None
+            else []
+        )
         material_parts = extract_axb_material_parts(text, expected_parts_total=header_parts_total)
-        if profile_work_items and len(profile_work_items) >= len(fallback_items["works"]):
+        raw_profile_work_total = round(sum(float(item.get("line_total") or 0) for item in profile_work_items), 2) if profile_work_items else None
+        tuned_profile_work_total = (
+            round(sum(float(item.get("line_total") or 0) for item in tuned_profile_work_items), 2)
+            if tuned_profile_work_items
+            else None
+        )
+        if tuned_profile_work_items and (
+            not profile_work_items
+            or (
+                header_work_total is not None
+                and amounts_match(tuned_profile_work_total, header_work_total, tolerance=3.0)
+                and not amounts_match(raw_profile_work_total, header_work_total, tolerance=3.0)
+            )
+        ):
+            profile_work_items = tuned_profile_work_items
+        fallback_work_total, _ = summarize_line_totals(fallback_items)
+        profile_work_total = round(sum(float(item.get("line_total") or 0) for item in profile_work_items), 2) if profile_work_items else None
+        if profile_work_items and (
+            len(profile_work_items) >= len(fallback_items["works"])
+            or (
+                header_work_total is not None
+                and amounts_match(profile_work_total, header_work_total, tolerance=3.0)
+                and not amounts_match(fallback_work_total, header_work_total, tolerance=3.0)
+            )
+        ):
             fallback_items["works"] = profile_work_items
         if material_parts and len(material_parts) >= len(fallback_items["parts"]):
             fallback_items["parts"] = material_parts

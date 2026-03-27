@@ -28,6 +28,7 @@ class AuditSampleOcrQualityTestCase(unittest.TestCase):
             works_count=0,
             parts_count=5,
             invoice_only=True,
+            parts_total_matches_lines=True,
         )
 
         flags = build_doc_flags(row)
@@ -37,6 +38,8 @@ class AuditSampleOcrQualityTestCase(unittest.TestCase):
         self.assertTrue(flags["work_total"])
         self.assertTrue(flags["works_lines"])
         self.assertTrue(flags["parts_lines"])
+        self.assertTrue(flags["work_sum_reconciled"])
+        self.assertTrue(flags["parts_sum_reconciled"])
         self.assertTrue(flags["manual_review_free"])
 
     def test_build_doc_flags_keeps_regular_document_requirements(self) -> None:
@@ -52,6 +55,8 @@ class AuditSampleOcrQualityTestCase(unittest.TestCase):
             works_count=0,
             parts_count=0,
             invoice_only=False,
+            work_total_matches_lines=False,
+            parts_total_matches_lines=False,
         )
 
         flags = build_doc_flags(row)
@@ -61,6 +66,8 @@ class AuditSampleOcrQualityTestCase(unittest.TestCase):
         self.assertFalse(flags["work_total"])
         self.assertFalse(flags["works_lines"])
         self.assertFalse(flags["parts_lines"])
+        self.assertFalse(flags["work_sum_reconciled"])
+        self.assertFalse(flags["parts_sum_reconciled"])
         self.assertFalse(flags["manual_review_free"])
 
     def test_build_doc_flags_treats_suppressed_missing_mileage_as_structurally_ok(self) -> None:
@@ -142,6 +149,7 @@ class AuditSampleOcrQualityTestCase(unittest.TestCase):
         report = render_report([row], source_dir=Path("/tmp/ocr-audit-test"))
 
         self.assertIn("Источник: `/tmp/ocr-audit-test`", report)
+        self.assertIn("Режим OCR для аудита: `auto`", report)
 
     def test_audit_documents_parses_without_registry_enrichment(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -204,6 +212,64 @@ class AuditSampleOcrQualityTestCase(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertIs(parse_mock.call_args.kwargs["db"], sentinel_db)
+
+    def test_audit_documents_allows_tesseract_mode_by_disabling_vision(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            sample_path = Path(tmp_dir) / "sample.pdf"
+            sample_path.write_bytes(b"%PDF-1.4")
+
+            with (
+                patch(
+                    "app.services.document_processing.extract_document_text",
+                    return_value=("Заказ-наряд № 1 от 01.01.2026", "pdf_tesseract_ocr", None),
+                ),
+                patch(
+                    "app.services.document_processing.parse_document_text",
+                    return_value={
+                        "extracted_fields": {"order_number": "1", "work_total": 100.0, "parts_total": 50.0},
+                        "manual_review_reasons": [],
+                        "extracted_items": {
+                            "works": [{"line_total": 100.0}],
+                            "parts": [{"line_total": 40.0}],
+                        },
+                    },
+                ),
+                patch(
+                    "app.services.document_processing.is_gruzovye_rezervy_invoice_only_document",
+                    return_value=False,
+                ),
+                patch("app.services.document_processing.is_vision_ocr_available", return_value=True),
+            ):
+                rows = audit_documents(Path(tmp_dir), ocr_backend="tesseract")
+
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0].work_total_matches_lines)
+        self.assertFalse(rows[0].parts_total_matches_lines)
+
+    def test_build_doc_flags_marks_mismatch_as_not_manual_review_free(self) -> None:
+        row = AuditRow(
+            service_label="AXB",
+            profile_scope="axb",
+            relative_path="sample.pdf",
+            source_type="pdf",
+            extract_source="pdf_vision_ocr",
+            extract_failure_reason=None,
+            extracted_fields={
+                "order_number": "0001",
+                "repair_date": "2026-01-01",
+                "work_total": 100.0,
+                "parts_total": 50.0,
+            },
+            manual_review_reasons=[],
+            works_count=3,
+            parts_count=2,
+            work_total_matches_lines=False,
+            parts_total_matches_lines=True,
+        )
+
+        flags = build_doc_flags(row)
+
+        self.assertFalse(flags["manual_review_free"])
 
 
 if __name__ == "__main__":

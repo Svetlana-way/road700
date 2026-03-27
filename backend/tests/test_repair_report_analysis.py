@@ -16,6 +16,7 @@ class RepairReportAnalysisTestCase(unittest.TestCase):
             vehicle_id=1,
             mileage=100000,
             reason="Ремонт крыла. Замена заднего правого фонаря.",
+            employee_comment=None,
             work_total=12000,
             parts_total=5000,
             vat_total=0,
@@ -183,6 +184,61 @@ class RepairReportAnalysisTestCase(unittest.TestCase):
         self.assertIsNotNone(finding)
         self.assertEqual(finding["severity"], "high")
         self.assertEqual(finding["category"], "Документ и OCR")
+
+    def test_report_flags_unresolved_vibration_and_non_original_work_markers(self) -> None:
+        repair = self._build_repair(
+            works=[
+                RepairWork(
+                    work_code="31",
+                    work_name="Индукция. слесарные работы.",
+                    quantity=1,
+                    standard_hours=1.0,
+                    actual_hours=1.0,
+                    price=2100,
+                    line_total=1890,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="32",
+                    work_name="Доработка аналоговых з/ч",
+                    quantity=0.2,
+                    standard_hours=0.2,
+                    actual_hours=0.2,
+                    price=2101.85,
+                    line_total=378.33,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+            ],
+            parts=[],
+        )
+        repair.order_number = "ЛТ250012276"
+        repair.reason = "На холостом ходу при малых оборотах вибрации по кабине."
+        repair.employee_comment = "неисправности по вибрации по кабине на момент осмотра не обнаружено, подушки двс в норме"
+        repair.work_total = 2268.33
+        repair.grand_total = 2268.33
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={},
+            manual_review_reason_labels={},
+        )
+
+        vibration_finding = next(
+            (item for item in report["findings"] if item["title"] == "По заявленной вибрации проблема не подтверждена"),
+            None,
+        )
+        self.assertIsNotNone(vibration_finding)
+        self.assertEqual(vibration_finding["severity"], "high")
+
+        non_original_finding = next(
+            (item for item in report["findings"] if item["title"] == "Есть признаки неоригинальных или восстановленных запчастей"),
+            None,
+        )
+        self.assertIsNotNone(non_original_finding)
+
+        finance_section = next((item for item in report["full_report_sections"] if item["key"] == "financial_risks"), None)
+        self.assertIsNotNone(finance_section)
+        self.assertTrue(any("спорных затрат" in line for line in finance_section["items"]))
 
 
 if __name__ == "__main__":

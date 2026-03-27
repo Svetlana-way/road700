@@ -218,6 +218,24 @@ export function RepairOverviewReportPanel({
           <>
             <Alert severity={reportAlertSeverity}>{reportAlertText}</Alert>
 
+            {executiveReport.full_report_sections.length > 0 ? (
+              <Paper className="repair-line" elevation={0}>
+                <Stack spacing={1.5}>
+                  <Typography variant="subtitle1">Короткий отчёт для руководителя</Typography>
+                  {executiveReport.full_report_sections.map((section) => (
+                    <Stack spacing={0.75} key={`executive-full-section-${section.key}`}>
+                      <Typography className="metric-label">{section.title}</Typography>
+                      {section.items.map((line, index) => (
+                        <Typography className="muted-copy" key={`executive-full-section-line-${section.key}-${index}`}>
+                          {line}
+                        </Typography>
+                      ))}
+                    </Stack>
+                  ))}
+                </Stack>
+              </Paper>
+            ) : null}
+
             <Paper className="repair-line" elevation={0}>
               <Stack spacing={1.25}>
                 <Stack

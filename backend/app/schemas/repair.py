@@ -125,6 +125,12 @@ class RepairExecutiveReportRiskRead(BaseModel):
     comment: str
 
 
+class RepairExecutiveReportSectionRead(BaseModel):
+    key: str
+    title: str
+    items: list[str]
+
+
 class RepairExecutiveReportRead(BaseModel):
     headline: str
     summary: str
@@ -134,6 +140,7 @@ class RepairExecutiveReportRead(BaseModel):
     findings: list[RepairExecutiveReportFindingRead]
     risk_matrix: list[RepairExecutiveReportRiskRead]
     recommendations: list[str]
+    full_report_sections: list[RepairExecutiveReportSectionRead]
 
 
 class RepairDetailResponse(BaseModel):

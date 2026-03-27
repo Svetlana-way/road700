@@ -127,6 +127,11 @@ export type RepairExecutiveReport = {
     comment: string;
   }>;
   recommendations: string[];
+  full_report_sections: Array<{
+    key: string;
+    title: string;
+    items: string[];
+  }>;
 };
 
 export type RepairDetail = {

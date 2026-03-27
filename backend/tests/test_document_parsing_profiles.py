@@ -2203,6 +2203,36 @@ a9d6fd9b-203c-4ef9-8a13-c892beb08927
         self.assertIn("leader_trak_items_restored_from_invoice_table", parsed["normalization_notes"])
         self.assertIn("leader_trak_totals_restored_from_invoice_summary", parsed["normalization_notes"])
 
+    def test_parse_document_text_extracts_clean_reason_and_recommendations_from_leader_trak_order(self) -> None:
+        text = """
+Общество с ограниченной ответственностью "ЛидерТрак"
+НАРЯД-ЗАКАЗ № ЛТ250012276 от 25.12.2025
+Автомобиль:
+FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пробег: 172274
+Причина
+обращения:
+ТО основное с заменой масла+салонный фильтр
+На холостом ходу при малых оборотах вибрации по кабине. При увеличении оборотов, вибрации пропадают; Заменить щетки стеклоочистителей
+Выполненные сервисные услуги и использованные материалы
+1 ZZ000253133903 Масло моторное синтетическое DONGFENG Diesel Ultra CS, EURO-6 10W40, бочка 205 л. 37 литр 447,16 992,68 15 717,50 3 143,50 18 861,00
+Рекомендации:
+акб1-1065а
+неисправности по вибрации по кабине на момент осмотра не обнаружено, подушки двс в норме
+НЕ ДЕЛАЕМ:
+1. Забиты глушители на модуляторах
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="leader_trak")
+
+        self.assertEqual(
+            parsed["extracted_fields"]["reason"],
+            "ТО основное с заменой масла+салонный фильтр На холостом ходу при малых оборотах вибрации по кабине. При увеличении оборотов, вибрации пропадают; Заменить щетки стеклоочистителей",
+        )
+        self.assertEqual(
+            parsed["extracted_fields"]["employee_comment"],
+            "акб1-1065а неисправности по вибрации по кабине на момент осмотра не обнаружено, подушки двс в норме",
+        )
+
     def test_parse_document_text_extracts_gruzovye_rezervy_items_from_sections(self) -> None:
         text = """
 Заказ-наряд № ГП000215622 от 12 февраля 2026 г.

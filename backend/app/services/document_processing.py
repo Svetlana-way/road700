@@ -267,7 +267,8 @@ REASON_SECTION_PATTERNS = [
     re.compile(
         rf"(?:^|\n)\s*(?:{REASON_LABEL_PATTERN})\s*[:№]?\s*(?P<value>.+?)"
         r"(?=(?:\n\s*(?:Выполненные\s+работы|Расходная\s+накладная|Акт\s+выполненных\s+работ|"
-        r"Перечень\s+работ|№\s+Артикул|Итого\s+работ|Итого\s+по\s+причине\s+обращения)\b)|\Z)",
+        r"Перечень\s+работ|Выполненные\s+сервисные\s+услуги|№\s+Артикул|Итого\s+работ|"
+        r"Итого\s+по\s+причине\s+обращения)\b)|\Z)",
         re.IGNORECASE | re.MULTILINE | re.DOTALL,
     ),
 ]
@@ -756,6 +757,27 @@ def extract_reason_from_text(text: str) -> Optional[str]:
         if value:
             return value[:2000]
     return None
+
+
+def extract_recommendations_from_text(text: str) -> Optional[str]:
+    fragment = extract_fragment_after_marker(
+        text,
+        r"Рекомендации\s*:",
+        stop_patterns=(
+            r"НЕ\s+ДЕЛАЕМ\s*:",
+            r"После\s+подписания",
+            r"Сервисные\s+услуги\s+сдал",
+        ),
+        max_chars=2000,
+    )
+    if not fragment:
+        return None
+
+    lines = [normalize_multiline_text(line) for line in fragment.splitlines()]
+    cleaned_lines = [line.strip(" -*") for line in lines if line.strip(" -*")]
+    if not cleaned_lines:
+        return None
+    return " ".join(cleaned_lines)[:2000]
 
 
 def is_vision_ocr_available() -> bool:
@@ -7238,6 +7260,10 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
     if reason:
         extracted_fields["reason"] = reason
         confidence_map["reason"] = 0.84
+    employee_comment = extract_recommendations_from_text(text)
+    if employee_comment:
+        extracted_fields["employee_comment"] = employee_comment
+        confidence_map["employee_comment"] = 0.8
 
     if normalized_profile_scope == "leader_trak" and "order_number" not in extracted_fields:
         leader_trak_order_number = extract_leader_trak_order_number(header_text or text)
@@ -7728,6 +7754,8 @@ def process_document(db: Session, document_id: int, *, job_id: int | None = None
                 repair.mileage = int(extracted_fields["mileage"])
             if "reason" in extracted_fields:
                 repair.reason = str(extracted_fields["reason"])
+            if "employee_comment" in extracted_fields:
+                repair.employee_comment = str(extracted_fields["employee_comment"])
             repair.work_total = float(extracted_fields["work_total"]) if "work_total" in extracted_fields else 0.0
             repair.parts_total = float(extracted_fields["parts_total"]) if "parts_total" in extracted_fields else 0.0
             repair.vat_total = float(extracted_fields["vat_total"]) if "vat_total" in extracted_fields else 0.0

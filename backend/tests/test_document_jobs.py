@@ -153,6 +153,7 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         self.assertIsInstance(repair_payload["executive_report"]["headline"], str)
         self.assertIsInstance(repair_payload["executive_report"]["summary"], str)
         self.assertIsInstance(repair_payload["executive_report"]["status"], str)
+        self.assertIsInstance(repair_payload["executive_report"]["full_report_sections"], list)
         self.assertGreaterEqual(len(repair_payload["documents"]), 1)
 
         document_payload = next(item for item in repair_payload["documents"] if item["id"] == document_id)

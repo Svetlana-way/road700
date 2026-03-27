@@ -49,7 +49,7 @@ export function useDocumentsWorkspace({
   formatDocumentStatusLabel,
 }: UseDocumentsWorkspaceParams) {
   const [uploadForm, setUploadForm] = useState<UploadFormState>(emptyUploadForm);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [lastUploadedDocument, setLastUploadedDocument] = useState<DocumentItem | null>(null);
   const uploadFileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadLoading, setUploadLoading] = useState(false);
@@ -63,7 +63,7 @@ export function useDocumentsWorkspace({
 
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!token || !selectedFile) {
+    if (!token || selectedFiles.length === 0) {
       setErrorMessage("Сначала выберите файл");
       return;
     }
@@ -96,7 +96,9 @@ export function useDocumentsWorkspace({
       if (uploadForm.notes.trim()) {
         body.append("notes", uploadForm.notes);
       }
-      body.append("file", selectedFile);
+      for (const file of selectedFiles) {
+        body.append("files", file);
+      }
 
       const result = await apiRequest<DocumentUploadResponse>(
         "/documents/upload",
@@ -110,7 +112,7 @@ export function useDocumentsWorkspace({
       setSuccessMessage(result.message);
       setLastUploadedDocument(result.document);
       setUploadForm(emptyUploadForm());
-      setSelectedFile(null);
+      setSelectedFiles([]);
       await refreshWorkspace();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить документ");
@@ -126,15 +128,16 @@ export function useDocumentsWorkspace({
     }));
   }
 
-  function handleUploadFileSelect(nextFile: File | null) {
+  function handleUploadFileSelect(nextFiles: File[]) {
     setLastUploadedDocument(null);
-    setSelectedFile(nextFile);
-    if (!nextFile) {
+    setSelectedFiles(nextFiles);
+    if (nextFiles.length === 0) {
       return;
     }
 
-    const parsedRepairDate = parseRepairDateFromFilename(nextFile.name);
-    const parsedOrderNumber = parseOrderNumberFromFilename(nextFile.name);
+    const firstFile = nextFiles[0];
+    const parsedRepairDate = parseRepairDateFromFilename(firstFile.name);
+    const parsedOrderNumber = parseOrderNumberFromFilename(firstFile.name);
     setUploadForm((current) => ({
       ...current,
       repairDate: parsedRepairDate || current.repairDate,
@@ -248,7 +251,7 @@ export function useDocumentsWorkspace({
 
   function resetDocumentsWorkspaceState() {
     setUploadForm(emptyUploadForm());
-    setSelectedFile(null);
+    setSelectedFiles([]);
     setLastUploadedDocument(null);
     setUploadLoading(false);
     setReprocessLoading(false);
@@ -262,7 +265,7 @@ export function useDocumentsWorkspace({
 
   return {
     uploadForm,
-    selectedFile,
+    selectedFiles,
     lastUploadedDocument,
     setLastUploadedDocument,
     uploadFileInputRef,

@@ -14,7 +14,7 @@ from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.core.paths import STORAGE_ROOT
 from app.models.audit import AuditLog
 from app.models.document import Document
-from app.models.enums import CheckSeverity, RepairStatus, UserRole
+from app.models.enums import CheckSeverity, DocumentStatus, RepairStatus, UserRole
 from app.models.imports import ImportJob
 from app.models.ocr_learning_signal import OcrLearningSignal
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
@@ -29,6 +29,7 @@ from app.schemas.repair import (
 )
 from app.services.document_processing import build_manual_review_check, replace_ocr_checks, resolve_service
 from app.services.exporting import append_rows, safe_filename
+from app.services.pdf_tools import render_text_report_pdf
 from app.services.repair_report_analysis import build_repair_executive_report
 
 
@@ -473,6 +474,134 @@ def build_export_warning_rows(repair: Repair) -> list[tuple[object, ...]]:
     return rows
 
 
+def build_repair_pdf_sections(repair: Repair) -> list[tuple[str, list[str]]]:
+    source_document = get_report_source_document(repair)
+    source_payload = get_report_source_payload(repair)
+    report_status, report_status_comment = build_report_status_summary(repair)
+    raw_reasons = source_payload.get("manual_review_reasons")
+    manual_review_reasons = [str(item) for item in raw_reasons] if isinstance(raw_reasons, list) else []
+    extracted_fields = source_payload.get("extracted_fields") if isinstance(source_payload.get("extracted_fields"), dict) else {}
+    warning_rows = build_export_warning_rows(repair)
+
+    warning_lines = [
+        (
+            f"{index}. Раздел {row[0]} | важность {row[1]} | "
+            f"{row[2]} | источник {row[4]} | {'решено' if row[5] == 'Да' else 'открыто'}"
+            + (f" | {row[3]}" if row[3] else "")
+            + (f" | дата решения {row[6]}" if row[6] else "")
+        )
+        for index, row in enumerate(warning_rows, start=1)
+    ]
+
+    sections: list[tuple[str, list[str]]] = [
+        (
+            "Сводка",
+            [
+                f"ID ремонта: {repair.id}",
+                f"Номер заказ-наряда: {repair.order_number or 'Не указан'}",
+                f"Дата ремонта: {repair.repair_date.isoformat()}",
+                f"Статус ремонта: {repair.status.value}",
+                f"Итоговый статус отчёта: {report_status}",
+                f"Комментарий к статусу: {report_status_comment}",
+                f"Предварительный: {'Да' if repair.is_preliminary else 'Нет'}",
+                f"Частично распознан: {'Да' if repair.is_partially_recognized else 'Нет'}",
+                f"Госномер: {repair.vehicle.plate_number or 'Не указан'}",
+                f"VIN: {repair.vehicle.vin or 'Не указан'}",
+                f"Марка и модель: {' '.join(part for part in (repair.vehicle.brand, repair.vehicle.model) if part) or 'Не указаны'}",
+                f"Сервис: {repair.service.name if repair.service is not None else 'Не назначен'}",
+                f"Сервис по OCR: {extracted_fields.get('service_name') or 'Не распознан'}",
+                f"Пробег: {repair.mileage}",
+                f"Причина ремонта: {repair.reason or 'Не указана'}",
+                f"Комментарий сотрудника: {repair.employee_comment or 'Нет'}",
+                f"Работы, руб: {float(repair.work_total):.2f}",
+                f"Запчасти, руб: {float(repair.parts_total):.2f}",
+                f"НДС, руб: {float(repair.vat_total):.2f}",
+                f"Итого, руб: {float(repair.grand_total):.2f}",
+                (
+                    "Ожидаемая стоимость, руб: "
+                    f"{float(repair.expected_total):.2f}"
+                    if repair.expected_total is not None
+                    else "Ожидаемая стоимость, руб: Не рассчитана"
+                ),
+                f"Основной документ: {source_document.original_filename if source_document is not None else 'Не выбран'}",
+                f"Статус основного документа: {source_document.status.value if source_document is not None else 'Не определён'}",
+                (
+                    "Причины ручной проверки OCR: "
+                    + (
+                        ", ".join(MANUAL_REVIEW_REASON_LABELS.get(item, item) for item in manual_review_reasons)
+                        if manual_review_reasons
+                        else "Нет"
+                    )
+                ),
+                f"Открытых предупреждений: {len([item for item in repair.checks if not item.is_resolved])}",
+                f"Создан: {repair.created_at.isoformat()}",
+                f"Обновлён: {repair.updated_at.isoformat()}",
+            ],
+        ),
+        (
+            "Несоответствия",
+            warning_lines
+            if warning_lines
+            else ["Открытых предупреждений и ручных причин проверки не найдено."],
+        ),
+        (
+            "Работы",
+            [
+                (
+                    f"{item.work_code or 'Без кода'} | {item.work_name} | "
+                    f"кол-во {item.quantity} | нормо-часы {item.standard_hours if item.standard_hours is not None else '—'} | "
+                    f"факт {item.actual_hours if item.actual_hours is not None else '—'} | "
+                    f"цена {float(item.price):.2f} | сумма {float(item.line_total):.2f} | статус {item.status.value}"
+                )
+                for item in sorted(repair.works, key=lambda item: item.id)
+            ]
+            or ["Работы не заполнены."],
+        ),
+        (
+            "Материалы",
+            [
+                (
+                    (
+                        f"{item.article or 'Без артикула'} | {item.part_name} | "
+                        f"кол-во {item.quantity} {item.unit_name or ''}"
+                    ).strip()
+                    + f" | цена {float(item.price):.2f} | сумма {float(item.line_total):.2f} | статус {item.status.value}"
+                )
+                for item in sorted(repair.parts, key=lambda item: item.id)
+            ]
+            or ["Материалы не заполнены."],
+        ),
+        (
+            "Проверки",
+            [
+                (
+                    f"{item.check_type} | {item.severity.value} | "
+                    f"{item.title} | {'Решено' if item.is_resolved else 'Открыто'} | "
+                    f"создано {item.created_at.isoformat()}"
+                    + (f" | {item.details}" if item.details else "")
+                )
+                for item in sorted(repair.checks, key=lambda item: item.id)
+            ]
+            or ["Проверки отсутствуют."],
+        ),
+        (
+            "Документы",
+            [
+                (
+                    f"ID {item.id} | {item.original_filename} | {item.kind.value} | {item.status.value} | "
+                    f"{'основной' if item.is_primary else 'дополнительный'} | "
+                    f"OCR {item.ocr_confidence if item.ocr_confidence is not None else '—'} | "
+                    f"создан {item.created_at.isoformat()} | обновлён {item.updated_at.isoformat()}"
+                )
+                for item in sorted(repair.documents, key=lambda item: item.id)
+            ]
+            or ["Документы отсутствуют."],
+        ),
+    ]
+
+    return sections
+
+
 def update_service_manual_review_state(repair: Repair, service_name: str | None) -> None:
     source_document = get_learning_source_document(repair)
     latest_version = get_latest_document_version(source_document)
@@ -653,57 +782,58 @@ def delete_repair(
         }
         for document in sorted(repair.documents, key=lambda item: item.id)
     ]
-    storage_keys = {
-        document.storage_key
-        for document in repair.documents
-    } | {
-        version.storage_key
-        for document in repair.documents
-        for version in document.versions
-    }
-    document_ids = [document.id for document in repair.documents]
-    document_version_ids = [version.id for document in repair.documents for version in document.versions]
+    old_documents_by_id = {item["id"]: item for item in old_snapshot["documents"]}
 
+    repair.status = RepairStatus.ARCHIVED
+    repair.is_preliminary = False
+    for document in repair.documents:
+        document.status = DocumentStatus.ARCHIVED
+        document.review_queue_priority = 0
+
+    new_snapshot = build_repair_snapshot(repair)
+    new_snapshot["documents"] = [
+        {
+            "id": document.id,
+            "original_filename": document.original_filename,
+            "storage_key": document.storage_key,
+            "kind": document.kind.value,
+            "status": document.status.value,
+        }
+        for document in sorted(repair.documents, key=lambda item: item.id)
+    ]
     db.add(
         AuditLog(
             user_id=current_admin.id,
             entity_type="repair",
             entity_id=str(repair.id),
-            action_type="repair_deleted",
+            action_type="repair_archived",
             old_value=old_snapshot,
-            new_value={"deleted": True},
+            new_value=new_snapshot,
         )
     )
-    db.flush()
-
-    if document_version_ids:
-        db.execute(
-            delete(OcrLearningSignal).where(
-                or_(
-                    OcrLearningSignal.repair_id == repair.id,
-                    OcrLearningSignal.document_id.in_(document_ids),
-                    OcrLearningSignal.document_version_id.in_(document_version_ids),
-                )
+    for document in repair.documents:
+        db.add(
+            AuditLog(
+                user_id=current_admin.id,
+                entity_type="document",
+                entity_id=str(document.id),
+                action_type="document_archived",
+                old_value={
+                    "document_id": document.id,
+                    "status": old_documents_by_id.get(document.id, {}).get("status"),
+                    "repair_id": repair.id,
+                },
+                new_value={
+                    "document_id": document.id,
+                    "status": document.status.value,
+                    "repair_id": repair.id,
+                },
             )
         )
-    else:
-        db.execute(delete(OcrLearningSignal).where(OcrLearningSignal.repair_id == repair.id))
-
-    if document_ids:
-        db.execute(delete(ImportJob).where(ImportJob.document_id.in_(document_ids)))
-
-    repair.source_document_id = None
-    db.flush()
-
-    for document in list(repair.documents):
-        db.delete(document)
-
-    db.delete(repair)
     db.commit()
-    cleanup_storage_files(storage_keys)
 
     return RepairDeleteResponse(
-        message="Заказ-наряд и связанные документы удалены",
+        message="Заказ-наряд и связанные документы отправлены в архив",
         deleted_repair_id=repair_id,
     )
 
@@ -855,6 +985,29 @@ def export_repair(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}.xlsx"'},
+    )
+
+
+@router.get("/{repair_id}/export.pdf")
+def export_repair_pdf(
+    repair_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> StreamingResponse:
+    repair = load_repair_for_user(db, repair_id, current_user)
+    filename = safe_filename(
+        f"repair_{repair.id}_{repair.order_number or repair.vehicle.plate_number or 'card'}",
+        f"repair_{repair.id}",
+    )
+    pdf_bytes = render_text_report_pdf(
+        "Карточка ремонта",
+        build_repair_pdf_sections(repair),
+        subtitle=f"Ремонт #{repair.id} · {repair.order_number or repair.vehicle.plate_number or 'без номера'}",
+    )
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.pdf"'},
     )
 
 

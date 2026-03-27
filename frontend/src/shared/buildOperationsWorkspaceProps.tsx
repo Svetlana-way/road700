@@ -60,10 +60,12 @@ export type BuildOperationsWorkspacePropsParams = {
   selectedFleetVehicle: FleetDetailProps["selectedFleetVehicle"];
   vehicleSaving: FleetDetailProps["vehicleSaving"];
   vehicleExportLoading: FleetDetailProps["vehicleExportLoading"];
+  vehiclePdfExportLoading: FleetDetailProps["vehiclePdfExportLoading"];
   vehicles: FleetDetailProps["vehicles"];
   fleetVehicles: FleetProps["fleetVehicles"];
   handleUpdateVehicle: (payload: { status: Parameters<FleetDetailProps["onUpdateVehicleStatus"]>[0] }) => void | Promise<void>;
   handleExportVehicle: () => void | Promise<void>;
+  handleExportVehiclePdf: () => void | Promise<void>;
   formatVehicle: FleetDetailProps["formatVehicle"];
   formatDateValue: FleetDetailProps["formatDateValue"];
   formatUserRoleLabel: FleetDetailProps["formatUserRoleLabel"];
@@ -151,6 +153,7 @@ export function buildOperationsWorkspaceProps(params: BuildOperationsWorkspacePr
         userRole: params.userRole ?? undefined,
         vehicleSaving: params.vehicleSaving,
         vehicleExportLoading: params.vehicleExportLoading,
+        vehiclePdfExportLoading: params.vehiclePdfExportLoading,
         vehicles: params.vehicles,
         fleetVehicles: params.fleetVehicles,
         onUpdateVehicleStatus: (status) => {
@@ -158,6 +161,9 @@ export function buildOperationsWorkspaceProps(params: BuildOperationsWorkspacePr
         },
         onExportVehicle: () => {
           void params.handleExportVehicle();
+        },
+        onExportVehiclePdf: () => {
+          void params.handleExportVehiclePdf();
         },
         onOpenRepair: (repairId) => {
           void params.openRepairByIds(null, repairId);

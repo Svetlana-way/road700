@@ -246,7 +246,7 @@ export function useRepairEditingWorkflow({
       return;
     }
     const confirmed = window.confirm(
-      "Удалить ошибочно введенный заказ-наряд вместе со связанными документами и OCR-данными?",
+      "Отправить заказ-наряд в архив вместе со связанными документами? Восстановление делается только через изменение статуса.",
     );
     if (!confirmed) {
       return;
@@ -270,7 +270,7 @@ export function useRepairEditingWorkflow({
       setSuccessMessage(payload.message);
       await refreshWorkspace();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось удалить заказ-наряд");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось отправить заказ-наряд в архив");
     } finally {
       setRepairDeleteLoading(false);
     }

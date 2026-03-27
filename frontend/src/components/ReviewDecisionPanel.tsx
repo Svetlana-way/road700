@@ -235,6 +235,9 @@ export function ReviewDecisionPanel({
             Текущие причины: {selectedReviewItem.issue_titles.slice(0, 4).join(", ")}
             {selectedReviewItem.issue_titles.length > 4 ? ` и ещё ${selectedReviewItem.issue_titles.length - 4}` : ""}
           </Typography>
+          <Typography className="muted-copy">
+            Финальное подтверждение доступно только после заполнения обязательных полей и разбора всех открытых предупреждений.
+          </Typography>
           {selectedRepairDocument ? (
             <Grid container spacing={2}>
               <Grid item xs={12} lg={6}>

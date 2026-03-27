@@ -260,13 +260,12 @@ export function DocumentsListPanel({
                     <Button
                       size="small"
                       variant="text"
-                      color="error"
                       disabled={repairDeleteLoading}
                       onClick={() => {
                         onDeleteRepair(document.repair.id);
                       }}
                     >
-                      {repairDeleteLoading ? "Удаление..." : "Удалить"}
+                      {repairDeleteLoading ? "Архивация..." : "В архив заказ-наряд"}
                     </Button>
                   ) : null}
                   {userRole === "admin" && document.status !== "archived" ? (

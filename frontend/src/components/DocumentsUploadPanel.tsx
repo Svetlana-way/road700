@@ -32,14 +32,14 @@ type DocumentsUploadPanelProps = {
   uploadForm: UploadFormState;
   vehicles: Vehicle[];
   rootDocumentKindOptions: DocumentKindOption[];
-  selectedFile: File | null;
+  selectedFiles: File[];
   uploadMissingRequirements: string[];
   uploadLoading: boolean;
   lastUploadedDocument: DocumentItem | null;
   uploadFileInputRef: RefObject<HTMLInputElement>;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onUploadFieldChange: (field: UploadField, value: string) => void;
-  onFileSelect: (file: File | null) => void;
+  onFileSelect: (files: File[]) => void;
   onOpenFilePicker: () => void;
   onOpenUploadedRepair: (documentId: number, repairId: number) => void;
   onHideUploadedResult: () => void;
@@ -59,7 +59,7 @@ export function DocumentsUploadPanel({
   uploadForm,
   vehicles,
   rootDocumentKindOptions,
-  selectedFile,
+  selectedFiles,
   uploadMissingRequirements,
   uploadLoading,
   lastUploadedDocument,
@@ -202,12 +202,13 @@ export function DocumentsUploadPanel({
                       ref={uploadFileInputRef}
                       hidden
                       type="file"
+                      multiple
                       accept=".pdf,.xlsx,image/*"
                       onClick={(event) => {
                         event.currentTarget.value = "";
                       }}
                       onChange={(event) => {
-                        onFileSelect(event.target.files?.[0] ?? null);
+                        onFileSelect(Array.from(event.target.files ?? []));
                       }}
                     />
                     <Button
@@ -226,24 +227,28 @@ export function DocumentsUploadPanel({
                       Выбрать файл
                     </Button>
                   </Stack>
-                  {selectedFile ? (
+                  {selectedFiles.length > 0 ? (
                     <Alert severity="success" className="selected-file-alert">
-                      <Typography className="selected-file-title">Файл выбран</Typography>
-                      <Typography className="selected-file">{selectedFile.name}</Typography>
+                      <Typography className="selected-file-title">
+                        {selectedFiles.length > 1 ? `Выбрано файлов: ${selectedFiles.length}` : "Файл выбран"}
+                      </Typography>
+                      <Typography className="selected-file">
+                        {selectedFiles.map((file) => file.name).join(", ")}
+                      </Typography>
                       <Typography className="muted-copy">
-                        Файл пока только выбран локально. Можно загружать сразу: техника, дата и пробег теперь необязательны, OCR попытается заполнить их автоматически.
+                        Файлы пока только выбраны локально. Можно загружать сразу: техника, дата и пробег необязательны, OCR попытается заполнить их автоматически. Если выбрано несколько фото, сервер объединит их в один PDF.
                       </Typography>
                     </Alert>
                   ) : (
                     <Typography className="selected-file">Файл ещё не выбран</Typography>
                   )}
-                  {selectedFile && uploadMissingRequirements.length > 0 ? (
+                  {selectedFiles.length > 0 && uploadMissingRequirements.length > 0 ? (
                     <Alert severity="info">
                       Для загрузки ещё нужно указать: {uploadMissingRequirements.join(", ")}.
                     </Alert>
-                  ) : selectedFile ? (
+                  ) : selectedFiles.length > 0 ? (
                     <Alert severity="info">
-                      После загрузки система создаст черновик ремонта, выполнит OCR, проверит машину, сервис, справочники и историю, а затем подготовит короткий итог по заказ-наряду.
+                      После загрузки система создаст черновик ремонта, выполнит OCR, проверит машину, сервис, справочники и историю, а затем подготовит короткий итог по заказ-наряду. Несколько фото будут объединены в один PDF перед распознаванием.
                     </Alert>
                   ) : null}
                 </Paper>

@@ -1,4 +1,3 @@
-import shutil
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -12,6 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.api.access import get_allowed_vehicle_ids_query, get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.api.upload_validation import validate_document_upload
+from app.core.config import settings
 from app.core.paths import STORAGE_ROOT
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
@@ -38,6 +38,7 @@ from app.schemas.document import (
     DocumentVehicleRead,
 )
 from app.services.import_jobs import enqueue_document_processing_job
+from app.services.pdf_tools import merge_images_to_pdf
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 COMPARISON_REVIEW_ACTIONS = {"keep_current_primary", "make_document_primary", "mark_reviewed"}
@@ -137,6 +138,92 @@ def build_storage_key(filename: str) -> str:
     suffix = Path(filename).suffix.lower()
     today = date.today()
     return f"documents/{today.year}/{today.month:02d}/{uuid4().hex}{suffix}"
+
+
+def read_uploaded_file_bytes(upload: UploadFile) -> bytes:
+    upload.file.seek(0)
+    return upload.file.read()
+
+
+def get_uploaded_file_size(upload: UploadFile) -> int:
+    current_position = upload.file.tell()
+    try:
+        upload.file.seek(0, 2)
+        return int(upload.file.tell())
+    finally:
+        upload.file.seek(current_position)
+
+
+def close_uploaded_files(uploads: list[UploadFile]) -> None:
+    for upload in uploads:
+        upload.file.close()
+
+
+def collect_document_uploads(
+    file: UploadFile | None,
+    files: list[UploadFile] | None,
+) -> list[UploadFile]:
+    uploads = [item for item in (files or []) if item is not None]
+    if file is not None:
+        uploads.append(file)
+    if not uploads:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Сначала выберите файл")
+    return uploads
+
+
+def build_merged_upload_filename(uploads: list[UploadFile]) -> str:
+    first_filename = (uploads[0].filename or "").strip()
+    first_stem = Path(first_filename).stem.strip() if first_filename else ""
+    base_name = first_stem or "document"
+    return f"{base_name}_merged_{len(uploads)}_images.pdf"
+
+
+def build_document_upload_artifact(
+    file: UploadFile | None,
+    files: list[UploadFile] | None,
+) -> dict[str, object]:
+    uploads = collect_document_uploads(file, files)
+    if len(uploads) == 1:
+        upload = uploads[0]
+        return {
+            "content": read_uploaded_file_bytes(upload),
+            "original_filename": upload.filename or "document",
+            "mime_type": upload.content_type,
+            "source_type": validate_document_upload(upload),
+            "uploaded_files": [upload.filename or "document"],
+            "upload_mode": "single_file",
+        }
+
+    source_types = [validate_document_upload(upload) for upload in uploads]
+    if any(source_type != "image" for source_type in source_types):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="При загрузке нескольких файлов поддерживаются только изображения: сервер объединит их в один PDF.",
+        )
+
+    total_upload_size = sum(get_uploaded_file_size(upload) for upload in uploads)
+    if total_upload_size > settings.max_document_upload_size_bytes:
+        max_size_mb = round(settings.max_document_upload_size_bytes / (1024 * 1024), 1)
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Совокупный размер набора фотографий превышает лимит {max_size_mb} MB",
+        )
+
+    uploaded_files = [upload.filename or f"image_{index + 1}" for index, upload in enumerate(uploads)]
+    try:
+        merged_content = merge_images_to_pdf(
+            [(uploaded_files[index], read_uploaded_file_bytes(upload)) for index, upload in enumerate(uploads)]
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    return {
+        "content": merged_content,
+        "original_filename": build_merged_upload_filename(uploads),
+        "mime_type": "application/pdf",
+        "source_type": "pdf",
+        "uploaded_files": uploaded_files,
+        "upload_mode": "merged_images",
+    }
 
 
 def load_document_with_relations(db: Session, document_id: int) -> Optional[Document]:
@@ -720,7 +807,8 @@ def upload_document(
     reason: Optional[str] = Form(default=None),
     employee_comment: Optional[str] = Form(default=None),
     notes: Optional[str] = Form(default=None),
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(default=None),
+    files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> DocumentUploadResponse:
@@ -737,15 +825,15 @@ def upload_document(
     else:
         vehicle = get_or_create_placeholder_vehicle(db)
 
-    source_type = validate_document_upload(file)
-    storage_key = build_storage_key(file.filename or "document")
+    uploads = collect_document_uploads(file, files)
+    upload_artifact = build_document_upload_artifact(file, files)
+    storage_key = build_storage_key(str(upload_artifact["original_filename"]))
     destination = STORAGE_ROOT / storage_key
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     created_document_id = None
     try:
-        with destination.open("wb") as target:
-            shutil.copyfileobj(file.file, target)
+        destination.write_bytes(upload_artifact["content"])
 
         repair = Repair(
             order_number=order_number,
@@ -764,10 +852,10 @@ def upload_document(
         document = Document(
             repair_id=repair.id,
             uploaded_by_user_id=current_user.id,
-            original_filename=file.filename or "document",
+            original_filename=str(upload_artifact["original_filename"]),
             storage_key=storage_key,
-            mime_type=file.content_type,
-            source_type=source_type,
+            mime_type=str(upload_artifact["mime_type"]) if upload_artifact["mime_type"] is not None else None,
+            source_type=str(upload_artifact["source_type"]),
             kind=kind,
             status=DocumentStatus.UPLOADED,
             is_primary=True,
@@ -792,6 +880,8 @@ def upload_document(
                     "uploaded_repair_date": repair_date.isoformat() if repair_date else None,
                     "uploaded_mileage": mileage,
                     "uploaded_vehicle_id": vehicle_id,
+                    "upload_mode": upload_artifact["upload_mode"],
+                    "uploaded_files": upload_artifact["uploaded_files"],
                 },
                 field_confidence_map={},
                 change_summary="Initial upload",
@@ -805,7 +895,7 @@ def upload_document(
             destination.unlink()
         raise
     finally:
-        file.file.close()
+        close_uploaded_files(uploads)
 
     if created_document_id is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")
@@ -904,7 +994,8 @@ def upload_document_to_repair(
     repair_id: int = Form(...),
     kind: DocumentKind = Form(default=DocumentKind.REPEAT_SCAN),
     notes: Optional[str] = Form(default=None),
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(default=None),
+    files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> DocumentUploadResponse:
@@ -912,15 +1003,15 @@ def upload_document_to_repair(
     if repair is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
 
-    source_type = validate_document_upload(file)
-    storage_key = build_storage_key(file.filename or "document")
+    uploads = collect_document_uploads(file, files)
+    upload_artifact = build_document_upload_artifact(file, files)
+    storage_key = build_storage_key(str(upload_artifact["original_filename"]))
     destination = STORAGE_ROOT / storage_key
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     created_document_id = None
     try:
-        with destination.open("wb") as target:
-            shutil.copyfileobj(file.file, target)
+        destination.write_bytes(upload_artifact["content"])
 
         existing_documents_total = db.scalar(
             select(func.count(Document.id)).where(Document.repair_id == repair.id)
@@ -929,10 +1020,10 @@ def upload_document_to_repair(
         document = Document(
             repair_id=repair.id,
             uploaded_by_user_id=current_user.id,
-            original_filename=file.filename or "document",
+            original_filename=str(upload_artifact["original_filename"]),
             storage_key=storage_key,
-            mime_type=file.content_type,
-            source_type=source_type,
+            mime_type=str(upload_artifact["mime_type"]) if upload_artifact["mime_type"] is not None else None,
+            source_type=str(upload_artifact["source_type"]),
             kind=kind,
             status=DocumentStatus.UPLOADED,
             is_primary=existing_documents_total == 0,
@@ -956,6 +1047,8 @@ def upload_document_to_repair(
                     "ocr_status": "queued",
                     "uploaded_by_user_id": current_user.id,
                     "repair_id": repair.id,
+                    "upload_mode": upload_artifact["upload_mode"],
+                    "uploaded_files": upload_artifact["uploaded_files"],
                 },
                 field_confidence_map={},
                 change_summary="Attached to existing repair",
@@ -969,7 +1062,7 @@ def upload_document_to_repair(
             destination.unlink()
         raise
     finally:
-        file.file.close()
+        close_uploaded_files(uploads)
 
     if created_document_id is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document was not created")

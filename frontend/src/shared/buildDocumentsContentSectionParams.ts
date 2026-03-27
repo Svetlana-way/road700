@@ -36,7 +36,7 @@ export function buildDocumentsContentSectionParams(
     uploadForm: documentsWorkspace.uploadForm,
     vehicles: rootState.vehicles,
     rootDocumentKindOptions,
-    selectedFile: documentsWorkspace.selectedFile,
+    selectedFiles: documentsWorkspace.selectedFiles,
     uploadMissingRequirements: repairDerivedViewModel.uploadMissingRequirements,
     uploadLoading: documentsWorkspace.uploadLoading,
     lastUploadedDocument: documentsWorkspace.lastUploadedDocument,

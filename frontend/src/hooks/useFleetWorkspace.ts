@@ -38,6 +38,7 @@ export function useFleetWorkspace({
   const [fleetViewMode, setFleetViewMode] = useState<"list" | "detail">("list");
   const [vehicleSaving, setVehicleSaving] = useState(false);
   const [vehicleExportLoading, setVehicleExportLoading] = useState(false);
+  const [vehiclePdfExportLoading, setVehiclePdfExportLoading] = useState(false);
   const fleetListScrollPositionRef = useRef(0);
 
   async function loadFleetVehicles(
@@ -154,6 +155,21 @@ export function useFleetWorkspace({
     }
   }
 
+  async function handleExportVehiclePdf() {
+    if (!token || !selectedFleetVehicle) {
+      return;
+    }
+    setVehiclePdfExportLoading(true);
+    setErrorMessage("");
+    try {
+      await downloadApiFile(`/vehicles/${selectedFleetVehicle.id}/export.pdf`, token, `vehicle_${selectedFleetVehicle.id}.pdf`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось выгрузить карточку техники в PDF");
+    } finally {
+      setVehiclePdfExportLoading(false);
+    }
+  }
+
   function resetFleetState() {
     setFleetVehicles([]);
     setFleetVehiclesTotal(0);
@@ -167,6 +183,7 @@ export function useFleetWorkspace({
     setFleetViewMode("list");
     setVehicleSaving(false);
     setVehicleExportLoading(false);
+    setVehiclePdfExportLoading(false);
     fleetListScrollPositionRef.current = 0;
   }
 
@@ -207,6 +224,7 @@ export function useFleetWorkspace({
     setFleetViewMode,
     vehicleSaving,
     vehicleExportLoading,
+    vehiclePdfExportLoading,
     loadFleetVehicles,
     applyBootstrapVehicleList,
     openFleetVehicleCard,
@@ -214,6 +232,7 @@ export function useFleetWorkspace({
     openFleetVehicleById,
     handleUpdateVehicle,
     handleExportVehicle,
+    handleExportVehiclePdf,
     resetFleetState,
   };
 }

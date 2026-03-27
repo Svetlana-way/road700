@@ -13,10 +13,12 @@ type FleetVehicleDetailPanelProps = {
   userRole?: UserRole;
   vehicleSaving: boolean;
   vehicleExportLoading: boolean;
+  vehiclePdfExportLoading: boolean;
   vehicles: VehiclePreview[];
   fleetVehicles: VehiclePreview[];
   onUpdateVehicleStatus: (status: VehicleStatus) => void;
   onExportVehicle: () => void;
+  onExportVehiclePdf: () => void;
   onOpenRepair: (repairId: number) => void;
   formatVehicle: (vehicle: VehiclePreview) => string;
   formatVehicleTypeLabel: (value: VehicleType | "" | null | undefined) => string;
@@ -35,10 +37,12 @@ export function FleetVehicleDetailPanel({
   userRole,
   vehicleSaving,
   vehicleExportLoading,
+  vehiclePdfExportLoading,
   vehicles,
   fleetVehicles,
   onUpdateVehicleStatus,
   onExportVehicle,
+  onExportVehiclePdf,
   onOpenRepair,
   formatVehicle,
   formatVehicleTypeLabel,
@@ -92,6 +96,9 @@ export function FleetVehicleDetailPanel({
               ) : null}
               <Button variant="outlined" onClick={onExportVehicle} disabled={vehicleExportLoading}>
                 {vehicleExportLoading ? "Экспорт..." : "Экспорт Excel"}
+              </Button>
+              <Button variant="outlined" onClick={onExportVehiclePdf} disabled={vehiclePdfExportLoading}>
+                {vehiclePdfExportLoading ? "Экспорт..." : "Экспорт PDF"}
               </Button>
               <Chip size="small" variant="outlined" label={formatVehicleTypeLabel(selectedFleetVehicle.vehicle_type)} />
               <Chip size="small" color={vehicleStatusColor(selectedFleetVehicle.status)} label={formatVehicleStatusLabel(selectedFleetVehicle.status)} />

@@ -3,9 +3,11 @@ from __future__ import annotations
 import tempfile
 import unittest
 import warnings
+from io import BytesIO
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -96,6 +98,12 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
+
+    def _make_png_bytes(self, color: tuple[int, int, int]) -> bytes:
+        image = Image.new("RGB", (64, 48), color=color)
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
 
     def test_upload_creates_queued_job_and_retry_reuses_failed_job(self) -> None:
         headers = self._get_auth_headers()
@@ -191,6 +199,76 @@ class DocumentJobsApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(response.json()["detail"], "Cannot compare a document with itself")
+
+    def test_upload_multiple_images_merges_into_single_pdf_and_queues_job(self) -> None:
+        headers = self._get_auth_headers()
+
+        response = self.client.post(
+            "/api/documents/upload",
+            headers=headers,
+            files=[
+                ("files", ("page-1.png", self._make_png_bytes((220, 20, 60)), "image/png")),
+                ("files", ("page-2.png", self._make_png_bytes((65, 105, 225)), "image/png")),
+            ],
+            data={"kind": "order"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["document"]["mime_type"], "application/pdf")
+        self.assertEqual(payload["document"]["source_type"], "pdf")
+        self.assertEqual(payload["document"]["parsed_payload"]["upload_mode"], "merged_images")
+        self.assertEqual(len(payload["document"]["parsed_payload"]["uploaded_files"]), 2)
+        self.assertTrue(payload["document"]["original_filename"].endswith(".pdf"))
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, payload["document"]["id"])
+            self.assertIsNotNone(document)
+            assert document is not None
+            stored_path = self.storage_root / document.storage_key
+            self.assertTrue(stored_path.exists())
+            self.assertTrue(stored_path.read_bytes().startswith(b"%PDF"))
+
+    def test_attach_multiple_images_to_existing_repair_merges_into_single_pdf(self) -> None:
+        headers = self._get_auth_headers()
+        initial_payload = self._upload_order_document(headers)
+        repair_id = initial_payload["document"]["repair"]["id"]
+
+        response = self.client.post(
+            "/api/documents/upload-to-repair",
+            headers=headers,
+            files=[
+                ("files", ("scan-1.png", self._make_png_bytes((34, 139, 34)), "image/png")),
+                ("files", ("scan-2.png", self._make_png_bytes((255, 140, 0)), "image/png")),
+            ],
+            data={"repair_id": str(repair_id), "kind": "repeat_scan"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["document"]["repair"]["id"], repair_id)
+        self.assertEqual(payload["document"]["mime_type"], "application/pdf")
+        self.assertEqual(payload["document"]["source_type"], "pdf")
+        self.assertEqual(payload["document"]["parsed_payload"]["upload_mode"], "merged_images")
+        self.assertFalse(payload["document"]["is_primary"])
+
+    def test_repair_and_vehicle_pdf_exports_return_pdf_files(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        repair_id = payload["document"]["repair"]["id"]
+        vehicle_id = payload["document"]["vehicle"]["id"]
+
+        repair_response = self.client.get(f"/api/repairs/{repair_id}/export.pdf", headers=headers)
+        self.assertEqual(repair_response.status_code, 200, repair_response.text)
+        self.assertIn("application/pdf", repair_response.headers["content-type"])
+        self.assertIn('.pdf"', repair_response.headers["content-disposition"])
+        self.assertTrue(repair_response.content.startswith(b"%PDF"))
+
+        vehicle_response = self.client.get(f"/api/vehicles/{vehicle_id}/export.pdf", headers=headers)
+        self.assertEqual(vehicle_response.status_code, 200, vehicle_response.text)
+        self.assertIn("application/pdf", vehicle_response.headers["content-type"])
+        self.assertIn('.pdf"', vehicle_response.headers["content-disposition"])
+        self.assertTrue(vehicle_response.content.startswith(b"%PDF"))
 
     def _mark_job_failed(self, db: Session, job_id: int, document_id: int) -> None:
         job = db.get(ImportJob, job_id)

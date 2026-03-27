@@ -16,14 +16,14 @@ type RepairWorkspaceContentPanelProps = {
   saveRepairLoading: boolean;
   hasRepairDraft: boolean;
   repairExportLoading: boolean;
+  repairPdfExportLoading: boolean;
   repairArchiveLoading: boolean;
-  repairDeleteLoading: boolean;
   onCancelEdit: () => void;
   onSaveRepair: () => void;
   onExportRepair: () => void;
+  onExportRepairPdf: () => void;
   onStartEdit: () => void;
   onArchiveRepair: () => void;
-  onDeleteRepair: (repairId: number) => void;
   reviewDecisionProps: ReviewDecisionProps | null;
   repairTabsProps: RepairTabsProps | null;
   formatRepairStatus: (status: string) => string;
@@ -40,14 +40,14 @@ export function RepairWorkspaceContentPanel({
   saveRepairLoading,
   hasRepairDraft,
   repairExportLoading,
+  repairPdfExportLoading,
   repairArchiveLoading,
-  repairDeleteLoading,
   onCancelEdit,
   onSaveRepair,
   onExportRepair,
+  onExportRepairPdf,
   onStartEdit,
   onArchiveRepair,
-  onDeleteRepair,
   reviewDecisionProps,
   repairTabsProps,
   formatRepairStatus,
@@ -105,6 +105,9 @@ export function RepairWorkspaceContentPanel({
                 <Button variant="outlined" onClick={onExportRepair} disabled={repairExportLoading}>
                   {repairExportLoading ? "Экспорт..." : "Экспорт Excel"}
                 </Button>
+                <Button variant="outlined" onClick={onExportRepairPdf} disabled={repairPdfExportLoading}>
+                  {repairPdfExportLoading ? "Экспорт..." : "Экспорт PDF"}
+                </Button>
                 {selectedRepair.status !== "archived" ? (
                   <>
                     <Button variant="outlined" onClick={onStartEdit}>
@@ -115,9 +118,6 @@ export function RepairWorkspaceContentPanel({
                     </Button>
                   </>
                 ) : null}
-                <Button variant="text" color="error" disabled={repairDeleteLoading} onClick={() => onDeleteRepair(selectedRepair.id)}>
-                  {repairDeleteLoading ? "Удаление..." : "Удалить"}
-                </Button>
               </>
             )}
           </Stack>
@@ -125,6 +125,9 @@ export function RepairWorkspaceContentPanel({
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
             <Button variant="outlined" onClick={onExportRepair} disabled={repairExportLoading}>
               {repairExportLoading ? "Экспорт..." : "Экспорт Excel"}
+            </Button>
+            <Button variant="outlined" onClick={onExportRepairPdf} disabled={repairPdfExportLoading}>
+              {repairPdfExportLoading ? "Экспорт..." : "Экспорт PDF"}
             </Button>
           </Stack>
         )}

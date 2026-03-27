@@ -181,7 +181,7 @@ export default function App() {
   });
   const {
     uploadForm,
-    selectedFile,
+    selectedFiles,
     lastUploadedDocument,
     setLastUploadedDocument,
     uploadFileInputRef,
@@ -534,6 +534,7 @@ export default function App() {
     setFleetViewMode,
     vehicleSaving,
     vehicleExportLoading,
+    vehiclePdfExportLoading,
     loadFleetVehicles,
     applyBootstrapVehicleList,
     openFleetVehicleCard,
@@ -541,6 +542,7 @@ export default function App() {
     openFleetVehicleById,
     handleUpdateVehicle,
     handleExportVehicle,
+    handleExportVehiclePdf,
     resetFleetState,
   } = fleetWorkspace;
   const repairDetailLoader = useRepairDetailLoader<RepairDetail, DocumentItem>({
@@ -599,7 +601,7 @@ export default function App() {
   } = appNavigation;
   const repairDerivedViewModel = useRepairDerivedViewModel({
     selectedDocumentId,
-    selectedFile,
+    selectedFiles,
     userRole: user?.role,
     selectedRepair,
     reviewQueue,
@@ -755,11 +757,13 @@ export default function App() {
   });
   const {
     repairExportLoading,
+    repairPdfExportLoading,
     documentVehicleSaving,
     checkActionLoadingId,
     openQualityRepair,
     openQualityService,
     handleExportRepair,
+    handleExportRepairPdf,
     handleOpenRepair,
     handleCheckResolution,
     handleCreateVehicleFromDocument,
@@ -786,8 +790,8 @@ export default function App() {
     setAttachedDocumentKind,
     attachedDocumentNotes,
     setAttachedDocumentNotes,
-    attachedDocumentFile,
-    setAttachedDocumentFile,
+    attachedDocumentFiles,
+    setAttachedDocumentFiles,
     documentComparison,
     setDocumentComparison,
     documentComparisonComment,

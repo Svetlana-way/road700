@@ -49,7 +49,7 @@ export function useRepairDocumentsWorkflow({
   const [documentComparisonReviewLoading, setDocumentComparisonReviewLoading] = useState(false);
   const [attachedDocumentKind, setAttachedDocumentKind] = useState<DocumentKind>("repeat_scan");
   const [attachedDocumentNotes, setAttachedDocumentNotes] = useState("");
-  const [attachedDocumentFile, setAttachedDocumentFile] = useState<File | null>(null);
+  const [attachedDocumentFiles, setAttachedDocumentFiles] = useState<File[]>([]);
   const [documentComparison, setDocumentComparison] = useState<DocumentComparisonResponse | null>(null);
   const [documentComparisonComment, setDocumentComparisonComment] = useState("");
 
@@ -72,7 +72,7 @@ export function useRepairDocumentsWorkflow({
   }
 
   async function handleAttachDocumentToRepair() {
-    if (!token || !selectedRepair || !attachedDocumentFile) {
+    if (!token || !selectedRepair || attachedDocumentFiles.length === 0) {
       setErrorMessage("Сначала выберите файл");
       return;
     }
@@ -85,7 +85,9 @@ export function useRepairDocumentsWorkflow({
       body.append("repair_id", String(selectedRepair.id));
       body.append("kind", attachedDocumentKind);
       body.append("notes", attachedDocumentNotes);
-      body.append("file", attachedDocumentFile);
+      for (const file of attachedDocumentFiles) {
+        body.append("files", file);
+      }
 
       const result = await apiRequest<{ document: { id: number }; message: string }>(
         "/documents/upload-to-repair",
@@ -98,7 +100,7 @@ export function useRepairDocumentsWorkflow({
 
       setSuccessMessage(result.message);
       setAttachedDocumentNotes("");
-      setAttachedDocumentFile(null);
+      setAttachedDocumentFiles([]);
       await refreshWorkspace();
       await openRepairByIds(result.document.id, selectedRepair.id);
     } catch (error) {
@@ -206,7 +208,7 @@ export function useRepairDocumentsWorkflow({
     setDocumentComparisonReviewLoading(false);
     setAttachedDocumentKind("repeat_scan");
     setAttachedDocumentNotes("");
-    setAttachedDocumentFile(null);
+    setAttachedDocumentFiles([]);
     setDocumentComparison(null);
     setDocumentComparisonComment("");
   }
@@ -221,8 +223,8 @@ export function useRepairDocumentsWorkflow({
     setAttachedDocumentKind,
     attachedDocumentNotes,
     setAttachedDocumentNotes,
-    attachedDocumentFile,
-    setAttachedDocumentFile,
+    attachedDocumentFiles,
+    setAttachedDocumentFiles,
     documentComparison,
     setDocumentComparison,
     documentComparisonComment,

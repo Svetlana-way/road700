@@ -39,7 +39,7 @@ type RepairDetailLike = Pick<
 
 type UseRepairDerivedViewModelParams = {
   selectedDocumentId: number | null;
-  selectedFile: File | null;
+  selectedFiles: File[];
   userRole: UserRole | null | undefined;
   selectedRepair: RepairDetailLike | null;
   reviewQueue: ReviewQueueItem[];
@@ -51,7 +51,7 @@ type UseRepairDerivedViewModelParams = {
 
 export function useRepairDerivedViewModel({
   selectedDocumentId,
-  selectedFile,
+  selectedFiles,
   userRole,
   selectedRepair,
   reviewQueue,
@@ -267,9 +267,10 @@ export function useRepairDerivedViewModel({
     (item) => item.status === "missing" || item.status === "mismatch",
   ).length;
   const reviewReadyFieldsCount = reviewRequiredFieldComparisons.filter((item) => item.status !== "missing").length;
-  const canConfirmSelectedReview = reviewMissingRequiredFields.length === 0;
+  const hasUnresolvedReviewChecks = selectedRepairUnresolvedChecks.length > 0;
+  const canConfirmSelectedReview = reviewMissingRequiredFields.length === 0 && !hasUnresolvedReviewChecks;
   const uploadMissingRequirements = [
-    !selectedFile ? "файл" : null,
+    selectedFiles.length === 0 ? "файл" : null,
   ].filter(Boolean) as string[];
   const canLinkVehicleFromSelectedDocument =
     selectedDocumentId !== null &&

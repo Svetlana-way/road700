@@ -374,6 +374,16 @@ def collect_missing_confirmation_fields(document: Document) -> list[str]:
     return missing_fields
 
 
+def collect_unresolved_confirmation_findings(document: Document) -> list[str]:
+    unresolved_checks = [item for item in document.repair.checks if not item.is_resolved]
+    findings: list[str] = []
+    for check in unresolved_checks:
+        title = check.title.strip() if isinstance(check.title, str) else ""
+        if title and title not in findings:
+            findings.append(title)
+    return findings
+
+
 def apply_review_action(document: Document, action: str, comment: Optional[str], current_user: User) -> str:
     if action == "employee_confirm":
         document.status = DocumentStatus.CONFIRMED
@@ -381,9 +391,6 @@ def apply_review_action(document: Document, action: str, comment: Optional[str],
         document.repair.status = RepairStatus.EMPLOYEE_CONFIRMED
         document.repair.is_preliminary = True
         document.repair.is_partially_recognized = False
-        for check in document.repair.checks:
-            if not check.is_resolved:
-                check.is_resolved = True
         message = "Заказ-наряд подтверждён сотрудником и отправлен администратору"
     elif action == "confirm":
         document.status = DocumentStatus.CONFIRMED
@@ -391,9 +398,6 @@ def apply_review_action(document: Document, action: str, comment: Optional[str],
         document.repair.status = RepairStatus.CONFIRMED
         document.repair.is_preliminary = False
         document.repair.is_partially_recognized = False
-        for check in document.repair.checks:
-            if not check.is_resolved:
-                check.is_resolved = True
         message = "Заказ-наряд подтверждён администратором"
     else:
         document.status = DocumentStatus.NEEDS_REVIEW
@@ -695,6 +699,18 @@ def execute_review_action(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Нельзя подтвердить документ. Заполните обязательные поля: {', '.join(missing_fields)}",
+            )
+        unresolved_findings = collect_unresolved_confirmation_findings(document)
+        if unresolved_findings:
+            preview = ", ".join(unresolved_findings[:3])
+            if len(unresolved_findings) > 3:
+                preview = f"{preview} и ещё {len(unresolved_findings) - 3}"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Нельзя подтвердить документ. Сначала разберите все предупреждения и несоответствия: "
+                    f"{preview}"
+                ),
             )
     old_snapshot = build_repair_state_snapshot(document)
     message = apply_review_action(document, action, payload.comment, current_user)

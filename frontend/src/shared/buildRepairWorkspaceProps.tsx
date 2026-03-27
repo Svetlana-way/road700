@@ -31,14 +31,16 @@ export type BuildRepairWorkspacePropsParams = {
   saveRepairLoading: RepairWorkspaceContentProps["saveRepairLoading"];
   repairDraft: RepairEditProps["repairDraft"] | null;
   repairExportLoading: RepairWorkspaceContentProps["repairExportLoading"];
+  repairPdfExportLoading: RepairWorkspaceContentProps["repairPdfExportLoading"];
   repairArchiveLoading: RepairWorkspaceContentProps["repairArchiveLoading"];
-  repairDeleteLoading: RepairWorkspaceContentProps["repairDeleteLoading"];
+  repairDeleteLoading: boolean;
   handleCancelRepairEdit: RepairWorkspaceContentProps["onCancelEdit"];
   handleSaveRepair: () => void | Promise<void>;
   handleExportRepair: () => void | Promise<void>;
+  handleExportRepairPdf: () => void | Promise<void>;
   handleStartRepairEdit: RepairWorkspaceContentProps["onStartEdit"];
   handleArchiveRepair: () => void | Promise<void>;
-  handleDeleteRepair: RepairWorkspaceContentProps["onDeleteRepair"];
+  handleDeleteRepair: (repairId: number) => void | Promise<void>;
   selectedRepairDocument: ReviewDecisionProps["selectedRepairDocument"];
   reviewDocumentPreviewLoading: ReviewDecisionProps["reviewDocumentPreviewLoading"];
   reviewDocumentPreviewKind: ReviewDecisionProps["reviewDocumentPreviewKind"];
@@ -142,7 +144,7 @@ export type BuildRepairWorkspacePropsParams = {
   documentKindOptions: RepairDocumentsProps["documentKindOptions"];
   attachedDocumentKind: RepairDocumentsProps["attachedDocumentKind"];
   attachedDocumentNotes: RepairDocumentsProps["attachedDocumentNotes"];
-  attachedDocumentFile: RepairDocumentsProps["attachedDocumentFile"];
+  attachedDocumentFiles: RepairDocumentsProps["attachedDocumentFiles"];
   attachedFileInputRef: RepairDocumentsProps["attachedFileInputRef"];
   attachDocumentLoading: RepairDocumentsProps["attachDocumentLoading"];
   reprocessLoading: RepairDocumentsProps["reprocessLoading"];
@@ -204,8 +206,8 @@ export function buildRepairWorkspaceProps(params: BuildRepairWorkspacePropsParam
       saveRepairLoading: params.saveRepairLoading,
       hasRepairDraft: Boolean(params.repairDraft),
       repairExportLoading: params.repairExportLoading,
+      repairPdfExportLoading: params.repairPdfExportLoading,
       repairArchiveLoading: params.repairArchiveLoading,
-      repairDeleteLoading: params.repairDeleteLoading,
       onCancelEdit: params.handleCancelRepairEdit,
       onSaveRepair: () => {
         void params.handleSaveRepair();
@@ -213,12 +215,12 @@ export function buildRepairWorkspaceProps(params: BuildRepairWorkspacePropsParam
       onExportRepair: () => {
         void params.handleExportRepair();
       },
+      onExportRepairPdf: () => {
+        void params.handleExportRepairPdf();
+      },
       onStartEdit: params.handleStartRepairEdit,
       onArchiveRepair: () => {
         void params.handleArchiveRepair();
-      },
-      onDeleteRepair: (repairId) => {
-        void params.handleDeleteRepair(repairId);
       },
       reviewDecisionProps:
         params.selectedRepair
@@ -405,7 +407,7 @@ export function buildRepairWorkspaceProps(params: BuildRepairWorkspacePropsParam
                 documentKindOptions: params.documentKindOptions,
                 attachedDocumentKind: params.attachedDocumentKind,
                 attachedDocumentNotes: params.attachedDocumentNotes,
-                attachedDocumentFile: params.attachedDocumentFile,
+                attachedDocumentFiles: params.attachedDocumentFiles,
                 attachedFileInputRef: params.attachedFileInputRef,
                 attachDocumentLoading: params.attachDocumentLoading,
                 documentOpenLoadingId: params.documentOpenLoadingId,

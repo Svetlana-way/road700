@@ -19,8 +19,8 @@ from app.core.security import get_password_hash
 from app.db.base import Base
 from app.main import app
 from app.models.document import Document
-from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
-from app.models.repair import Repair
+from app.models.enums import CheckSeverity, DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
+from app.models.repair import Repair, RepairCheck
 from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle, VehicleAssignmentHistory
@@ -182,6 +182,44 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["document_status"], "needs_review")
         self.assertEqual(payload["repair_status"], "in_review")
+
+    def test_employee_cannot_confirm_repair_with_unresolved_findings(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            db.add(
+                RepairCheck(
+                    repair_id=repair.id,
+                    check_type="ocr_total_mismatch",
+                    severity=CheckSeverity.SUSPICIOUS,
+                    title="Сумма строк не совпадает с итоговой суммой",
+                    details="Требуется ручная проверка",
+                    is_resolved=False,
+                )
+            )
+            db.commit()
+
+        response = self.client.post(
+            "/api/review/queue/1/action",
+            headers=headers,
+            json={"action": "employee_confirm", "comment": "Проверил"},
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("Сначала разберите все предупреждения", response.json()["detail"])
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+            self.assertEqual(repair.status, RepairStatus.IN_REVIEW)
+            self.assertEqual(document.status, DocumentStatus.NEEDS_REVIEW)
 
     def test_employee_can_access_own_preliminary_repair_after_server_vehicle_relink(self) -> None:
         headers = self._get_auth_headers("employee")
@@ -426,6 +464,24 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(response.json()["detail"], "Нельзя назначить сотрудника на архивную технику")
+
+    def test_delete_endpoint_archives_repair_instead_of_removing_it(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        response = self.client.delete("/api/repairs/1", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["message"], "Заказ-наряд и связанные документы отправлены в архив")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+            self.assertEqual(repair.status, RepairStatus.ARCHIVED)
+            self.assertEqual(document.status, DocumentStatus.ARCHIVED)
 
 
 if __name__ == "__main__":

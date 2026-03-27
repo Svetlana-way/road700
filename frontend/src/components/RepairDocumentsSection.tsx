@@ -14,7 +14,7 @@ type RepairDocumentsSectionProps = {
   documentKindOptions: Array<{ value: DocumentKind; label: string }>;
   attachedDocumentKind: DocumentKind;
   attachedDocumentNotes: string;
-  attachedDocumentFile: File | null;
+  attachedDocumentFiles: File[];
   attachedFileInputRef: Ref<HTMLInputElement>;
   attachDocumentLoading: boolean;
   documentOpenLoadingId: number | null;
@@ -29,7 +29,7 @@ type RepairDocumentsSectionProps = {
   documentComparisonReviewLoading: boolean;
   onAttachedDocumentKindChange: (value: DocumentKind) => void;
   onAttachedDocumentNotesChange: (value: string) => void;
-  onAttachedDocumentFileChange: (file: File | null) => void;
+  onAttachedDocumentFileChange: (files: File[]) => void;
   onOpenAttachedFilePicker: () => void;
   onAttachDocument: () => void;
   onOpenDocumentFile: (documentId: number) => void;
@@ -59,7 +59,7 @@ export function RepairDocumentsSection({
   documentKindOptions,
   attachedDocumentKind,
   attachedDocumentNotes,
-  attachedDocumentFile,
+  attachedDocumentFiles,
   attachedFileInputRef,
   attachDocumentLoading,
   documentOpenLoadingId,
@@ -138,21 +138,27 @@ export function RepairDocumentsSection({
                   ref={attachedFileInputRef}
                   hidden
                   type="file"
+                  multiple
                   accept=".pdf,.xlsx,image/*"
                   onClick={(event) => {
                     event.currentTarget.value = "";
                   }}
-                  onChange={(event) => onAttachedDocumentFileChange(event.target.files?.[0] ?? null)}
+                  onChange={(event) => onAttachedDocumentFileChange(Array.from(event.target.files ?? []))}
                 />
                 <Button variant="outlined" onClick={onOpenAttachedFilePicker}>
                   Выбрать файл
                 </Button>
                 <Typography className="muted-copy">
-                  {attachedDocumentFile ? attachedDocumentFile.name : "Файл не выбран"}
+                  {attachedDocumentFiles.length > 0
+                    ? attachedDocumentFiles.map((file) => file.name).join(", ")
+                    : "Файл не выбран"}
                 </Typography>
               </Stack>
+              {attachedDocumentFiles.length > 1 ? (
+                <Alert severity="info">Несколько фото будут объединены на сервере в один PDF-документ.</Alert>
+              ) : null}
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                <Button variant="contained" disabled={attachDocumentLoading || !attachedDocumentFile} onClick={onAttachDocument}>
+                <Button variant="contained" disabled={attachDocumentLoading || attachedDocumentFiles.length === 0} onClick={onAttachDocument}>
                   {attachDocumentLoading ? "Загрузка..." : "Добавить документ"}
                 </Button>
               </Stack>

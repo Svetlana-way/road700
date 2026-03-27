@@ -11,7 +11,7 @@ export type BuildDocumentsWorkspacePropsParams = {
   uploadForm: DocumentsUploadProps["uploadForm"];
   vehicles: DocumentsUploadProps["vehicles"];
   rootDocumentKindOptions: DocumentsUploadProps["rootDocumentKindOptions"];
-  selectedFile: DocumentsUploadProps["selectedFile"];
+  selectedFiles: DocumentsUploadProps["selectedFiles"];
   uploadMissingRequirements: DocumentsUploadProps["uploadMissingRequirements"];
   uploadLoading: DocumentsUploadProps["uploadLoading"];
   lastUploadedDocument: DocumentsUploadProps["lastUploadedDocument"];
@@ -71,7 +71,7 @@ export function buildDocumentsWorkspaceProps(params: BuildDocumentsWorkspaceProp
       uploadForm: params.uploadForm,
       vehicles: params.vehicles,
       rootDocumentKindOptions: params.rootDocumentKindOptions,
-      selectedFile: params.selectedFile,
+      selectedFiles: params.selectedFiles,
       uploadMissingRequirements: params.uploadMissingRequirements,
       uploadLoading: params.uploadLoading,
       lastUploadedDocument: params.lastUploadedDocument,

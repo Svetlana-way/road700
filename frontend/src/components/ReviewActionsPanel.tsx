@@ -1,4 +1,4 @@
-import { Button, Stack, TextField } from "@mui/material";
+import { Button, Stack, TextField, Typography } from "@mui/material";
 import type { UserRole } from "../shared/workspaceBootstrapTypes";
 
 type ReviewActionsPanelProps = {
@@ -56,6 +56,9 @@ export function ReviewActionsPanel({
           Вернуть в ручную проверку
         </Button>
       </Stack>
+      <Typography className="muted-copy">
+        Подтверждение доступно только после заполнения обязательных полей и разбора всех предупреждений по заказ-наряду.
+      </Typography>
     </>
   );
 }

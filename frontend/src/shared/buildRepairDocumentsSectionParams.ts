@@ -8,7 +8,7 @@ type RepairDocumentsSectionParams = Pick<
   | "documentKindOptions"
   | "attachedDocumentKind"
   | "attachedDocumentNotes"
-  | "attachedDocumentFile"
+  | "attachedDocumentFiles"
   | "attachedFileInputRef"
   | "attachDocumentLoading"
   | "reprocessLoading"
@@ -43,7 +43,7 @@ export function buildRepairDocumentsSectionParams(
     documentKindOptions,
     attachedDocumentKind: repairDocumentsWorkflow.attachedDocumentKind,
     attachedDocumentNotes: repairDocumentsWorkflow.attachedDocumentNotes,
-    attachedDocumentFile: repairDocumentsWorkflow.attachedDocumentFile,
+    attachedDocumentFiles: repairDocumentsWorkflow.attachedDocumentFiles,
     attachedFileInputRef: rootState.attachedFileInputRef,
     attachDocumentLoading: repairDocumentsWorkflow.attachDocumentLoading,
     reprocessLoading: documentsWorkspace.reprocessLoading,
@@ -57,7 +57,7 @@ export function buildRepairDocumentsSectionParams(
     documentComparisonReviewLoading: repairDocumentsWorkflow.documentComparisonReviewLoading,
     setAttachedDocumentKind: repairDocumentsWorkflow.setAttachedDocumentKind,
     setAttachedDocumentNotes: repairDocumentsWorkflow.setAttachedDocumentNotes,
-    setAttachedDocumentFile: repairDocumentsWorkflow.setAttachedDocumentFile,
+    setAttachedDocumentFile: repairDocumentsWorkflow.setAttachedDocumentFiles,
     handleAttachDocumentToRepair: repairDocumentsWorkflow.handleAttachDocumentToRepair,
     handleReprocessDocumentById: documentsWorkspace.handleReprocessDocumentById,
     handleCompareWithPrimary: repairDocumentsWorkflow.handleCompareWithPrimary,

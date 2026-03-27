@@ -27,6 +27,7 @@ from app.schemas.vehicle import (
 )
 from app.services.exporting import append_rows, safe_filename
 from app.services.historical_repairs_import import IMPORT_REASON_PREFIX
+from app.services.pdf_tools import render_text_report_pdf
 from app.scripts.import_vehicles import (
     DEFAULT_TRAILERS_PATH,
     DEFAULT_TRUCKS_PATH,
@@ -35,6 +36,93 @@ from app.scripts.import_vehicles import (
 
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
+
+
+def build_vehicle_pdf_sections(payload: dict) -> list[tuple[str, list[str]]]:
+    return [
+        (
+            "Карточка техники",
+            [
+                f"ID техники: {payload['id']}",
+                f"Внешний код: {payload['external_id'] or 'Не указан'}",
+                f"Тип техники: {payload['vehicle_type']}",
+                f"Госномер: {payload['plate_number'] or 'Не указан'}",
+                f"VIN: {payload['vin'] or 'Не указан'}",
+                f"Марка и модель: {' '.join(part for part in (payload['brand'], payload['model']) if part) or 'Не указаны'}",
+                f"Год: {payload['year'] or 'Не указан'}",
+                f"Колонна: {payload['column_name'] or 'Не указана'}",
+                f"Механик: {payload['mechanic_name'] or 'Не указан'}",
+                f"Водитель: {payload['current_driver_name'] or 'Не указан'}",
+                f"Статус: {payload['status']}",
+                f"Комментарий: {payload['comment'] or 'Нет'}",
+                f"Ремонтов: {payload['history_summary']['repairs_total']}",
+                f"Документов: {payload['history_summary']['documents_total']}",
+                f"Подтверждено ремонтов: {payload['history_summary']['confirmed_repairs']}",
+                f"Подозрительных ремонтов: {payload['history_summary']['suspicious_repairs']}",
+                f"Последний ремонт: {payload['history_summary']['last_repair_date'] or 'Не найден'}",
+                f"Последний пробег: {payload['history_summary']['last_mileage'] or 'Не указан'}",
+                f"Исторических ремонтов 2025: {payload['historical_history_summary']['repairs_total']}",
+                f"Исторических сервисов: {payload['historical_history_summary']['services_total']}",
+                f"Историческая сумма: {payload['historical_history_summary']['total_spend']}",
+                f"Первый исторический ремонт: {payload['historical_history_summary']['first_repair_date'] or 'Не найден'}",
+                f"Последний исторический ремонт: {payload['historical_history_summary']['last_repair_date'] or 'Не найден'}",
+                f"Создано: {payload['created_at'].isoformat()}",
+                f"Обновлено: {payload['updated_at'].isoformat()}",
+            ],
+        ),
+        (
+            "Закрепления",
+            [
+                (
+                    f"{assignment['user']['full_name']} | {assignment['user']['email']} | {assignment['user']['role']} | "
+                    f"с {assignment['starts_at'].isoformat()} до "
+                    f"{assignment['ends_at'].isoformat() if assignment['ends_at'] is not None else 'текущее время'}"
+                    + (f" | {assignment['comment']}" if assignment['comment'] else "")
+                )
+                for assignment in payload["active_assignments"]
+            ]
+            or ["Активных закреплений нет."],
+        ),
+        (
+            "Связки",
+            [
+                (
+                    f"Левая техника {link.left_vehicle_id} | Правая техника {link.right_vehicle_id} | "
+                    f"с {link.starts_at.isoformat()} до {link.ends_at.isoformat() if link.ends_at is not None else 'текущее время'}"
+                    + (f" | {link.comment}" if link.comment else "")
+                )
+                for link in payload["active_links"]
+            ]
+            or ["Активных связок нет."],
+        ),
+        (
+            "Ремонты",
+            [
+                (
+                    f"Ремонт #{repair['repair_id']} | заказ-наряд {repair['order_number'] or 'Не указан'} | "
+                    f"дата {repair['repair_date'].isoformat()} | пробег {repair['mileage']} | статус {repair['status']} | "
+                    f"сервис {repair['service_name'] or 'Не указан'} | итого {repair['grand_total']} | "
+                    f"документов {repair['documents_total']} | обновлено {repair['updated_at'].isoformat()}"
+                )
+                for repair in payload["repair_history"]
+            ]
+            or ["История ремонтов пуста."],
+        ),
+        (
+            "История 2025",
+            [
+                (
+                    f"Ремонт #{repair['repair_id']} | заказ-наряд {repair['order_number'] or 'Не указан'} | "
+                    f"дата {repair['repair_date'].isoformat()} | пробег {repair['mileage']} | "
+                    f"сервис {repair['service_name'] or 'Не указан'} | итого {repair['grand_total']} | "
+                    f"обновлено {repair['updated_at'].isoformat()}"
+                    + (f" | {repair['employee_comment']}" if repair['employee_comment'] else "")
+                )
+                for repair in payload["historical_repair_history"]
+            ]
+            or ["Исторических ремонтов 2025 нет."],
+        ),
+    ]
 
 
 def build_historical_summary_map(db: Session, vehicle_ids: list[int]) -> dict[int, dict[str, object]]:
@@ -445,6 +533,34 @@ def export_vehicle(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}.xlsx"'},
+    )
+
+
+@router.get("/{vehicle_id}/export.pdf")
+def export_vehicle_pdf(
+    vehicle_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> StreamingResponse:
+    stmt = apply_vehicle_scope(select(Vehicle).where(Vehicle.id == vehicle_id), current_user)
+    vehicle = db.scalar(stmt)
+    if vehicle is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
+
+    payload = build_vehicle_detail_payload(db, vehicle)
+    filename = safe_filename(
+        f"vehicle_{payload['id']}_{payload['plate_number'] or payload['vin'] or 'card'}",
+        f"vehicle_{payload['id']}",
+    )
+    pdf_bytes = render_text_report_pdf(
+        "Карточка техники",
+        build_vehicle_pdf_sections(payload),
+        subtitle=f"Техника #{payload['id']} · {payload['plate_number'] or payload['vin'] or 'без идентификатора'}",
+    )
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.pdf"'},
     )
 
 

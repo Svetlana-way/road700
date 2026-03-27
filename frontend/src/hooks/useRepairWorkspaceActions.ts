@@ -57,6 +57,7 @@ export function useRepairWorkspaceActions({
   setSelectedRepairFromApi,
 }: UseRepairWorkspaceActionsParams) {
   const [repairExportLoading, setRepairExportLoading] = useState(false);
+  const [repairPdfExportLoading, setRepairPdfExportLoading] = useState(false);
   const [documentVehicleSaving, setDocumentVehicleSaving] = useState(false);
   const [checkActionLoadingId, setCheckActionLoadingId] = useState<number | null>(null);
 
@@ -65,6 +66,7 @@ export function useRepairWorkspaceActions({
       return;
     }
     setRepairExportLoading(false);
+    setRepairPdfExportLoading(false);
     setDocumentVehicleSaving(false);
     setCheckActionLoadingId(null);
   }, [token]);
@@ -101,6 +103,21 @@ export function useRepairWorkspaceActions({
       setErrorMessage(error instanceof Error ? error.message : "Не удалось выгрузить карточку ремонта");
     } finally {
       setRepairExportLoading(false);
+    }
+  }
+
+  async function handleExportRepairPdf() {
+    if (!token || !selectedRepairId) {
+      return;
+    }
+    setRepairPdfExportLoading(true);
+    setErrorMessage("");
+    try {
+      await downloadApiFile(`/repairs/${selectedRepairId}/export.pdf`, token, `repair_${selectedRepairId}.pdf`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось выгрузить карточку ремонта в PDF");
+    } finally {
+      setRepairPdfExportLoading(false);
     }
   }
 
@@ -197,11 +214,13 @@ export function useRepairWorkspaceActions({
 
   return {
     repairExportLoading,
+    repairPdfExportLoading,
     documentVehicleSaving,
     checkActionLoadingId,
     openQualityRepair,
     openQualityService,
     handleExportRepair,
+    handleExportRepairPdf,
     handleOpenRepair,
     handleCheckResolution,
     handleCreateVehicleFromDocument,

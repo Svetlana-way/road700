@@ -16,11 +16,13 @@ type RepairShellSectionParams = Pick<
   | "saveRepairLoading"
   | "repairDraft"
   | "repairExportLoading"
+  | "repairPdfExportLoading"
   | "repairArchiveLoading"
   | "repairDeleteLoading"
   | "handleCancelRepairEdit"
   | "handleSaveRepair"
   | "handleExportRepair"
+  | "handleExportRepairPdf"
   | "handleStartRepairEdit"
   | "handleArchiveRepair"
   | "handleDeleteRepair"
@@ -55,11 +57,13 @@ export function buildRepairShellSectionParams(
     saveRepairLoading: repairEditingWorkflow.saveRepairLoading,
     repairDraft: repairEditingWorkflow.repairDraft,
     repairExportLoading: repairWorkspaceActions.repairExportLoading,
+    repairPdfExportLoading: repairWorkspaceActions.repairPdfExportLoading,
     repairArchiveLoading: repairEditingWorkflow.repairArchiveLoading,
     repairDeleteLoading: repairEditingWorkflow.repairDeleteLoading,
     handleCancelRepairEdit: repairWorkspaceActions.handleCancelRepairEdit,
     handleSaveRepair: repairEditingWorkflow.handleSaveRepair,
     handleExportRepair: repairWorkspaceActions.handleExportRepair,
+    handleExportRepairPdf: repairWorkspaceActions.handleExportRepairPdf,
     handleStartRepairEdit: repairWorkspaceActions.handleStartRepairEdit,
     handleArchiveRepair: repairEditingWorkflow.handleArchiveRepair,
     handleDeleteRepair: repairEditingWorkflow.handleDeleteRepair,

@@ -2269,6 +2269,56 @@ DFH4180, гос. номер: 831ОТТ716, шасси: LGAG3DV22P8830897, VIN: L
         self.assertAlmostEqual(parsed["extracted_fields"]["work_total"], 28520.83, places=2)
         self.assertAlmostEqual(parsed["extracted_fields"]["parts_total"], 80164.17, places=2)
 
+    def test_parse_document_text_auto_detects_leader_trak_profile_when_scope_missing(self) -> None:
+        text = """
+Общество с ограниченной ответственностью "ЛидерТрак"
+НАРЯД-ЗАКАЗ № ЛТ250004899 от 12.05.2025
+Автомобиль:
+DFH4180, гос. номер: 831ОТТ716, шасси: LGAG3DV22P8830897, VIN: LGAG3DV22P8830897, пробег:
+416 695, год выпуска 2022, цвет Синий
+Выполненные сервисные услуги и использованные материалы
+№ Номер
+операции или
+запчасти
+Наименование работ,
+запчастей и материалов
+Кол-во Ед.
+измер.
+Цена за
+единицу
+Сумма
+скидки
+Стоимость
+без налога
+Сумма
+налога
+Стоимость
+с налогом *
+1 ЧМЗ902802MS-2902012-10Рессора передняя 2 шт 44 535,65 10 688,56 80 164,17 16 032,83 96 197,00
+2 Мойка №2 Мойка портальная, ручная
+,(автопоезд 16 м. п/п) 0,8 н/ч 2 223,38 213,44 1 600,83 320,17 1 921,00
+3 43215045 Рессора - смена 6 н/ч 1 988,89 1 432,00 10 740,00 2 148,00 12 888,00
+4 72000-2
+Рессоры, общие сведения.
+Номер вспомогательной
+операции
+2 н/ч 1 988,89 477,33 3 580,00 716,00 4 296,00
+5 ЦБ00003120 подгонка рессор 6 н/ч 2 000,00 1 440,00 10 800,00 2 160,00 12 960,00
+6 Индукция. слесарные работы. 1 н/ч 2 000,00 240,00 1 800,00 360,00 2 160,00
+Всего по странице: 108 685,00 21 737,00 130 422,00
+Всего по наряд-заказу: 108 685,00 21 737,00 130 422,00
+Всего: 130 422,00 рублей, включая НДС 21 737,00рублей.
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None)
+
+        self.assertEqual(len(parsed["extracted_items"]["works"]), 5)
+        self.assertEqual(len(parsed["extracted_items"]["parts"]), 1)
+        self.assertEqual(parsed["extracted_fields"]["service_name"], "ООО «ЛидерТрак»")
+        self.assertAlmostEqual(parsed["extracted_fields"]["work_total"], 28520.83, places=2)
+        self.assertAlmostEqual(parsed["extracted_fields"]["parts_total"], 80164.17, places=2)
+        self.assertEqual(parsed["extracted_fields"]["grand_total"], 130422.0)
+
     def test_parse_document_text_extracts_leader_trak_items_across_pages(self) -> None:
         text = """
 Общество с ограниченной ответственностью "ЛидерТрак"

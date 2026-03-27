@@ -1393,6 +1393,33 @@ def load_active_ocr_profile_matchers(db: Session) -> list[OcrProfileMatcher]:
     return db.scalars(stmt).all()
 
 
+def infer_builtin_profile_scope_from_text(text: str, *, source_type: str = "pdf") -> Optional[str]:
+    matched: list[dict[str, object]] = []
+    for item in DEFAULT_OCR_PROFILE_MATCHER_DEFINITIONS:
+        matcher_source_type = str(item.get("source_type") or "")
+        if matcher_source_type and matcher_source_type != source_type:
+            continue
+        text_pattern = str(item.get("text_pattern") or "")
+        if not text_pattern:
+            continue
+        try:
+            if re.search(text_pattern, text, re.IGNORECASE | re.MULTILINE | re.DOTALL) is None:
+                continue
+        except re.error:
+            continue
+        matched.append(item)
+
+    if not matched:
+        return None
+
+    matched.sort(key=lambda item: int(item["priority"]))
+    best = matched[0]
+    runner_up = matched[1] if len(matched) > 1 else None
+    if runner_up is not None and int(runner_up["priority"]) == int(best["priority"]) and runner_up["profile_scope"] != best["profile_scope"]:
+        return None
+    return str(best["profile_scope"])
+
+
 def extract_profile_history_scope(document: Document) -> Optional[str]:
     repair = document.repair
     if repair is None:
@@ -7335,6 +7362,9 @@ def maybe_apply_axb_raw_tesseract_fallback(
 def parse_document_text(text: str, db: Session | None = None, *, profile_scope: str | None = None) -> dict[str, object]:
     text = select_best_text_variant(text)
     normalized_profile_scope = normalize_ocr_rule_code(profile_scope)
+    if not normalized_profile_scope:
+        inferred_profile_scope = infer_builtin_profile_scope_from_text(text)
+        normalized_profile_scope = normalize_ocr_rule_code(inferred_profile_scope)
     header_text = extract_header_text(text)
     vehicle_section_text = extract_vehicle_section_text(text)
     field_search_texts: list[str] = []
@@ -7353,8 +7383,8 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
         normalization_notes.append(f"noise_work_items_removed:{removed_noise_work_count}")
     rule_map = (
         group_ocr_rules_by_field(
-            load_active_ocr_rules(db, profile_scope=profile_scope),
-            profile_scope=profile_scope,
+            load_active_ocr_rules(db, profile_scope=normalized_profile_scope),
+            profile_scope=normalized_profile_scope,
         )
         if db is not None
         else {}
@@ -7557,7 +7587,7 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
 
     apply_profile_specific_total_fallbacks(
         text,
-        profile_scope=profile_scope,
+        profile_scope=normalized_profile_scope,
         extracted_fields=extracted_fields,
         confidence_map=confidence_map,
         normalization_notes=normalization_notes,
@@ -7565,7 +7595,7 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
 
     extracted_items = apply_profile_specific_item_fallbacks(
         text,
-        profile_scope=profile_scope,
+        profile_scope=normalized_profile_scope,
         extracted_items=extracted_items,
         extracted_fields=extracted_fields,
         normalization_notes=normalization_notes,

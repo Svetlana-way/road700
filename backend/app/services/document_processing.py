@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 import logging
 import re
@@ -2591,7 +2592,7 @@ def is_axb_invoice_stop_line(line: str) -> bool:
 
 def is_axb_invoice_total_marker(line: str) -> bool:
     compact_line = re.sub(r"[^A-Za-zА-Яа-яЁё]", "", normalize_line(line)).lower()
-    return compact_line == "всего" or bool(re.fullmatch(r"[bв][cс][eе][rг][oо]", compact_line))
+    return compact_line in {"всего", "всег"} or bool(re.fullmatch(r"[bв][cс][eе][rг](?:[oо])?", compact_line))
 
 
 def extract_axb_invoice_fragment(text: str) -> str:
@@ -4867,7 +4868,11 @@ def extract_axb_batched_material_section_entries_from_lines(
         len(body_lines),
     )
 
-    codes: list[str] = []
+    codes: list[str] = [
+        normalize_article_value(line) or normalize_text(line)
+        for line in lines[max(0, name_header_index - 8) : name_header_index]
+        if is_axb_material_article_candidate(line)
+    ]
     name_lines: list[str] = []
     for line in body_lines[:body_end_index]:
         lowered_line = line.lower()
@@ -4946,19 +4951,54 @@ def extract_axb_material_section_entries(section_text: str) -> list[dict[str, Op
 
 def extract_axb_material_section_amounts(section_text: str) -> list[float]:
     lines = [normalize_line(line) for line in section_text.splitlines() if normalize_line(line)]
-    total_marker_index = -1
-    for index, line in enumerate(lines):
-        if is_axb_invoice_total_marker(line):
-            total_marker_index = index
-    if total_marker_index < 0:
+    if not lines:
         return []
 
-    amounts: list[float] = []
-    for line in lines[total_marker_index + 1 :]:
-        amounts.extend(extract_amount_candidates_from_fragment(line))
-    while amounts and float(amounts[0]).is_integer() and amounts[0] <= 20:
-        amounts = amounts[1:]
-    return amounts
+    header_anchor_index = -1
+    for index, line in enumerate(lines):
+        lowered_line = line.lower()
+        if is_axb_material_name_header_line(line) or any(marker in lowered_line for marker in ("кол-во", "ед. изм", "ед.изм", "цена", "скидка")):
+            header_anchor_index = index
+            break
+
+    footer_index = next(
+        (
+            index
+            for index, line in enumerate(lines[header_anchor_index + 1 :], start=header_anchor_index + 1)
+            if line.lower().startswith("заказчик подтверждает")
+            or line.lower().startswith("заказ-наряд и сч")
+            or line.lower().startswith("универсальный передаточный")
+        ),
+        len(lines),
+    )
+
+    total_marker_indexes = [
+        index
+        for index, line in enumerate(lines[header_anchor_index + 1 : footer_index], start=header_anchor_index + 1)
+        if is_axb_invoice_total_marker(line)
+    ]
+    if not total_marker_indexes:
+        return []
+
+    best_amounts: list[float] = []
+    best_score: tuple[int, int, float] | None = None
+    for total_marker_index in total_marker_indexes:
+        amounts: list[float] = []
+        trailing_window = lines[total_marker_index + 1 : min(footer_index, total_marker_index + 25)]
+        for line in trailing_window:
+            amounts.extend(extract_amount_candidates_from_fragment(line))
+        while amounts and float(amounts[0]).is_integer() and amounts[0] <= 20:
+            amounts = amounts[1:]
+        if not amounts:
+            continue
+
+        duplicate_count = sum(1 for count in Counter(round(float(amount), 2) for amount in amounts).values() if count >= 2)
+        candidate_score = (len(amounts), duplicate_count, max(amounts))
+        if best_score is None or candidate_score > best_score:
+            best_amounts = amounts
+            best_score = candidate_score
+
+    return best_amounts
 
 
 def choose_axb_material_line_totals(
@@ -4969,6 +5009,16 @@ def choose_axb_material_line_totals(
 ) -> list[float]:
     if expected_count <= 0 or not raw_amounts:
         return []
+
+    if expected_count == 1:
+        normalized_amounts = [round(float(amount), 2) for amount in raw_amounts if float(amount) > 0]
+        duplicated_amounts = [
+            amount
+            for amount, count in Counter(normalized_amounts).items()
+            if count >= 2 and (section_total is None or amount <= float(section_total) + 0.01)
+        ]
+        if duplicated_amounts:
+            return [max(duplicated_amounts)]
 
     if len(raw_amounts) == expected_count:
         return raw_amounts
@@ -5083,21 +5133,6 @@ def extract_axb_material_parts(text: str, *, expected_parts_total: Optional[floa
     matches = list(section_pattern.finditer(text))
     if not matches:
         return []
-
-    if expected_parts_total is None:
-        expected_parts_total = extract_largest_amount_from_fragment(
-            extract_fragment_after_marker(
-                text,
-                r"Итого\s+материал(?:ов|ы):",
-                stop_patterns=(
-                    r"Итого\s+по\s+причине\s+обращения",
-                    r"Всего\s+по\s+причине\s+обращения",
-                    r"Итого\s+по\s+заказ[- ]наряду",
-                    r"Всего\s+по\s+заказ[- ]наряду",
-                ),
-                max_chars=800,
-            )
-        )
 
     parts: list[dict[str, object]] = []
     for index, match in enumerate(matches):
@@ -5892,6 +5927,13 @@ def apply_profile_specific_total_fallbacks(
     if normalized_profile_scope != "axb":
         return
 
+    axb_material_parts = extract_axb_material_parts(text)
+    axb_material_parts_total = (
+        round(sum(float(item.get("line_total") or 0) for item in axb_material_parts), 2)
+        if axb_material_parts
+        else None
+    )
+
     profile_total_candidates = {
         "work_total": extract_largest_amount_from_fragment(
             extract_fragment_after_marker(
@@ -5906,7 +5948,7 @@ def apply_profile_specific_total_fallbacks(
                 text,
                 r"Итого\s+материал(?:ов|ы):",
                 stop_patterns=(r"Итого\s+по\s+причине\s+обращения", r"Всего\s+по\s+причине\s+обращения", r"Итого\s+по\s+заказ[- ]наряду", r"Всего\s+по\s+заказ[- ]наряду"),
-                max_chars=800,
+                max_chars=1800,
             )
         ),
         "grand_total": extract_largest_amount_around_marker(
@@ -5917,6 +5959,12 @@ def apply_profile_specific_total_fallbacks(
             stop_patterns=(r"Заказчик\s+подтверждает", r"Заказ-наряд\s+и\s+Сч[её]т", r"Универсальный\s+передаточный"),
         ),
     }
+
+    if axb_material_parts_total is not None and (
+        profile_total_candidates["parts_total"] is None
+        or float(profile_total_candidates["parts_total"]) < round(axb_material_parts_total * 0.7, 2)
+    ):
+        profile_total_candidates["parts_total"] = axb_material_parts_total
 
     for field_name, candidate_amount in profile_total_candidates.items():
         if candidate_amount is None:
@@ -5934,7 +5982,11 @@ def apply_profile_specific_total_fallbacks(
     work_total = extracted_fields.get("work_total")
     parts_total = extracted_fields.get("parts_total")
     grand_total = extracted_fields.get("grand_total")
-    if isinstance(work_total, (int, float)) and isinstance(grand_total, (int, float)):
+    if (
+        axb_material_parts_total is None
+        and isinstance(work_total, (int, float))
+        and isinstance(grand_total, (int, float))
+    ):
         derived_parts_total = round(float(grand_total) - float(work_total), 2)
         if derived_parts_total > 0 and (
             not isinstance(parts_total, (int, float)) or float(parts_total) < round(derived_parts_total * 0.7, 2)

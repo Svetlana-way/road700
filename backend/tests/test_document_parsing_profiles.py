@@ -596,6 +596,56 @@ TC : ORTHAUS V3 гос. номер: BY167016, VIN: NPFCGSV30PA000038, год в�
         self.assertEqual(parsed["extracted_fields"]["grand_total"], 67066.2)
         self.assertEqual(parsed["extracted_fields"]["parts_total"], 39090.6)
 
+    def test_parse_document_text_keeps_axb_material_section_total_when_grand_total_delta_is_misleading(self) -> None:
+        text = """
+Заказ-наряд № 0000019380 от 11.03.2025
+Автомобиль : DFH4180 гос. номер: 0106XB716 VIN: LGAG3DV22N8829942 год вып. 2022 пробег 431 068
+Итого работ:
+8,6
+Всего
+8 208,00
+Расходная накладная к заказ-наряду № 0000019380 от 11.03.2025
+Артикул
+929989-1
+Наименование
+Клемма гнездовая 7 pin байонетного разъема серии 1,5мм
+Итого по странице материалов:
+Кол-во
+4
+Ед.изм. Цена Скидка
+шт 55,99
+16,80
+Всего
+319,14
+53,19
+Расходная накладная к заказ-наряду № 0000019380 от 11.03.2025
+Артикул
+M7323001
+Наименование
+Кабель спиральный 15 PIN
+Итого по странице материалов:
+Итого материалов:
+Цена Скидка
+шт 13 752,0
+687,60
+13 064,40
+2 177,40
+13 383,54
+2 230,59
+Итого по причине обращения:
+35 237,34
+5 872,89
+Итого по заказ-наряду :
+35 237,34
+5 872,89
+"""
+
+        parsed = document_processing.parse_document_text(text, db=None, profile_scope="axb")
+
+        self.assertEqual(parsed["extracted_fields"]["work_total"], 8208.0)
+        self.assertEqual(parsed["extracted_fields"]["parts_total"], 13383.54)
+        self.assertEqual(parsed["extracted_fields"]["grand_total"], 35237.34)
+
     def test_parse_document_text_extracts_axb_invoice_items_from_payment_block(self) -> None:
         text = """
 Заказ-наряд № 0000020577 от 02.05.2025

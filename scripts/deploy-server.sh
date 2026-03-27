@@ -42,7 +42,7 @@ if [[ -n "$SSH_PASSWORD" ]]; then
     echo "sshpass is required when DEPLOY_PASSWORD or SSH_PASSWORD is set" >&2
     exit 1
   fi
-  REMOTE_SHELL="sshpass -e ssh ${SSH_BASE_ARGS[*]}"
+  REMOTE_SHELL="ssh ${SSH_BASE_ARGS[*]}"
 else
   REMOTE_SHELL="ssh ${SSH_BASE_ARGS[*]}"
 fi
@@ -57,7 +57,7 @@ run_ssh() {
 
 run_rsync() {
   if [[ -n "$SSH_PASSWORD" ]]; then
-    SSHPASS="$SSH_PASSWORD" rsync "$@"
+    SSHPASS="$SSH_PASSWORD" sshpass -e rsync "$@"
     return
   fi
   rsync "$@"

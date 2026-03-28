@@ -334,6 +334,75 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         visible_document_ids = [item["id"] for item in documents_response.json()["items"]]
         self.assertIn(document_id, visible_document_ids)
 
+    def test_employee_can_execute_review_action_for_own_preliminary_repair_after_vehicle_relink(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            self.assertIsNotNone(employee)
+
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-2",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            foreign_vehicle = Vehicle(
+                external_id="truck-foreign-2",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="C789EF116",
+                brand="Howo",
+                model="T5G",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, foreign_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-UPL-REVIEW-001",
+                repair_date=date(2025, 1, 17),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=employee.id,
+                mileage=2000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=employee.id,
+                original_filename="uploaded-review-order.pdf",
+                storage_key="documents/test/uploaded-review-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            repair.vehicle_id = foreign_vehicle.id
+            db.commit()
+            document_id = document.id
+
+        response = self.client.post(
+            f"/api/review/queue/{document_id}/action",
+            headers=headers,
+            json={"action": "send_to_review", "comment": "Повторная ручная проверка"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["document_status"], DocumentStatus.NEEDS_REVIEW.value)
+        self.assertEqual(payload["repair_status"], RepairStatus.IN_REVIEW.value)
+
     def test_manual_service_assignment_updates_single_warning_without_duplicates(self) -> None:
         headers = self._get_auth_headers("admin")
 

@@ -203,14 +203,13 @@ def get_visible_document(db: Session, current_user: User, document_id: int) -> D
     if current_user.role == UserRole.ADMIN:
         return document
 
-    visible_vehicle = get_allowed_vehicle_ids_query(current_user)
-    vehicle_is_visible = db.scalar(
+    repair_is_visible = db.scalar(
         select(func.count(Repair.id)).where(
             Repair.id == document.repair_id,
-            Repair.vehicle_id.in_(visible_vehicle),
+            get_repair_visibility_clause(current_user),
         )
     )
-    if not vehicle_is_visible:
+    if not repair_is_visible:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return document
 

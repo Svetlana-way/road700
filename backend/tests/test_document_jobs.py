@@ -5,6 +5,7 @@ import unittest
 import warnings
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -15,6 +16,7 @@ from sqlalchemy.exc import SAWarning
 
 from app.api.deps import get_db
 from app.api import documents as documents_api
+from app.core.paths import set_storage_root
 from app.core.security import get_password_hash
 from app.db.base import Base
 from app.main import app
@@ -47,7 +49,7 @@ class DocumentJobsApiTestCase(unittest.TestCase):
                 db.close()
 
         app.dependency_overrides[get_db] = override_get_db
-        documents_api.STORAGE_ROOT = cls.storage_root
+        set_storage_root(cls.storage_root)
         cls.client = TestClient(app)
 
     @classmethod
@@ -229,6 +231,53 @@ class DocumentJobsApiTestCase(unittest.TestCase):
             stored_path = self.storage_root / document.storage_key
             self.assertTrue(stored_path.exists())
             self.assertTrue(stored_path.read_bytes().startswith(b"%PDF"))
+
+    def test_worker_processing_uses_overridden_storage_root(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        job_id = payload["job_id"]
+
+        sample_text = """
+Общество с ограниченной ответственностью "ЛидерТрак"
+НАРЯД-ЗАКАЗ № ЛТ250012276 от 25.12.2025
+Автомобиль:
+FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пробег: 172274
+Причина
+обращения:
+ТО основное с заменой масла+салонный фильтр
+На холостом ходу при малых оборотах вибрации по кабине.
+Выполненные сервисные услуги и использованные материалы
+1 ZZ000253133903 Масло моторное синтетическое DONGFENG Diesel Ultra CS, EURO-6 10W40, бочка 205 л. 37 литр 447,16 992,68 15 717,50 3 143,50 18 861,00
+Рекомендации:
+неисправности по вибрации по кабине на момент осмотра не обнаружено, подушки двс в норме
+"""
+
+        with patch("app.services.document_processing.extract_document_text", return_value=(sample_text, "pdf_text", None)):
+            from app.services.import_jobs import claim_next_document_processing_job, run_document_processing_job
+
+            with self.SessionLocal() as db:
+                next_job = claim_next_document_processing_job(db)
+                self.assertIsNotNone(next_job)
+                assert next_job is not None
+                self.assertEqual(next_job.id, job_id)
+
+            with self.SessionLocal() as db:
+                attached_job = db.get(ImportJob, job_id)
+                self.assertIsNotNone(attached_job)
+                assert attached_job is not None
+                run_document_processing_job(db, attached_job)
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(document)
+            assert document is not None
+            self.assertNotEqual(document.status, DocumentStatus.OCR_ERROR)
+            latest_job = db.get(ImportJob, job_id)
+            self.assertIsNotNone(latest_job)
+            assert latest_job is not None
+            self.assertIn(latest_job.status, {ImportStatus.COMPLETED, ImportStatus.COMPLETED_WITH_CONFLICTS})
+            self.assertTrue((self.storage_root / document.storage_key).exists())
 
     def test_attach_multiple_images_to_existing_repair_merges_into_single_pdf(self) -> None:
         headers = self._get_auth_headers()

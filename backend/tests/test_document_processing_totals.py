@@ -22,7 +22,7 @@ from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.services import document_processing
-from app.services.document_processing import OcrProfileSelection, process_document
+from app.services.document_processing import OcrProfileSelection, find_vehicle_by_identifiers, process_document
 from app.services.labor_norms import LaborNormApplicability
 
 
@@ -548,6 +548,104 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
             self.assertEqual(repair.vehicle.model, "CARGOBULL 9084")
             self.assertEqual(repair.vehicle.year, 2018)
             self.assertEqual(len(vehicles), 3)
+
+    def test_find_vehicle_by_identifiers_matches_shifted_ocr_plate_format(self) -> None:
+        with self.SessionLocal() as db:
+            vehicle = db.get(Vehicle, 1)
+            self.assertIsNotNone(vehicle)
+            assert vehicle is not None
+            vehicle.plate_number = "К879ВА/716"
+            vehicle.vin = None
+            db.add(vehicle)
+            db.commit()
+
+            matched_vehicle = find_vehicle_by_identifiers(
+                db,
+                plate_number="879КВА716",
+                vin=None,
+                chassis_number=None,
+            )
+
+            self.assertIsNotNone(matched_vehicle)
+            assert matched_vehicle is not None
+            self.assertEqual(matched_vehicle.id, vehicle.id)
+
+    def test_process_document_skips_plate_mismatch_for_shifted_ocr_plate_format(self) -> None:
+        parsed_payload = {
+            "extracted_fields": {
+                "order_number": "ЛТ250012276",
+                "repair_date": "2026-01-19",
+                "plate_number": "879КВА716",
+                "vin": "X9PRG20A4MW137776",
+                "service_name": "ООО «Грузовые резервы»",
+            },
+            "extracted_items": {"works": [], "parts": []},
+            "confidence_map": {
+                "order_number": 0.9,
+                "repair_date": 0.9,
+                "plate_number": 0.9,
+                "vin": 0.9,
+                "service_name": 0.9,
+            },
+            "manual_review_reasons": [],
+            "normalization_notes": [],
+        }
+
+        with self.SessionLocal() as db:
+            vehicle = db.get(Vehicle, 1)
+            repair = db.get(Repair, 1)
+            self.assertIsNotNone(vehicle)
+            self.assertIsNotNone(repair)
+            assert vehicle is not None
+            assert repair is not None
+            vehicle.plate_number = "К879ВА/716"
+            vehicle.vin = "X9PRG20A4MW137776"
+            db.add(vehicle)
+            repair.vehicle_id = vehicle.id
+            db.add(repair)
+            db.commit()
+
+        with self.SessionLocal() as db:
+            labor_norm_applicability = SimpleNamespace(
+                eligible=False,
+                scope="none",
+                reason_code="not_applicable",
+                reason="Not applicable in test",
+                brand_family=None,
+                catalog_name=None,
+            )
+            labor_norm_summary = SimpleNamespace(matched_count=0, unmatched_count=0)
+            with (
+                patch.object(document_processing, "LOCAL_STORAGE_ROOT", self.storage_root),
+                patch.object(document_processing, "extract_document_text", return_value=("test text", "mock", None)),
+                patch.object(
+                    document_processing,
+                    "select_ocr_profile_scope",
+                    return_value=OcrProfileSelection("leader_trak", "test", "test"),
+                ),
+                patch.object(document_processing, "parse_document_text", return_value=parsed_payload),
+                patch.object(document_processing, "build_dynamic_work_reference_checks", return_value=[]),
+                patch.object(document_processing, "build_standard_hours_checks", return_value=[]),
+                patch.object(document_processing, "build_repeat_repair_checks", return_value=[]),
+                patch.object(document_processing, "build_duplicate_line_checks", return_value=[]),
+                patch.object(document_processing, "build_expected_total_checks", return_value=(None, [])),
+                patch.object(
+                    document_processing,
+                    "assess_labor_norm_applicability",
+                    return_value=labor_norm_applicability,
+                ),
+                patch.object(
+                    document_processing,
+                    "enrich_work_payloads_with_labor_norms",
+                    return_value=([], labor_norm_summary),
+                ),
+            ):
+                process_document(db, self.document_id)
+                checks = db.scalars(
+                    select(RepairCheck).where(RepairCheck.repair_id == 1).order_by(RepairCheck.id.asc())
+                ).all()
+
+                self.assertFalse(any(item.check_type == "ocr_vehicle_plate_mismatch" for item in checks))
 
     def test_process_document_resets_stale_totals_when_reparse_does_not_extract_them(self) -> None:
         self._run_processing(grand_total=189821.0, vat_total=34230.02)

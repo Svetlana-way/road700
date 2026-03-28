@@ -22,3 +22,13 @@ def detect_project_root() -> Path:
 PROJECT_ROOT = detect_project_root()
 STORAGE_ROOT = Path(os.getenv("ROAD700_STORAGE_ROOT", str(PROJECT_ROOT / "storage"))).resolve()
 FRONTEND_DIST_DIR = Path(os.getenv("ROAD700_FRONTEND_DIST", str(PROJECT_ROOT / "frontend" / "dist"))).resolve()
+
+
+def get_storage_root() -> Path:
+    return STORAGE_ROOT
+
+
+def set_storage_root(path: str | Path) -> Path:
+    global STORAGE_ROOT
+    STORAGE_ROOT = Path(path).resolve()
+    return STORAGE_ROOT

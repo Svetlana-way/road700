@@ -52,10 +52,12 @@ from app.services.labor_norms import (
     find_best_labor_norm_match,
     normalize_labor_norm_code,
 )
-from app.core.paths import STORAGE_ROOT
+from app.core.paths import get_storage_root
 
 
-LOCAL_STORAGE_ROOT = STORAGE_ROOT
+LOCAL_STORAGE_ROOT: Path | None = None
+
+
 VISION_OCR_SCRIPT = Path(__file__).with_name("vision_ocr.swift")
 logger = logging.getLogger(__name__)
 TESSERACT_BINARY = "tesseract"
@@ -658,7 +660,8 @@ DEFAULT_OCR_RULE_DEFINITIONS: list[dict[str, object]] = [
 
 
 def get_storage_path(storage_key: str) -> Path:
-    return LOCAL_STORAGE_ROOT / storage_key
+    storage_root = LOCAL_STORAGE_ROOT if LOCAL_STORAGE_ROOT is not None else get_storage_root()
+    return storage_root / storage_key
 
 
 def normalize_text(text: str) -> str:
@@ -1093,7 +1096,7 @@ def find_vehicle_by_identifiers(
     vin: str | None,
     chassis_number: str | None = None,
 ) -> Vehicle | None:
-    normalized_plate = normalize_compare_token(plate_number)
+    normalized_plate = normalize_plate_compare_token(plate_number)
     normalized_vin = normalize_compare_token(vin)
     normalized_chassis = normalize_compare_token(chassis_number)
     if not normalized_plate and not normalized_vin and not normalized_chassis:
@@ -1106,7 +1109,7 @@ def find_vehicle_by_identifiers(
     for vehicle in vehicles:
         if vehicle.external_id == PLACEHOLDER_VEHICLE_EXTERNAL_ID:
             continue
-        vehicle_plate = normalize_compare_token(vehicle.plate_number)
+        vehicle_plate = normalize_plate_compare_token(vehicle.plate_number)
         vehicle_vin = normalize_compare_token(vehicle.vin)
         if normalized_vin and vehicle_vin == normalized_vin:
             exact_matches[vehicle.id] = vehicle
@@ -1633,6 +1636,22 @@ def normalize_compare_token(value: str | None) -> Optional[str]:
         return None
     normalized = normalize_identifier_token(normalize_ocr_code_token(value))
     return normalized or None
+
+
+def normalize_plate_compare_token(value: str | None) -> Optional[str]:
+    normalized = normalize_compare_token(value)
+    if not normalized:
+        return None
+
+    if re.fullmatch(r"[A-Z]\d{3}[A-Z]{2}\d{2,3}", normalized):
+        return normalized
+
+    shifted_match = re.fullmatch(r"(\d{3})([A-Z]{3})(\d{2,3})", normalized)
+    if shifted_match is None:
+        return normalized
+
+    digits, letters, region = shifted_match.groups()
+    return f"{letters[0]}{digits}{letters[1:]}{region}"
 
 
 def find_pattern_value(patterns: list[str], text: str) -> Optional[str]:
@@ -8058,8 +8077,8 @@ def process_document(db: Session, document_id: int, *, job_id: int | None = None
             )
 
             if "plate_number" in extracted_fields and repair.vehicle.plate_number:
-                extracted_plate_compare = normalize_compare_token(str(extracted_fields["plate_number"]))
-                vehicle_plate_compare = normalize_compare_token(repair.vehicle.plate_number)
+                extracted_plate_compare = normalize_plate_compare_token(str(extracted_fields["plate_number"]))
+                vehicle_plate_compare = normalize_plate_compare_token(repair.vehicle.plate_number)
                 if extracted_plate_compare and vehicle_plate_compare and extracted_plate_compare != vehicle_plate_compare:
                     checks.append(
                         {

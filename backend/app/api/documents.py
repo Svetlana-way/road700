@@ -1088,13 +1088,7 @@ def process_single_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> DocumentProcessResponse:
-    document = load_document_with_relations(db, document_id)
-    if document is None or document.repair is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    if current_user.role != UserRole.ADMIN:
-        visible_vehicle = get_visible_vehicle(db, current_user, document.repair.vehicle_id)
-        if visible_vehicle is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    document = get_visible_document(db, current_user, document_id)
 
     job = queue_document_processing(db, document_id, retry_failed=True)
     db.commit()

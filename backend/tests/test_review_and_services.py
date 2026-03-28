@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import services as services_api
+from app.api import documents as documents_api
 from app.api.deps import get_db
 from app.core.security import get_password_hash
 from app.db.base import Base
@@ -402,6 +403,83 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["document_status"], DocumentStatus.NEEDS_REVIEW.value)
         self.assertEqual(payload["repair_status"], RepairStatus.IN_REVIEW.value)
+
+    def test_employee_can_reprocess_own_preliminary_document_after_vehicle_relink(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            self.assertIsNotNone(employee)
+
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-3",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            foreign_vehicle = Vehicle(
+                external_id="truck-foreign-3",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="D012GH116",
+                brand="Foton",
+                model="Auman",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, foreign_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-UPL-PROCESS-001",
+                repair_date=date(2025, 1, 18),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=employee.id,
+                mileage=3000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=employee.id,
+                original_filename="uploaded-process-order.pdf",
+                storage_key="documents/test/uploaded-process-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            repair.vehicle_id = foreign_vehicle.id
+            db.commit()
+            document_id = document.id
+
+        with patch.object(documents_api, "queue_document_processing", autospec=True) as queue_mock:
+            queue_mock.return_value = type(
+                "QueuedJobStub",
+                (),
+                {"id": 501, "status": type("JobStatusStub", (), {"value": "queued"})()},
+            )()
+
+            response = self.client.post(
+                f"/api/documents/{document_id}/process",
+                headers=headers,
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["document"]["id"], document_id)
+        self.assertEqual(payload["job_id"], 501)
+        self.assertEqual(payload["import_status"], "queued")
+        queue_mock.assert_called_once()
 
     def test_manual_service_assignment_updates_single_warning_without_duplicates(self) -> None:
         headers = self._get_auth_headers("admin")

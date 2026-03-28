@@ -508,6 +508,25 @@ class RepairReportAnalysisTestCase(unittest.TestCase):
         self.assertIsNotNone(finance_section)
         self.assertTrue(any("6 803,34 ₽" in line for line in finance_section["items"]))
 
+    def test_finance_section_marks_net_and_gross_amounts_when_vat_present(self) -> None:
+        repair = self._build_repair(works=[], parts=[])
+        repair.work_total = 32035.83
+        repair.parts_total = 37990.84
+        repair.vat_total = 14005.33
+        repair.grand_total = 84032.00
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={},
+            manual_review_reason_labels={},
+        )
+
+        finance_section = next((item for item in report["full_report_sections"] if item["key"] == "finance"), None)
+        self.assertIsNotNone(finance_section)
+        self.assertIn("Работы без НДС: 32 035,83 ₽.", finance_section["items"])
+        self.assertIn("Запчасти и материалы без НДС: 37 990,84 ₽.", finance_section["items"])
+        self.assertIn("Итого по заказ-наряду с НДС: 84 032,00 ₽.", finance_section["items"])
+
 
 if __name__ == "__main__":
     unittest.main()

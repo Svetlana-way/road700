@@ -898,11 +898,24 @@ def _build_full_report_sections(
 
 
 def _build_finance_section(repair: Repair) -> dict[str, object]:
+    has_vat = float(repair.vat_total or 0) > 0
     items = [
-        f"Работы: {_format_money(float(repair.work_total or 0))}.",
-        f"Запчасти и материалы: {_format_money(float(repair.parts_total or 0))}.",
+        (
+            f"Работы без НДС: {_format_money(float(repair.work_total or 0))}."
+            if has_vat
+            else f"Работы: {_format_money(float(repair.work_total or 0))}."
+        ),
+        (
+            f"Запчасти и материалы без НДС: {_format_money(float(repair.parts_total or 0))}."
+            if has_vat
+            else f"Запчасти и материалы: {_format_money(float(repair.parts_total or 0))}."
+        ),
         f"НДС: {_format_money(float(repair.vat_total or 0))}.",
-        f"Итого по заказ-наряду: {_format_money(float(repair.grand_total or 0))}.",
+        (
+            f"Итого по заказ-наряду с НДС: {_format_money(float(repair.grand_total or 0))}."
+            if has_vat
+            else f"Итого по заказ-наряду: {_format_money(float(repair.grand_total or 0))}."
+        ),
     ]
 
     calculated_total = float(repair.work_total or 0) + float(repair.parts_total or 0) + float(repair.vat_total or 0)

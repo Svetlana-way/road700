@@ -615,6 +615,122 @@ class RepairReportAnalysisTestCase(unittest.TestCase):
         self.assertIn("Объем работ шире исходной заявки", short_titles)
         self.assertNotIn("Документ содержит отметку об Exchange Program", short_titles)
 
+    def test_highlights_remain_fact_based_and_do_not_repeat_finding_titles(self) -> None:
+        repair = self._build_repair(
+            works=[
+                RepairWork(
+                    work_code="1",
+                    work_name="БАЗОВЫЙ СЕРВИС",
+                    quantity=1.2,
+                    standard_hours=1.2,
+                    actual_hours=1.2,
+                    price=2100,
+                    line_total=2268.33,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="2",
+                    work_name="ЩЕТКА СТЕКЛООЧИСТИТЕЛЯ ВЕТРОВОГО СТЕКЛА. ЗАМЕНА.",
+                    quantity=0.4,
+                    standard_hours=0.4,
+                    actual_hours=0.4,
+                    price=2100,
+                    line_total=755.83,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="3",
+                    work_name="ТОРМОЗНЫЕ КОЛОДКИ ВЕДУЩЕЙ ОСИ. ЗАМЕНА. КОЛЕСА СНЯТЫ.",
+                    quantity=1.8,
+                    standard_hours=1.8,
+                    actual_hours=1.8,
+                    price=2100,
+                    line_total=3401.67,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="4",
+                    work_name="ТОРМОЗНЫЕ КОЛОДКИ ПЕРЕДНЕГО КОЛЕСА. ЗАМЕНА. БАРАБАН СНЯТ.",
+                    quantity=1.8,
+                    standard_hours=1.8,
+                    actual_hours=1.8,
+                    price=2100,
+                    line_total=3401.67,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="5",
+                    work_name="Продольная рулевая тяга - смена",
+                    quantity=2.2,
+                    standard_hours=2.2,
+                    actual_hours=2.2,
+                    price=2100,
+                    line_total=4158.33,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="6",
+                    work_name="Трубка - компрессор - смена",
+                    quantity=1.5,
+                    standard_hours=1.5,
+                    actual_hours=1.5,
+                    price=2100,
+                    line_total=2835.0,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="7",
+                    work_name="Обтекатель лев. - ремонт",
+                    quantity=1,
+                    standard_hours=1.0,
+                    actual_hours=1.0,
+                    price=2100,
+                    line_total=1890.0,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="8",
+                    work_name="Индукция. слесарные работы.",
+                    quantity=1,
+                    standard_hours=1.0,
+                    actual_hours=1.0,
+                    price=2100,
+                    line_total=1890.0,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+            ],
+            parts=[],
+        )
+        repair.reason = "ТО основное. Вибрация по кабине. Заменить щетки стеклоочистителей."
+        repair.work_total = 20600.83
+        repair.grand_total = 20600.83
+        repair.checks = [
+            RepairCheck(
+                repair_id=1,
+                check_type="ocr_total_mismatch",
+                severity=CheckSeverity.WARNING,
+                title="Сумма строк не совпадает с итоговой суммой",
+                details="Требуется ручная проверка итогов документа",
+                calculation_payload={
+                    "calculated_total": 20000.0,
+                    "grand_total": 20600.83,
+                },
+                is_resolved=False,
+            )
+        ]
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={},
+            manual_review_reason_labels={},
+        )
+
+        finding_titles = {str(item["title"]) for item in report["findings"]}
+        self.assertTrue(report["highlights"])
+        self.assertTrue(all(line not in finding_titles for line in report["highlights"]))
+        self.assertTrue(any(line.startswith("Высокорисковых сигналов: ") for line in report["highlights"]))
+        self.assertTrue(any(line.startswith("Спорные затраты по прямым сигналам:") for line in report["highlights"]))
+
     def test_finance_section_marks_net_and_gross_amounts_when_vat_present(self) -> None:
         repair = self._build_repair(works=[], parts=[])
         repair.work_total = 32035.83

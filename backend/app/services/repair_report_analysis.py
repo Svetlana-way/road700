@@ -1255,13 +1255,23 @@ def _estimate_gross_risk_total(repair: Repair, net_total: float) -> float:
 
 
 def _build_highlights(repair: Repair, findings: list[dict[str, object]]) -> list[str]:
+    high_findings_count = len([item for item in findings if str(item["severity"]) == "high"])
+    _, suspicious_total = _collect_financial_risk_items(repair, findings)
+    gross_suspicious_total = _estimate_gross_risk_total(repair, suspicious_total)
     highlights = [
         f"Сумма заказ-наряда: {_format_money(float(repair.grand_total))}",
         f"Работ: {len(repair.works)} · запчастей: {len(repair.parts)}",
         f"Открытых проверок: {len([item for item in repair.checks if not item.is_resolved])}",
+        f"Высокорисковых сигналов: {high_findings_count}",
     ]
-    for finding in findings[:3]:
-        highlights.append(str(finding["title"]))
+    if suspicious_total > 0:
+        if gross_suspicious_total > suspicious_total:
+            highlights.append(
+                "Спорные затраты по прямым сигналам: "
+                f"{_format_money(suspicious_total)} без НДС, около {_format_money(gross_suspicious_total)} с НДС"
+            )
+        else:
+            highlights.append(f"Спорные затраты по прямым сигналам: до {_format_money(suspicious_total)}")
     return highlights[:5]
 
 

@@ -16,6 +16,7 @@ from sqlalchemy.exc import SAWarning
 
 from app.api.deps import get_db
 from app.api import documents as documents_api
+from app.api.repairs import build_export_warning_rows, build_report_status_summary
 from app.core.paths import set_storage_root
 from app.core.security import get_password_hash
 from app.db.base import Base
@@ -23,6 +24,7 @@ from app.main import app
 from app.models.document import Document
 from app.models.enums import DocumentKind, DocumentStatus, ImportStatus, RepairStatus, UserRole
 from app.models.imports import ImportJob
+from app.models.repair import Repair
 from app.models.user import User
 
 
@@ -279,6 +281,54 @@ FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пр�
             assert latest_job is not None
             self.assertIn(latest_job.status, {ImportStatus.COMPLETED, ImportStatus.COMPLETED_WITH_CONFLICTS})
             self.assertTrue((self.storage_root / document.storage_key).exists())
+
+    def test_export_status_and_warnings_follow_executive_report_findings(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        repair_id = payload["document"]["repair"]["id"]
+        job_id = payload["job_id"]
+
+        sample_text = """
+Общество с ограниченной ответственностью "ЛидерТрак"
+НАРЯД-ЗАКАЗ № ЛТ250012276 от 25.12.2025
+Автомобиль:
+FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пробег: 172274
+Причина
+обращения:
+ТО основное с заменой масла+салонный фильтр
+На холостом ходу при малых оборотах вибрации по кабине.
+Выполненные сервисные услуги и использованные материалы
+1 ZZ000253133903 Масло моторное синтетическое DONGFENG Diesel Ultra CS, EURO-6 10W40, бочка 205 л. 37 литр 447,16 992,68 15 717,50 3 143,50 18 861,00
+Рекомендации:
+неисправности по вибрации по кабине на момент осмотра не обнаружено, подушки двс в норме
+"""
+
+        with patch("app.services.document_processing.extract_document_text", return_value=(sample_text, "pdf_text", None)):
+            from app.services.import_jobs import claim_next_document_processing_job, run_document_processing_job
+
+            with self.SessionLocal() as db:
+                next_job = claim_next_document_processing_job(db)
+                self.assertIsNotNone(next_job)
+                assert next_job is not None
+                self.assertEqual(next_job.id, job_id)
+
+            with self.SessionLocal() as db:
+                attached_job = db.get(ImportJob, job_id)
+                self.assertIsNotNone(attached_job)
+                assert attached_job is not None
+                run_document_processing_job(db, attached_job)
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            report_status, report_status_comment = build_report_status_summary(repair)
+            warning_rows = build_export_warning_rows(repair)
+
+        self.assertEqual(report_status, "Есть критичные несоответствия")
+        self.assertIn("ручная проверка", report_status_comment)
+        self.assertTrue(any(row[2] == "По заявленной вибрации проблема не подтверждена" for row in warning_rows))
+        self.assertTrue(any(row[2] == "Моторное масло требует проверки на соответствие Volvo" for row in warning_rows))
 
     def test_attach_multiple_images_to_existing_repair_merges_into_single_pdf(self) -> None:
         headers = self._get_auth_headers()

@@ -419,18 +419,43 @@ def get_check_report_section_key(check_type: str) -> str:
 
 
 def build_report_status_summary(repair: Repair) -> tuple[str, str]:
-    if any(document.status.value == "uploaded" for document in repair.documents):
+    source_document = get_report_source_document(repair)
+    if source_document is not None and source_document.status.value == "uploaded":
         return "В очереди OCR", "Документ ещё находится в обработке или перепроверке."
 
-    unresolved_checks = [item for item in repair.checks if not item.is_resolved]
-    if any(item.severity in {CheckSeverity.SUSPICIOUS, CheckSeverity.ERROR} for item in unresolved_checks):
+    executive_report = build_repair_executive_report(
+        repair,
+        source_payload=get_report_source_payload(repair),
+        manual_review_reason_labels=MANUAL_REVIEW_REASON_LABELS,
+    )
+    findings = executive_report["findings"]
+    if any(str(item["severity"]) == "high" for item in findings):
         return "Есть критичные несоответствия", "Перед подтверждением нужны ручная проверка и решение по предупреждениям."
-    if unresolved_checks:
+    if findings:
         return "Требует ручной проверки", "По заказ-наряду есть открытые предупреждения, которые нужно проверить."
     return "Готов к следующему этапу", "Открытых несоответствий по заказ-наряду не найдено."
 
 
 def build_export_warning_rows(repair: Repair) -> list[tuple[object, ...]]:
+    executive_report = build_repair_executive_report(
+        repair,
+        source_payload=get_report_source_payload(repair),
+        manual_review_reason_labels=MANUAL_REVIEW_REASON_LABELS,
+    )
+    if executive_report["findings"]:
+        return [
+            (
+                str(item["category"]),
+                str(item["severity"]),
+                str(item["title"]),
+                str(item["summary"]),
+                "executive_report",
+                "Нет",
+                "",
+            )
+            for item in executive_report["findings"]
+        ]
+
     rows: list[tuple[object, ...]] = []
     report_payload = get_report_source_payload(repair)
     extracted_fields = report_payload.get("extracted_fields") if isinstance(report_payload.get("extracted_fields"), dict) else {}
@@ -534,7 +559,7 @@ def build_repair_pdf_sections(repair: Repair) -> list[tuple[str, list[str]]]:
                         else "Нет"
                     )
                 ),
-                f"Открытых предупреждений: {len([item for item in repair.checks if not item.is_resolved])}",
+                f"Открытых предупреждений: {len(warning_rows)}",
                 f"Создан: {repair.created_at.isoformat()}",
                 f"Обновлён: {repair.updated_at.isoformat()}",
             ],
@@ -889,7 +914,7 @@ def export_repair(
                 "Причины ручной проверки OCR",
                 ", ".join(MANUAL_REVIEW_REASON_LABELS.get(item, item) for item in manual_review_reasons),
             ),
-            ("Открытых предупреждений", len([item for item in repair.checks if not item.is_resolved])),
+            ("Открытых предупреждений", len(warning_rows)),
             ("Создан", repair.created_at.isoformat()),
             ("Обновлен", repair.updated_at.isoformat()),
         ],

@@ -137,9 +137,7 @@ export function RepairOverviewReportPanel({
           }`,
           `Структура заказ-наряда: работ ${selectedRepair.works.length}, запчастей ${selectedRepair.parts.length}`,
         ];
-  const conciseIssues = selectedRepairAwaitingOcr
-    ? ["Документ ещё проходит OCR или перепроверку."]
-    : executiveReport.findings.slice(0, 4).map((item) => item.title);
+  const conciseFindings = selectedRepairAwaitingOcr ? [] : executiveReport.findings.slice(0, 4);
 
   return (
     <Paper className="repair-summary" elevation={0}>
@@ -196,13 +194,52 @@ export function RepairOverviewReportPanel({
                 </Typography>
               ))}
             </Stack>
-            {conciseIssues.length > 0 ? (
+            {selectedRepairAwaitingOcr ? (
               <Stack spacing={0.5}>
                 <Typography className="metric-label">Что требует внимания</Typography>
-                {conciseIssues.map((line, index) => (
-                  <Typography className="muted-copy" key={`concise-issue-${index}`}>
-                    {line}
-                  </Typography>
+                <Typography className="muted-copy">Документ ещё проходит OCR или перепроверку.</Typography>
+              </Stack>
+            ) : conciseFindings.length > 0 ? (
+              <Stack spacing={0.75}>
+                <Typography className="metric-label">Что требует внимания</Typography>
+                {conciseFindings.map((item, index) => (
+                  <Paper
+                    className="repair-line"
+                    elevation={0}
+                    key={`concise-finding-${index}`}
+                    sx={{
+                      borderLeft: 4,
+                      borderLeftColor: (theme) => {
+                        if (item.severity === "high") {
+                          return theme.palette.error.main;
+                        }
+                        if (item.severity === "medium") {
+                          return theme.palette.warning.main;
+                        }
+                        return theme.palette.success.main;
+                      },
+                    }}
+                  >
+                    <Stack spacing={0.75}>
+                      <Stack
+                        direction={{ xs: "column", sm: "row" }}
+                        spacing={1}
+                        justifyContent="space-between"
+                        alignItems={{ xs: "flex-start", sm: "center" }}
+                      >
+                        <Typography>{item.title}</Typography>
+                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                          <Chip size="small" variant="outlined" label={item.category} />
+                          <Chip
+                            size="small"
+                            color={executiveRiskColor(item.severity)}
+                            label={formatExecutiveRiskLabel(item.severity)}
+                          />
+                        </Stack>
+                      </Stack>
+                      <Typography className="muted-copy">{item.summary}</Typography>
+                    </Stack>
+                  </Paper>
                 ))}
               </Stack>
             ) : null}

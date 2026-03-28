@@ -93,20 +93,24 @@ export function RepairOverviewReportPanel({
   formatStatus,
 }: RepairOverviewReportPanelProps) {
   const executiveReport = selectedRepair.executive_report;
+  const executiveFindingsCount = executiveReport.findings.length;
+  const executiveHasBlockingFindings = executiveReport.findings.some((item) => item.severity === "high");
+  const effectiveAttentionCount = Math.max(selectedRepairUnresolvedChecksCount, executiveFindingsCount);
+  const effectiveHasBlockingFindings = selectedRepairHasBlockingFindings || executiveHasBlockingFindings;
   const vehicleMatched =
     !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
     Boolean(selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id);
   const serviceMatched = Boolean(selectedRepair.service?.name);
   const reportAlertSeverity = selectedRepairAwaitingOcr
     ? "info"
-    : selectedRepairUnresolvedChecksCount === 0
+    : effectiveAttentionCount === 0
       ? "success"
-      : selectedRepairHasBlockingFindings
+      : effectiveHasBlockingFindings
         ? "warning"
         : "info";
   const reportAlertText = selectedRepairAwaitingOcr
     ? "Документ ещё находится в очереди OCR или перепроверки. Итоговый отчёт будет обновлён автоматически."
-    : selectedRepairUnresolvedChecksCount === 0
+    : effectiveAttentionCount === 0
       ? "По заказ-наряду открытых несоответствий не найдено."
       : "В отчёте есть несоответствия. Ниже они сгруппированы по типам проверки.";
   const conciseReportTitle = selectedRepairAwaitingOcr ? "Документ обрабатывается" : executiveReport.headline;
@@ -131,9 +135,9 @@ export function RepairOverviewReportPanel({
           `Проверка по базе, справочникам и истории: ${
             selectedRepairAwaitingOcr
               ? "ожидает завершения OCR"
-              : selectedRepairUnresolvedChecksCount === 0
+              : effectiveAttentionCount === 0
                 ? "замечаний нет"
-                : `найдено ${selectedRepairUnresolvedChecksCount} несоответствий`
+                : `найдено ${effectiveAttentionCount} несоответствий`
           }`,
           `Структура заказ-наряда: работ ${selectedRepair.works.length}, запчастей ${selectedRepair.parts.length}`,
         ];
@@ -172,10 +176,10 @@ export function RepairOverviewReportPanel({
             <Chip
               size="small"
               variant="outlined"
-              color={selectedRepairUnresolvedChecksCount > 0 ? "warning" : "success"}
+              color={effectiveAttentionCount > 0 ? "warning" : "success"}
               label={
-                selectedRepairUnresolvedChecksCount > 0
-                  ? `Несоответствий: ${selectedRepairUnresolvedChecksCount}`
+                effectiveAttentionCount > 0
+                  ? `Несоответствий: ${effectiveAttentionCount}`
                   : "Несоответствий нет"
               }
             />

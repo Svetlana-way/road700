@@ -728,6 +728,7 @@ class RepairReportAnalysisTestCase(unittest.TestCase):
         finding_titles = {str(item["title"]) for item in report["findings"]}
         self.assertTrue(report["highlights"])
         self.assertTrue(all(line not in finding_titles for line in report["highlights"]))
+        self.assertIn("Сигналов в отчёте: 4", report["highlights"])
         self.assertTrue(any(line.startswith("Высокорисковых сигналов: ") for line in report["highlights"]))
         self.assertTrue(any(line.startswith("Спорные затраты по прямым сигналам:") for line in report["highlights"]))
 

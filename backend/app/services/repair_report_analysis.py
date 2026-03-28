@@ -1261,7 +1261,7 @@ def _build_highlights(repair: Repair, findings: list[dict[str, object]]) -> list
     highlights = [
         f"Сумма заказ-наряда: {_format_money(float(repair.grand_total))}",
         f"Работ: {len(repair.works)} · запчастей: {len(repair.parts)}",
-        f"Открытых проверок: {len([item for item in repair.checks if not item.is_resolved])}",
+        f"Сигналов в отчёте: {len(findings)}",
         f"Высокорисковых сигналов: {high_findings_count}",
     ]
     if suspicious_total > 0:

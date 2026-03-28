@@ -106,52 +106,52 @@ def build_repair_executive_report(
     manual_review_reason_labels: dict[str, str],
 ) -> dict[str, object]:
     findings: list[dict[str, object]] = []
-    seen_titles: set[str] = set()
+    seen_findings: set[tuple[object, ...]] = set()
 
     for finding in _build_check_findings(repair.checks):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_reason_gap_findings(repair):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_part_work_alignment_findings(repair):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_unresolved_symptom_findings(repair):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_oil_compatibility_findings(repair):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_scope_expansion_findings(repair):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_out_of_scope_brake_findings(repair):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_reason_quality_findings(repair):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_diagnostics_findings(repair):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_expensive_part_findings(repair):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_ambiguous_work_findings(repair):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_non_original_part_findings(repair):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_document_quality_findings(repair, source_payload, manual_review_reason_labels):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_document_program_findings(source_payload):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     for finding in _build_service_not_done_findings(source_payload):
-        _append_finding(findings, seen_titles, finding)
+        _append_finding(findings, seen_findings, finding)
 
     findings.sort(key=lambda item: (-LEVEL_ORDER[str(item["severity"])], str(item["title"])))
 
@@ -180,14 +180,28 @@ def build_repair_executive_report(
 
 def _append_finding(
     findings: list[dict[str, object]],
-    seen_titles: set[str],
+    seen_findings: set[tuple[object, ...]],
     finding: dict[str, object],
 ) -> None:
-    title = str(finding["title"])
-    if title in seen_titles:
+    fingerprint = _build_finding_fingerprint(finding)
+    if fingerprint in seen_findings:
         return
-    seen_titles.add(title)
+    seen_findings.add(fingerprint)
     findings.append(finding)
+
+
+def _build_finding_fingerprint(finding: dict[str, object]) -> tuple[object, ...]:
+    evidence = finding.get("evidence")
+    evidence_items = tuple(str(item) for item in evidence) if isinstance(evidence, list) else ()
+    return (
+        str(finding.get("title", "")),
+        str(finding.get("severity", "")),
+        str(finding.get("category", "")),
+        str(finding.get("summary", "")),
+        str(finding.get("rationale", "")),
+        evidence_items,
+        str(finding.get("recommendation", "")),
+    )
 
 
 def _build_check_findings(checks: Iterable[RepairCheck]) -> list[dict[str, object]]:

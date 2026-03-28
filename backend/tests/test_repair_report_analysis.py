@@ -186,6 +186,50 @@ class RepairReportAnalysisTestCase(unittest.TestCase):
         self.assertEqual(finding["severity"], "high")
         self.assertEqual(finding["category"], "Документ и OCR")
 
+    def test_report_keeps_multiple_distinct_findings_with_same_title(self) -> None:
+        repair = self._build_repair(works=[], parts=[])
+        repair.checks = [
+            RepairCheck(
+                repair_id=1,
+                check_type="ocr_work_reference_missing",
+                severity=CheckSeverity.WARNING,
+                title="Работа не найдена в динамическом справочнике",
+                details="Замена рулевой тяги · в базе пока нет подтвержденной истории для сверки",
+                calculation_payload={
+                    "work_code": "123",
+                    "work_name": "Замена рулевой тяги",
+                    "comparison_source": "none",
+                },
+                is_resolved=False,
+            ),
+            RepairCheck(
+                repair_id=1,
+                check_type="ocr_work_reference_missing",
+                severity=CheckSeverity.WARNING,
+                title="Работа не найдена в динамическом справочнике",
+                details="Замена трубки компрессора · в базе пока нет подтвержденной истории для сверки",
+                calculation_payload={
+                    "work_code": "456",
+                    "work_name": "Замена трубки компрессора",
+                    "comparison_source": "none",
+                },
+                is_resolved=False,
+            ),
+        ]
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={},
+            manual_review_reason_labels={},
+        )
+
+        matching_findings = [item for item in report["findings"] if item["title"] == "Работа не подтверждается накопленной практикой"]
+        self.assertEqual(len(matching_findings), 2)
+        self.assertTrue(any("Замена рулевой тяги" in evidence for item in matching_findings for evidence in item["evidence"]))
+        self.assertTrue(
+            any("Замена трубки компрессора" in evidence for item in matching_findings for evidence in item["evidence"])
+        )
+
     def test_report_flags_unresolved_vibration_and_non_original_work_markers(self) -> None:
         repair = self._build_repair(
             works=[

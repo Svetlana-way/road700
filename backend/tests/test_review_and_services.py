@@ -19,6 +19,7 @@ from app.api.deps import get_db
 from app.core.security import get_password_hash
 from app.db.base import Base
 from app.main import app
+from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
 from app.models.enums import CheckSeverity, DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
 from app.models.repair import Repair, RepairCheck
@@ -618,6 +619,95 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(details_payload["counts"]["documents"], 2)
         visible_document_ids = [item["document_id"] for item in details_payload["documents"]]
         self.assertIn(document_id, visible_document_ids)
+
+    def test_employee_sees_audit_entries_for_own_preliminary_repair_after_vehicle_relink(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            self.assertIsNotNone(employee)
+            self.assertIsNotNone(admin)
+
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-6",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            foreign_vehicle = Vehicle(
+                external_id="truck-foreign-6",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="G901MN116",
+                brand="FAW",
+                model="J7",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, foreign_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-UPL-AUDIT-001",
+                repair_date=date(2025, 1, 21),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=employee.id,
+                mileage=6000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=employee.id,
+                original_filename="uploaded-audit-order.pdf",
+                storage_key="documents/test/uploaded-audit-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            repair.vehicle_id = foreign_vehicle.id
+            db.flush()
+
+            db.add_all(
+                [
+                    AuditLog(
+                        user_id=admin.id,
+                        entity_type="repair",
+                        entity_id=str(repair.id),
+                        action_type="admin_repair_note",
+                        old_value=None,
+                        new_value={"repair_id": repair.id},
+                    ),
+                    AuditLog(
+                        user_id=admin.id,
+                        entity_type="document",
+                        entity_id=str(document.id),
+                        action_type="admin_document_note",
+                        old_value=None,
+                        new_value={"document_id": document.id},
+                    ),
+                ]
+            )
+            db.commit()
+
+        response = self.client.get("/api/audit?limit=50", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        action_types = [item["action_type"] for item in payload["items"]]
+        self.assertIn("admin_repair_note", action_types)
+        self.assertIn("admin_document_note", action_types)
 
     def test_manual_service_assignment_updates_single_warning_without_duplicates(self) -> None:
         headers = self._get_auth_headers("admin")

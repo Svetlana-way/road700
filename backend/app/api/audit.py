@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import and_, distinct, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.access import get_allowed_vehicle_ids_query
+from app.api.access import get_allowed_vehicle_ids_query, get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_db
 from app.models.audit import AuditLog
 from app.models.document import Document
@@ -26,10 +26,11 @@ def build_audit_visibility_clause(current_user: User):
         return True
 
     allowed_vehicle_ids = get_allowed_vehicle_ids_query(current_user)
+    repair_visibility_clause = get_repair_visibility_clause(current_user)
     repair_visible = and_(
         AuditLog.entity_type == "repair",
         AuditLog.entity_id.in_(
-            select(func.cast(Repair.id, type_=AuditLog.entity_id.type)).where(Repair.vehicle_id.in_(allowed_vehicle_ids))
+            select(func.cast(Repair.id, type_=AuditLog.entity_id.type)).where(repair_visibility_clause)
         ),
     )
     document_visible = and_(
@@ -37,7 +38,7 @@ def build_audit_visibility_clause(current_user: User):
         AuditLog.entity_id.in_(
             select(func.cast(Document.id, type_=AuditLog.entity_id.type))
             .join(Repair, Repair.id == Document.repair_id)
-            .where(Repair.vehicle_id.in_(allowed_vehicle_ids))
+            .where(repair_visibility_clause)
         ),
     )
     vehicle_visible = and_(

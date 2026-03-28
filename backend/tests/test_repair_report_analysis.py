@@ -511,6 +511,110 @@ class RepairReportAnalysisTestCase(unittest.TestCase):
         self.assertIsNotNone(finance_section)
         self.assertTrue(any("6 803,34 ₽" in line for line in finance_section["items"]))
 
+    def test_report_prioritizes_managerial_findings_above_exchange_markers_in_short_list(self) -> None:
+        repair = self._build_repair(
+            works=[
+                RepairWork(
+                    work_code="1",
+                    work_name="БАЗОВЫЙ СЕРВИС",
+                    quantity=1.2,
+                    standard_hours=1.2,
+                    actual_hours=1.2,
+                    price=2100,
+                    line_total=2268.33,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="2",
+                    work_name="ЩЕТКА СТЕКЛООЧИСТИТЕЛЯ ВЕТРОВОГО СТЕКЛА. ЗАМЕНА.",
+                    quantity=0.4,
+                    standard_hours=0.4,
+                    actual_hours=0.4,
+                    price=2100,
+                    line_total=755.83,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="3",
+                    work_name="ТОРМОЗНЫЕ КОЛОДКИ ВЕДУЩЕЙ ОСИ. ЗАМЕНА. КОЛЕСА СНЯТЫ.",
+                    quantity=1.8,
+                    standard_hours=1.8,
+                    actual_hours=1.8,
+                    price=2100,
+                    line_total=3401.67,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="4",
+                    work_name="ТОРМОЗНЫЕ КОЛОДКИ ПЕРЕДНЕГО КОЛЕСА. ЗАМЕНА. БАРАБАН СНЯТ.",
+                    quantity=1.8,
+                    standard_hours=1.8,
+                    actual_hours=1.8,
+                    price=2100,
+                    line_total=3401.67,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="5",
+                    work_name="Продольная рулевая тяга - смена",
+                    quantity=2.2,
+                    standard_hours=2.2,
+                    actual_hours=2.2,
+                    price=2100,
+                    line_total=4158.33,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="6",
+                    work_name="Трубка - компрессор - смена",
+                    quantity=1.5,
+                    standard_hours=1.5,
+                    actual_hours=1.5,
+                    price=2100,
+                    line_total=2835.0,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="7",
+                    work_name="Обтекатель лев. - ремонт",
+                    quantity=1,
+                    standard_hours=1.0,
+                    actual_hours=1.0,
+                    price=2100,
+                    line_total=1890.0,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+                RepairWork(
+                    work_code="8",
+                    work_name="Индукция. слесарные работы.",
+                    quantity=1,
+                    standard_hours=1.0,
+                    actual_hours=1.0,
+                    price=2100,
+                    line_total=1890.0,
+                    status=CatalogStatus.CONFIRMED,
+                ),
+            ],
+            parts=[],
+        )
+        repair.reason = "ТО основное. Вибрация по кабине. Заменить щетки стеклоочистителей."
+        repair.work_total = 20600.83
+        repair.grand_total = 20600.83
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={
+                "normalization_notes": ["exchange_program_present", "leader_trak_totals_restored_from_summary"],
+                "service_not_done": ["Забиты глушители на модуляторах"],
+            },
+            manual_review_reason_labels={},
+        )
+
+        short_titles = [item["title"] for item in report["findings"][:4]]
+        self.assertIn("Тормозные работы не следуют из исходной жалобы", short_titles)
+        self.assertIn("Объем работ шире исходной заявки", short_titles)
+        self.assertNotIn("Документ содержит отметку об Exchange Program", short_titles)
+
     def test_finance_section_marks_net_and_gross_amounts_when_vat_present(self) -> None:
         repair = self._build_repair(works=[], parts=[])
         repair.work_total = 32035.83

@@ -23,6 +23,28 @@ SEVERITY_LEVELS = {
 }
 LEVEL_ORDER = {"low": 0, "medium": 1, "high": 2}
 LEVEL_LABELS = {"low": "низкий", "medium": "средний", "high": "высокий"}
+FINDING_TITLE_PRIORITY = {
+    "По заявленной вибрации проблема не подтверждена": 0,
+    "Моторное масло требует проверки на соответствие Volvo": 1,
+    "Тормозные работы не следуют из исходной жалобы": 2,
+    "Объем работ шире исходной заявки": 3,
+    "Сервис сам зафиксировал нерешённые замечания": 4,
+    "Есть работы с недостаточно прозрачными формулировками": 5,
+    "Дорогая запчасть слабо связана с причиной обращения": 6,
+    "Есть признаки неоригинальных или восстановленных запчастей": 7,
+    "Документ содержит отметку об Exchange Program": 8,
+    "Часть документа была восстановлена эвристически": 9,
+}
+CATEGORY_PRIORITY = {
+    "Соответствие дефекта и ремонта": 0,
+    "Суммы и структура": 1,
+    "Прозрачность ремонта": 2,
+    "Состав ремонта": 3,
+    "Документ и OCR": 4,
+    "Сопоставление с историей": 5,
+    "Повторяемость ремонтов": 6,
+    "Нормо-часы": 7,
+}
 REASON_SIGNAL_RULES = [
     {
         "label": "ABS",
@@ -153,7 +175,7 @@ def build_repair_executive_report(
     for finding in _build_service_not_done_findings(source_payload):
         _append_finding(findings, seen_findings, finding)
 
-    findings.sort(key=lambda item: (-LEVEL_ORDER[str(item["severity"])], str(item["title"])))
+    findings.sort(key=_finding_sort_key)
 
     overall_risk = "low"
     if findings:
@@ -969,7 +991,7 @@ def _build_work_scope_section(repair: Repair) -> dict[str, object]:
 
 
 def _build_findings_section(findings: list[dict[str, object]]) -> dict[str, object]:
-    ordered_findings = sorted(findings, key=lambda item: (-LEVEL_ORDER[str(item["severity"])], str(item["title"])))
+    ordered_findings = sorted(findings, key=_finding_sort_key)
     if not ordered_findings:
         items = ["Критичных и средних замечаний по данным автоматической проверки не выявлено."]
     else:
@@ -1283,6 +1305,15 @@ def _risk_comment(zone: str, level: str) -> str:
     if level == "medium":
         return f"По зоне «{zone}» есть спорные моменты, которые стоит уточнить до закрытия ремонта."
     return f"По зоне «{zone}» значимых рисков не выявлено."
+
+
+def _finding_sort_key(item: dict[str, object]) -> tuple[int, int, int, str]:
+    severity = str(item.get("severity", "low"))
+    title = str(item.get("title", ""))
+    category = str(item.get("category", ""))
+    title_priority = FINDING_TITLE_PRIORITY.get(title, 100)
+    category_priority = CATEGORY_PRIORITY.get(category, 100)
+    return (-LEVEL_ORDER.get(severity, 0), title_priority, category_priority, title)
 
 
 def _build_check_rationale(check: RepairCheck) -> Optional[str]:

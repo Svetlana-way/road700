@@ -330,6 +330,38 @@ FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пр�
         self.assertTrue(any(row[2] == "По заявленной вибрации проблема не подтверждена" for row in warning_rows))
         self.assertTrue(any(row[2] == "Моторное масло требует проверки на соответствие Volvo" for row in warning_rows))
 
+    def test_report_status_stays_in_ocr_queue_when_source_document_job_is_processing(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        repair_id = payload["document"]["repair"]["id"]
+        document_id = payload["document"]["id"]
+        job_id = payload["job_id"]
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            document = db.get(Document, document_id)
+            job = db.get(ImportJob, job_id)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            self.assertIsNotNone(job)
+            assert repair is not None
+            assert document is not None
+            assert job is not None
+
+            repair.source_document_id = document.id
+            document.status = DocumentStatus.RECOGNIZED
+            job.status = ImportStatus.PROCESSING
+            db.add(repair)
+            db.add(document)
+            db.add(job)
+            db.commit()
+            db.refresh(repair)
+
+            report_status, report_status_comment = build_report_status_summary(repair)
+
+        self.assertEqual(report_status, "В очереди OCR")
+        self.assertIn("обработке", report_status_comment)
+
     def test_attach_multiple_images_to_existing_repair_merges_into_single_pdf(self) -> None:
         headers = self._get_auth_headers()
         initial_payload = self._upload_order_document(headers)

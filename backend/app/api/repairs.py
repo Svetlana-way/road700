@@ -14,7 +14,7 @@ from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.core.paths import STORAGE_ROOT
 from app.models.audit import AuditLog
 from app.models.document import Document
-from app.models.enums import CheckSeverity, DocumentStatus, RepairStatus, UserRole
+from app.models.enums import CheckSeverity, DocumentStatus, ImportStatus, RepairStatus, UserRole
 from app.models.imports import ImportJob
 from app.models.ocr_learning_signal import OcrLearningSignal
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
@@ -420,7 +420,14 @@ def get_check_report_section_key(check_type: str) -> str:
 
 def build_report_status_summary(repair: Repair) -> tuple[str, str]:
     source_document = get_report_source_document(repair)
-    if source_document is not None and source_document.status.value == "uploaded":
+    latest_import_job = max(source_document.import_jobs, key=lambda item: item.id, default=None) if source_document is not None else None
+    if source_document is not None and (
+        source_document.status.value == "uploaded"
+        or (
+            latest_import_job is not None
+            and latest_import_job.status in {ImportStatus.QUEUED, ImportStatus.RETRY, ImportStatus.PROCESSING}
+        )
+    ):
         return "В очереди OCR", "Документ ещё находится в обработке или перепроверке."
 
     executive_report = build_repair_executive_report(

@@ -18,7 +18,7 @@ from app.api.deps import get_db
 from app.core.security import get_password_hash
 from app.db.base import Base
 from app.main import app
-from app.models.document import Document
+from app.models.document import Document, DocumentVersion
 from app.models.enums import CheckSeverity, DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
 from app.models.repair import Repair, RepairCheck
 from app.models.service import Service
@@ -221,6 +221,51 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             self.assertEqual(repair.status, RepairStatus.IN_REVIEW)
             self.assertEqual(document.status, DocumentStatus.NEEDS_REVIEW)
 
+    def test_employee_resolving_last_check_does_not_bypass_review_confirmation(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+            document.status = DocumentStatus.RECOGNIZED
+            check = RepairCheck(
+                repair_id=repair.id,
+                check_type="ocr_service_missing",
+                severity=CheckSeverity.WARNING,
+                title="Не удалось определить сервис",
+                details="Сервис у ремонта не назначен. Нужна ручная проверка.",
+                is_resolved=False,
+            )
+            db.add(check)
+            db.commit()
+            check_id = check.id
+
+        response = self.client.patch(
+            f"/api/repairs/1/checks/{check_id}",
+            headers=headers,
+            json={"is_resolved": True, "comment": "Проверил предупреждение"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], RepairStatus.IN_REVIEW.value)
+        patched_check = next(item for item in payload["checks"] if item["id"] == check_id)
+        self.assertTrue(patched_check["is_resolved"])
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+            self.assertEqual(repair.status, RepairStatus.IN_REVIEW)
+            self.assertEqual(document.status, DocumentStatus.RECOGNIZED)
+
     def test_employee_can_access_own_preliminary_repair_after_server_vehicle_relink(self) -> None:
         headers = self._get_auth_headers("employee")
 
@@ -288,6 +333,82 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(documents_response.status_code, 200, documents_response.text)
         visible_document_ids = [item["id"] for item in documents_response.json()["items"]]
         self.assertIn(document_id, visible_document_ids)
+
+    def test_manual_service_assignment_updates_single_warning_without_duplicates(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+
+            repair.service_id = None
+            document.status = DocumentStatus.RECOGNIZED
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=1,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "extracted_fields": {},
+                        "manual_review_reasons": ["service_name_missing"],
+                    },
+                    field_confidence_map={},
+                    change_summary="Initial OCR payload",
+                )
+            )
+            db.add(
+                RepairCheck(
+                    repair_id=repair.id,
+                    check_type="ocr_service_missing",
+                    severity=CheckSeverity.WARNING,
+                    title="Не удалось определить сервис",
+                    details="Сервис у ремонта не назначен. Нужна ручная проверка.",
+                    calculation_payload={"reason": "service_name_missing"},
+                    is_resolved=False,
+                )
+            )
+            db.commit()
+
+        assign_response = self.client.patch(
+            "/api/repairs/1/service",
+            headers=headers,
+            json={"service_name": "Service Alpha"},
+        )
+        self.assertEqual(assign_response.status_code, 200, assign_response.text)
+
+        repeat_assign_response = self.client.patch(
+            "/api/repairs/1/service",
+            headers=headers,
+            json={"service_name": "Service Alpha"},
+        )
+        self.assertEqual(repeat_assign_response.status_code, 200, repeat_assign_response.text)
+
+        clear_response = self.client.patch(
+            "/api/repairs/1/service",
+            headers=headers,
+            json={"service_name": ""},
+        )
+        self.assertEqual(clear_response.status_code, 200, clear_response.text)
+
+        restore_response = self.client.patch(
+            "/api/repairs/1/service",
+            headers=headers,
+            json={"service_name": "Service Alpha"},
+        )
+        self.assertEqual(restore_response.status_code, 200, restore_response.text)
+
+        payload = restore_response.json()
+        service_checks = [item for item in payload["checks"] if item["check_type"] == "ocr_service_missing"]
+        self.assertEqual(len(service_checks), 1)
+        self.assertTrue(service_checks[0]["is_resolved"])
+        self.assertEqual(payload["service"]["name"], "Service Alpha")
+        latest_payload = payload["documents"][0]["versions"][0]["parsed_payload"]
+        self.assertEqual(latest_payload["manual_review_reasons"], [])
+        self.assertEqual(latest_payload["extracted_fields"]["service_name"], "Service Alpha")
 
     def test_admin_created_service_keeps_confirmed_status(self) -> None:
         headers = self._get_auth_headers("admin")

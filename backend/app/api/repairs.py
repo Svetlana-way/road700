@@ -1221,10 +1221,7 @@ def refresh_repair_status_after_check_updates(repair: Repair, current_user: User
         repair.status = RepairStatus.IN_REVIEW
         return
 
-    if current_user.role == UserRole.ADMIN:
-        repair.status = RepairStatus.IN_REVIEW
-    else:
-        repair.status = RepairStatus.EMPLOYEE_CONFIRMED
+    repair.status = RepairStatus.IN_REVIEW
 
 
 @router.patch("/{repair_id}/checks/{check_id}", response_model=RepairDetailResponse)

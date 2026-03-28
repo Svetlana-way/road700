@@ -222,6 +222,7 @@ def serialize_repair(
     )
     return RepairDetailResponse(
         id=repair.id,
+        source_document_id=repair.source_document_id,
         order_number=repair.order_number,
         repair_date=repair.repair_date,
         mileage=repair.mileage,

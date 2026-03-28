@@ -136,6 +136,7 @@ export type RepairExecutiveReport = {
 
 export type RepairDetail = {
   id: number;
+  source_document_id: number | null;
   order_number: string | null;
   repair_date: string;
   mileage: number;

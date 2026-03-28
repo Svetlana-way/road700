@@ -35,7 +35,7 @@ import type {
 
 type RepairDetailLike = Pick<
   RepairDetail,
-  "id" | "order_number" | "repair_date" | "mileage" | "grand_total" | "vehicle" | "service" | "documents" | "checks"
+  "id" | "source_document_id" | "order_number" | "repair_date" | "mileage" | "grand_total" | "vehicle" | "service" | "documents" | "checks"
 >;
 
 type UseRepairDerivedViewModelParams = {
@@ -80,9 +80,18 @@ export function useRepairDerivedViewModel({
   const selectedRepairUnresolvedChecks = selectedRepair
     ? selectedRepair.checks.filter((item) => !item.is_resolved)
     : [];
+  const sourceRepairDocument = selectedRepair
+    ? (selectedRepair.source_document_id !== null
+        ? selectedRepair.documents.find((document) => document.id === selectedRepair.source_document_id)
+        : null) ??
+      selectedRepair.documents.find((document) => document.is_primary) ??
+      selectedRepair.documents[0] ??
+      null
+    : null;
   const selectedRepairAwaitingOcr =
-    selectedRepair?.documents.some((document) => isDocumentAwaitingOcr(document.status) || documentHasActiveImportJob(document)) ??
-    false;
+    sourceRepairDocument !== null
+      ? isDocumentAwaitingOcr(sourceRepairDocument.status) || documentHasActiveImportJob(sourceRepairDocument)
+      : false;
   const selectedRepairHasBlockingFindings = selectedRepairUnresolvedChecks.some(
     (item) => item.severity === "suspicious" || item.severity === "error",
   );

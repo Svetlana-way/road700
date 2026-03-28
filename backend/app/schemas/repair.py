@@ -145,6 +145,7 @@ class RepairExecutiveReportRead(BaseModel):
 
 class RepairDetailResponse(BaseModel):
     id: int
+    source_document_id: Optional[int]
     order_number: Optional[str]
     repair_date: date
     mileage: int

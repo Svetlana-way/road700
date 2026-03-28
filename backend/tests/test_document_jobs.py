@@ -152,6 +152,7 @@ class DocumentJobsApiTestCase(unittest.TestCase):
 
         self.assertEqual(repair_payload["id"], repair_id)
         self.assertIn("executive_report", repair_payload)
+        self.assertEqual(repair_payload["source_document_id"], document_id)
         self.assertIsInstance(repair_payload["executive_report"]["headline"], str)
         self.assertIsInstance(repair_payload["executive_report"]["summary"], str)
         self.assertIsInstance(repair_payload["executive_report"]["status"], str)

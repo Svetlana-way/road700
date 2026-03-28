@@ -42,6 +42,7 @@ export type EditableRepairDraft = {
 export type ReviewComparisonStatus = "match" | "missing" | "mismatch" | "ocr_missing" | "empty";
 
 export type RepairDetailForDraft = {
+  source_document_id: number | null;
   order_number: string | null;
   repair_date: string;
   mileage: number;
@@ -241,14 +242,23 @@ export function resolveRepairDocumentId(repair: RepairDetailForDraft, preferredD
   if (preferredDocumentId !== null && repair.documents.some((document) => document.id === preferredDocumentId)) {
     return preferredDocumentId;
   }
+  if (repair.source_document_id !== null && repair.documents.some((document) => document.id === repair.source_document_id)) {
+    return repair.source_document_id;
+  }
   return repair.documents.find((document) => document.is_primary)?.id ?? repair.documents[0]?.id ?? null;
 }
 
 export function repairHasDocumentsAwaitingOcr(repair: RepairDetailForDraft | null) {
-  return (
-    repair?.documents.some((document) => isDocumentAwaitingOcr(document.status) || documentHasActiveImportJob(document)) ??
-    false
-  );
+  if (!repair || repair.documents.length === 0) {
+    return false;
+  }
+  const sourceDocument =
+    (repair.source_document_id !== null
+      ? repair.documents.find((document) => document.id === repair.source_document_id)
+      : null) ??
+    repair.documents.find((document) => document.is_primary) ??
+    repair.documents[0];
+  return isDocumentAwaitingOcr(sourceDocument.status) || documentHasActiveImportJob(sourceDocument);
 }
 
 export function getDocumentPreviewKind(mimeType: string | null | undefined): "pdf" | "image" | null {

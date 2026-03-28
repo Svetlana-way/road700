@@ -487,15 +487,7 @@ def _build_unresolved_symptom_findings(repair: Repair) -> list[dict[str, object]
 
 
 def _build_oil_compatibility_findings(repair: Repair) -> list[dict[str, object]]:
-    vehicle_text = _normalize_text(" ".join(filter(None, [_get_vehicle_attr(repair, "brand"), _get_vehicle_attr(repair, "model")])))
-    if not vehicle_text or not _contains_any(vehicle_text, VOLVO_FAMILY_TERMS):
-        return []
-
-    suspicious_oils = [
-        item
-        for item in repair.parts
-        if "масло" in _normalize_text(item.part_name) and _contains_any(_normalize_text(item.part_name), SUSPICIOUS_OIL_TERMS)
-    ]
+    suspicious_oils = _collect_suspicious_oil_parts(repair)
     if not suspicious_oils:
         return []
 
@@ -1142,6 +1134,7 @@ def _collect_financial_risk_items(
     items: list[str] = []
     suspicious_total = 0.0
     counted_work_keys: set[int] = set()
+    counted_part_keys: set[int] = set()
 
     if repair.expected_total is not None:
         delta = float(repair.grand_total or 0) - float(repair.expected_total)
@@ -1161,10 +1154,18 @@ def _collect_financial_risk_items(
             f"Несколько диагностических строк дают {_format_money(diagnostic_total)} и требуют отдельного обоснования."
         )
 
+    suspicious_oils = _collect_suspicious_oil_parts(repair)
+    if suspicious_oils:
+        suspicious_oil_total = sum(float(item.line_total or 0) for item in suspicious_oils)
+        suspicious_total += _sum_unique_line_totals(suspicious_oils, counted_part_keys)
+        items.append(
+            f"Строки по моторному маслу, требующему проверки допуска Volvo, составляют {_format_money(suspicious_oil_total)}."
+        )
+
     ambiguous_works = _collect_ambiguous_works(repair)
     if ambiguous_works:
         ambiguous_total = sum(float(item.line_total or 0) for item in ambiguous_works)
-        suspicious_total += _sum_unique_work_totals(ambiguous_works, counted_work_keys)
+        suspicious_total += _sum_unique_line_totals(ambiguous_works, counted_work_keys)
         items.append(
             f"Работы с расплывчатыми формулировками составляют {_format_money(ambiguous_total)}."
         )
@@ -1174,7 +1175,7 @@ def _collect_financial_risk_items(
     ]
     if non_original_works:
         non_original_total = sum(float(item.line_total or 0) for item in non_original_works)
-        suspicious_total += _sum_unique_work_totals(non_original_works, counted_work_keys)
+        suspicious_total += _sum_unique_line_totals(non_original_works, counted_work_keys)
         items.append(
             f"Строки с признаками аналоговых или восстановленных комплектующих составляют {_format_money(non_original_total)}."
         )
@@ -1185,7 +1186,7 @@ def _collect_financial_risk_items(
     ]
     if brake_works and not _contains_any(_normalize_text(repair.reason or ""), BRAKE_TERMS):
         brake_total = sum(float(item.line_total or 0) for item in brake_works)
-        suspicious_total += _sum_unique_work_totals(brake_works, counted_work_keys)
+        suspicious_total += _sum_unique_line_totals(brake_works, counted_work_keys)
         items.append(
             f"Тормозные работы вне исходной жалобы составляют {_format_money(brake_total)}."
         )
@@ -1377,15 +1378,27 @@ def _contains_any(text: str, needles: Iterable[str]) -> bool:
     return any(needle in text for needle in needles)
 
 
-def _sum_unique_work_totals(works: Iterable[object], seen_keys: set[int]) -> float:
+def _sum_unique_line_totals(items: Iterable[object], seen_keys: set[int]) -> float:
     total = 0.0
-    for work in works:
-        key = id(work)
+    for item in items:
+        key = id(item)
         if key in seen_keys:
             continue
         seen_keys.add(key)
-        total += float(getattr(work, "line_total", 0) or 0)
+        total += float(getattr(item, "line_total", 0) or 0)
     return total
+
+
+def _collect_suspicious_oil_parts(repair: Repair) -> list[object]:
+    vehicle_text = _normalize_text(" ".join(filter(None, [_get_vehicle_attr(repair, "brand"), _get_vehicle_attr(repair, "model")])))
+    if not vehicle_text or not _contains_any(vehicle_text, VOLVO_FAMILY_TERMS):
+        return []
+
+    return [
+        item
+        for item in repair.parts
+        if "масло" in _normalize_text(item.part_name) and _contains_any(_normalize_text(item.part_name), SUSPICIOUS_OIL_TERMS)
+    ]
 
 
 def _get_vehicle_attr(repair: Repair, attr_name: str) -> str | None:

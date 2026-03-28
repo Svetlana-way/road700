@@ -317,6 +317,9 @@ class RepairReportAnalysisTestCase(unittest.TestCase):
         )
         self.assertIsNotNone(finding)
         self.assertEqual(finding["severity"], "high")
+        finance_section = next((item for item in report["full_report_sections"] if item["key"] == "financial_risks"), None)
+        self.assertIsNotNone(finance_section)
+        self.assertTrue(any("15 717,50 ₽" in line for line in finance_section["items"]))
 
     def test_report_flags_exchange_program_from_document_notes(self) -> None:
         repair = self._build_repair(works=[], parts=[])

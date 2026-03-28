@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import distinct, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.access import get_allowed_vehicle_ids_query
+from app.api.access import get_allowed_vehicle_ids_query, get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_db
 from app.models.document import Document
 from app.models.enums import CatalogStatus, DocumentStatus, RepairStatus, ServiceStatus, UserRole
@@ -73,12 +73,13 @@ def get_dashboard_summary(
         )
     else:
         visible_ids = get_allowed_vehicle_ids_query(current_user)
+        repair_visibility_clause = get_repair_visibility_clause(current_user)
         vehicle_count = db.scalar(select(func.count(Vehicle.id)).where(Vehicle.id.in_(visible_ids))) or 0
-        repair_count = db.scalar(select(func.count(Repair.id)).where(Repair.vehicle_id.in_(visible_ids))) or 0
+        repair_count = db.scalar(select(func.count(Repair.id)).where(repair_visibility_clause)) or 0
         draft_count = (
             db.scalar(
                 select(func.count(Repair.id)).where(
-                    Repair.vehicle_id.in_(visible_ids),
+                    repair_visibility_clause,
                     Repair.status == RepairStatus.DRAFT,
                 )
             )
@@ -87,7 +88,7 @@ def get_dashboard_summary(
         suspicious_count = (
             db.scalar(
                 select(func.count(Repair.id)).where(
-                    Repair.vehicle_id.in_(visible_ids),
+                    repair_visibility_clause,
                     Repair.status == RepairStatus.SUSPICIOUS,
                 )
             )
@@ -95,7 +96,7 @@ def get_dashboard_summary(
         )
         document_count = (
             db.scalar(
-                select(func.count(Document.id)).join(Document.repair).where(Repair.vehicle_id.in_(visible_ids))
+                select(func.count(Document.id)).join(Document.repair).where(repair_visibility_clause)
             )
             or 0
         )
@@ -104,7 +105,7 @@ def get_dashboard_summary(
                 select(func.count(Document.id))
                 .join(Document.repair)
                 .where(
-                    Repair.vehicle_id.in_(visible_ids),
+                    repair_visibility_clause,
                     Document.status.in_(REVIEW_QUEUE_DOCUMENT_STATUSES),
                 )
             )
@@ -179,15 +180,16 @@ def get_dashboard_data_quality(
         )
     else:
         visible_ids = get_allowed_vehicle_ids_query(current_user)
+        repair_visibility_clause = get_repair_visibility_clause(current_user)
         average_ocr_confidence = db.scalar(
-            select(func.avg(Document.ocr_confidence)).join(Document.repair).where(Repair.vehicle_id.in_(visible_ids))
+            select(func.avg(Document.ocr_confidence)).join(Document.repair).where(repair_visibility_clause)
         )
         documents_low_confidence = (
             db.scalar(
                 select(func.count(Document.id))
                 .join(Document.repair)
                 .where(
-                    Repair.vehicle_id.in_(visible_ids),
+                    repair_visibility_clause,
                     Document.ocr_confidence.is_not(None),
                     Document.ocr_confidence < 0.9,
                 )
@@ -199,7 +201,7 @@ def get_dashboard_data_quality(
                 select(func.count(Document.id))
                 .join(Document.repair)
                 .where(
-                    Repair.vehicle_id.in_(visible_ids),
+                    repair_visibility_clause,
                     Document.status == DocumentStatus.OCR_ERROR,
                 )
             )
@@ -210,7 +212,7 @@ def get_dashboard_data_quality(
                 select(func.count(Document.id))
                 .join(Document.repair)
                 .where(
-                    Repair.vehicle_id.in_(visible_ids),
+                    repair_visibility_clause,
                     Document.status.in_(ACTIVE_REVIEW_DOCUMENT_STATUSES),
                 )
             )
@@ -222,7 +224,7 @@ def get_dashboard_data_quality(
                 .join(Repair, Repair.service_id == Service.id)
                 .where(
                     visible_services,
-                    Repair.vehicle_id.in_(visible_ids),
+                    repair_visibility_clause,
                     Service.status == ServiceStatus.PRELIMINARY,
                 )
             )
@@ -233,7 +235,7 @@ def get_dashboard_data_quality(
                 select(func.count(RepairWork.id))
                 .join(RepairWork.repair)
                 .where(
-                    Repair.vehicle_id.in_(visible_ids),
+                    repair_visibility_clause,
                     RepairWork.status == CatalogStatus.PRELIMINARY,
                 )
             )
@@ -244,7 +246,7 @@ def get_dashboard_data_quality(
                 select(func.count(RepairPart.id))
                 .join(RepairPart.repair)
                 .where(
-                    Repair.vehicle_id.in_(visible_ids),
+                    repair_visibility_clause,
                     RepairPart.status == CatalogStatus.PRELIMINARY,
                 )
             )
@@ -257,7 +259,7 @@ def get_dashboard_data_quality(
                 .join(Document, Document.id == ImportJob.document_id)
                 .join(Repair, Repair.id == Document.repair_id)
                 .where(
-                    Repair.vehicle_id.in_(visible_ids),
+                    repair_visibility_clause,
                     ImportConflict.status == "pending",
                 )
             )
@@ -266,7 +268,7 @@ def get_dashboard_data_quality(
         repairs_suspicious = (
             db.scalar(
                 select(func.count(Repair.id)).where(
-                    Repair.vehicle_id.in_(visible_ids),
+                    repair_visibility_clause,
                     Repair.status == RepairStatus.SUSPICIOUS,
                 )
             )
@@ -294,6 +296,7 @@ def get_dashboard_data_quality_details(
 ) -> DashboardDataQualityDetailsResponse:
     safe_limit = min(max(limit, 1), 25)
     visible_ids = get_allowed_vehicle_ids_query(current_user) if current_user.role != UserRole.ADMIN else None
+    repair_visibility_clause = get_repair_visibility_clause(current_user) if current_user.role != UserRole.ADMIN else None
     visible_services = get_visible_services_condition()
     document_condition = or_(
         Document.status.in_(REVIEW_QUEUE_DOCUMENT_STATUSES),
@@ -302,9 +305,9 @@ def get_dashboard_data_quality_details(
     )
 
     document_count_stmt = select(func.count(Document.id)).select_from(Document).where(document_condition)
-    if visible_ids is not None:
+    if repair_visibility_clause is not None:
         document_count_stmt = document_count_stmt.join(Repair, Repair.id == Document.repair_id).where(
-            Repair.vehicle_id.in_(visible_ids)
+            repair_visibility_clause
         )
     documents_total = db.scalar(document_count_stmt) or 0
 
@@ -327,8 +330,8 @@ def get_dashboard_data_quality_details(
         .order_by(Document.review_queue_priority.desc(), Document.updated_at.desc(), Document.id.desc())
         .limit(safe_limit)
     )
-    if visible_ids is not None:
-        document_stmt = document_stmt.where(Repair.vehicle_id.in_(visible_ids))
+    if repair_visibility_clause is not None:
+        document_stmt = document_stmt.where(repair_visibility_clause)
     document_items = [
         DashboardQualityDocumentItem(
             document_id=row.document_id,
@@ -349,9 +352,9 @@ def get_dashboard_data_quality_details(
         visible_services,
         Service.status == ServiceStatus.PRELIMINARY
     )
-    if visible_ids is not None:
+    if repair_visibility_clause is not None:
         service_count_stmt = service_count_stmt.join(Repair, Repair.service_id == Service.id).where(
-            Repair.vehicle_id.in_(visible_ids)
+            repair_visibility_clause
         )
     services_total = db.scalar(service_count_stmt) or 0
 
@@ -372,8 +375,8 @@ def get_dashboard_data_quality_details(
         .order_by(func.count(distinct(Repair.id)).desc(), func.max(Repair.repair_date).desc(), Service.name.asc())
         .limit(safe_limit)
     )
-    if visible_ids is not None:
-        service_stmt = service_stmt.where(Repair.vehicle_id.in_(visible_ids))
+    if repair_visibility_clause is not None:
+        service_stmt = service_stmt.where(repair_visibility_clause)
     service_items = [
         DashboardQualityServiceItem(
             service_id=row.service_id,
@@ -391,8 +394,8 @@ def get_dashboard_data_quality_details(
         .join(Repair, Repair.id == RepairWork.repair_id)
         .where(RepairWork.status == CatalogStatus.PRELIMINARY)
     )
-    if visible_ids is not None:
-        work_count_stmt = work_count_stmt.where(Repair.vehicle_id.in_(visible_ids))
+    if repair_visibility_clause is not None:
+        work_count_stmt = work_count_stmt.where(repair_visibility_clause)
     works_total = db.scalar(work_count_stmt) or 0
 
     work_stmt = (
@@ -413,8 +416,8 @@ def get_dashboard_data_quality_details(
         .order_by(RepairWork.id.desc())
         .limit(safe_limit)
     )
-    if visible_ids is not None:
-        work_stmt = work_stmt.where(Repair.vehicle_id.in_(visible_ids))
+    if repair_visibility_clause is not None:
+        work_stmt = work_stmt.where(repair_visibility_clause)
     work_items = [
         DashboardQualityWorkItem(
             work_id=row.work_id,
@@ -436,8 +439,8 @@ def get_dashboard_data_quality_details(
         .join(Repair, Repair.id == RepairPart.repair_id)
         .where(RepairPart.status == CatalogStatus.PRELIMINARY)
     )
-    if visible_ids is not None:
-        part_count_stmt = part_count_stmt.where(Repair.vehicle_id.in_(visible_ids))
+    if repair_visibility_clause is not None:
+        part_count_stmt = part_count_stmt.where(repair_visibility_clause)
     parts_total = db.scalar(part_count_stmt) or 0
 
     part_stmt = (
@@ -458,8 +461,8 @@ def get_dashboard_data_quality_details(
         .order_by(RepairPart.id.desc())
         .limit(safe_limit)
     )
-    if visible_ids is not None:
-        part_stmt = part_stmt.where(Repair.vehicle_id.in_(visible_ids))
+    if repair_visibility_clause is not None:
+        part_stmt = part_stmt.where(repair_visibility_clause)
     part_items = [
         DashboardQualityPartItem(
             part_id=row.part_id,
@@ -478,12 +481,12 @@ def get_dashboard_data_quality_details(
     conflict_count_stmt = select(func.count(ImportConflict.id)).select_from(ImportConflict).where(
         ImportConflict.status == "pending"
     )
-    if visible_ids is not None:
+    if repair_visibility_clause is not None:
         conflict_count_stmt = (
             conflict_count_stmt.join(ImportJob, ImportJob.id == ImportConflict.import_job_id)
             .join(Document, Document.id == ImportJob.document_id)
             .join(Repair, Repair.id == Document.repair_id)
-            .where(Repair.vehicle_id.in_(visible_ids))
+            .where(repair_visibility_clause)
         )
     conflicts_total = db.scalar(conflict_count_stmt) or 0
 
@@ -509,8 +512,8 @@ def get_dashboard_data_quality_details(
         .order_by(ImportConflict.created_at.desc(), ImportConflict.id.desc())
         .limit(safe_limit)
     )
-    if visible_ids is not None:
-        conflict_stmt = conflict_stmt.where(Repair.vehicle_id.in_(visible_ids))
+    if repair_visibility_clause is not None:
+        conflict_stmt = conflict_stmt.where(repair_visibility_clause)
     conflict_items = [
         DashboardQualityConflictItem(
             conflict_id=row.conflict_id,

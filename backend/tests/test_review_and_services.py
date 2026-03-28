@@ -481,6 +481,144 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["import_status"], "queued")
         queue_mock.assert_called_once()
 
+    def test_dashboard_summary_includes_own_preliminary_repair_after_vehicle_relink(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            self.assertIsNotNone(employee)
+
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-4",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            foreign_vehicle = Vehicle(
+                external_id="truck-foreign-4",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="E345IJ116",
+                brand="Shaanxi",
+                model="X3000",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, foreign_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-UPL-DASH-001",
+                repair_date=date(2025, 1, 19),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=employee.id,
+                mileage=4000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=employee.id,
+                original_filename="uploaded-dashboard-order.pdf",
+                storage_key="documents/test/uploaded-dashboard-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            repair.vehicle_id = foreign_vehicle.id
+            db.commit()
+
+        response = self.client.get("/api/dashboard/summary", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["vehicles_total"], 1)
+        self.assertEqual(payload["repairs_total"], 2)
+        self.assertEqual(payload["documents_total"], 2)
+        self.assertEqual(payload["documents_review_queue"], 2)
+
+    def test_dashboard_details_include_own_preliminary_document_after_vehicle_relink(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            self.assertIsNotNone(employee)
+
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-5",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            foreign_vehicle = Vehicle(
+                external_id="truck-foreign-5",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="F678KL116",
+                brand="JAC",
+                model="K7",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, foreign_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-UPL-DQ-001",
+                repair_date=date(2025, 1, 20),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=employee.id,
+                mileage=5000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=employee.id,
+                original_filename="uploaded-dashboard-details-order.pdf",
+                storage_key="documents/test/uploaded-dashboard-details-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=130,
+                ocr_confidence=0.42,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            repair.vehicle_id = foreign_vehicle.id
+            db.commit()
+            document_id = document.id
+
+        quality_response = self.client.get("/api/dashboard/data-quality", headers=headers)
+        self.assertEqual(quality_response.status_code, 200, quality_response.text)
+        quality_payload = quality_response.json()
+        self.assertEqual(quality_payload["documents_needs_review"], 2)
+        self.assertEqual(quality_payload["documents_low_confidence"], 1)
+
+        details_response = self.client.get("/api/dashboard/data-quality/details?limit=8", headers=headers)
+        self.assertEqual(details_response.status_code, 200, details_response.text)
+        details_payload = details_response.json()
+        self.assertEqual(details_payload["counts"]["documents"], 2)
+        visible_document_ids = [item["document_id"] for item in details_payload["documents"]]
+        self.assertIn(document_id, visible_document_ids)
+
     def test_manual_service_assignment_updates_single_warning_without_duplicates(self) -> None:
         headers = self._get_auth_headers("admin")
 

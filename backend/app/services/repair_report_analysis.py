@@ -767,6 +767,9 @@ def _build_document_quality_findings(
     manual_review_reasons = source_payload.get("manual_review_reasons")
     reason_codes = [str(item) for item in manual_review_reasons] if isinstance(manual_review_reasons, list) else []
     labeled_reasons = [manual_review_reason_labels.get(item, item) for item in reason_codes]
+    normalization_notes_raw = source_payload.get("normalization_notes")
+    normalization_notes = [str(item) for item in normalization_notes_raw] if isinstance(normalization_notes_raw, list) else []
+    restoration_signals = _collect_document_restoration_signals(normalization_notes)
 
     if document is not None and (document.ocr_confidence or 0) < 0.75 and document.ocr_confidence is not None:
         findings.append(
@@ -791,6 +794,24 @@ def _build_document_quality_findings(
                 "rationale": "Это повышает риск ручных правок и управленческих ошибок при закрытии ремонта.",
                 "evidence": [f"Причины ручной проверки: {', '.join(labeled_reasons[:5])}"],
                 "recommendation": "До подтверждения ремонта проверить вручную все поля, отмеченные системой как спорные или отсутствующие.",
+            }
+        )
+
+    if restoration_signals:
+        high_impact_restoration = any(
+            marker in note
+            for note in normalization_notes
+            for marker in ("_items_restored_from_", "_totals_restored_from_", "_total_restored_from_", "_derived_from_")
+        )
+        findings.append(
+            {
+                "title": "Часть документа была восстановлена эвристически",
+                "severity": "medium" if high_impact_restoration else "low",
+                "category": "Документ и OCR",
+                "summary": "Система собирала часть строк или итогов не напрямую из исходной структуры, а через восстановление по другим блокам документа.",
+                "rationale": "Это не означает ошибку автоматически, но снижает прозрачность OCR-разбора и повышает важность ручной сверки ключевых сумм и спорных строк.",
+                "evidence": restoration_signals[:4],
+                "recommendation": "Перед использованием отчёта для управленческого решения вручную сверить восстановленные суммы и ключевые строки документа.",
             }
         )
 
@@ -1372,3 +1393,29 @@ def _truncate_text(value: str, max_length: int) -> str:
     if len(normalized) <= max_length:
         return normalized
     return normalized[: max_length - 1].rstrip() + "…"
+
+
+def _collect_document_restoration_signals(normalization_notes: list[str]) -> list[str]:
+    signals: list[str] = []
+    for note in normalization_notes:
+        if note.startswith("noise_work_items_removed"):
+            removed_count = note.partition(":")[2]
+            if removed_count.isdigit():
+                signals.append(f"OCR удалил шумовые строки из таблицы работ: {removed_count}.")
+            else:
+                signals.append("OCR удалил шумовые строки из таблицы работ.")
+            continue
+        if "_items_restored_from_" in note:
+            signals.append("Состав работ или материалов восстановлен из другого блока документа.")
+            continue
+        if "_totals_restored_from_" in note or "_total_restored_from_" in note:
+            signals.append("Итоги документа восстановлены по итоговому или служебному блоку.")
+            continue
+        if "_derived_from_" in note:
+            signals.append("Часть сумм была вычислена из связанных полей документа.")
+            continue
+        if note.endswith("_items_suppressed") or "_items_suppressed:" in note:
+            signals.append("Часть строк была подавлена как шум или нерелевантный блок документа.")
+            continue
+
+    return list(dict.fromkeys(signals))

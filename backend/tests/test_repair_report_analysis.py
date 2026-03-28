@@ -333,6 +333,32 @@ class RepairReportAnalysisTestCase(unittest.TestCase):
         )
         self.assertIsNotNone(finding)
 
+    def test_report_flags_when_document_totals_or_items_were_restored_heuristically(self) -> None:
+        repair = self._build_repair(works=[], parts=[])
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={
+                "normalization_notes": [
+                    "noise_work_items_removed:2",
+                    "leader_trak_totals_restored_from_summary",
+                    "leader_trak_items_restored_from_service_table",
+                    "work_total_restored_from_lines",
+                ]
+            },
+            manual_review_reason_labels={},
+        )
+
+        finding = next(
+            (item for item in report["findings"] if item["title"] == "Часть документа была восстановлена эвристически"),
+            None,
+        )
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding["category"], "Документ и OCR")
+        self.assertEqual(finding["severity"], "medium")
+        self.assertTrue(any("восстановлен" in evidence.lower() for evidence in finding["evidence"]))
+        self.assertTrue(any("шумовые строки" in evidence.lower() for evidence in finding["evidence"]))
+
     def test_report_flags_service_not_done_and_shows_gross_risk_estimate(self) -> None:
         repair = self._build_repair(
             works=[

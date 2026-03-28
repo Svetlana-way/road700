@@ -130,7 +130,6 @@ EXPECTED_TOTAL_REPAIR_STATUSES = (
     RepairStatus.CONFIRMED,
     RepairStatus.EMPLOYEE_CONFIRMED,
     RepairStatus.SUSPICIOUS,
-    RepairStatus.ARCHIVED,
 )
 
 
@@ -6254,6 +6253,7 @@ def build_repeat_repair_checks(
         .where(
             Repair.vehicle_id == repair.vehicle_id,
             Repair.id != repair.id,
+            Repair.status != RepairStatus.ARCHIVED,
             Repair.repair_date >= window_start,
             Repair.repair_date <= repair.repair_date,
         )

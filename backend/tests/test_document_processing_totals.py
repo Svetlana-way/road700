@@ -847,6 +847,130 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
         self.assertEqual(dynamic_reference["comparison_source"], "not_applicable")
         self.assertEqual(dynamic_reference["reason_code"], "outside_catalog_service")
 
+    def test_build_repeat_repair_checks_ignores_archived_repairs(self) -> None:
+        with self.SessionLocal() as db:
+            current_repair = db.get(Repair, 1)
+            vehicle = db.get(Vehicle, 1)
+            admin = db.get(User, 1)
+            self.assertIsNotNone(current_repair)
+            self.assertIsNotNone(vehicle)
+            self.assertIsNotNone(admin)
+            assert current_repair is not None
+            assert vehicle is not None
+            assert admin is not None
+
+            current_repair.repair_date = date(2026, 1, 19)
+            db.add(current_repair)
+
+            archived_repair = Repair(
+                order_number="ARCH-1",
+                repair_date=date(2026, 1, 10),
+                vehicle_id=vehicle.id,
+                service_id=None,
+                created_by_user_id=admin.id,
+                mileage=110000,
+                status=RepairStatus.ARCHIVED,
+                is_preliminary=False,
+                is_partially_recognized=False,
+            )
+            db.add(archived_repair)
+            db.flush()
+            db.add(
+                RepairWork(
+                    repair_id=archived_repair.id,
+                    work_code="31",
+                    work_name="Индукция. слесарные работы.",
+                    quantity=1.0,
+                    price=2000.0,
+                    line_total=2000.0,
+                )
+            )
+            db.commit()
+
+            checks = document_processing.build_repeat_repair_checks(
+                db,
+                current_repair,
+                [
+                    {
+                        "work_code": "31",
+                        "work_name": "Индукция. слесарные работы.",
+                        "quantity": 1.0,
+                        "price": 2100.0,
+                        "line_total": 2100.0,
+                    }
+                ],
+            )
+
+        self.assertEqual(checks, [])
+
+    def test_build_expected_total_checks_ignores_archived_repairs(self) -> None:
+        with self.SessionLocal() as db:
+            current_repair = db.get(Repair, 1)
+            vehicle = db.get(Vehicle, 1)
+            admin = db.get(User, 1)
+            self.assertIsNotNone(current_repair)
+            self.assertIsNotNone(vehicle)
+            self.assertIsNotNone(admin)
+            assert current_repair is not None
+            assert vehicle is not None
+            assert admin is not None
+
+            current_repair.work_total = 5000.0
+            current_repair.parts_total = 1000.0
+            current_repair.vat_total = 0.0
+            current_repair.grand_total = 6000.0
+            db.add(current_repair)
+
+            archived_repair = Repair(
+                order_number="ARCH-2",
+                repair_date=date(2026, 1, 5),
+                vehicle_id=vehicle.id,
+                service_id=None,
+                created_by_user_id=admin.id,
+                mileage=105000,
+                status=RepairStatus.ARCHIVED,
+                is_preliminary=False,
+                is_partially_recognized=False,
+                work_total=9000.0,
+                parts_total=0.0,
+                vat_total=0.0,
+                grand_total=9000.0,
+            )
+            db.add(archived_repair)
+            db.flush()
+            db.add(
+                RepairWork(
+                    repair_id=archived_repair.id,
+                    work_code="31",
+                    work_name="Индукция. слесарные работы.",
+                    quantity=1.0,
+                    standard_hours=1.0,
+                    actual_hours=1.0,
+                    price=9000.0,
+                    line_total=9000.0,
+                )
+            )
+            db.commit()
+
+            expected_total, checks = document_processing.build_expected_total_checks(
+                db,
+                current_repair,
+                [
+                    {
+                        "work_code": "31",
+                        "work_name": "Индукция. слесарные работы.",
+                        "quantity": 1.0,
+                        "standard_hours": 1.0,
+                        "actual_hours": 1.0,
+                        "price": 5000.0,
+                        "line_total": 5000.0,
+                    }
+                ],
+            )
+
+        self.assertIsNone(expected_total)
+        self.assertEqual(checks, [])
+
 
 if __name__ == "__main__":
     unittest.main()

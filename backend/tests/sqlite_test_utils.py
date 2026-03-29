@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import warnings
 
+from app.core.rate_limit import rate_limiter
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SAWarning
@@ -21,6 +22,8 @@ def create_sqlite_test_engine(*, enforce_foreign_keys: bool = False) -> Engine:
 
 
 def reset_database(engine: Engine, metadata) -> None:
+    rate_limiter.reset()
+
     with engine.connect() as connection:
         if connection.dialect.name == "sqlite":
             connection.exec_driver_sql("PRAGMA foreign_keys=OFF")

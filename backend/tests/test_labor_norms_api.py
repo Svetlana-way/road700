@@ -4,16 +4,19 @@ import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from app.api.deps import get_db
 from app.core.security import get_password_hash
 from app.db.base import Base
 from app.main import app
+from app.models.audit import AuditLog
 from app.models.enums import CatalogStatus, UserRole
 from app.models.labor_norm import LaborNorm
 from app.models.labor_norm_catalog import LaborNormCatalog
 from app.models.user import User
+from app.scripts.import_labor_norms import ImportStats
 from tests.sqlite_test_utils import create_sqlite_test_engine, reset_database
 
 
@@ -152,3 +155,202 @@ class LaborNormsApiTestCase(unittest.TestCase):
         self.assertEqual(response.json()["detail"], "Архивный каталог `archived_catalog` доступен только для чтения")
         import_mock.assert_not_called()
 
+    def test_import_labor_norms_rejects_unsupported_extension_before_service_call(self) -> None:
+        headers = self._get_auth_headers()
+
+        with patch("app.api.labor_norms.import_labor_norms_with_session") as import_mock:
+            response = self.client.post(
+                "/api/labor-norms/import",
+                headers=headers,
+                files={"file": ("catalog.pdf", b"%PDF-fake", "application/pdf")},
+                data={"scope": "active_catalog"},
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"], "Поддерживается импорт каталога нормо-часов в форматах .xlsx и .csv")
+        import_mock.assert_not_called()
+
+    def test_import_labor_norms_rejects_invalid_xlsx_signature_before_service_call(self) -> None:
+        headers = self._get_auth_headers()
+
+        with patch("app.api.labor_norms.import_labor_norms_with_session") as import_mock:
+            response = self.client.post(
+                "/api/labor-norms/import",
+                headers=headers,
+                files={
+                    "file": (
+                        "catalog.xlsx",
+                        b"not-a-zip-file",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+                data={"scope": "active_catalog"},
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"], "Файл каталога нормо-часов не похож на корректный .xlsx документ")
+        import_mock.assert_not_called()
+
+    def test_create_catalog_writes_audit_log(self) -> None:
+        headers = self._get_auth_headers()
+
+        response = self.client.post(
+            "/api/labor-norms/catalogs",
+            headers=headers,
+            json={
+                "scope": "new_catalog",
+                "catalog_name": "New Catalog",
+                "brand_family": "man",
+                "priority": 200,
+                "auto_match_enabled": True,
+                "status": "confirmed",
+                "notes": "Created from test",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        with self.SessionLocal() as db:
+            audit_entry = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "labor_norm_catalog",
+                    AuditLog.entity_id == str(payload["id"]),
+                    AuditLog.action_type == "labor_norm_catalog_created",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            self.assertIsNotNone(audit_entry)
+            assert audit_entry is not None
+            self.assertEqual(audit_entry.user_id, 1)
+            self.assertEqual(audit_entry.new_value["scope"], "new_catalog")
+            self.assertEqual(audit_entry.new_value["catalog_name"], "New Catalog")
+            self.assertEqual(audit_entry.new_value["status"], "confirmed")
+
+    def test_archive_labor_norm_item_writes_audit_log(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            item = LaborNorm(
+                scope="active_catalog",
+                brand_family="dongfeng",
+                catalog_name="Active Catalog",
+                code="A-002",
+                category="Общее",
+                name_ru="Активная операция",
+                name_ru_alt=None,
+                name_cn=None,
+                name_en=None,
+                normalized_name="активная операция",
+                search_text="A-002 | Активная операция",
+                standard_hours=2.0,
+                source_sheet="Sheet1",
+                source_file="active.xlsx",
+                status=CatalogStatus.CONFIRMED,
+            )
+            db.add(item)
+            db.commit()
+            db.refresh(item)
+            item_id = item.id
+
+        response = self.client.patch(
+            f"/api/labor-norms/{item_id}",
+            headers=headers,
+            json={"status": "archived"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "archived")
+
+        with self.SessionLocal() as db:
+            audit_entry = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "labor_norm_item",
+                    AuditLog.entity_id == str(item_id),
+                    AuditLog.action_type == "labor_norm_item_archived",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            self.assertIsNotNone(audit_entry)
+            assert audit_entry is not None
+            self.assertEqual(audit_entry.old_value["status"], "confirmed")
+            self.assertEqual(audit_entry.new_value["status"], "archived")
+
+    def test_import_labor_norms_writes_success_audit_log(self) -> None:
+        headers = self._get_auth_headers()
+
+        with patch(
+            "app.api.labor_norms.import_labor_norms_with_session",
+            return_value=ImportStats(created=2, updated=1, skipped=3),
+        ):
+            response = self.client.post(
+                "/api/labor-norms/import",
+                headers=headers,
+                files={
+                    "file": (
+                        "catalog.xlsx",
+                        b"PK\x03\x04fake-xlsx-content",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+                data={"scope": "active_catalog"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+
+        with self.SessionLocal() as db:
+            audit_entry = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "labor_norm_import",
+                    AuditLog.entity_id == "active_catalog",
+                    AuditLog.action_type == "labor_norm_import_succeeded",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            self.assertIsNotNone(audit_entry)
+            assert audit_entry is not None
+            self.assertEqual(audit_entry.user_id, 1)
+            self.assertEqual(audit_entry.new_value["scope"], "active_catalog")
+            self.assertEqual(audit_entry.new_value["created"], 2)
+            self.assertEqual(audit_entry.new_value["updated"], 1)
+            self.assertEqual(audit_entry.new_value["skipped"], 3)
+
+    def test_import_labor_norms_writes_failure_audit_log(self) -> None:
+        headers = self._get_auth_headers()
+
+        with patch(
+            "app.api.labor_norms.import_labor_norms_with_session",
+            side_effect=RuntimeError("import failed in test"),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.client.post(
+                    "/api/labor-norms/import",
+                    headers=headers,
+                    files={
+                        "file": (
+                            "catalog.xlsx",
+                            b"PK\x03\x04fake-xlsx-content",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                    },
+                    data={"scope": "active_catalog"},
+                )
+
+        with self.SessionLocal() as db:
+            audit_entry = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "labor_norm_import",
+                    AuditLog.entity_id == "active_catalog",
+                    AuditLog.action_type == "labor_norm_import_failed",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            self.assertIsNotNone(audit_entry)
+            assert audit_entry is not None
+            self.assertEqual(audit_entry.user_id, 1)
+            self.assertEqual(audit_entry.new_value["scope"], "active_catalog")
+            self.assertIn("import failed in test", audit_entry.new_value["error"])

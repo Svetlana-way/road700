@@ -63,6 +63,7 @@ export function useAuthSession({
     setPasswordRecoveryLoading(false);
     setCurrentPasswordValue("");
     setNewPasswordValue("");
+    onLogoutAppReset();
   }
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {

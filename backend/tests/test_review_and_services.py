@@ -1749,6 +1749,59 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(response.json()["detail"], "Нельзя назначить сотрудника на архивную технику")
 
+    def test_vehicle_list_excludes_archived_by_default_and_allows_explicit_archive_filter(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            archived_vehicle = Vehicle(
+                external_id="truck-archived-list",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="Y999YY116",
+                brand="Archived",
+                model="List",
+                status=VehicleStatus.ARCHIVED,
+            )
+            db.add(archived_vehicle)
+            db.commit()
+            archived_vehicle_id = archived_vehicle.id
+
+        default_response = self.client.get("/api/vehicles?limit=50", headers=headers)
+
+        self.assertEqual(default_response.status_code, 200, default_response.text)
+        default_payload = default_response.json()
+        self.assertEqual(default_payload["total"], 1)
+        self.assertEqual([item["id"] for item in default_payload["items"]], [1])
+
+        archived_response = self.client.get("/api/vehicles?limit=50&status=archived", headers=headers)
+
+        self.assertEqual(archived_response.status_code, 200, archived_response.text)
+        archived_payload = archived_response.json()
+        self.assertEqual(archived_payload["total"], 1)
+        self.assertEqual([item["id"] for item in archived_payload["items"]], [archived_vehicle_id])
+
+    def test_global_search_excludes_archived_vehicle_matches(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            db.add(
+                Vehicle(
+                    external_id="truck-archived-search",
+                    vehicle_type=VehicleType.TRUCK,
+                    plate_number="ARCH-SEARCH-116",
+                    brand="Archived",
+                    model="Search",
+                    status=VehicleStatus.ARCHIVED,
+                )
+            )
+            db.commit()
+
+        response = self.client.get("/api/search/global?q=ARCH-SEARCH-116", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["vehicles_total"], 0)
+        self.assertEqual(payload["vehicles"], [])
+
     def test_delete_endpoint_archives_repair_instead_of_removing_it(self) -> None:
         headers = self._get_auth_headers("admin")
 

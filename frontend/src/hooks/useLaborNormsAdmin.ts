@@ -70,6 +70,10 @@ export function useLaborNormsAdmin({
   const [laborNormCatalogForm, setLaborNormCatalogForm] = useState<LaborNormCatalogFormState>(createEmptyCatalogForm);
   const [laborNormEntryForm, setLaborNormEntryForm] = useState<LaborNormEntryFormState>(createEmptyLaborNormEntryForm);
 
+  function getOperationalCatalogs(catalogs: LaborNormCatalogConfigItem[] = laborNormCatalogs) {
+    return catalogs.filter((item) => item.status !== "archived");
+  }
+
   function applyBootstrapLaborNorms(payload: {
     laborNormCatalog: LaborNormCatalogResponse | null;
     laborNormCatalogConfigs: LaborNormCatalogConfigResponse | null;
@@ -285,7 +289,7 @@ export function useLaborNormsAdmin({
     setLaborNormEntryForm(createLaborNormEntryFormFromItem(item));
   }
 
-  function resetLaborNormEntryEditor(scope = laborNormScope || laborNormImportScope || laborNormCatalogs[0]?.scope || "") {
+  function resetLaborNormEntryEditor(scope = laborNormScope || laborNormImportScope || getOperationalCatalogs()[0]?.scope || "") {
     setLaborNormEntryForm(createEmptyLaborNormEntryForm(scope));
   }
 
@@ -394,14 +398,15 @@ export function useLaborNormsAdmin({
   }
 
   useEffect(() => {
-    if (laborNormCatalogs.length === 0) {
+    const operationalCatalogs = getOperationalCatalogs();
+    if (operationalCatalogs.length === 0) {
       return;
     }
     if (!laborNormEntryForm.scope) {
-      setLaborNormEntryForm((current) => ({ ...current, scope: laborNormCatalogs[0].scope }));
+      setLaborNormEntryForm((current) => ({ ...current, scope: operationalCatalogs[0].scope }));
     }
     if (!laborNormImportScope) {
-      selectCatalogScope(laborNormCatalogs[0].scope);
+      selectCatalogScope(operationalCatalogs[0].scope);
     }
   }, [laborNormCatalogs, laborNormEntryForm.scope, laborNormImportScope]);
 

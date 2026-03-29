@@ -302,6 +302,9 @@ def list_vehicles(
     if status_filter is not None:
         base_stmt = base_stmt.where(Vehicle.status == status_filter)
         count_stmt = count_stmt.where(Vehicle.status == status_filter)
+    else:
+        base_stmt = base_stmt.where(Vehicle.status != VehicleStatus.ARCHIVED)
+        count_stmt = count_stmt.where(Vehicle.status != VehicleStatus.ARCHIVED)
 
     if search:
         pattern = f"%{search.strip()}%"

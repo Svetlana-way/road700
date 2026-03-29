@@ -5,6 +5,9 @@ import unittest
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
+from app.models.enums import CatalogStatus
+from app.models.labor_norm import LaborNorm
+from app.models.labor_norm_catalog import LaborNormCatalog
 from app.scripts.import_labor_norms import import_labor_norms_with_session
 from app.services.labor_norms import (
     classify_known_non_catalog_operation,
@@ -89,6 +92,47 @@ class LaborNormMatchingTestCase(unittest.TestCase):
         self.assertIsNotNone(valve_match)
         self.assertEqual(valve_match.norm.code, "10070101")
         self.assertEqual(valve_match.matched_by, "name_variant")
+
+    def test_find_best_labor_norm_match_ignores_norms_from_archived_catalog(self) -> None:
+        with self.SessionLocal() as db:
+            db.add(
+                LaborNormCatalog(
+                    scope="archived_catalog",
+                    catalog_name="Archived Catalog",
+                    brand_family="dongfeng",
+                    priority=100,
+                    auto_match_enabled=True,
+                    status=CatalogStatus.ARCHIVED,
+                )
+            )
+            db.add(
+                LaborNorm(
+                    scope="archived_catalog",
+                    brand_family="dongfeng",
+                    catalog_name="Archived Catalog",
+                    code="A-001",
+                    category="Общее",
+                    name_ru="Архивная операция",
+                    name_ru_alt=None,
+                    name_cn=None,
+                    name_en=None,
+                    normalized_name="архивная операция",
+                    search_text="A-001 | Архивная операция",
+                    standard_hours=1.5,
+                    source_sheet="Sheet1",
+                    source_file="archived.xlsx",
+                    status=CatalogStatus.CONFIRMED,
+                )
+            )
+            db.commit()
+            match = find_best_labor_norm_match(
+                db,
+                work_code="A-001",
+                work_name="Архивная операция",
+                scope="archived_catalog",
+            )
+
+        self.assertIsNone(match)
 
     def test_classify_known_non_catalog_operation_marks_trailer_abs_diagnostics_as_outside_catalog(self) -> None:
         matched, reason = classify_known_non_catalog_operation(

@@ -9,7 +9,9 @@ from sqlalchemy import distinct, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.api.upload_validation import validate_labor_norm_import_upload
 from app.core.paths import STORAGE_ROOT
+from app.models.audit import AuditLog
 from app.models.enums import CatalogStatus
 from app.models.labor_norm import LaborNorm
 from app.models.labor_norm_catalog import LaborNormCatalog
@@ -83,6 +85,64 @@ def get_labor_norm_or_404(db: Session, labor_norm_id: int) -> LaborNorm:
     if labor_norm is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Запись нормо-часов не найдена")
     return labor_norm
+
+
+def build_catalog_audit_snapshot(catalog: LaborNormCatalog) -> dict[str, object]:
+    return {
+        "scope": catalog.scope,
+        "catalog_name": catalog.catalog_name,
+        "brand_family": catalog.brand_family,
+        "vehicle_type": catalog.vehicle_type.value if catalog.vehicle_type is not None else None,
+        "year_from": catalog.year_from,
+        "year_to": catalog.year_to,
+        "brand_keywords": list(catalog.brand_keywords or []),
+        "model_keywords": list(catalog.model_keywords or []),
+        "vin_prefixes": list(catalog.vin_prefixes or []),
+        "priority": catalog.priority,
+        "auto_match_enabled": catalog.auto_match_enabled,
+        "status": catalog.status.value,
+        "notes": catalog.notes,
+    }
+
+
+def build_labor_norm_audit_snapshot(labor_norm: LaborNorm) -> dict[str, object]:
+    return {
+        "scope": labor_norm.scope,
+        "brand_family": labor_norm.brand_family,
+        "catalog_name": labor_norm.catalog_name,
+        "code": labor_norm.code,
+        "category": labor_norm.category,
+        "name_ru": labor_norm.name_ru,
+        "name_ru_alt": labor_norm.name_ru_alt,
+        "name_cn": labor_norm.name_cn,
+        "name_en": labor_norm.name_en,
+        "standard_hours": labor_norm.standard_hours,
+        "source_sheet": labor_norm.source_sheet,
+        "source_file": labor_norm.source_file,
+        "status": labor_norm.status.value,
+    }
+
+
+def write_audit_entry(
+    db: Session,
+    *,
+    user_id: int | None,
+    entity_type: str,
+    entity_id: str,
+    action_type: str,
+    old_value: dict[str, object] | None,
+    new_value: dict[str, object] | None,
+) -> None:
+    db.add(
+        AuditLog(
+            user_id=user_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            action_type=action_type,
+            old_value=old_value,
+            new_value=new_value,
+        )
+    )
 
 
 def populate_labor_norm_from_payload(
@@ -182,6 +242,16 @@ def create_labor_norm_catalog(
         status=payload.status,
         notes=payload.notes,
     )
+    db.flush()
+    write_audit_entry(
+        db,
+        user_id=current_admin.id,
+        entity_type="labor_norm_catalog",
+        entity_id=str(catalog.id),
+        action_type="labor_norm_catalog_created",
+        old_value=None,
+        new_value=build_catalog_audit_snapshot(catalog),
+    )
     db.commit()
     db.refresh(catalog)
     return LaborNormCatalogRead.model_validate(catalog)
@@ -199,11 +269,26 @@ def update_labor_norm_catalog(
     if catalog is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Каталог нормо-часов не найден")
 
+    old_snapshot = build_catalog_audit_snapshot(catalog)
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
         return LaborNormCatalogRead.model_validate(catalog)
 
     catalog = upsert_labor_norm_catalog(db, scope=catalog.scope, **update_data)
+    db.flush()
+    new_snapshot = build_catalog_audit_snapshot(catalog)
+    action_type = "labor_norm_catalog_updated"
+    if old_snapshot["status"] != new_snapshot["status"] and new_snapshot["status"] == CatalogStatus.ARCHIVED.value:
+        action_type = "labor_norm_catalog_archived"
+    write_audit_entry(
+        db,
+        user_id=current_admin.id,
+        entity_type="labor_norm_catalog",
+        entity_id=str(catalog.id),
+        action_type=action_type,
+        old_value=old_snapshot,
+        new_value=new_snapshot,
+    )
     db.commit()
     db.refresh(catalog)
     return LaborNormCatalogRead.model_validate(catalog)
@@ -324,6 +409,16 @@ def create_labor_norm(
         record_status=payload.status,
     )
     db.add(labor_norm)
+    db.flush()
+    write_audit_entry(
+        db,
+        user_id=current_admin.id,
+        entity_type="labor_norm_item",
+        entity_id=str(labor_norm.id),
+        action_type="labor_norm_item_created",
+        old_value=None,
+        new_value=build_labor_norm_audit_snapshot(labor_norm),
+    )
     db.commit()
     db.refresh(labor_norm)
     return LaborNormRead.model_validate(labor_norm)
@@ -340,6 +435,7 @@ def update_labor_norm(
     labor_norm = get_labor_norm_or_404(db, labor_norm_id)
     current_catalog = get_catalog_by_scope(db, labor_norm.scope)
     ensure_catalog_is_operational(current_catalog)
+    old_snapshot = build_labor_norm_audit_snapshot(labor_norm)
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
         return LaborNormRead.model_validate(labor_norm)
@@ -379,6 +475,20 @@ def update_labor_norm(
         record_status=update_data.get("status", labor_norm.status),
     )
     db.add(labor_norm)
+    db.flush()
+    new_snapshot = build_labor_norm_audit_snapshot(labor_norm)
+    action_type = "labor_norm_item_updated"
+    if old_snapshot["status"] != new_snapshot["status"] and new_snapshot["status"] == CatalogStatus.ARCHIVED.value:
+        action_type = "labor_norm_item_archived"
+    write_audit_entry(
+        db,
+        user_id=current_admin.id,
+        entity_type="labor_norm_item",
+        entity_id=str(labor_norm.id),
+        action_type=action_type,
+        old_value=old_snapshot,
+        new_value=new_snapshot,
+    )
     db.commit()
     db.refresh(labor_norm)
     return LaborNormRead.model_validate(labor_norm)
@@ -395,26 +505,7 @@ def import_labor_norms(
     current_admin: User = Depends(get_current_admin),
 ) -> LaborNormImportResponse:
     _ = note
-    content_type = (file.content_type or "").lower()
-    if not file.filename:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Catalog file name is missing")
-    if not (file.filename.lower().endswith(".xlsx") or file.filename.lower().endswith(".csv")):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Поддерживается импорт каталога нормо-часов в форматах .xlsx и .csv",
-        )
-    if (
-        content_type
-        and "sheet" not in content_type
-        and "excel" not in content_type
-        and "csv" not in content_type
-        and "octet-stream" not in content_type
-        and "text/plain" not in content_type
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Некорректный тип файла каталога",
-        )
+    validate_labor_norm_import_upload(file)
 
     normalized_scope = normalize_labor_norm_scope(scope)
     if not normalized_scope:
@@ -452,18 +543,55 @@ def import_labor_norms(
         model_keywords=catalog.model_keywords if catalog else [],
         vin_prefixes=catalog.vin_prefixes if catalog else [],
     )
-
-    stats = import_labor_norms_with_session(
-        db,
-        path=stored_path,
-        scope=normalized_scope,
-        brand_family=effective_brand_family,
-        catalog_name=effective_catalog_name,
-    )
+    try:
+        stats = import_labor_norms_with_session(
+            db,
+            path=stored_path,
+            scope=normalized_scope,
+            brand_family=effective_brand_family,
+            catalog_name=effective_catalog_name,
+        )
+    except Exception as error:
+        db.rollback()
+        write_audit_entry(
+            db,
+            user_id=current_admin.id,
+            entity_type="labor_norm_import",
+            entity_id=normalized_scope,
+            action_type="labor_norm_import_failed",
+            old_value=None,
+            new_value={
+                "scope": normalized_scope,
+                "catalog_name": effective_catalog_name,
+                "brand_family": effective_brand_family,
+                "filename": stored_path.name,
+                "error": str(error),
+            },
+        )
+        db.commit()
+        raise
 
     refreshed_catalog = db.scalar(select(LaborNormCatalog).where(LaborNormCatalog.scope == normalized_scope))
     if refreshed_catalog is not None:
         sync_labor_norm_catalog_metadata(db, refreshed_catalog)
+        write_audit_entry(
+            db,
+            user_id=current_admin.id,
+            entity_type="labor_norm_import",
+            entity_id=normalized_scope,
+            action_type="labor_norm_import_succeeded",
+            old_value=None,
+            new_value={
+                "scope": normalized_scope,
+                "catalog_id": refreshed_catalog.id,
+                "catalog_name": refreshed_catalog.catalog_name,
+                "brand_family": refreshed_catalog.brand_family,
+                "filename": stored_path.name,
+                "created": stats.created,
+                "updated": stats.updated,
+                "skipped": stats.skipped,
+            },
+        )
         db.commit()
 
     return LaborNormImportResponse(

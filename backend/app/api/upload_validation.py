@@ -26,6 +26,13 @@ XLSX_CONTENT_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/octet-stream",
 }
+CSV_CONTENT_TYPES = {
+    "application/csv",
+    "application/octet-stream",
+    "application/vnd.ms-excel",
+    "text/csv",
+    "text/plain",
+}
 HEIF_BRANDS = {
     b"heic",
     b"heix",
@@ -151,3 +158,43 @@ def validate_historical_import_upload(upload: UploadFile) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Файл исторического импорта не похож на корректный .xlsx документ",
         )
+
+
+def validate_labor_norm_import_upload(upload: UploadFile) -> None:
+    ensure_upload_within_size_limit(
+        upload,
+        max_size_bytes=settings.max_import_upload_size_bytes,
+        label="Labor norms catalog file",
+    )
+
+    filename = (upload.filename or "").strip().lower()
+    if not filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Catalog file name is missing")
+
+    content_type = (upload.content_type or "").lower().strip()
+    if filename.endswith(".xlsx"):
+        if content_type and content_type not in XLSX_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Некорректный тип файла каталога",
+            )
+        header = read_upload_header(upload)
+        if not header.startswith(ZIP_SIGNATURES):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Файл каталога нормо-часов не похож на корректный .xlsx документ",
+            )
+        return
+
+    if filename.endswith(".csv"):
+        if content_type and content_type not in CSV_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Некорректный тип файла каталога",
+            )
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Поддерживается импорт каталога нормо-часов в форматах .xlsx и .csv",
+    )

@@ -213,6 +213,16 @@ export function useAppNavigation({
   }
 
   useEffect(() => {
+    if (token) {
+      return;
+    }
+    const defaultRoute: AppRoute = { workspace: "documents" };
+    if (!areAppRoutesEqual(routeSnapshot, defaultRoute)) {
+      updateBrowserRoute(defaultRoute);
+    }
+  }, [routeSnapshot, token]);
+
+  useEffect(() => {
     if (userRole === "admin") {
       return;
     }

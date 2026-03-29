@@ -565,7 +565,9 @@ def assess_labor_norm_applicability(db: Session, vehicle: object | None) -> Labo
 def load_active_labor_norms(db: Session, *, scope: Optional[str] = None) -> list[LaborNorm]:
     stmt = (
         select(LaborNorm)
+        .join(LaborNormCatalog, LaborNormCatalog.scope == LaborNorm.scope)
         .where(LaborNorm.status != CatalogStatus.ARCHIVED)
+        .where(LaborNormCatalog.status != CatalogStatus.ARCHIVED)
         .order_by(LaborNorm.scope.asc(), LaborNorm.code.asc())
     )
     normalized_scope = normalize_labor_norm_scope(scope)

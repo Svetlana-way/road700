@@ -127,6 +127,9 @@ export function LaborNormsAdminPanel({
   formatStatus,
   formatHours,
 }: LaborNormsAdminPanelProps) {
+  const operationalCatalogs = laborNormCatalogs.filter((item) => item.status !== "archived");
+  const operationalScopes = laborNormScopes.filter((scope) => operationalCatalogs.some((item) => item.scope === scope));
+
   return (
     <Paper className="workspace-panel" elevation={0}>
       <Stack spacing={2}>
@@ -333,7 +336,12 @@ export function LaborNormsAdminPanel({
                           <Button size="small" variant="outlined" onClick={() => onEditCatalog(item)}>
                             Редактировать
                           </Button>
-                          <Button size="small" variant="text" onClick={() => onSelectCatalogScope(item.scope)}>
+                          <Button
+                            size="small"
+                            variant="text"
+                            disabled={item.status === "archived"}
+                            onClick={() => onSelectCatalogScope(item.scope)}
+                          >
                             Использовать в импорте
                           </Button>
                         </Stack>
@@ -366,7 +374,7 @@ export function LaborNormsAdminPanel({
               fullWidth
             >
               <MenuItem value="">Все каталоги</MenuItem>
-              {laborNormScopes.map((scope) => (
+              {operationalScopes.map((scope) => (
                 <MenuItem key={scope} value={scope}>
                   {formatCatalogCodeLabel(scope)}
                 </MenuItem>
@@ -412,12 +420,12 @@ export function LaborNormsAdminPanel({
                     onChange={(event) => onSelectCatalogScope(event.target.value)}
                     fullWidth
                   >
-                    {laborNormCatalogs.length === 0 ? (
+                    {operationalCatalogs.length === 0 ? (
                       <MenuItem value="" disabled>
                         Сначала создайте каталог
                       </MenuItem>
                     ) : null}
-                    {laborNormCatalogs.map((item) => (
+                    {operationalCatalogs.map((item) => (
                       <MenuItem key={`import-${item.scope}`} value={item.scope}>
                         {item.catalog_name} · {formatCatalogCodeLabel(item.scope)}
                       </MenuItem>
@@ -479,12 +487,12 @@ export function LaborNormsAdminPanel({
                     onChange={(event) => onEntryFormChange("scope", event.target.value)}
                     fullWidth
                   >
-                    {laborNormCatalogs.length === 0 ? (
+                    {operationalCatalogs.length === 0 ? (
                       <MenuItem value="" disabled>
                         Сначала создайте каталог
                       </MenuItem>
                     ) : null}
-                    {laborNormCatalogs.map((item) => (
+                    {operationalCatalogs.map((item) => (
                       <MenuItem key={`entry-${item.scope}`} value={item.scope}>
                         {item.catalog_name} · {item.scope}
                       </MenuItem>

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.api.access import apply_vehicle_scope, get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_db
 from app.models.document import Document
+from app.models.enums import VehicleStatus
 from app.models.repair import Repair, RepairPart, RepairWork
 from app.models.service import Service
 from app.models.user import User
@@ -181,12 +182,15 @@ def global_search(
         Vehicle.external_id.ilike(pattern),
     )
     vehicles_stmt = (
-        apply_vehicle_scope(select(Vehicle).where(vehicle_search_clause), current_user)
+        apply_vehicle_scope(
+            select(Vehicle).where(vehicle_search_clause, Vehicle.status != VehicleStatus.ARCHIVED),
+            current_user,
+        )
         .order_by(Vehicle.updated_at.desc(), Vehicle.id.desc())
         .limit(limit_per_section)
     )
     vehicles_total_stmt = apply_vehicle_scope(
-        select(func.count(func.distinct(Vehicle.id))).where(vehicle_search_clause),
+        select(func.count(func.distinct(Vehicle.id))).where(vehicle_search_clause, Vehicle.status != VehicleStatus.ARCHIVED),
         current_user,
     )
 

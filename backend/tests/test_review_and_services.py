@@ -1179,6 +1179,84 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             self.assertFalse(old_primary.is_primary)
             self.assertIn("Повторный скан качественнее", new_primary.notes or "")
 
+    def test_comparison_review_accepts_canonical_source_document_even_if_primary_flag_drifted(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            self.assertIsNotNone(admin)
+            assert admin is not None
+
+            vehicle = Vehicle(
+                external_id="truck-compare-primary-drift",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="P777PP116",
+                brand="Mercedes",
+                model="Actros",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-COMPARE-PRIMARY-DRIFT",
+                repair_date=date(2025, 1, 28),
+                vehicle_id=vehicle.id,
+                created_by_user_id=admin.id,
+                mileage=18000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            primary_document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="canonical-source.pdf",
+                storage_key="documents/test/canonical-source.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=False,
+                review_queue_priority=100,
+            )
+            candidate_document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="candidate-repeat.pdf",
+                storage_key="documents/test/candidate-repeat-drift.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.REPEAT_SCAN,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=False,
+                review_queue_priority=90,
+            )
+            db.add_all([primary_document, candidate_document])
+            db.flush()
+
+            repair.source_document_id = primary_document.id
+            db.commit()
+            primary_document_id = primary_document.id
+            candidate_document_id = candidate_document.id
+
+        response = self.client.post(
+            f"/api/documents/{candidate_document_id}/compare/review",
+            headers=headers,
+            json={
+                "with_document_id": primary_document_id,
+                "action": "keep_current_primary",
+                "comment": "canonical source should stay accepted",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["action"], "keep_current_primary")
+        self.assertEqual(payload["source_document_id"], primary_document_id)
+
     def test_comparison_review_ignores_legacy_foreign_source_document_id_in_response_and_audit(self) -> None:
         headers = self._get_auth_headers("admin")
 

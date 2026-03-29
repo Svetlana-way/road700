@@ -39,6 +39,7 @@ from app.schemas.document import (
 )
 from app.services.document_repair_relations import (
     assign_primary_document,
+    build_canonical_source_document_id_expr,
     get_repair_source_document,
     is_document_primary_eligible,
     normalize_repair_primary_document,
@@ -1386,7 +1387,11 @@ def review_document_comparison(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot compare a document with itself")
     if compared_document.repair_id != primary_document.repair_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Documents must belong to the same repair")
-    if not primary_document.is_primary:
+    canonical_source_document = get_repair_source_document(
+        primary_document.repair,
+        include_archived_fallback=True,
+    )
+    if canonical_source_document is None or canonical_source_document.id != primary_document.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reference document must be primary")
     ensure_document_can_be_primary(compared_document)
     ensure_document_can_be_primary(primary_document)
@@ -1528,7 +1533,10 @@ def reprocess_existing_documents(
         stmt = stmt.where(Document.status.in_(REPROCESSABLE_DOCUMENT_STATUSES))
 
     if only_primary:
-        stmt = stmt.where(Document.is_primary.is_(True))
+        stmt = (
+            stmt.join(Repair, Repair.id == Document.repair_id)
+            .where(Document.id == build_canonical_source_document_id_expr())
+        )
 
     document_ids = db.execute(
         stmt.order_by(Document.created_at.asc(), Document.id.asc()).limit(limit)

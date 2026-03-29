@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from sqlalchemy import func, select
+
 from app.models.document import Document
 from app.models.enums import DocumentKind, DocumentStatus
 from app.models.repair import Repair
@@ -72,6 +74,49 @@ def get_repair_source_document(
     if include_archived_fallback:
         return repair.documents[0] if repair.documents else None
     return None
+
+
+def build_canonical_source_document_id_expr():
+    source_document_match_id = (
+        select(Document.id)
+        .where(
+            Document.id == Repair.source_document_id,
+            Document.repair_id == Repair.id,
+            Document.kind.in_(tuple(PRIMARY_DOCUMENT_KINDS)),
+            Document.status != DocumentStatus.ARCHIVED,
+        )
+        .limit(1)
+        .correlate(Repair)
+        .scalar_subquery()
+    )
+    preferred_document_id = (
+        select(Document.id)
+        .where(
+            Document.repair_id == Repair.id,
+            Document.kind.in_(tuple(PRIMARY_DOCUMENT_KINDS)),
+            Document.status != DocumentStatus.ARCHIVED,
+        )
+        .order_by(
+            Document.is_primary.desc(),
+            Document.created_at.desc(),
+            Document.id.desc(),
+        )
+        .limit(1)
+        .correlate(Repair)
+        .scalar_subquery()
+    )
+    fallback_document_id = (
+        select(Document.id)
+        .where(
+            Document.repair_id == Repair.id,
+            Document.status != DocumentStatus.ARCHIVED,
+        )
+        .order_by(Document.created_at.asc(), Document.id.asc())
+        .limit(1)
+        .correlate(Repair)
+        .scalar_subquery()
+    )
+    return func.coalesce(source_document_match_id, preferred_document_id, fallback_document_id)
 
 
 def order_repair_documents_by_source_priority(repair: Repair) -> list[Document]:

@@ -219,6 +219,29 @@ class DocumentJobsApiTestCase(unittest.TestCase):
             self.assertEqual(len(jobs), 2)
             self.assertEqual(sum(1 for job in jobs if job.status == ImportStatus.PROCESSING), 1)
 
+    def test_reprocess_existing_only_primary_uses_canonical_source_document_when_primary_flag_drifted(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        repair_id = payload["document"]["repair"]["id"]
+        canonical_document_id = payload["document"]["id"]
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            canonical_document = db.get(Document, canonical_document_id)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(canonical_document)
+            assert repair is not None
+            assert canonical_document is not None
+
+            canonical_document.is_primary = False
+            db.commit()
+
+        response = self.client.post("/api/documents/reprocess-existing?only_primary=true&limit=10", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["processed_count"], 1)
+        self.assertEqual(payload["document_ids"], [canonical_document_id])
+
     def test_repair_detail_returns_executive_report_and_document_job_status(self) -> None:
         headers = self._get_auth_headers()
         payload = self._upload_order_document(headers)

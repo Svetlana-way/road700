@@ -19,6 +19,7 @@ import type { ServiceFormState } from "../shared/workspaceFormTypes";
 type ServicesAdminPanelProps = {
   serviceQuery: string;
   serviceCityFilter: string;
+  serviceStatusFilter: "" | ServiceStatus;
   serviceCities: string[];
   serviceLoading: boolean;
   showServiceEditor: boolean;
@@ -28,6 +29,7 @@ type ServicesAdminPanelProps = {
   showServiceListDialog: boolean;
   onServiceQueryChange: (value: string) => void;
   onServiceCityFilterChange: (value: string) => void;
+  onServiceStatusFilterChange: (value: "" | ServiceStatus) => void;
   onRefresh: () => void;
   onReset: () => void;
   onToggleEditor: () => void;
@@ -37,12 +39,15 @@ type ServicesAdminPanelProps = {
   onOpenListDialog: () => void;
   onCloseListDialog: () => void;
   onEditService: (item: ServiceItem) => void;
+  onArchiveService: (item: ServiceItem) => void;
+  onRestoreService: (item: ServiceItem) => void;
   formatStatus: (value: string) => string;
 };
 
 export function ServicesAdminPanel({
   serviceQuery,
   serviceCityFilter,
+  serviceStatusFilter,
   serviceCities,
   serviceLoading,
   showServiceEditor,
@@ -52,6 +57,7 @@ export function ServicesAdminPanel({
   showServiceListDialog,
   onServiceQueryChange,
   onServiceCityFilterChange,
+  onServiceStatusFilterChange,
   onRefresh,
   onReset,
   onToggleEditor,
@@ -61,6 +67,8 @@ export function ServicesAdminPanel({
   onOpenListDialog,
   onCloseListDialog,
   onEditService,
+  onArchiveService,
+  onRestoreService,
   formatStatus,
 }: ServicesAdminPanelProps) {
   return (
@@ -81,7 +89,7 @@ export function ServicesAdminPanel({
               fullWidth
             />
           </Grid>
-          <Grid item xs={12} sm={4}>
+          <Grid item xs={12} sm={3}>
             <TextField
               select
               label="Город"
@@ -97,7 +105,21 @@ export function ServicesAdminPanel({
               ))}
             </TextField>
           </Grid>
-          <Grid item xs={12} sm={3}>
+          <Grid item xs={12} sm={2}>
+            <TextField
+              select
+              label="Статус"
+              value={serviceStatusFilter}
+              onChange={(event) => onServiceStatusFilterChange(event.target.value as "" | ServiceStatus)}
+              fullWidth
+            >
+              <MenuItem value="">Активные</MenuItem>
+              <MenuItem value="preliminary">Предварительные</MenuItem>
+              <MenuItem value="confirmed">Подтверждённые</MenuItem>
+              <MenuItem value="archived">Архив</MenuItem>
+            </TextField>
+          </Grid>
+          <Grid item xs={12} sm={2}>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
               <Button variant="outlined" onClick={onRefresh} disabled={serviceLoading}>
                 {serviceLoading ? "Загрузка..." : "Обновить"}
@@ -155,7 +177,6 @@ export function ServicesAdminPanel({
                   >
                     <MenuItem value="preliminary">Предварительный</MenuItem>
                     <MenuItem value="confirmed">Подтверждён</MenuItem>
-                    <MenuItem value="archived">Архив</MenuItem>
                   </TextField>
                 </Grid>
                 <Grid item xs={12}>
@@ -218,16 +239,38 @@ export function ServicesAdminPanel({
                       </Typography>
                       {item.comment ? <Typography className="muted-copy">{item.comment}</Typography> : null}
                       <Stack direction="row" spacing={1}>
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={() => {
-                            onCloseListDialog();
-                            onEditService(item);
-                          }}
-                        >
-                          Редактировать
-                        </Button>
+                        {item.status === "archived" ? (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            disabled={serviceSaving}
+                            onClick={() => onRestoreService(item)}
+                          >
+                            Восстановить
+                          </Button>
+                        ) : (
+                          <>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => {
+                                onCloseListDialog();
+                                onEditService(item);
+                              }}
+                            >
+                              Редактировать
+                            </Button>
+                            <Button
+                              size="small"
+                              color="warning"
+                              variant="text"
+                              disabled={serviceSaving}
+                              onClick={() => onArchiveService(item)}
+                            >
+                              Архивировать
+                            </Button>
+                          </>
+                        )}
                       </Stack>
                     </Stack>
                   </Paper>

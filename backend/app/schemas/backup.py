@@ -3,6 +3,10 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+BackupIncludedSection = Literal["database", "storage_files"]
+BackupExcludedSection = Literal["backup_archives"]
+BackupRestoreEffect = Literal["replace_database", "replace_storage_files", "keep_backup_archives", "relogin_required"]
+
 
 class BackupItemRead(BaseModel):
     backup_id: str
@@ -14,6 +18,9 @@ class BackupItemRead(BaseModel):
     size_bytes: int
     storage_files_total: int
     tables_total: int
+    included_sections: list[BackupIncludedSection]
+    excluded_sections: list[BackupExcludedSection]
+    restore_effects: list[BackupRestoreEffect]
 
 
 class BackupListResponse(BaseModel):

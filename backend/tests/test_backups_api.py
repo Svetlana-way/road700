@@ -159,7 +159,20 @@ class BackupsApiTestCase(unittest.TestCase):
 
         create_response = self.client.post("/api/backups", headers=headers)
         self.assertEqual(create_response.status_code, 200, create_response.text)
-        backup_id = create_response.json()["backup"]["backup_id"]
+        create_payload = create_response.json()
+        backup_payload = create_payload["backup"]
+        backup_id = backup_payload["backup_id"]
+        self.assertEqual(backup_payload["storage_files_total"], 1)
+        self.assertEqual(backup_payload["included_sections"], ["database", "storage_files"])
+        self.assertEqual(backup_payload["excluded_sections"], ["backup_archives"])
+        self.assertEqual(
+            backup_payload["restore_effects"],
+            ["replace_database", "replace_storage_files", "keep_backup_archives", "relogin_required"],
+        )
+
+        backup_dir_note = backups_service.BACKUP_DIR / "keep-local-note.txt"
+        backup_dir_note.parent.mkdir(parents=True, exist_ok=True)
+        backup_dir_note.write_text("preserve backup directory", encoding="utf-8")
 
         with self.SessionLocal() as db:
             db.add(
@@ -198,6 +211,11 @@ class BackupsApiTestCase(unittest.TestCase):
         self.assertTrue(payload["requires_reauthentication"])
         self.assertEqual(payload["post_restore_action"], "relogin")
         self.assertIn("Выполните вход заново", payload["message"])
+        self.assertEqual(payload["backup"]["excluded_sections"], ["backup_archives"])
+        self.assertEqual(
+            payload["backup"]["restore_effects"],
+            ["replace_database", "replace_storage_files", "keep_backup_archives", "relogin_required"],
+        )
 
         with self.SessionLocal() as db:
             restored_user = db.scalar(select(User).where(User.login == "temporary"))
@@ -212,3 +230,4 @@ class BackupsApiTestCase(unittest.TestCase):
             self.assertEqual(restored_document.repair_id, restored_repair.id)
 
         self.assertEqual(file_path.read_text(encoding="utf-8"), "before restore")
+        self.assertEqual(backup_dir_note.read_text(encoding="utf-8"), "preserve backup directory")

@@ -1486,6 +1486,118 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["status"], "confirmed")
         self.assertIsNotNone(payload["confirmed_by_user_id"])
 
+        with self.SessionLocal() as db:
+            audit_entry = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "service",
+                    AuditLog.action_type == "service_created",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            self.assertIsNotNone(audit_entry)
+            assert audit_entry is not None
+            self.assertEqual(audit_entry.user_id, 1)
+            self.assertEqual(audit_entry.new_value["name"], "Custom Confirmed Service")
+            self.assertEqual(audit_entry.new_value["status"], "confirmed")
+            self.assertEqual(audit_entry.new_value["confirmed_by_user_id"], payload["confirmed_by_user_id"])
+
+    def test_service_update_writes_audit_log_with_old_and_new_values(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with patch.object(services_api, "ensure_service_catalog_synced", autospec=True) as sync_mock, patch.object(
+            services_api,
+            "find_service_catalog_entry",
+            autospec=True,
+            return_value=None,
+        ):
+            sync_mock.return_value = ()
+            response = self.client.patch(
+                "/api/services/1",
+                headers=headers,
+                json={
+                    "name": "Service Alpha Updated",
+                    "city": "Moscow",
+                    "status": "preliminary",
+                    "comment": "Archived for operational use",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["name"], "Service Alpha Updated")
+        self.assertEqual(payload["status"], "preliminary")
+
+        with self.SessionLocal() as db:
+            audit_entry = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "service",
+                    AuditLog.entity_id == "1",
+                    AuditLog.action_type == "service_updated",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            self.assertIsNotNone(audit_entry)
+            assert audit_entry is not None
+            self.assertEqual(audit_entry.user_id, 1)
+            self.assertEqual(audit_entry.old_value["name"], "Service Alpha")
+            self.assertEqual(audit_entry.old_value["status"], "confirmed")
+            self.assertEqual(audit_entry.new_value["name"], "Service Alpha Updated")
+            self.assertEqual(audit_entry.new_value["city"], "Moscow")
+            self.assertEqual(audit_entry.new_value["status"], "preliminary")
+            self.assertEqual(audit_entry.new_value["comment"], "Archived for operational use")
+
+    def test_service_archive_and_restore_use_explicit_endpoints(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with patch.object(services_api, "ensure_service_catalog_synced", autospec=True) as sync_mock:
+            sync_mock.return_value = ()
+
+            patch_response = self.client.patch(
+                "/api/services/1",
+                headers=headers,
+                json={"status": "archived"},
+            )
+            self.assertEqual(patch_response.status_code, 409, patch_response.text)
+            self.assertIn("explicit archive/restore endpoints", patch_response.json()["detail"])
+
+            archive_response = self.client.post("/api/services/1/archive", headers=headers)
+            self.assertEqual(archive_response.status_code, 200, archive_response.text)
+            self.assertEqual(archive_response.json()["status"], "archived")
+
+            restore_response = self.client.post("/api/services/1/restore", headers=headers)
+            self.assertEqual(restore_response.status_code, 200, restore_response.text)
+            self.assertEqual(restore_response.json()["status"], "confirmed")
+
+        with self.SessionLocal() as db:
+            archive_audit = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "service",
+                    AuditLog.entity_id == "1",
+                    AuditLog.action_type == "service_archived",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            restore_audit = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "service",
+                    AuditLog.entity_id == "1",
+                    AuditLog.action_type == "service_restored",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            self.assertIsNotNone(archive_audit)
+            self.assertIsNotNone(restore_audit)
+            assert archive_audit is not None
+            assert restore_audit is not None
+            self.assertEqual(archive_audit.old_value["status"], "confirmed")
+            self.assertEqual(archive_audit.new_value["status"], "archived")
+            self.assertEqual(restore_audit.old_value["status"], "archived")
+            self.assertEqual(restore_audit.new_value["status"], "confirmed")
+
     def test_list_services_does_not_persist_sync_side_effects(self) -> None:
         headers = self._get_auth_headers("admin")
 

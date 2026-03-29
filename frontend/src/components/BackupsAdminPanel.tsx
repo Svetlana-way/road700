@@ -24,7 +24,31 @@ type BackupItem = {
   size_bytes: number;
   storage_files_total: number;
   tables_total: number;
+  included_sections: Array<"database" | "storage_files">;
+  excluded_sections: Array<"backup_archives">;
+  restore_effects: Array<"replace_database" | "replace_storage_files" | "keep_backup_archives" | "relogin_required">;
 };
+
+const BACKUP_SECTION_LABELS: Record<BackupItem["included_sections"][number] | BackupItem["excluded_sections"][number], string> = {
+  database: "база данных",
+  storage_files: "рабочие файлы из storage",
+  backup_archives: "каталог резервных копий",
+};
+
+const BACKUP_RESTORE_EFFECT_LABELS: Record<BackupItem["restore_effects"][number], string> = {
+  replace_database: "текущая база данных будет перезаписана",
+  replace_storage_files: "рабочие файлы storage будут перезаписаны",
+  keep_backup_archives: "каталог резервных копий сохранится",
+  relogin_required: "после восстановления потребуется повторный вход",
+};
+
+function formatBackupSectionList(values: Array<BackupItem["included_sections"][number] | BackupItem["excluded_sections"][number]>) {
+  return values.map((value) => BACKUP_SECTION_LABELS[value]).join(", ");
+}
+
+function formatBackupRestoreEffectList(values: BackupItem["restore_effects"]) {
+  return values.map((value) => BACKUP_RESTORE_EFFECT_LABELS[value]).join("; ");
+}
 
 type BackupsAdminPanelProps = {
   backupActionLoading: boolean;
@@ -63,15 +87,23 @@ export function BackupsAdminPanel({
   formatDateTime,
   formatFileSize,
 }: BackupsAdminPanelProps) {
+  const contractPreview = backupRestoreTarget ?? backups[0] ?? null;
+
   return (
     <Paper className="workspace-panel" elevation={0}>
       <Stack spacing={2}>
         <Box>
           <Typography variant="h5">Резервные копии</Typography>
           <Typography className="muted-copy">
-            Полный backup включает базу данных и все файлы из `storage`. После восстановления текущая сессия будет завершена, затем потребуется повторный вход.
+            Полный backup включает базу данных и рабочие файлы `storage`, кроме каталога резервных копий. Восстановление перезаписывает текущую базу и рабочие файлы, но не удаляет сами архивы backup.
           </Typography>
         </Box>
+        {contractPreview ? (
+          <Alert severity="info">
+            Включено: {formatBackupSectionList(contractPreview.included_sections)}. Не входит: {formatBackupSectionList(contractPreview.excluded_sections)}. При
+            восстановлении: {formatBackupRestoreEffectList(contractPreview.restore_effects)}.
+          </Alert>
+        ) : null}
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
           <Button variant="contained" disabled={backupActionLoading} onClick={onCreateBackup}>
             {backupActionLoading ? "Выполнение..." : "Создать резервную копию"}
@@ -144,7 +176,8 @@ export function BackupsAdminPanel({
           <DialogContent dividers>
             <Stack spacing={1.5}>
               <Alert severity="warning">
-                Восстановление перезапишет текущую базу и файлы `storage`, а затем завершит текущую сессию.
+                Восстановление перезапишет текущую базу и рабочие файлы `storage`, но не затронет каталог резервных копий. После восстановления потребуется
+                повторный вход.
               </Alert>
               <Typography>
                 Для подтверждения введите код копии: <strong>{backupRestoreTarget?.backup_id || "—"}</strong>

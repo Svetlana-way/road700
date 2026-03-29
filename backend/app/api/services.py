@@ -5,6 +5,7 @@ from sqlalchemy import distinct, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.models.audit import AuditLog
 from app.models.enums import ServiceStatus, UserRole
 from app.models.service import Service
 from app.models.user import User
@@ -55,6 +56,27 @@ def get_service_or_404(db: Session, service_id: int) -> Service:
     if service_item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Сервис не найден")
     return service_item
+
+
+def ensure_service_is_operational(service_item: Service) -> None:
+    if service_item.status == ServiceStatus.ARCHIVED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Архивные сервисы доступны только для чтения")
+
+
+def resolve_service_restore_status(service_item: Service) -> ServiceStatus:
+    return ServiceStatus.CONFIRMED if service_item.confirmed_by_user_id is not None else ServiceStatus.PRELIMINARY
+
+
+def build_service_audit_snapshot(service_item: Service) -> dict[str, object]:
+    return {
+        "name": service_item.name,
+        "city": service_item.city,
+        "contact": service_item.contact,
+        "comment": service_item.comment,
+        "status": service_item.status.value,
+        "created_by_user_id": service_item.created_by_user_id,
+        "confirmed_by_user_id": service_item.confirmed_by_user_id,
+    }
 
 
 @router.get("", response_model=ServiceListResponse)
@@ -125,6 +147,11 @@ def create_service(
     current_user: User = Depends(get_current_active_user),
 ) -> ServiceRead:
     ensure_service_catalog_synced(db, commit=False)
+    if payload.status == ServiceStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Use explicit archive endpoint for service archive changes",
+        )
     normalized_name = normalize_service_name(payload.name)
     existing = db.scalar(select(Service).where(func.lower(Service.name) == normalized_name.lower()))
     if existing is not None:
@@ -147,6 +174,17 @@ def create_service(
         ),
     )
     db.add(service_item)
+    db.flush()
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            entity_type="service",
+            entity_id=str(service_item.id),
+            action_type="service_created",
+            old_value=None,
+            new_value=build_service_audit_snapshot(service_item),
+        )
+    )
     db.commit()
     db.refresh(service_item)
     return ServiceRead.model_validate(service_item)
@@ -161,9 +199,19 @@ def update_service(
 ) -> ServiceRead:
     ensure_service_catalog_synced(db, commit=False)
     service_item = get_service_or_404(db, service_id)
+    ensure_service_is_operational(service_item)
+    old_snapshot = build_service_audit_snapshot(service_item)
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
         return ServiceRead.model_validate(service_item)
+
+    if "status" in update_data and update_data["status"] != service_item.status and (
+        update_data["status"] == ServiceStatus.ARCHIVED or service_item.status == ServiceStatus.ARCHIVED
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Use explicit archive/restore endpoints for service archive changes",
+        )
 
     if "name" in update_data:
         normalized_name = normalize_service_name(update_data["name"])
@@ -194,6 +242,73 @@ def update_service(
             service_item.confirmed_by_user_id = current_admin.id
 
     db.add(service_item)
+    db.flush()
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="service",
+            entity_id=str(service_item.id),
+            action_type="service_updated",
+            old_value=old_snapshot,
+            new_value=build_service_audit_snapshot(service_item),
+        )
+    )
+    db.commit()
+    db.refresh(service_item)
+    return ServiceRead.model_validate(service_item)
+
+
+@router.post("/{service_id}/archive", response_model=ServiceRead)
+def archive_service(
+    service_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> ServiceRead:
+    ensure_service_catalog_synced(db, commit=False)
+    service_item = get_service_or_404(db, service_id)
+
+    old_snapshot = build_service_audit_snapshot(service_item)
+    service_item.status = ServiceStatus.ARCHIVED
+    db.add(service_item)
+    db.flush()
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="service",
+            entity_id=str(service_item.id),
+            action_type="service_archived",
+            old_value=old_snapshot,
+            new_value=build_service_audit_snapshot(service_item),
+        )
+    )
+    db.commit()
+    db.refresh(service_item)
+    return ServiceRead.model_validate(service_item)
+
+
+@router.post("/{service_id}/restore", response_model=ServiceRead)
+def restore_service(
+    service_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> ServiceRead:
+    ensure_service_catalog_synced(db, commit=False)
+    service_item = get_service_or_404(db, service_id)
+
+    old_snapshot = build_service_audit_snapshot(service_item)
+    service_item.status = resolve_service_restore_status(service_item)
+    db.add(service_item)
+    db.flush()
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="service",
+            entity_id=str(service_item.id),
+            action_type="service_restored",
+            old_value=old_snapshot,
+            new_value=build_service_audit_snapshot(service_item),
+        )
+    )
     db.commit()
     db.refresh(service_item)
     return ServiceRead.model_validate(service_item)

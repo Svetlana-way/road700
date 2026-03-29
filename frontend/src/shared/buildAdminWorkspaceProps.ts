@@ -70,6 +70,7 @@ export type BuildAdminWorkspacePropsParams = {
   isAssignmentActive: EmployeesProps["isAssignmentActive"];
   serviceQuery: ServicesProps["serviceQuery"];
   serviceCityFilter: ServicesProps["serviceCityFilter"];
+  serviceStatusFilter: ServicesProps["serviceStatusFilter"];
   serviceCities: ServicesProps["serviceCities"];
   serviceLoading: ServicesProps["serviceLoading"];
   showServiceEditor: ServicesProps["showServiceEditor"];
@@ -79,6 +80,7 @@ export type BuildAdminWorkspacePropsParams = {
   showServiceListDialog: ServicesProps["showServiceListDialog"];
   setServiceQuery: ServicesProps["onServiceQueryChange"];
   setServiceCityFilter: ServicesProps["onServiceCityFilterChange"];
+  setServiceStatusFilter: ServicesProps["onServiceStatusFilterChange"];
   handleServiceSearch: () => void | Promise<void>;
   resetServicesFilters: ServicesProps["onReset"];
   setShowServiceEditor: Dispatch<SetStateAction<ServicesProps["showServiceEditor"]>>;
@@ -87,6 +89,8 @@ export type BuildAdminWorkspacePropsParams = {
   resetServiceEditor: () => void;
   setShowServiceListDialog: Dispatch<SetStateAction<ServicesProps["showServiceListDialog"]>>;
   handleEditService: ServicesProps["onEditService"];
+  handleArchiveService: (item: Parameters<ServicesProps["onArchiveService"]>[0]) => void | Promise<void>;
+  handleRestoreService: (item: Parameters<ServicesProps["onRestoreService"]>[0]) => void | Promise<void>;
   formatStatus: BackupsProps["formatStatus"] & HistoricalImportsProps["formatStatus"] & LaborNormsProps["formatStatus"];
   backupActionLoading: BackupsProps["backupActionLoading"];
   backupsLoading: BackupsProps["backupsLoading"];
@@ -339,6 +343,7 @@ export function buildAdminWorkspaceProps(params: BuildAdminWorkspacePropsParams)
     servicesProps: {
       serviceQuery: params.serviceQuery,
       serviceCityFilter: params.serviceCityFilter,
+      serviceStatusFilter: params.serviceStatusFilter,
       serviceCities: params.serviceCities,
       serviceLoading: params.serviceLoading,
       showServiceEditor: params.showServiceEditor,
@@ -348,6 +353,7 @@ export function buildAdminWorkspaceProps(params: BuildAdminWorkspacePropsParams)
       showServiceListDialog: params.showServiceListDialog,
       onServiceQueryChange: params.setServiceQuery,
       onServiceCityFilterChange: params.setServiceCityFilter,
+      onServiceStatusFilterChange: params.setServiceStatusFilter,
       onRefresh: () => {
         void params.handleServiceSearch();
       },
@@ -372,6 +378,12 @@ export function buildAdminWorkspaceProps(params: BuildAdminWorkspacePropsParams)
         params.setShowServiceListDialog(false);
       },
       onEditService: params.handleEditService,
+      onArchiveService: (item) => {
+        void params.handleArchiveService(item);
+      },
+      onRestoreService: (item) => {
+        void params.handleRestoreService(item);
+      },
       formatStatus: params.formatStatus,
     },
     backupsProps: {

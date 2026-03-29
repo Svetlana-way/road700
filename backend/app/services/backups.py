@@ -29,6 +29,9 @@ DATABASE_SNAPSHOT_ENTRY = "database.json"
 BACKUP_MANIFEST_SUFFIX = ".manifest.json"
 REPAIR_DOCUMENT_CYCLE_TABLES = ("repairs", "documents")
 REPAIR_DOCUMENT_CYCLE_DEPENDENCIES = ("users", "vehicles", "services")
+BACKUP_INCLUDED_SECTIONS = ("database", "storage_files")
+BACKUP_EXCLUDED_SECTIONS = ("backup_archives",)
+BACKUP_RESTORE_EFFECTS = ("replace_database", "replace_storage_files", "keep_backup_archives", "relogin_required")
 
 
 def utc_now() -> datetime:
@@ -170,6 +173,9 @@ def manifest_to_item(manifest: dict[str, Any]) -> dict[str, Any]:
         "size_bytes": int(manifest.get("size_bytes") or 0),
         "storage_files_total": int(manifest.get("storage_files_total") or 0),
         "tables_total": int(manifest.get("tables_total") or 0),
+        "included_sections": list(manifest.get("included_sections") or BACKUP_INCLUDED_SECTIONS),
+        "excluded_sections": list(manifest.get("excluded_sections") or BACKUP_EXCLUDED_SECTIONS),
+        "restore_effects": list(manifest.get("restore_effects") or BACKUP_RESTORE_EFFECTS),
     }
 
 
@@ -214,6 +220,9 @@ def create_backup_archive(db: Session, *, source: str = "manual") -> dict[str, A
         "size_bytes": archive_path.stat().st_size,
         "storage_files_total": len(storage_files),
         "tables_total": len(snapshot["tables"]),
+        "included_sections": list(BACKUP_INCLUDED_SECTIONS),
+        "excluded_sections": list(BACKUP_EXCLUDED_SECTIONS),
+        "restore_effects": list(BACKUP_RESTORE_EFFECTS),
     }
     write_manifest(manifest)
     return manifest_to_item(manifest)

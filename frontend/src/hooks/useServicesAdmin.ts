@@ -3,7 +3,7 @@ import { buildServicePayload } from "../shared/adminPayloadBuilders";
 import { apiRequest } from "../shared/api";
 import { createEmptyServiceForm, createServiceFormFromItem } from "../shared/formStateFactories";
 import { buildServiceQueryString } from "../shared/queryBuilders";
-import type { ServiceItem, ServicesResponse, UserRole } from "../shared/workspaceBootstrapTypes";
+import type { ServiceItem, ServicesResponse, ServiceStatus, UserRole } from "../shared/workspaceBootstrapTypes";
 import type { ServiceFormState } from "../shared/workspaceFormTypes";
 
 type UseServicesAdminParams = {
@@ -23,6 +23,7 @@ export function useServicesAdmin({
   const [serviceCities, setServiceCities] = useState<string[]>([]);
   const [serviceQuery, setServiceQuery] = useState("");
   const [serviceCityFilter, setServiceCityFilter] = useState("");
+  const [serviceStatusFilter, setServiceStatusFilter] = useState<"" | ServiceStatus>("");
   const [serviceLoading, setServiceLoading] = useState(false);
   const [serviceSaving, setServiceSaving] = useState(false);
   const [serviceForm, setServiceForm] = useState<ServiceFormState>(createEmptyServiceForm);
@@ -37,6 +38,7 @@ export function useServicesAdmin({
   async function loadServices(
     query: string = serviceQuery,
     city: string = serviceCityFilter,
+    statusFilter: string = serviceStatusFilter,
   ) {
     if (!token) {
       return;
@@ -44,7 +46,7 @@ export function useServicesAdmin({
     setServiceLoading(true);
     try {
       const payload = await apiRequest<ServicesResponse>(
-        `/services?${buildServiceQueryString(query, city)}`,
+        `/services?${buildServiceQueryString(query, city, statusFilter)}`,
         { method: "GET" },
         token,
       );
@@ -88,9 +90,10 @@ export function useServicesAdmin({
     }
     setServiceQuery("");
     setServiceCityFilter("");
+    setServiceStatusFilter("");
     setErrorMessage("");
     try {
-      await loadServices("", "");
+      await loadServices("", "", "");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить сервисы");
     }
@@ -142,11 +145,52 @@ export function useServicesAdmin({
     }
   }
 
+  async function handleArchiveService(item: ServiceItem) {
+    if (!token || userRole !== "admin") {
+      return;
+    }
+    setServiceSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      await apiRequest<ServiceItem>(`/services/${item.id}/archive`, { method: "POST" }, token);
+      setSuccessMessage(`Сервис «${item.name}» отправлен в архив`);
+      if (serviceForm.id === item.id) {
+        resetServiceEditor();
+        setShowServiceEditor(false);
+      }
+      await loadServices();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось архивировать сервис");
+    } finally {
+      setServiceSaving(false);
+    }
+  }
+
+  async function handleRestoreService(item: ServiceItem) {
+    if (!token || userRole !== "admin") {
+      return;
+    }
+    setServiceSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      await apiRequest<ServiceItem>(`/services/${item.id}/restore`, { method: "POST" }, token);
+      setSuccessMessage(`Сервис «${item.name}» восстановлен`);
+      await loadServices(serviceQuery, serviceCityFilter, serviceStatusFilter || "archived");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось восстановить сервис");
+    } finally {
+      setServiceSaving(false);
+    }
+  }
+
   function resetServicesState() {
     setServices([]);
     setServiceCities([]);
     setServiceQuery("");
     setServiceCityFilter("");
+    setServiceStatusFilter("");
     setServiceLoading(false);
     setServiceSaving(false);
     setServiceForm(createEmptyServiceForm());
@@ -161,6 +205,8 @@ export function useServicesAdmin({
     setServiceQuery,
     serviceCityFilter,
     setServiceCityFilter,
+    serviceStatusFilter,
+    setServiceStatusFilter,
     serviceLoading,
     serviceSaving,
     serviceForm,
@@ -176,6 +222,8 @@ export function useServicesAdmin({
     handleServiceSearch,
     resetServicesFilters,
     handleSaveService,
+    handleArchiveService,
+    handleRestoreService,
     resetServicesState,
   };
 }

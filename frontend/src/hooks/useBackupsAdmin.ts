@@ -12,6 +12,9 @@ type BackupItem = {
   size_bytes: number;
   storage_files_total: number;
   tables_total: number;
+  included_sections: Array<"database" | "storage_files">;
+  excluded_sections: Array<"backup_archives">;
+  restore_effects: Array<"replace_database" | "replace_storage_files" | "keep_backup_archives" | "relogin_required">;
 };
 
 type BackupListResponse = {

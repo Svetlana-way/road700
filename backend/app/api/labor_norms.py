@@ -70,6 +70,14 @@ def get_catalog_by_scope(db: Session, scope: str) -> LaborNormCatalog:
     return catalog
 
 
+def ensure_catalog_is_operational(catalog: LaborNormCatalog) -> None:
+    if catalog.status == CatalogStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Архивный каталог `{catalog.scope}` доступен только для чтения",
+        )
+
+
 def get_labor_norm_or_404(db: Session, labor_norm_id: int) -> LaborNorm:
     labor_norm = db.scalar(select(LaborNorm).where(LaborNorm.id == labor_norm_id))
     if labor_norm is None:
@@ -287,6 +295,7 @@ def create_labor_norm(
 ) -> LaborNormRead:
     _ = current_admin
     catalog = get_catalog_by_scope(db, payload.scope)
+    ensure_catalog_is_operational(catalog)
     existing = db.scalar(
         select(LaborNorm).where(
             LaborNorm.scope == catalog.scope,
@@ -329,12 +338,15 @@ def update_labor_norm(
 ) -> LaborNormRead:
     _ = current_admin
     labor_norm = get_labor_norm_or_404(db, labor_norm_id)
+    current_catalog = get_catalog_by_scope(db, labor_norm.scope)
+    ensure_catalog_is_operational(current_catalog)
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
         return LaborNormRead.model_validate(labor_norm)
 
     target_scope = update_data.get("scope", labor_norm.scope)
     catalog = get_catalog_by_scope(db, target_scope)
+    ensure_catalog_is_operational(catalog)
     target_code = normalize_labor_norm_code(update_data.get("code", labor_norm.code))
     if not target_code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректный код операции")
@@ -410,6 +422,8 @@ def import_labor_norms(
     normalized_brand_family = normalize_brand_family(brand_family)
     normalized_catalog_name = catalog_name.strip() if catalog_name and catalog_name.strip() else None
     catalog = db.scalar(select(LaborNormCatalog).where(LaborNormCatalog.scope == normalized_scope))
+    if catalog is not None:
+        ensure_catalog_is_operational(catalog)
     effective_brand_family = normalized_brand_family if normalized_brand_family is not None else catalog.brand_family if catalog else None
     effective_catalog_name = normalized_catalog_name if normalized_catalog_name is not None else catalog.catalog_name if catalog else normalized_scope
 

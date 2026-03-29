@@ -42,6 +42,7 @@ type AdminPeopleServicesSectionParams = Pick<
   | "isAssignmentActive"
   | "serviceQuery"
   | "serviceCityFilter"
+  | "serviceStatusFilter"
   | "serviceCities"
   | "serviceLoading"
   | "showServiceEditor"
@@ -51,6 +52,7 @@ type AdminPeopleServicesSectionParams = Pick<
   | "showServiceListDialog"
   | "setServiceQuery"
   | "setServiceCityFilter"
+  | "setServiceStatusFilter"
   | "handleServiceSearch"
   | "resetServicesFilters"
   | "setShowServiceEditor"
@@ -59,6 +61,8 @@ type AdminPeopleServicesSectionParams = Pick<
   | "resetServiceEditor"
   | "setShowServiceListDialog"
   | "handleEditService"
+  | "handleArchiveService"
+  | "handleRestoreService"
   | "formatStatus"
 >;
 
@@ -105,6 +109,7 @@ export function buildAdminPeopleServicesSectionParams(
     isAssignmentActive,
     serviceQuery: servicesAdmin.serviceQuery,
     serviceCityFilter: servicesAdmin.serviceCityFilter,
+    serviceStatusFilter: servicesAdmin.serviceStatusFilter,
     serviceCities: servicesAdmin.serviceCities,
     serviceLoading: servicesAdmin.serviceLoading,
     showServiceEditor: servicesAdmin.showServiceEditor,
@@ -114,6 +119,7 @@ export function buildAdminPeopleServicesSectionParams(
     showServiceListDialog: servicesAdmin.showServiceListDialog,
     setServiceQuery: servicesAdmin.setServiceQuery,
     setServiceCityFilter: servicesAdmin.setServiceCityFilter,
+    setServiceStatusFilter: servicesAdmin.setServiceStatusFilter,
     handleServiceSearch: servicesAdmin.handleServiceSearch,
     resetServicesFilters: servicesAdmin.resetServicesFilters,
     setShowServiceEditor: servicesAdmin.setShowServiceEditor,
@@ -122,6 +128,8 @@ export function buildAdminPeopleServicesSectionParams(
     resetServiceEditor: servicesAdmin.resetServiceEditor,
     setShowServiceListDialog: servicesAdmin.setShowServiceListDialog,
     handleEditService: repairWorkspaceActions.handleEditService,
+    handleArchiveService: servicesAdmin.handleArchiveService,
+    handleRestoreService: servicesAdmin.handleRestoreService,
     formatStatus,
   };
 }

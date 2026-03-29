@@ -13,7 +13,7 @@ export function buildLaborNormQueryString(query: string, scope: string, category
   return params.toString();
 }
 
-export function buildServiceQueryString(query: string, city: string) {
+export function buildServiceQueryString(query: string, city: string, statusFilter: string) {
   const params = new URLSearchParams();
   params.set("limit", "100");
   if (query.trim()) {
@@ -21,6 +21,9 @@ export function buildServiceQueryString(query: string, city: string) {
   }
   if (city) {
     params.set("city", city);
+  }
+  if (statusFilter) {
+    params.set("status", statusFilter);
   }
   return params.toString();
 }

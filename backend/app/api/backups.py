@@ -103,6 +103,8 @@ def restore_backup(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
 
     return BackupRestoreResponse(
-        message="Резервная копия восстановлена",
+        message="Резервная копия восстановлена. Выполните вход заново.",
         backup=BackupItemRead.model_validate(backup),
+        requires_reauthentication=True,
+        post_restore_action="relogin",
     )

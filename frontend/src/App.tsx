@@ -492,6 +492,7 @@ export default function App() {
     activeAdminTab,
     setErrorMessage,
     setSuccessMessage,
+    invalidateSession,
   });
   const {
     backups,

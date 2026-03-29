@@ -69,7 +69,7 @@ export function BackupsAdminPanel({
         <Box>
           <Typography variant="h5">Резервные копии</Typography>
           <Typography className="muted-copy">
-            Полный backup включает базу данных и все файлы из `storage`. Для восстановления введите точный код копии.
+            Полный backup включает базу данных и все файлы из `storage`. После восстановления текущая сессия будет завершена, затем потребуется повторный вход.
           </Typography>
         </Box>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
@@ -144,7 +144,7 @@ export function BackupsAdminPanel({
           <DialogContent dividers>
             <Stack spacing={1.5}>
               <Alert severity="warning">
-                Восстановление перезапишет текущую базу и файлы `storage`.
+                Восстановление перезапишет текущую базу и файлы `storage`, а затем завершит текущую сессию.
               </Alert>
               <Typography>
                 Для подтверждения введите код копии: <strong>{backupRestoreTarget?.backup_id || "—"}</strong>

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -32,3 +33,5 @@ class BackupRestoreRequest(BaseModel):
 class BackupRestoreResponse(BaseModel):
     message: str
     backup: BackupItemRead
+    requires_reauthentication: bool
+    post_restore_action: Literal["relogin"]

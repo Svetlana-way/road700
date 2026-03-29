@@ -27,6 +27,8 @@ type BackupCreateResponse = {
 type BackupRestoreResponse = {
   message: string;
   backup: BackupItem;
+  requires_reauthentication: boolean;
+  post_restore_action: "relogin";
 };
 
 type UseBackupsAdminParams = {
@@ -36,6 +38,7 @@ type UseBackupsAdminParams = {
   activeAdminTab: AdminTab;
   setErrorMessage: (message: string) => void;
   setSuccessMessage: (message: string) => void;
+  invalidateSession: () => void;
 };
 
 export function useBackupsAdmin({
@@ -45,6 +48,7 @@ export function useBackupsAdmin({
   activeAdminTab,
   setErrorMessage,
   setSuccessMessage,
+  invalidateSession,
 }: UseBackupsAdminParams) {
   const [backups, setBackups] = useState<BackupItem[]>([]);
   const [backupsLoading, setBackupsLoading] = useState(false);
@@ -129,6 +133,11 @@ export function useBackupsAdmin({
       );
       setSuccessMessage(payload.message);
       closeBackupRestoreDialog();
+      if (payload.requires_reauthentication && payload.post_restore_action === "relogin") {
+        resetBackupsState();
+        invalidateSession();
+        return;
+      }
       await loadBackups();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось восстановить резервную копию");

@@ -2,30 +2,23 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-import warnings
 from pathlib import Path
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.exc import SAWarning
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.models.labor_norm_catalog import LaborNormCatalog
 from app.models.labor_norm import LaborNorm
 from app.scripts.import_labor_norms import import_labor_norms_with_session
 from app.services.labor_norms import upsert_labor_norm_catalog
+from tests.sqlite_test_utils import create_sqlite_test_engine, reset_database
 
 
 class ImportLaborNormsTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.engine = create_engine(
-            "sqlite+pysqlite:///:memory:",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-            future=True,
-        )
+        cls.engine = create_sqlite_test_engine(enforce_foreign_keys=True)
         cls.SessionLocal = sessionmaker(bind=cls.engine, autoflush=False, autocommit=False, future=True)
         Base.metadata.create_all(bind=cls.engine)
 
@@ -34,16 +27,7 @@ class ImportLaborNormsTestCase(unittest.TestCase):
         cls.engine.dispose()
 
     def setUp(self) -> None:
-        with self.engine.begin() as connection:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message="Cannot correctly sort tables; there are unresolvable cycles between tables",
-                    category=SAWarning,
-                )
-                tables = list(reversed(Base.metadata.sorted_tables))
-            for table in tables:
-                connection.execute(table.delete())
+        reset_database(self.engine, Base.metadata)
 
     def test_import_keeps_auto_match_enabled_for_existing_non_default_catalog(self) -> None:
         csv_content = "\n".join(

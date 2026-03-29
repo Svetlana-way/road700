@@ -2,31 +2,28 @@ from __future__ import annotations
 
 import unittest
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.models.enums import VehicleStatus, VehicleType
 from app.models.vehicle import Vehicle
 from app.services import document_processing
+from tests.sqlite_test_utils import create_sqlite_test_engine, reset_database
 
 
 class DocumentParsingProfilesTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.engine = create_engine(
-            "sqlite+pysqlite:///:memory:",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-            future=True,
-        )
+        cls.engine = create_sqlite_test_engine(enforce_foreign_keys=True)
         cls.SessionLocal = sessionmaker(bind=cls.engine, autoflush=False, autocommit=False, future=True)
         Base.metadata.create_all(bind=cls.engine)
 
     @classmethod
     def tearDownClass(cls) -> None:
         cls.engine.dispose()
+
+    def setUp(self) -> None:
+        reset_database(self.engine, Base.metadata)
 
     def test_load_active_ocr_profile_matchers_seeds_service_profiles(self) -> None:
         with self.SessionLocal() as db:

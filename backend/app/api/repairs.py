@@ -14,7 +14,7 @@ from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.core.paths import STORAGE_ROOT
 from app.models.audit import AuditLog
 from app.models.document import Document
-from app.models.enums import CheckSeverity, DocumentKind, DocumentStatus, ImportStatus, RepairStatus, UserRole, VehicleStatus
+from app.models.enums import CheckSeverity, DocumentStatus, ImportStatus, RepairStatus, UserRole, VehicleStatus
 from app.models.imports import ImportJob
 from app.models.ocr_learning_signal import OcrLearningSignal
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
@@ -28,6 +28,10 @@ from app.schemas.repair import (
     RepairUpdateRequest,
 )
 from app.services.document_processing import build_manual_review_check, replace_ocr_checks, resolve_service
+from app.services.document_repair_relations import (
+    get_repair_source_document,
+    normalize_repair_primary_document,
+)
 from app.services.exporting import append_rows, safe_filename
 from app.services.pdf_tools import render_text_report_pdf
 from app.services.repair_report_analysis import build_repair_executive_report
@@ -67,9 +71,6 @@ CHECK_REPORT_SECTION_LABELS = {
     "history": "История и аномалии",
     "ocr": "OCR и ручная проверка",
 }
-PRIMARY_DOCUMENT_KINDS = {DocumentKind.ORDER, DocumentKind.REPEAT_SCAN}
-
-
 def build_repair_snapshot(repair: Repair) -> dict:
     return {
         "order_number": repair.order_number,
@@ -158,29 +159,6 @@ def ensure_repair_is_operational(repair: Repair) -> None:
             status_code=status.HTTP_409_CONFLICT,
             detail="Repairs for archived vehicles cannot be modified",
         )
-
-
-def normalize_repair_primary_document(repair: Repair) -> Document | None:
-    eligible_documents = [
-        item for item in repair.documents if item.kind in PRIMARY_DOCUMENT_KINDS and item.status != DocumentStatus.ARCHIVED
-    ]
-    current_source = next(
-        (
-            item
-            for item in eligible_documents
-            if repair.source_document_id is not None and item.id == repair.source_document_id
-        ),
-        None,
-    )
-    current_primary = next((item for item in eligible_documents if item.is_primary), None)
-    chosen = current_source or current_primary
-    if chosen is None and eligible_documents:
-        chosen = max(eligible_documents, key=lambda item: (item.created_at, item.id))
-
-    for item in repair.documents:
-        item.is_primary = chosen is not None and item.id == chosen.id
-    repair.source_document_id = chosen.id if chosen is not None else None
-    return chosen
 
 
 def archive_repair_state(repair: Repair) -> None:
@@ -281,6 +259,7 @@ def serialize_repair(
 ) -> RepairDetailResponse:
     documents = sorted(repair.documents, key=lambda item: (item.created_at, item.id), reverse=True)
     documents_by_id = {str(item.id): item for item in documents}
+    source_document = get_repair_source_document(repair)
     executive_report = build_repair_executive_report(
         repair,
         source_payload=get_report_source_payload(repair),
@@ -288,7 +267,7 @@ def serialize_repair(
     )
     return RepairDetailResponse(
         id=repair.id,
-        source_document_id=repair.source_document_id,
+        source_document_id=source_document.id if source_document is not None else None,
         order_number=repair.order_number,
         repair_date=repair.repair_date,
         mileage=repair.mileage,
@@ -436,23 +415,7 @@ def replace_manual_lines(
 
 
 def get_learning_source_document(repair: Repair) -> Document | None:
-    if repair.source_document_id is not None:
-        matched = next(
-            (
-                item
-                for item in repair.documents
-                if item.id == repair.source_document_id and item.status != DocumentStatus.ARCHIVED
-            ),
-            None,
-        )
-        if matched is not None:
-            return matched
-    primary = next((item for item in repair.documents if item.is_primary and item.status != DocumentStatus.ARCHIVED), None)
-    if primary is not None:
-        return primary
-    return next((item for item in repair.documents if item.status != DocumentStatus.ARCHIVED), None) or (
-        repair.documents[0] if repair.documents else None
-    )
+    return get_repair_source_document(repair, include_archived_fallback=True)
 
 
 def get_latest_document_version(document: Document | None):

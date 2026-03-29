@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.scripts.import_labor_norms import import_labor_norms_with_session
@@ -13,23 +11,22 @@ from app.services.labor_norms import (
     extract_labor_norm_code_from_text,
     find_best_labor_norm_match,
 )
+from tests.sqlite_test_utils import create_sqlite_test_engine, reset_database
 
 
 class LaborNormMatchingTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.engine = create_engine(
-            "sqlite+pysqlite:///:memory:",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-            future=True,
-        )
+        cls.engine = create_sqlite_test_engine(enforce_foreign_keys=True)
         cls.SessionLocal = sessionmaker(bind=cls.engine, autoflush=False, autocommit=False, future=True)
         Base.metadata.create_all(bind=cls.engine)
 
     @classmethod
     def tearDownClass(cls) -> None:
         cls.engine.dispose()
+
+    def setUp(self) -> None:
+        reset_database(self.engine, Base.metadata)
 
     def test_find_best_labor_norm_match_uses_embedded_code_from_work_name(self) -> None:
         with self.SessionLocal() as db:

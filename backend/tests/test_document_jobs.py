@@ -2,18 +2,15 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-import warnings
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from PIL import Image
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.exc import SAWarning
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import get_db
 from app.api import documents as documents_api
@@ -28,6 +25,7 @@ from app.models.imports import ImportJob
 from app.models.repair import Repair
 from app.models.user import User
 from app.models.vehicle import Vehicle
+from tests.sqlite_test_utils import create_sqlite_test_engine, reset_database
 
 
 class DocumentJobsApiTestCase(unittest.TestCase):
@@ -36,12 +34,7 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         cls.temp_dir = tempfile.TemporaryDirectory()
         cls.storage_root = Path(cls.temp_dir.name) / "storage"
         cls.storage_root.mkdir(parents=True, exist_ok=True)
-        cls.engine = create_engine(
-            "sqlite+pysqlite:///:memory:",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-            future=True,
-        )
+        cls.engine = create_sqlite_test_engine(enforce_foreign_keys=True)
         cls.SessionLocal = sessionmaker(bind=cls.engine, autoflush=False, autocommit=False, future=True)
         Base.metadata.create_all(bind=cls.engine)
 
@@ -63,16 +56,7 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         cls.temp_dir.cleanup()
 
     def setUp(self) -> None:
-        with self.engine.begin() as connection:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message="Cannot correctly sort tables; there are unresolvable cycles between tables",
-                    category=SAWarning,
-                )
-                tables = list(reversed(Base.metadata.sorted_tables))
-            for table in tables:
-                connection.execute(table.delete())
+        reset_database(self.engine, Base.metadata)
         with self.SessionLocal() as db:
             db.add(
                 User(
@@ -163,6 +147,78 @@ class DocumentJobsApiTestCase(unittest.TestCase):
             self.assertEqual(jobs[0].id, initial_job_id)
             self.assertEqual(jobs[0].status, ImportStatus.QUEUED)
 
+    def test_database_rejects_second_active_ocr_job_for_same_document(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(document)
+            assert document is not None
+
+            db.add(
+                ImportJob(
+                    document_id=document_id,
+                    import_type="document_ocr",
+                    source_filename=document.original_filename,
+                    status=ImportStatus.PROCESSING,
+                    summary={"document_id": document_id, "stage": "duplicate_processing"},
+                    error_message=None,
+                    attempts=1,
+                    started_at=datetime(2025, 1, 3, 10, 0, 0),
+                    finished_at=None,
+                )
+            )
+            with self.assertRaises(IntegrityError):
+                db.commit()
+            db.rollback()
+
+            jobs = db.query(ImportJob).filter(ImportJob.document_id == document_id).order_by(ImportJob.id.asc()).all()
+            self.assertEqual(len(jobs), 1)
+            self.assertEqual(jobs[0].status, ImportStatus.QUEUED)
+
+    def test_process_endpoint_reuses_active_processing_job_even_if_latest_job_is_completed(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        initial_job_id = payload["job_id"]
+
+        with self.SessionLocal() as db:
+            initial_job = db.get(ImportJob, initial_job_id)
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(initial_job)
+            self.assertIsNotNone(document)
+            assert initial_job is not None
+            assert document is not None
+
+            initial_job.status = ImportStatus.PROCESSING
+            initial_job.started_at = datetime(2025, 1, 1, 9, 0, 0)
+            db.add(
+                ImportJob(
+                    document_id=document_id,
+                    import_type="document_ocr",
+                    source_filename=document.original_filename,
+                    status=ImportStatus.COMPLETED,
+                    summary={"document_id": document_id, "stage": "completed"},
+                    error_message=None,
+                    attempts=1,
+                    started_at=None,
+                    finished_at=None,
+                )
+            )
+            db.commit()
+
+        response = self.client.post(f"/api/documents/{document_id}/process", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["job_id"], initial_job_id)
+        self.assertEqual(response.json()["import_status"], "processing")
+
+        with self.SessionLocal() as db:
+            jobs = db.query(ImportJob).filter(ImportJob.document_id == document_id).order_by(ImportJob.id.asc()).all()
+            self.assertEqual(len(jobs), 2)
+            self.assertEqual(sum(1 for job in jobs if job.status == ImportStatus.PROCESSING), 1)
+
     def test_repair_detail_returns_executive_report_and_document_job_status(self) -> None:
         headers = self._get_auth_headers()
         payload = self._upload_order_document(headers)
@@ -186,6 +242,66 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         document_payload = next(item for item in repair_payload["documents"] if item["id"] == document_id)
         self.assertEqual(document_payload["latest_import_job"]["id"], job_id)
         self.assertEqual(document_payload["latest_import_job"]["status"], "queued")
+
+    def test_repair_detail_does_not_expose_foreign_source_document_id_from_legacy_relation_drift(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        repair_id = payload["document"]["repair"]["id"]
+        local_document_id = payload["document"]["id"]
+
+        with self.SessionLocal() as db:
+            local_repair = db.get(Repair, repair_id)
+            self.assertIsNotNone(local_repair)
+            assert local_repair is not None
+
+            foreign_vehicle = Vehicle(
+                external_id="truck-foreign-source",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="X123YZ116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(foreign_vehicle)
+            db.flush()
+
+            foreign_repair = Repair(
+                order_number="ZN-FOREIGN-001",
+                repair_date=date(2025, 1, 20),
+                vehicle_id=foreign_vehicle.id,
+                created_by_user_id=1,
+                mileage=45000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+                is_partially_recognized=False,
+            )
+            db.add(foreign_repair)
+            db.flush()
+
+            foreign_document = Document(
+                repair_id=foreign_repair.id,
+                uploaded_by_user_id=1,
+                original_filename="foreign-source.pdf",
+                storage_key="documents/test/foreign-source.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(foreign_document)
+            db.flush()
+
+            local_repair.source_document_id = foreign_document.id
+            db.commit()
+
+        response = self.client.get(f"/api/repairs/{repair_id}", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        repair_payload = response.json()
+
+        self.assertEqual(repair_payload["source_document_id"], local_document_id)
+        self.assertEqual([item["id"] for item in repair_payload["documents"]], [local_document_id])
 
     def test_archived_document_cannot_become_primary(self) -> None:
         headers = self._get_auth_headers()
@@ -303,6 +419,48 @@ FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пр�
             assert latest_job is not None
             self.assertIn(latest_job.status, {ImportStatus.COMPLETED, ImportStatus.COMPLETED_WITH_CONFLICTS})
             self.assertTrue((self.storage_root / document.storage_key).exists())
+
+    def test_database_rejects_queued_duplicate_while_document_is_processing(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        active_job_id = payload["job_id"]
+
+        with self.SessionLocal() as db:
+            active_job = db.get(ImportJob, active_job_id)
+            self.assertIsNotNone(active_job)
+            assert active_job is not None
+
+            active_job.status = ImportStatus.PROCESSING
+            active_job.started_at = datetime(2025, 1, 2, 10, 0, 0)
+            db.commit()
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(document)
+            assert document is not None
+
+            db.add(
+                ImportJob(
+                    document_id=document_id,
+                    import_type="document_ocr",
+                    source_filename=document.original_filename,
+                    status=ImportStatus.QUEUED,
+                    summary={"document_id": document_id, "stage": "queued_duplicate"},
+                    error_message=None,
+                    attempts=0,
+                    started_at=None,
+                    finished_at=None,
+                )
+            )
+            with self.assertRaises(IntegrityError):
+                db.commit()
+            db.rollback()
+
+            jobs = db.query(ImportJob).filter(ImportJob.document_id == document_id).order_by(ImportJob.id.asc()).all()
+            self.assertEqual(len(jobs), 1)
+            self.assertEqual(jobs[0].id, active_job_id)
+            self.assertEqual(jobs[0].status, ImportStatus.PROCESSING)
 
     def test_upload_rolls_back_document_and_file_when_queueing_fails(self) -> None:
         headers = self._get_auth_headers()

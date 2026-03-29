@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-import warnings
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.exc import SAWarning
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.core.security import get_password_hash
 from app.db.base import Base
@@ -24,6 +21,7 @@ from app.models.vehicle import Vehicle
 from app.services import document_processing
 from app.services.document_processing import OcrProfileSelection, find_vehicle_by_identifiers, process_document
 from app.services.labor_norms import LaborNormApplicability
+from tests.sqlite_test_utils import create_sqlite_test_engine, reset_database
 
 
 class DocumentProcessingTotalsTestCase(unittest.TestCase):
@@ -32,12 +30,7 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
         cls.temp_dir = tempfile.TemporaryDirectory()
         cls.storage_root = Path(cls.temp_dir.name) / "storage"
         cls.storage_root.mkdir(parents=True, exist_ok=True)
-        cls.engine = create_engine(
-            "sqlite+pysqlite:///:memory:",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-            future=True,
-        )
+        cls.engine = create_sqlite_test_engine(enforce_foreign_keys=True)
         cls.SessionLocal = sessionmaker(bind=cls.engine, autoflush=False, autocommit=False, future=True)
         Base.metadata.create_all(bind=cls.engine)
 
@@ -47,16 +40,7 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
         cls.temp_dir.cleanup()
 
     def setUp(self) -> None:
-        with self.engine.begin() as connection:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message="Cannot correctly sort tables; there are unresolvable cycles between tables",
-                    category=SAWarning,
-                )
-                tables = list(reversed(Base.metadata.sorted_tables))
-            for table in tables:
-                connection.execute(table.delete())
+        reset_database(self.engine, Base.metadata)
 
         with self.SessionLocal() as db:
             admin = User(

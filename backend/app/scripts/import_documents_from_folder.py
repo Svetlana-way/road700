@@ -22,6 +22,7 @@ from app.models.repair import Repair
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.services.document_processing import process_document
+from app.services.document_repair_relations import normalize_repair_primary_document
 
 DEFAULT_SOURCE_DIR = PROJECT_ROOT / "Заказ-наряды"
 PLACEHOLDER_EXTERNAL_ID = "__batch_import_placeholder__"
@@ -234,7 +235,6 @@ def rebind_document_vehicle(
 
     document.repair.vehicle_id = vehicle.id
     db.add(document.repair)
-    db.commit()
     process_document(db, document.id)
     return True
 
@@ -278,14 +278,14 @@ def create_document_record(
         source_type=detect_source_type_from_path(source_path),
         kind=DocumentKind.ORDER,
         status=DocumentStatus.UPLOADED,
-        is_primary=True,
+        is_primary=False,
         review_queue_priority=100,
         notes=f"Batch import source: {relative_source_path}",
     )
     db.add(document)
     db.flush()
 
-    repair.source_document_id = document.id
+    normalize_repair_primary_document(repair)
     db.add(
         DocumentVersion(
             document_id=document.id,
@@ -302,7 +302,7 @@ def create_document_record(
             change_summary="Initial batch import",
         )
     )
-    db.commit()
+    db.flush()
     return document.id
 
 
@@ -367,7 +367,8 @@ def import_documents_with_session(
             stats.created += 1
         except Exception as exc:
             db.rollback()
-            if created_document_id is None and destination.exists():
+            persisted_document = created_document_id is not None and db.get(Document, created_document_id) is not None
+            if destination.exists() and not persisted_document:
                 destination.unlink()
             stats.failed += 1
             print(f"[FAILED] {path}: {exc}")

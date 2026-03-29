@@ -41,7 +41,7 @@ from app.models.ocr_rule import OcrRule
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
 from app.models.vehicle import Vehicle
-from app.services.import_jobs import mark_job_completed, mark_job_failed
+from app.services.import_jobs import mark_job_completed, mark_job_failed, start_document_processing_job
 from app.services.service_catalog import find_service_name_in_text, normalize_service_key, resolve_service_by_name
 from app.services.labor_norms import (
     LaborNormApplicability,
@@ -7884,20 +7884,8 @@ def process_document(db: Session, document_id: int, *, job_id: int | None = None
 
     storage_path = get_storage_path(initial_document.storage_key)
     if job_id is None:
-        job = ImportJob(
-            document_id=initial_document.id,
-            import_type="document_ocr",
-            source_filename=initial_document.original_filename,
-            status=ImportStatus.PROCESSING,
-            summary={"document_id": initial_document.id, "stage": "started"},
-            attempts=1,
-            started_at=datetime.now().astimezone(),
-            finished_at=None,
-        )
-        db.add(job)
-        db.flush()
+        job, _ = start_document_processing_job(db, initial_document, retry_failed=True, commit=True)
         job_id = job.id
-        db.commit()
     else:
         job = db.get(ImportJob, job_id)
         if job is None:

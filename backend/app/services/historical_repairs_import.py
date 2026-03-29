@@ -433,12 +433,20 @@ def import_historical_repairs(
     if repair_limit is not None and repair_limit <= 0:
         raise ValueError("Лимит ремонтов должен быть положительным числом")
 
+    started_at = datetime.now()
     job = ImportJob(
         import_type="historical_repairs",
         source_filename=filename,
         status=ImportStatus.PROCESSING,
-        summary={},
+        summary={
+            "stage": "processing",
+            "source_filename": filename,
+            "started_at": started_at.isoformat(),
+        },
         error_message=None,
+        attempts=1,
+        started_at=started_at,
+        finished_at=None,
     )
     db.add(job)
     db.commit()
@@ -617,8 +625,16 @@ def import_historical_repairs(
         result.status = (
             ImportStatus.COMPLETED_WITH_CONFLICTS if result.conflicts_created > 0 or result.duplicate_repairs > 0 else ImportStatus.COMPLETED
         )
+        finished_at = datetime.now()
         job.status = result.status
-        job.summary = result.build_summary()
+        job.finished_at = finished_at
+        job.summary = {
+            **result.build_summary(),
+            "stage": "completed",
+            "source_filename": filename,
+            "started_at": started_at.isoformat(),
+            "finished_at": finished_at.isoformat(),
+        }
         job.error_message = None
         db.add(job)
         db.commit()
@@ -627,8 +643,16 @@ def import_historical_repairs(
         db.rollback()
         failed_job = db.get(ImportJob, job.id)
         if failed_job is not None:
+            finished_at = datetime.now()
             failed_job.status = ImportStatus.FAILED
-            failed_job.summary = result.build_summary()
+            failed_job.finished_at = finished_at
+            failed_job.summary = {
+                **result.build_summary(),
+                "stage": "failed",
+                "source_filename": filename,
+                "started_at": started_at.isoformat(),
+                "finished_at": finished_at.isoformat(),
+            }
             failed_job.error_message = str(exc)
             db.add(failed_job)
             db.commit()

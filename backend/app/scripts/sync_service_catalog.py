@@ -10,6 +10,7 @@ from app.db.session import SessionLocal
 from app.models.document import Document
 from app.models.repair import Repair
 from app.services.document_processing import derive_service_name_from_source_path, extract_document_source_path
+from app.services.document_repair_relations import order_repair_documents_by_source_priority
 from app.services.service_catalog import ensure_service_catalog_synced, resolve_catalog_service
 
 
@@ -31,16 +32,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 
 def load_repair_documents(db, repair: Repair) -> list[Document]:
-    documents_by_id = {document.id: document for document in repair.documents}
-    ordered: list[Document] = []
-    if repair.source_document_id is not None and repair.source_document_id in documents_by_id:
-        ordered.append(documents_by_id[repair.source_document_id])
-    ordered.extend(
-        document
-        for document in sorted(repair.documents, key=lambda item: (item.is_primary, item.id), reverse=True)
-        if document.id != repair.source_document_id
-    )
-    return ordered
+    return order_repair_documents_by_source_priority(repair)
 
 
 def sync_service_catalog(*, skip_repair_backfill: bool = False) -> SyncStats:

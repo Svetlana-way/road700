@@ -8,12 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.core.paths import PROJECT_ROOT
 from app.db.base import Base
+from app.db.sqlite import create_sqlite_in_memory_engine
 from app.models.labor_norm import LaborNorm
 from app.scripts.import_labor_norms import import_labor_norms_with_session
 from app.services.document_processing import extract_document_text, normalize_line, parse_document_text
@@ -103,12 +102,7 @@ def resolve_catalog_path(labor_scope: str, catalog_path: str | None) -> Path:
 
 @contextmanager
 def build_audit_session(*, labor_scope: str, catalog_path: Path) -> Iterable[Session]:
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        future=True,
-    )
+    engine = create_sqlite_in_memory_engine(enforce_foreign_keys=True)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     Base.metadata.create_all(bind=engine)
     try:

@@ -2,27 +2,25 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-import warnings
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
-from sqlalchemy.exc import SAWarning
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.api import services as services_api
 from app.api import documents as documents_api
 from app.api.deps import get_db
+from app.core.paths import get_storage_root, set_storage_root
 from app.core.security import get_password_hash
 from app.db.base import Base
 from app.main import app
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
-from app.models.enums import CheckSeverity, DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
-from app.models.repair import Repair, RepairCheck
+from app.models.enums import CatalogStatus, CheckSeverity, DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
+from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle, VehicleAssignmentHistory
@@ -32,6 +30,7 @@ from app.services.service_catalog import (
     find_service_catalog_entry,
     resolve_service_by_name,
 )
+from tests.sqlite_test_utils import create_sqlite_test_engine, reset_database
 
 
 class ReviewAndServicesApiTestCase(unittest.TestCase):
@@ -40,12 +39,9 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         cls.temp_dir = tempfile.TemporaryDirectory()
         cls.storage_root = Path(cls.temp_dir.name) / "storage"
         cls.storage_root.mkdir(parents=True, exist_ok=True)
-        cls.engine = create_engine(
-            "sqlite+pysqlite:///:memory:",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-            future=True,
-        )
+        cls.original_storage_root = get_storage_root()
+        set_storage_root(cls.storage_root)
+        cls.engine = create_sqlite_test_engine(enforce_foreign_keys=True)
         cls.SessionLocal = sessionmaker(bind=cls.engine, autoflush=False, autocommit=False, future=True)
         Base.metadata.create_all(bind=cls.engine)
 
@@ -62,20 +58,12 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         app.dependency_overrides.clear()
+        set_storage_root(cls.original_storage_root)
         cls.engine.dispose()
         cls.temp_dir.cleanup()
 
     def setUp(self) -> None:
-        with self.engine.begin() as connection:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message="Cannot correctly sort tables; there are unresolvable cycles between tables",
-                    category=SAWarning,
-                )
-                tables = list(reversed(Base.metadata.sorted_tables))
-            for table in tables:
-                connection.execute(table.delete())
+        reset_database(self.engine, Base.metadata)
 
         with self.SessionLocal() as db:
             admin = User(
@@ -620,6 +608,116 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         visible_document_ids = [item["document_id"] for item in details_payload["documents"]]
         self.assertIn(document_id, visible_document_ids)
 
+    def test_dashboard_work_and_part_items_ignore_legacy_foreign_source_document_id(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            self.assertIsNotNone(admin)
+            assert admin is not None
+
+            local_vehicle = Vehicle(
+                external_id="truck-dashboard-local",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="E555EE116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            foreign_vehicle = Vehicle(
+                external_id="truck-dashboard-foreign",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="F666FF116",
+                brand="Scania",
+                model="R",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([local_vehicle, foreign_vehicle])
+            db.flush()
+
+            local_repair = Repair(
+                order_number="ZN-DASH-LOCAL-001",
+                repair_date=date(2025, 1, 24),
+                vehicle_id=local_vehicle.id,
+                created_by_user_id=admin.id,
+                mileage=21000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            foreign_repair = Repair(
+                order_number="ZN-DASH-FOREIGN-001",
+                repair_date=date(2025, 1, 25),
+                vehicle_id=foreign_vehicle.id,
+                created_by_user_id=admin.id,
+                mileage=22000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add_all([local_repair, foreign_repair])
+            db.flush()
+
+            local_document = Document(
+                repair_id=local_repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="dashboard-local-primary.pdf",
+                storage_key="documents/test/dashboard-local-primary.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            foreign_document = Document(
+                repair_id=foreign_repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="dashboard-foreign-primary.pdf",
+                storage_key="documents/test/dashboard-foreign-primary.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add_all([local_document, foreign_document])
+            db.flush()
+
+            local_repair.source_document_id = foreign_document.id
+            db.add_all(
+                [
+                    RepairWork(
+                        repair_id=local_repair.id,
+                        work_code="PRE-001",
+                        work_name="Предварительная диагностика",
+                        quantity=1,
+                        price=1500,
+                        line_total=1500,
+                        status=CatalogStatus.PRELIMINARY,
+                    ),
+                    RepairPart(
+                        repair_id=local_repair.id,
+                        article="P-001",
+                        part_name="Тестовая деталь",
+                        quantity=1,
+                        price=2500,
+                        line_total=2500,
+                        status=CatalogStatus.PRELIMINARY,
+                    ),
+                ]
+            )
+            db.commit()
+            local_document_id = local_document.id
+
+        response = self.client.get("/api/dashboard/data-quality/details?limit=8", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        work_item = next(item for item in payload["works"] if item["work_name"] == "Предварительная диагностика")
+        part_item = next(item for item in payload["parts"] if item["part_name"] == "Тестовая деталь")
+        self.assertEqual(work_item["document_id"], local_document_id)
+        self.assertEqual(part_item["document_id"], local_document_id)
+
     def test_employee_sees_audit_entries_for_own_preliminary_repair_after_vehicle_relink(self) -> None:
         headers = self._get_auth_headers("employee")
 
@@ -708,6 +806,506 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         action_types = [item["action_type"] for item in payload["items"]]
         self.assertIn("admin_repair_note", action_types)
         self.assertIn("admin_document_note", action_types)
+
+    def test_employee_can_download_own_preliminary_document_after_vehicle_relink(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            self.assertIsNotNone(employee)
+
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-7",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            foreign_vehicle = Vehicle(
+                external_id="truck-foreign-7",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="H234OP116",
+                brand="Sitrak",
+                model="C7H Max",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, foreign_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-UPL-DOWNLOAD-001",
+                repair_date=date(2025, 1, 22),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=employee.id,
+                mileage=7000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=employee.id,
+                original_filename="uploaded-download-order.pdf",
+                storage_key="documents/test/uploaded-download-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            repair.vehicle_id = foreign_vehicle.id
+            db.commit()
+            document_id = document.id
+            storage_key = document.storage_key
+
+        file_path = self.storage_root / storage_key
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_bytes(b"%PDF-1.4\n%relink-download-test\n")
+
+        response = self.client.get(
+            f"/api/documents/{document_id}/download",
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("application/pdf", response.headers["content-type"])
+        self.assertTrue(response.content.startswith(b"%PDF-1.4"))
+
+    def test_employee_can_export_own_preliminary_repair_after_vehicle_relink(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            self.assertIsNotNone(employee)
+
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-8",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            foreign_vehicle = Vehicle(
+                external_id="truck-foreign-8",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="J567RS116",
+                brand="Mercedes-Benz",
+                model="Actros",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, foreign_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-UPL-EXPORT-001",
+                repair_date=date(2025, 1, 23),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=employee.id,
+                mileage=8000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=employee.id,
+                original_filename="uploaded-export-order.pdf",
+                storage_key="documents/test/uploaded-export-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            repair.vehicle_id = foreign_vehicle.id
+            db.commit()
+            repair_id = repair.id
+
+        xlsx_response = self.client.get(
+            f"/api/repairs/{repair_id}/export",
+            headers=headers,
+        )
+        self.assertEqual(xlsx_response.status_code, 200, xlsx_response.text)
+        self.assertIn(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            xlsx_response.headers["content-type"],
+        )
+        self.assertTrue(xlsx_response.content.startswith(b"PK"))
+
+        pdf_response = self.client.get(
+            f"/api/repairs/{repair_id}/export.pdf",
+            headers=headers,
+        )
+        self.assertEqual(pdf_response.status_code, 200, pdf_response.text)
+        self.assertIn("application/pdf", pdf_response.headers["content-type"])
+        self.assertTrue(pdf_response.content.startswith(b"%PDF"))
+
+    def test_employee_can_compare_own_preliminary_documents_after_vehicle_relink(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            self.assertIsNotNone(employee)
+
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-9",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            foreign_vehicle = Vehicle(
+                external_id="truck-foreign-9",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="K890TU116",
+                brand="MAN",
+                model="TGX",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, foreign_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-UPL-COMPARE-001",
+                repair_date=date(2025, 1, 24),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=employee.id,
+                mileage=9000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            primary_document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=employee.id,
+                original_filename="compare-primary.pdf",
+                storage_key="documents/test/compare-primary.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            repeat_document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=employee.id,
+                original_filename="compare-repeat.pdf",
+                storage_key="documents/test/compare-repeat.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.REPEAT_SCAN,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=False,
+                review_queue_priority=90,
+            )
+            db.add_all([primary_document, repeat_document])
+            db.flush()
+
+            db.add_all(
+                [
+                    DocumentVersion(
+                        document_id=primary_document.id,
+                        version_number=1,
+                        storage_key=primary_document.storage_key,
+                        parsed_payload={
+                            "extracted_fields": {
+                                "order_number": "ZN-UPL-COMPARE-001",
+                                "grand_total": 10000,
+                            },
+                            "extracted_items": {
+                                "works": [{"name": "ТО"}],
+                                "parts": [{"name": "Фильтр"}],
+                            },
+                        },
+                        field_confidence_map={},
+                        change_summary="Primary OCR",
+                    ),
+                    DocumentVersion(
+                        document_id=repeat_document.id,
+                        version_number=1,
+                        storage_key=repeat_document.storage_key,
+                        parsed_payload={
+                            "extracted_fields": {
+                                "order_number": "ZN-UPL-COMPARE-001-R2",
+                                "grand_total": 12500,
+                            },
+                            "extracted_items": {
+                                "works": [{"name": "ТО"}, {"name": "Диагностика"}],
+                                "parts": [{"name": "Фильтр"}, {"name": "Масло"}],
+                            },
+                        },
+                        field_confidence_map={},
+                        change_summary="Repeat OCR",
+                    ),
+                ]
+            )
+
+            repair.source_document_id = primary_document.id
+            repair.vehicle_id = foreign_vehicle.id
+            db.commit()
+            primary_document_id = primary_document.id
+            repeat_document_id = repeat_document.id
+
+        response = self.client.get(
+            f"/api/documents/{repeat_document_id}/compare",
+            headers=headers,
+            params={"with_document_id": primary_document_id},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["left_document"]["id"], repeat_document_id)
+        self.assertEqual(payload["right_document"]["id"], primary_document_id)
+        self.assertEqual(payload["works_count_left"], 2)
+        self.assertEqual(payload["works_count_right"], 1)
+        self.assertEqual(payload["parts_count_left"], 2)
+        self.assertEqual(payload["parts_count_right"], 1)
+        differing_fields = {item["field_name"] for item in payload["compared_fields"] if item["is_different"]}
+        self.assertIn("order_number", differing_fields)
+        self.assertIn("grand_total", differing_fields)
+
+    def test_admin_can_review_comparison_and_promote_document_to_primary(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            self.assertIsNotNone(admin)
+
+            comparison_vehicle = Vehicle(
+                external_id="truck-compare-admin",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="L123UV116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(comparison_vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-ADMIN-COMPARE-001",
+                repair_date=date(2025, 1, 25),
+                vehicle_id=comparison_vehicle.id,
+                created_by_user_id=admin.id,
+                mileage=10000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            primary_document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="admin-primary.pdf",
+                storage_key="documents/test/admin-primary.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            candidate_document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="admin-repeat.pdf",
+                storage_key="documents/test/admin-repeat.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.REPEAT_SCAN,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=False,
+                review_queue_priority=90,
+            )
+            db.add_all([primary_document, candidate_document])
+            db.flush()
+
+            repair.source_document_id = primary_document.id
+            db.commit()
+            primary_document_id = primary_document.id
+            candidate_document_id = candidate_document.id
+            repair_id = repair.id
+
+        response = self.client.post(
+            f"/api/documents/{candidate_document_id}/compare/review",
+            headers=headers,
+            json={
+                "with_document_id": primary_document_id,
+                "action": "make_document_primary",
+                "comment": "Повторный скан качественнее",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["action"], "make_document_primary")
+        self.assertEqual(payload["document_id"], candidate_document_id)
+        self.assertEqual(payload["repair_id"], repair_id)
+        self.assertEqual(payload["source_document_id"], candidate_document_id)
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            new_primary = db.get(Document, candidate_document_id)
+            old_primary = db.get(Document, primary_document_id)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(new_primary)
+            self.assertIsNotNone(old_primary)
+            assert repair is not None
+            assert new_primary is not None
+            assert old_primary is not None
+            self.assertEqual(repair.source_document_id, candidate_document_id)
+            self.assertTrue(new_primary.is_primary)
+            self.assertFalse(old_primary.is_primary)
+            self.assertIn("Повторный скан качественнее", new_primary.notes or "")
+
+    def test_comparison_review_ignores_legacy_foreign_source_document_id_in_response_and_audit(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            self.assertIsNotNone(admin)
+            assert admin is not None
+
+            local_vehicle = Vehicle(
+                external_id="truck-compare-drift-local",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="M321OP116",
+                brand="MAN",
+                model="TGX",
+                status=VehicleStatus.ACTIVE,
+            )
+            foreign_vehicle = Vehicle(
+                external_id="truck-compare-drift-foreign",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="N654QR116",
+                brand="Scania",
+                model="R",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([local_vehicle, foreign_vehicle])
+            db.flush()
+
+            local_repair = Repair(
+                order_number="ZN-COMPARE-DRIFT-001",
+                repair_date=date(2025, 1, 26),
+                vehicle_id=local_vehicle.id,
+                created_by_user_id=admin.id,
+                mileage=12000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            foreign_repair = Repair(
+                order_number="ZN-COMPARE-DRIFT-FOREIGN",
+                repair_date=date(2025, 1, 27),
+                vehicle_id=foreign_vehicle.id,
+                created_by_user_id=admin.id,
+                mileage=15000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add_all([local_repair, foreign_repair])
+            db.flush()
+
+            primary_document = Document(
+                repair_id=local_repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="drift-primary.pdf",
+                storage_key="documents/test/drift-primary.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            candidate_document = Document(
+                repair_id=local_repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="drift-repeat.pdf",
+                storage_key="documents/test/drift-repeat.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.REPEAT_SCAN,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=False,
+                review_queue_priority=90,
+            )
+            foreign_document = Document(
+                repair_id=foreign_repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="foreign-source.pdf",
+                storage_key="documents/test/foreign-source-drift.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add_all([primary_document, candidate_document, foreign_document])
+            db.flush()
+
+            local_repair.source_document_id = foreign_document.id
+            db.commit()
+            primary_document_id = primary_document.id
+            candidate_document_id = candidate_document.id
+            local_repair_id = local_repair.id
+
+        response = self.client.post(
+            f"/api/documents/{candidate_document_id}/compare/review",
+            headers=headers,
+            json={
+                "with_document_id": primary_document_id,
+                "action": "keep_current_primary",
+                "comment": "Оставляем текущий основной документ",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["action"], "keep_current_primary")
+        self.assertEqual(payload["source_document_id"], primary_document_id)
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, local_repair_id)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            self.assertNotEqual(repair.source_document_id, primary_document_id)
+
+            audit_entry = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "repair",
+                    AuditLog.entity_id == str(local_repair_id),
+                    AuditLog.action_type == "document_comparison_reviewed",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            self.assertIsNotNone(audit_entry)
+            assert audit_entry is not None
+            self.assertEqual(audit_entry.old_value["source_document_id"], primary_document_id)
+            self.assertEqual(audit_entry.new_value["source_document_id"], primary_document_id)
 
     def test_manual_service_assignment_updates_single_warning_without_duplicates(self) -> None:
         headers = self._get_auth_headers("admin")

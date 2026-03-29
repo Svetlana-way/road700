@@ -8,12 +8,11 @@ from pathlib import Path
 from typing import Iterable
 from unittest.mock import patch
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.core.paths import PROJECT_ROOT
 from app.db.base import Base
+from app.db.sqlite import create_sqlite_in_memory_engine
 from app.scripts.import_vehicles import import_vehicles_with_session
 
 DEFAULT_SOURCE_DIR = PROJECT_ROOT / "Заказ-наряды"
@@ -211,12 +210,7 @@ def build_registry_audit_session() -> Iterable[Session | None]:
         yield None
         return
 
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        future=True,
-    )
+    engine = create_sqlite_in_memory_engine(enforce_foreign_keys=True)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     Base.metadata.create_all(bind=engine)
     try:

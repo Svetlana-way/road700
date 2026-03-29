@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.api.access import get_allowed_vehicle_ids_query, get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_db
 from app.models.document import Document
-from app.models.enums import CatalogStatus, DocumentStatus, RepairStatus, ServiceStatus, UserRole
+from app.models.enums import CatalogStatus, DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole
 from app.models.imports import ImportConflict, ImportJob
 from app.models.repair import Repair, RepairPart, RepairWork
 from app.models.service import Service
@@ -40,6 +40,7 @@ ACTIVE_REVIEW_DOCUMENT_STATUSES = [
     DocumentStatus.PARTIALLY_RECOGNIZED,
     DocumentStatus.NEEDS_REVIEW,
 ]
+PRIMARY_SOURCE_DOCUMENT_KINDS = [DocumentKind.ORDER, DocumentKind.REPEAT_SCAN]
 
 
 def get_visible_services_condition():
@@ -48,6 +49,49 @@ def get_visible_services_condition():
         Service.name.in_(catalog_names),
         Service.created_by_user_id.is_not(None),
     )
+
+
+def build_canonical_source_document_id_expr():
+    source_document_match_id = (
+        select(Document.id)
+        .where(
+            Document.id == Repair.source_document_id,
+            Document.repair_id == Repair.id,
+            Document.kind.in_(PRIMARY_SOURCE_DOCUMENT_KINDS),
+            Document.status != DocumentStatus.ARCHIVED,
+        )
+        .limit(1)
+        .correlate(Repair)
+        .scalar_subquery()
+    )
+    preferred_document_id = (
+        select(Document.id)
+        .where(
+            Document.repair_id == Repair.id,
+            Document.kind.in_(PRIMARY_SOURCE_DOCUMENT_KINDS),
+            Document.status != DocumentStatus.ARCHIVED,
+        )
+        .order_by(
+            Document.is_primary.desc(),
+            Document.created_at.desc(),
+            Document.id.desc(),
+        )
+        .limit(1)
+        .correlate(Repair)
+        .scalar_subquery()
+    )
+    fallback_document_id = (
+        select(Document.id)
+        .where(
+            Document.repair_id == Repair.id,
+            Document.status != DocumentStatus.ARCHIVED,
+        )
+        .order_by(Document.created_at.asc(), Document.id.asc())
+        .limit(1)
+        .correlate(Repair)
+        .scalar_subquery()
+    )
+    return func.coalesce(source_document_match_id, preferred_document_id, fallback_document_id)
 
 
 @router.get("/summary", response_model=DashboardSummaryResponse)
@@ -298,6 +342,7 @@ def get_dashboard_data_quality_details(
     visible_ids = get_allowed_vehicle_ids_query(current_user) if current_user.role != UserRole.ADMIN else None
     repair_visibility_clause = get_repair_visibility_clause(current_user) if current_user.role != UserRole.ADMIN else None
     visible_services = get_visible_services_condition()
+    canonical_source_document_id = build_canonical_source_document_id_expr()
     document_condition = or_(
         Document.status.in_(REVIEW_QUEUE_DOCUMENT_STATUSES),
         Document.ocr_confidence.is_(None),
@@ -402,7 +447,7 @@ def get_dashboard_data_quality_details(
         select(
             RepairWork.id.label("work_id"),
             Repair.id.label("repair_id"),
-            Repair.source_document_id.label("document_id"),
+            canonical_source_document_id.label("document_id"),
             RepairWork.work_name.label("work_name"),
             RepairWork.line_total.label("line_total"),
             Repair.repair_date.label("repair_date"),
@@ -447,7 +492,7 @@ def get_dashboard_data_quality_details(
         select(
             RepairPart.id.label("part_id"),
             Repair.id.label("repair_id"),
-            Repair.source_document_id.label("document_id"),
+            canonical_source_document_id.label("document_id"),
             RepairPart.part_name.label("part_name"),
             RepairPart.line_total.label("line_total"),
             Repair.repair_date.label("repair_date"),

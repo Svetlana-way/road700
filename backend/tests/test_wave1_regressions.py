@@ -2,15 +2,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-import warnings
 from datetime import date
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.exc import SAWarning
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_db
 from app.core.paths import get_storage_root, set_storage_root
@@ -23,6 +19,7 @@ from app.models.repair import Repair, RepairCheck
 from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle, VehicleAssignmentHistory
+from tests.sqlite_test_utils import create_sqlite_test_engine, reset_database
 
 
 class Wave1DomainRegressionTestCase(unittest.TestCase):
@@ -33,12 +30,7 @@ class Wave1DomainRegressionTestCase(unittest.TestCase):
         cls.storage_root.mkdir(parents=True, exist_ok=True)
         cls.original_storage_root = get_storage_root()
         set_storage_root(cls.storage_root)
-        cls.engine = create_engine(
-            "sqlite+pysqlite:///:memory:",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-            future=True,
-        )
+        cls.engine = create_sqlite_test_engine(enforce_foreign_keys=True)
         cls.SessionLocal = sessionmaker(bind=cls.engine, autoflush=False, autocommit=False, future=True)
         Base.metadata.create_all(bind=cls.engine)
 
@@ -60,16 +52,7 @@ class Wave1DomainRegressionTestCase(unittest.TestCase):
         cls.temp_dir.cleanup()
 
     def setUp(self) -> None:
-        with self.engine.begin() as connection:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message="Cannot correctly sort tables; there are unresolvable cycles between tables",
-                    category=SAWarning,
-                )
-                tables = list(reversed(Base.metadata.sorted_tables))
-            for table in tables:
-                connection.execute(table.delete())
+        reset_database(self.engine, Base.metadata)
 
         with self.SessionLocal() as db:
             admin = User(
@@ -330,12 +313,7 @@ class Wave1DomainRegressionTestCase(unittest.TestCase):
 class Wave1AuthRegressionTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.engine = create_engine(
-            "sqlite+pysqlite:///:memory:",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-            future=True,
-        )
+        cls.engine = create_sqlite_test_engine(enforce_foreign_keys=True)
         cls.SessionLocal = sessionmaker(bind=cls.engine, autoflush=False, autocommit=False, future=True)
         Base.metadata.create_all(bind=cls.engine)
 
@@ -355,16 +333,7 @@ class Wave1AuthRegressionTestCase(unittest.TestCase):
         cls.engine.dispose()
 
     def setUp(self) -> None:
-        with self.engine.begin() as connection:
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message="Cannot correctly sort tables; there are unresolvable cycles between tables",
-                    category=SAWarning,
-                )
-                tables = list(reversed(Base.metadata.sorted_tables))
-            for table in tables:
-                connection.execute(table.delete())
+        reset_database(self.engine, Base.metadata)
 
         with self.SessionLocal() as db:
             db.add_all(

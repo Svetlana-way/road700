@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, Enum, ForeignKey, Float, JSON, Numeric, String, Text
+from sqlalchemy import Boolean, Date, Enum, ForeignKey, Float, Index, JSON, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -104,6 +104,9 @@ class RepairPart(Base):
 
 class RepairCheck(Base, TimestampMixin):
     __tablename__ = "repair_checks"
+    __table_args__ = (
+        Index("ix_repair_checks_is_resolved_repair_id", "is_resolved", "repair_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     repair_id: Mapped[int] = mapped_column(ForeignKey("repairs.id"), nullable=False, index=True)

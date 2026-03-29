@@ -37,6 +37,12 @@ from app.schemas.document import (
     DocumentUploadResponse,
     DocumentVehicleRead,
 )
+from app.services.document_repair_relations import (
+    assign_primary_document,
+    get_repair_source_document,
+    is_document_primary_eligible,
+    normalize_repair_primary_document,
+)
 from app.services.import_jobs import enqueue_document_processing_job
 from app.services.pdf_tools import merge_images_to_pdf
 
@@ -51,7 +57,6 @@ REPROCESSABLE_DOCUMENT_STATUSES = {
     DocumentStatus.CONFIRMED,
     DocumentStatus.OCR_ERROR,
 }
-PRIMARY_DOCUMENT_KINDS = {DocumentKind.ORDER, DocumentKind.REPEAT_SCAN}
 PLACEHOLDER_EXTERNAL_ID = "__batch_import_placeholder__"
 IDENTIFIER_CHAR_TRANSLATION = str.maketrans(
     {
@@ -397,9 +402,10 @@ def build_comparison_field(
 
 
 def build_primary_document_snapshot(repair: Repair, documents: list[Document]) -> dict:
+    source_document = get_repair_source_document(repair, include_archived_fallback=True)
     return {
         "repair_id": repair.id,
-        "source_document_id": repair.source_document_id,
+        "source_document_id": source_document.id if source_document is not None else None,
         "documents": [
             {
                 "id": item.id,
@@ -428,58 +434,6 @@ def build_document_snapshot(document: Document) -> dict:
     }
 
 
-def set_primary_document_for_repair(target_document: Document, documents: list[Document]) -> None:
-    for item in documents:
-        item.is_primary = item.id == target_document.id
-    target_document.repair.source_document_id = target_document.id
-
-
-def is_document_primary_eligible(document: Document) -> bool:
-    return document.kind in PRIMARY_DOCUMENT_KINDS and document.status != DocumentStatus.ARCHIVED
-
-
-def assign_primary_document(repair: Repair, target_document: Document | None) -> None:
-    for item in repair.documents:
-        item.is_primary = target_document is not None and item.id == target_document.id
-    repair.source_document_id = target_document.id if target_document is not None else None
-
-
-def choose_primary_document_candidate(
-    repair: Repair,
-    *,
-    preferred_document: Document | None = None,
-) -> Document | None:
-    eligible_documents = [item for item in repair.documents if is_document_primary_eligible(item)]
-    if not eligible_documents:
-        return None
-
-    if preferred_document is not None and any(item.id == preferred_document.id for item in eligible_documents):
-        return next(item for item in eligible_documents if item.id == preferred_document.id)
-
-    current_source = next(
-        (item for item in eligible_documents if repair.source_document_id is not None and item.id == repair.source_document_id),
-        None,
-    )
-    if current_source is not None:
-        return current_source
-
-    current_primary_documents = [item for item in eligible_documents if item.is_primary]
-    if current_primary_documents:
-        return max(current_primary_documents, key=lambda item: (item.created_at, item.id))
-
-    return max(eligible_documents, key=lambda item: (item.created_at, item.id))
-
-
-def normalize_primary_document_for_repair(
-    repair: Repair,
-    *,
-    preferred_document: Document | None = None,
-) -> Document | None:
-    chosen = choose_primary_document_candidate(repair, preferred_document=preferred_document)
-    assign_primary_document(repair, chosen)
-    return chosen
-
-
 def ensure_document_can_be_primary(document: Document) -> None:
     if document.status == DocumentStatus.ARCHIVED:
         raise HTTPException(
@@ -506,11 +460,12 @@ def archive_document_state(document: Document) -> bool:
     if document.status == DocumentStatus.ARCHIVED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Document is already archived")
 
-    primary_changed = document.is_primary or document.repair.source_document_id == document.id
+    source_document = get_repair_source_document(document.repair, include_archived_fallback=True)
+    primary_changed = document.is_primary or (source_document is not None and source_document.id == document.id)
     document.status = DocumentStatus.ARCHIVED
     document.review_queue_priority = 0
     if primary_changed:
-        normalize_primary_document_for_repair(document.repair)
+        normalize_repair_primary_document(document.repair)
     return primary_changed
 
 
@@ -528,7 +483,7 @@ def restore_document_state(document: Document) -> None:
     document.status = DocumentStatus.NEEDS_REVIEW
     if document.review_queue_priority == 0:
         document.review_queue_priority = 20
-    normalize_primary_document_for_repair(document.repair)
+    normalize_repair_primary_document(document.repair)
 
 
 def append_comparison_review_note(
@@ -1023,14 +978,14 @@ def upload_document(
             source_type=str(upload_artifact["source_type"]),
             kind=kind,
             status=DocumentStatus.UPLOADED,
-            is_primary=True,
+            is_primary=False,
             review_queue_priority=100,
             notes=notes,
         )
         db.add(document)
         db.flush()
 
-        normalize_primary_document_for_repair(repair)
+        normalize_repair_primary_document(repair)
         db.add(
             DocumentVersion(
                 document_id=document.id,
@@ -1201,7 +1156,7 @@ def upload_document_to_repair(
         db.add(document)
         db.flush()
 
-        normalize_primary_document_for_repair(repair)
+        normalize_repair_primary_document(repair)
 
         db.add(
             DocumentVersion(
@@ -1379,7 +1334,7 @@ def set_primary_document(
 
     old_snapshot = build_primary_document_snapshot(document.repair, sibling_documents)
 
-    set_primary_document_for_repair(document, sibling_documents)
+    assign_primary_document(document.repair, document)
 
     db.commit()
 
@@ -1455,7 +1410,7 @@ def review_document_comparison(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Only order documents and repeat scans can be primary",
             )
-        set_primary_document_for_repair(compared_document, sibling_documents)
+        assign_primary_document(compared_document.repair, compared_document)
         message = "Сравниваемый документ назначен основным"
     elif action == "keep_current_primary":
         message = "Текущий основной документ сохранён"
@@ -1512,12 +1467,16 @@ def review_document_comparison(
     )
     db.commit()
 
+    refreshed_source_document = get_repair_source_document(
+        refreshed_compared.repair,
+        include_archived_fallback=True,
+    )
     return DocumentComparisonReviewResponse(
         message=message,
         action=action,
         document_id=refreshed_compared.id,
         repair_id=refreshed_compared.repair.id,
-        source_document_id=refreshed_compared.repair.source_document_id,
+        source_document_id=refreshed_source_document.id if refreshed_source_document is not None else None,
     )
 
 

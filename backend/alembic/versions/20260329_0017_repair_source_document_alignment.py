@@ -86,7 +86,7 @@ def _heal_invalid_repair_source_document_refs() -> None:
             sa.text(
                 """
                 update documents
-                set is_primary = case when id = :source_document_id then 1 else 0 end
+                set is_primary = case when id = :source_document_id then true else false end
                 where repair_id = :repair_id
                 """
             ),

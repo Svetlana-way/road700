@@ -6,7 +6,7 @@ from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.security import decode_access_token
+from app.core.security import build_access_token_password_fingerprint, decode_access_token
 from app.db.session import SessionLocal
 from app.models.enums import UserRole
 from app.models.user import User
@@ -45,6 +45,8 @@ def get_current_user(
     user = db.scalar(select(User).where(User.id == user_id))
     if user is None:
         raise credentials_exception
+    if payload.get("pwd") != build_access_token_password_fingerprint(user.password_hash):
+        raise credentials_exception
 
     return user
 
@@ -59,4 +61,3 @@ def get_current_admin(current_user: User = Depends(get_current_active_user)) -> 
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
-

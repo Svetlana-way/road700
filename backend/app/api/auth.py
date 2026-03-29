@@ -7,7 +7,14 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user, get_db
 from app.core.config import settings
-from app.core.security import create_access_token, generate_secure_token, get_password_hash, hash_token, verify_password
+from app.core.security import (
+    build_access_token_password_fingerprint,
+    create_access_token,
+    generate_secure_token,
+    get_password_hash,
+    hash_token,
+    verify_password,
+)
 from app.models.audit import AuditLog
 from app.models.password_reset_token import PasswordResetToken
 from app.models.user import User
@@ -26,6 +33,12 @@ from app.services.password_reset_tokens import invalidate_password_reset_tokens
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def normalize_utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -48,6 +61,7 @@ def login(
     access_token = create_access_token(
         subject=str(user.id),
         expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
+        password_fingerprint=build_access_token_password_fingerprint(user.password_hash),
     )
     return TokenResponse(access_token=access_token)
 
@@ -155,7 +169,7 @@ def confirm_password_reset(
     if token_row is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ссылка восстановления недействительна")
     now = datetime.now(timezone.utc)
-    if token_row.used_at is not None or token_row.expires_at < now:
+    if token_row.used_at is not None or normalize_utc_datetime(token_row.expires_at) < now:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ссылка восстановления недействительна или срок её действия истёк")
 
     user = db.scalar(select(User).where(User.id == token_row.user_id))

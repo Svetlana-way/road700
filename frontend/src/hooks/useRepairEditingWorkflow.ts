@@ -4,11 +4,6 @@ import { createRepairDraft, resolveRepairDocumentId, type EditablePartDraft, typ
 import type { WorkspaceTab } from "../shared/appRoute";
 import type { RepairDetail } from "../shared/repairDetailTypes";
 
-type RepairDeleteResponse = {
-  message: string;
-  deleted_repair_id: number;
-};
-
 type RepairEditingRecord = RepairDetail;
 
 type UseRepairEditingWorkflowParams = {
@@ -221,10 +216,9 @@ export function useRepairEditingWorkflow({
 
     try {
       const savedRepair = await apiRequest<RepairDetail>(
-        `/repairs/${selectedRepair.id}`,
+        `/repairs/${selectedRepair.id}/archive`,
         {
-          method: "PATCH",
-          body: JSON.stringify({ status: "archived" }),
+          method: "POST",
         },
         token,
       );
@@ -257,9 +251,9 @@ export function useRepairEditingWorkflow({
     setSuccessMessage("");
 
     try {
-      const payload = await apiRequest<RepairDeleteResponse>(
-        `/repairs/${repairId}`,
-        { method: "DELETE" },
+      await apiRequest<RepairDetail>(
+        `/repairs/${repairId}/archive`,
+        { method: "POST" },
         token,
       );
       if (selectedRepair?.id === repairId) {
@@ -267,7 +261,7 @@ export function useRepairEditingWorkflow({
         setSelectedDocumentId(null);
         setActiveWorkspaceTab("documents");
       }
-      setSuccessMessage(payload.message);
+      setSuccessMessage("Заказ-наряд и связанные документы отправлены в архив");
       await refreshWorkspace();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось отправить заказ-наряд в архив");

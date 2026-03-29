@@ -4,7 +4,7 @@ from collections import defaultdict
 import re
 from typing import Iterable, Optional
 
-from app.models.enums import CheckSeverity
+from app.models.enums import CheckSeverity, DocumentStatus
 from app.models.repair import Repair, RepairCheck
 
 
@@ -776,8 +776,16 @@ def _build_document_quality_findings(
     manual_review_reason_labels: dict[str, str],
 ) -> list[dict[str, object]]:
     findings: list[dict[str, object]] = []
-    source_document = next((item for item in repair.documents if item.id == repair.source_document_id), None)
-    document = source_document or next((item for item in repair.documents if item.is_primary), None) or (repair.documents[0] if repair.documents else None)
+    source_document = next(
+        (item for item in repair.documents if item.id == repair.source_document_id and item.status != DocumentStatus.ARCHIVED),
+        None,
+    )
+    document = (
+        source_document
+        or next((item for item in repair.documents if item.is_primary and item.status != DocumentStatus.ARCHIVED), None)
+        or next((item for item in repair.documents if item.status != DocumentStatus.ARCHIVED), None)
+        or (repair.documents[0] if repair.documents else None)
+    )
     manual_review_reasons = source_payload.get("manual_review_reasons")
     reason_codes = [str(item) for item in manual_review_reasons] if isinstance(manual_review_reasons, list) else []
     labeled_reasons = [manual_review_reason_labels.get(item, item) for item in reason_codes]

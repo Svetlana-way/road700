@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import warnings
+from datetime import date
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -22,10 +23,11 @@ from app.core.security import get_password_hash
 from app.db.base import Base
 from app.main import app
 from app.models.document import Document
-from app.models.enums import DocumentKind, DocumentStatus, ImportStatus, RepairStatus, UserRole
+from app.models.enums import DocumentKind, DocumentStatus, ImportStatus, RepairStatus, UserRole, VehicleStatus, VehicleType
 from app.models.imports import ImportJob
 from app.models.repair import Repair
 from app.models.user import User
+from app.models.vehicle import Vehicle
 
 
 class DocumentJobsApiTestCase(unittest.TestCase):
@@ -140,6 +142,26 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         retried_job_response = self.client.get(f"/api/jobs/{job_id}", headers=headers)
         self.assertEqual(retried_job_response.status_code, 200, retried_job_response.text)
         self.assertEqual(retried_job_response.json()["status"], "retry")
+
+    def test_process_endpoint_reuses_existing_active_job(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        initial_job_id = payload["job_id"]
+
+        first_response = self.client.post(f"/api/documents/{document_id}/process", headers=headers)
+        self.assertEqual(first_response.status_code, 200, first_response.text)
+        self.assertEqual(first_response.json()["job_id"], initial_job_id)
+
+        second_response = self.client.post(f"/api/documents/{document_id}/process", headers=headers)
+        self.assertEqual(second_response.status_code, 200, second_response.text)
+        self.assertEqual(second_response.json()["job_id"], initial_job_id)
+
+        with self.SessionLocal() as db:
+            jobs = db.query(ImportJob).filter(ImportJob.document_id == document_id).order_by(ImportJob.id.asc()).all()
+            self.assertEqual(len(jobs), 1)
+            self.assertEqual(jobs[0].id, initial_job_id)
+            self.assertEqual(jobs[0].status, ImportStatus.QUEUED)
 
     def test_repair_detail_returns_executive_report_and_document_job_status(self) -> None:
         headers = self._get_auth_headers()
@@ -281,6 +303,113 @@ FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пр�
             assert latest_job is not None
             self.assertIn(latest_job.status, {ImportStatus.COMPLETED, ImportStatus.COMPLETED_WITH_CONFLICTS})
             self.assertTrue((self.storage_root / document.storage_key).exists())
+
+    def test_upload_rolls_back_document_and_file_when_queueing_fails(self) -> None:
+        headers = self._get_auth_headers()
+        files_before = sorted(
+            str(path.relative_to(self.storage_root))
+            for path in self.storage_root.rglob("*")
+            if path.is_file()
+        )
+
+        with patch.object(documents_api, "queue_document_processing", side_effect=RuntimeError("queue unavailable")):
+            with self.assertRaises(RuntimeError):
+                self.client.post(
+                    "/api/documents/upload",
+                    headers=headers,
+                    files={"file": ("job-test.pdf", b"%PDF-1.4\n%test\n", "application/pdf")},
+                    data={"kind": "order"},
+                )
+
+        with self.SessionLocal() as db:
+            self.assertEqual(db.query(Document).count(), 0)
+            self.assertEqual(db.query(Repair).count(), 0)
+            self.assertEqual(db.query(ImportJob).count(), 0)
+
+        files_after = sorted(
+            str(path.relative_to(self.storage_root))
+            for path in self.storage_root.rglob("*")
+            if path.is_file()
+        )
+        self.assertEqual(files_after, files_before)
+
+    def test_link_vehicle_rolls_back_when_queueing_fails(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-ROLLBACK",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            target_vehicle = Vehicle(
+                external_id="truck-target-rollback",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="M111MM116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, target_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-LINK-ROLLBACK-001",
+                repair_date=date(2025, 1, 21),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=1,
+                mileage=150000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=1,
+                original_filename="rollback-order.pdf",
+                storage_key="documents/test/rollback-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            db.commit()
+
+            document_id = document.id
+            repair_id = repair.id
+            placeholder_vehicle_id = placeholder_vehicle.id
+            target_vehicle_id = target_vehicle.id
+
+        with patch.object(documents_api, "queue_document_processing", side_effect=RuntimeError("queue unavailable")):
+            with self.assertRaises(RuntimeError):
+                self.client.post(
+                    f"/api/documents/{document_id}/link-vehicle",
+                    headers=headers,
+                    json={"vehicle_id": target_vehicle_id},
+                )
+
+        with self.SessionLocal() as db:
+            refreshed_document = db.get(Document, document_id)
+            refreshed_repair = db.get(Repair, repair_id)
+            self.assertIsNotNone(refreshed_document)
+            self.assertIsNotNone(refreshed_repair)
+            assert refreshed_document is not None
+            assert refreshed_repair is not None
+
+            self.assertEqual(refreshed_document.status, DocumentStatus.NEEDS_REVIEW)
+            self.assertEqual(refreshed_repair.vehicle_id, placeholder_vehicle_id)
+            self.assertEqual(db.query(ImportJob).filter(ImportJob.document_id == document_id).count(), 0)
 
     def test_export_status_and_warnings_follow_executive_report_findings(self) -> None:
         headers = self._get_auth_headers()

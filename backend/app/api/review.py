@@ -337,6 +337,24 @@ def build_repair_state_snapshot(document: Document) -> dict:
     }
 
 
+def is_document_in_review_queue(document: Document) -> bool:
+    if document.repair is None:
+        return False
+
+    has_unresolved_checks = any(not item.is_resolved for item in document.repair.checks)
+    return (
+        document.kind in REVIEWABLE_DOCUMENT_KINDS
+        and document.status != DocumentStatus.ARCHIVED
+        and document.repair.status != RepairStatus.ARCHIVED
+        and (
+            document.status in REVIEWABLE_DOCUMENT_STATUSES
+            or document.repair.status in REVIEWABLE_REPAIR_STATUSES
+            or document.repair.is_partially_recognized
+            or has_unresolved_checks
+        )
+    )
+
+
 def append_review_comment(existing: Optional[str], action: str, comment: Optional[str], current_user: User) -> Optional[str]:
     normalized_comment = (comment or "").strip()
     if not normalized_comment:
@@ -692,6 +710,9 @@ def execute_review_action(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
     document = get_visible_document(db, current_user, document_id)
+    if not is_document_in_review_queue(document):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Document is not in review queue")
+
     if action in {"employee_confirm", "confirm"}:
         missing_fields = collect_missing_confirmation_fields(document)
         if missing_fields:
@@ -740,7 +761,7 @@ def execute_review_action(
 
     refreshed_document = get_visible_document(db, current_user, document_id)
     review_item = None
-    if refreshed_document.status in REVIEWABLE_DOCUMENT_STATUSES or refreshed_document.repair.status in REVIEWABLE_REPAIR_STATUSES:
+    if is_document_in_review_queue(refreshed_document):
         rule_map = build_review_rule_map(db)
         review_item = serialize_review_item(refreshed_document, rule_map)
 

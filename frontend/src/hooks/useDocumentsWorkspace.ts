@@ -230,10 +230,9 @@ export function useDocumentsWorkspace({
 
     try {
       const updatedDocument = await apiRequest<DocumentItem>(
-        `/documents/${documentId}`,
+        `/documents/${documentId}/archive`,
         {
-          method: "PATCH",
-          body: JSON.stringify({ status: "archived" satisfies DocumentStatus }),
+          method: "POST",
         },
         token,
       );

@@ -14,7 +14,7 @@ from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.core.paths import STORAGE_ROOT
 from app.models.audit import AuditLog
 from app.models.document import Document
-from app.models.enums import CheckSeverity, DocumentStatus, ImportStatus, RepairStatus, UserRole
+from app.models.enums import CheckSeverity, DocumentKind, DocumentStatus, ImportStatus, RepairStatus, UserRole, VehicleStatus
 from app.models.imports import ImportJob
 from app.models.ocr_learning_signal import OcrLearningSignal
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
@@ -67,6 +67,7 @@ CHECK_REPORT_SECTION_LABELS = {
     "history": "История и аномалии",
     "ocr": "OCR и ручная проверка",
 }
+PRIMARY_DOCUMENT_KINDS = {DocumentKind.ORDER, DocumentKind.REPEAT_SCAN}
 
 
 def build_repair_snapshot(repair: Repair) -> dict:
@@ -147,6 +148,71 @@ def load_repair_for_user(db: Session, repair_id: int, current_user: User) -> Rep
     if repair is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
     return repair
+
+
+def ensure_repair_is_operational(repair: Repair) -> None:
+    if repair.status == RepairStatus.ARCHIVED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Archived repairs cannot be modified")
+    if repair.vehicle is not None and repair.vehicle.status == VehicleStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Repairs for archived vehicles cannot be modified",
+        )
+
+
+def normalize_repair_primary_document(repair: Repair) -> Document | None:
+    eligible_documents = [
+        item for item in repair.documents if item.kind in PRIMARY_DOCUMENT_KINDS and item.status != DocumentStatus.ARCHIVED
+    ]
+    current_source = next(
+        (
+            item
+            for item in eligible_documents
+            if repair.source_document_id is not None and item.id == repair.source_document_id
+        ),
+        None,
+    )
+    current_primary = next((item for item in eligible_documents if item.is_primary), None)
+    chosen = current_source or current_primary
+    if chosen is None and eligible_documents:
+        chosen = max(eligible_documents, key=lambda item: (item.created_at, item.id))
+
+    for item in repair.documents:
+        item.is_primary = chosen is not None and item.id == chosen.id
+    repair.source_document_id = chosen.id if chosen is not None else None
+    return chosen
+
+
+def archive_repair_state(repair: Repair) -> None:
+    if repair.status == RepairStatus.ARCHIVED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repair is already archived")
+
+    repair.status = RepairStatus.ARCHIVED
+    repair.is_preliminary = False
+    for document in repair.documents:
+        document.status = DocumentStatus.ARCHIVED
+        document.review_queue_priority = 0
+        document.is_primary = False
+    repair.source_document_id = None
+
+
+def restore_repair_state(repair: Repair) -> None:
+    if repair.status != RepairStatus.ARCHIVED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repair is not archived")
+    if repair.vehicle is not None and repair.vehicle.status == VehicleStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot restore a repair for an archived vehicle",
+        )
+
+    repair.status = RepairStatus.IN_REVIEW
+    repair.is_preliminary = True
+    for document in repair.documents:
+        if document.status == DocumentStatus.ARCHIVED:
+            document.status = DocumentStatus.NEEDS_REVIEW
+            if document.review_queue_priority == 0:
+                document.review_queue_priority = 20
+    normalize_repair_primary_document(repair)
 
 
 def fetch_repair_history(db: Session, repair_id: int) -> list[AuditLog]:
@@ -371,13 +437,22 @@ def replace_manual_lines(
 
 def get_learning_source_document(repair: Repair) -> Document | None:
     if repair.source_document_id is not None:
-        matched = next((item for item in repair.documents if item.id == repair.source_document_id), None)
+        matched = next(
+            (
+                item
+                for item in repair.documents
+                if item.id == repair.source_document_id and item.status != DocumentStatus.ARCHIVED
+            ),
+            None,
+        )
         if matched is not None:
             return matched
-    primary = next((item for item in repair.documents if item.is_primary), None)
+    primary = next((item for item in repair.documents if item.is_primary and item.status != DocumentStatus.ARCHIVED), None)
     if primary is not None:
         return primary
-    return repair.documents[0] if repair.documents else None
+    return next((item for item in repair.documents if item.status != DocumentStatus.ARCHIVED), None) or (
+        repair.documents[0] if repair.documents else None
+    )
 
 
 def get_latest_document_version(document: Document | None):
@@ -871,6 +946,164 @@ def delete_repair(
     )
 
 
+@router.post("/{repair_id}/archive", response_model=RepairDetailResponse)
+def archive_repair(
+    repair_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> RepairDetailResponse:
+    stmt = build_repair_query().where(Repair.id == repair_id)
+    repair = db.execute(stmt).unique().scalar_one_or_none()
+    if repair is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
+    if repair.vehicle is not None and repair.vehicle.status == VehicleStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot archive a repair for an archived vehicle",
+        )
+
+    old_snapshot = build_repair_snapshot(repair)
+    old_snapshot["documents"] = [
+        {
+            "id": document.id,
+            "original_filename": document.original_filename,
+            "storage_key": document.storage_key,
+            "kind": document.kind.value,
+            "status": document.status.value,
+        }
+        for document in sorted(repair.documents, key=lambda item: item.id)
+    ]
+    old_documents_by_id = {item["id"]: item for item in old_snapshot["documents"]}
+
+    archive_repair_state(repair)
+
+    new_snapshot = build_repair_snapshot(repair)
+    new_snapshot["documents"] = [
+        {
+            "id": document.id,
+            "original_filename": document.original_filename,
+            "storage_key": document.storage_key,
+            "kind": document.kind.value,
+            "status": document.status.value,
+        }
+        for document in sorted(repair.documents, key=lambda item: item.id)
+    ]
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="repair",
+            entity_id=str(repair.id),
+            action_type="repair_archived",
+            old_value=old_snapshot,
+            new_value=new_snapshot,
+        )
+    )
+    for document in repair.documents:
+        db.add(
+            AuditLog(
+                user_id=current_admin.id,
+                entity_type="document",
+                entity_id=str(document.id),
+                action_type="document_archived",
+                old_value={
+                    "document_id": document.id,
+                    "status": old_documents_by_id.get(document.id, {}).get("status"),
+                    "repair_id": repair.id,
+                },
+                new_value={
+                    "document_id": document.id,
+                    "status": document.status.value,
+                    "repair_id": repair.id,
+                },
+            )
+        )
+
+    db.commit()
+    refreshed = db.execute(stmt).unique().scalar_one_or_none()
+    if refreshed is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repair could not be reloaded")
+    history_entries = fetch_repair_history(db, refreshed.id)
+    document_history_entries = fetch_document_history(db, refreshed)
+    return serialize_repair(refreshed, history_entries, document_history_entries)
+
+
+@router.post("/{repair_id}/restore", response_model=RepairDetailResponse)
+def restore_repair(
+    repair_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+) -> RepairDetailResponse:
+    stmt = build_repair_query().where(Repair.id == repair_id)
+    repair = db.execute(stmt).unique().scalar_one_or_none()
+    if repair is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
+
+    old_snapshot = build_repair_snapshot(repair)
+    old_snapshot["documents"] = [
+        {
+            "id": document.id,
+            "original_filename": document.original_filename,
+            "storage_key": document.storage_key,
+            "kind": document.kind.value,
+            "status": document.status.value,
+        }
+        for document in sorted(repair.documents, key=lambda item: item.id)
+    ]
+    old_documents_by_id = {item["id"]: item for item in old_snapshot["documents"]}
+
+    restore_repair_state(repair)
+
+    new_snapshot = build_repair_snapshot(repair)
+    new_snapshot["documents"] = [
+        {
+            "id": document.id,
+            "original_filename": document.original_filename,
+            "storage_key": document.storage_key,
+            "kind": document.kind.value,
+            "status": document.status.value,
+        }
+        for document in sorted(repair.documents, key=lambda item: item.id)
+    ]
+    db.add(
+        AuditLog(
+            user_id=current_admin.id,
+            entity_type="repair",
+            entity_id=str(repair.id),
+            action_type="repair_restored",
+            old_value=old_snapshot,
+            new_value=new_snapshot,
+        )
+    )
+    for document in repair.documents:
+        if old_documents_by_id.get(document.id, {}).get("status") != document.status.value:
+            db.add(
+                AuditLog(
+                    user_id=current_admin.id,
+                    entity_type="document",
+                    entity_id=str(document.id),
+                    action_type="document_restored",
+                    old_value={
+                        "document_id": document.id,
+                        "status": old_documents_by_id.get(document.id, {}).get("status"),
+                        "repair_id": repair.id,
+                    },
+                    new_value={
+                        "document_id": document.id,
+                        "status": document.status.value,
+                        "repair_id": repair.id,
+                    },
+                )
+            )
+
+    db.commit()
+    refreshed = db.execute(stmt).unique().scalar_one_or_none()
+    if refreshed is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repair could not be reloaded")
+    history_entries = fetch_repair_history(db, refreshed.id)
+    document_history_entries = fetch_document_history(db, refreshed)
+    return serialize_repair(refreshed, history_entries, document_history_entries)
+
+
 @router.get("/{repair_id}/export")
 def export_repair(
     repair_id: int,
@@ -1055,9 +1288,17 @@ def update_repair(
     repair = db.execute(stmt).unique().scalar_one_or_none()
     if repair is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
+    ensure_repair_is_operational(repair)
     old_snapshot = build_repair_snapshot(repair)
 
     update_data = payload.model_dump(exclude_unset=True)
+    if "status" in update_data and update_data["status"] != repair.status and (
+        update_data["status"] == RepairStatus.ARCHIVED or repair.status == RepairStatus.ARCHIVED
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Use explicit archive/restore endpoints for repair archive changes",
+        )
     for field_name in (
         "order_number",
         "repair_date",
@@ -1089,7 +1330,6 @@ def update_repair(
             repair.service_id = None
 
     replace_manual_lines(db, repair, payload.works, payload.parts)
-    replace_ocr_checks(db, repair.id, [])
 
     repair.is_manually_completed = True
     repair.is_partially_recognized = False
@@ -1126,6 +1366,7 @@ def update_repair_service(
     current_user: User = Depends(get_current_active_user),
 ) -> RepairDetailResponse:
     repair = load_repair_for_user(db, repair_id, current_user)
+    ensure_repair_is_operational(repair)
     old_snapshot = build_repair_snapshot(repair)
 
     service_name = payload.service_name.strip() if isinstance(payload.service_name, str) else None
@@ -1173,6 +1414,7 @@ def update_repair_review_fields(
     current_user: User = Depends(get_current_active_user),
 ) -> RepairDetailResponse:
     repair = load_repair_for_user(db, repair_id, current_user)
+    ensure_repair_is_operational(repair)
     old_snapshot = build_repair_snapshot(repair)
     update_data = payload.model_dump(exclude_unset=True)
 
@@ -1266,6 +1508,7 @@ def update_repair_check(
     current_user: User = Depends(get_current_active_user),
 ) -> RepairDetailResponse:
     repair = load_repair_for_user(db, repair_id, current_user)
+    ensure_repair_is_operational(repair)
     target_check = next((item for item in repair.checks if item.id == check_id), None)
     if target_check is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair check not found")

@@ -1,6 +1,6 @@
+from datetime import datetime, timedelta, timezone
 import secrets
 from hashlib import sha256
-from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from jose import jwt
@@ -20,11 +20,22 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def create_access_token(subject: str, expires_delta: Optional[timedelta] = None) -> str:
+def build_access_token_password_fingerprint(password_hash: str) -> str:
+    return sha256(f"{password_hash}:{settings.jwt_secret_key}".encode("utf-8")).hexdigest()
+
+
+def create_access_token(
+    subject: str,
+    expires_delta: Optional[timedelta] = None,
+    *,
+    password_fingerprint: str | None = None,
+) -> str:
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
     )
     to_encode: dict[str, Any] = {"sub": subject, "exp": expire}
+    if password_fingerprint is not None:
+        to_encode["pwd"] = password_fingerprint
     return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 

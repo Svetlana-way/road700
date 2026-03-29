@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user, get_db
 from app.core.config import settings
+from app.core.rate_limit import RateLimitRule, clear_rate_limit_scope, enforce_rate_limit
 from app.core.security import (
     build_access_token_password_fingerprint,
     create_access_token,
@@ -35,17 +36,81 @@ from app.services.password_reset_tokens import invalidate_password_reset_tokens
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+LOGIN_RATE_LIMIT_RULES = (
+    RateLimitRule(
+        scope="auth_login_ip",
+        key_type="ip",
+        max_requests=settings.auth_login_rate_limit_max_per_ip,
+        window_seconds=settings.auth_login_rate_limit_window_seconds,
+    ),
+    RateLimitRule(
+        scope="auth_login_user",
+        key_type="identifier",
+        max_requests=settings.auth_login_rate_limit_max_per_login,
+        window_seconds=settings.auth_login_rate_limit_window_seconds,
+    ),
+)
+
+PASSWORD_RESET_RATE_LIMIT_RULES = (
+    RateLimitRule(
+        scope="auth_password_reset_ip",
+        key_type="ip",
+        max_requests=settings.auth_password_reset_rate_limit_max_per_ip,
+        window_seconds=settings.auth_password_reset_rate_limit_window_seconds,
+    ),
+    RateLimitRule(
+        scope="auth_password_reset_email",
+        key_type="identifier",
+        max_requests=settings.auth_password_reset_rate_limit_max_per_email,
+        window_seconds=settings.auth_password_reset_rate_limit_window_seconds,
+    ),
+)
+
+
 def normalize_utc_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
 
 
+def _first_forwarded_header_value(raw_value: str | None) -> str | None:
+    if raw_value is None:
+        return None
+    normalized = raw_value.split(",")[0].strip()
+    return normalized or None
+
+
+def build_external_base_url(request: Request) -> str:
+    configured_base_url = (settings.public_base_url or "").strip().rstrip("/")
+    if configured_base_url:
+        return configured_base_url
+
+    forwarded_proto = _first_forwarded_header_value(request.headers.get("x-forwarded-proto"))
+    forwarded_host = _first_forwarded_header_value(request.headers.get("x-forwarded-host"))
+    if forwarded_proto and forwarded_host:
+        return f"{forwarded_proto}://{forwarded_host}"
+
+    host = request.headers.get("host")
+    if host:
+        return f"{request.url.scheme}://{host}"
+
+    return str(request.base_url).rstrip("/")
+
+
 @router.post("/login", response_model=TokenResponse)
 def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ) -> TokenResponse:
+    normalized_login = form_data.username.strip().lower()
+    enforce_rate_limit(
+        request,
+        rules=LOGIN_RATE_LIMIT_RULES,
+        identifier=normalized_login,
+        detail="Too many login attempts. Please try again later.",
+    )
+
     user = db.scalar(select(User).where(User.login == form_data.username))
 
     if user is None or not verify_password(form_data.password, user.password_hash):
@@ -63,6 +128,7 @@ def login(
         expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
         password_fingerprint=build_access_token_password_fingerprint(user.password_hash),
     )
+    clear_rate_limit_scope(request, scope="auth_login_user", identifier=normalized_login)
     return TokenResponse(access_token=access_token)
 
 
@@ -110,6 +176,12 @@ def request_password_reset(
     db: Session = Depends(get_db),
 ) -> PasswordResetRequestResponse:
     email = payload.email.strip().lower()
+    enforce_rate_limit(
+        request,
+        rules=PASSWORD_RESET_RATE_LIMIT_RULES,
+        identifier=email,
+        detail="Too many password reset requests. Please try again later.",
+    )
     generic_message = "Если пользователь с такой почтой найден, инструкция по восстановлению подготовлена"
     user = db.scalar(select(User).where(func.lower(User.email) == email))
     if user is None or not user.is_active:
@@ -130,7 +202,7 @@ def request_password_reset(
     db.add(reset_token)
     db.flush()
 
-    base_url = str(request.base_url).rstrip("/")
+    base_url = build_external_base_url(request)
     reset_link = f"{base_url}/?reset_token={raw_token}"
     sent, delivery_error = send_password_reset_email(recipient_email=user.email, reset_link=reset_link)
     reset_token.delivery_status = "sent" if sent else "pending_manual"

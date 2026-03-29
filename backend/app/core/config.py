@@ -20,9 +20,16 @@ class Settings(BaseSettings):
         default_factory=lambda: ["http://localhost:5173"],
         validation_alias="BACKEND_CORS_ORIGINS",
     )
+    public_base_url: Optional[str] = None
     jwt_secret_key: str = "change-me"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 120
+    auth_login_rate_limit_window_seconds: int = 600
+    auth_login_rate_limit_max_per_ip: int = 20
+    auth_login_rate_limit_max_per_login: int = 5
+    auth_password_reset_rate_limit_window_seconds: int = 900
+    auth_password_reset_rate_limit_max_per_ip: int = 10
+    auth_password_reset_rate_limit_max_per_email: int = 3
     password_reset_token_ttl_minutes: int = 60
     initial_admin_full_name: str = "System Administrator"
     initial_admin_login: str = "admin"

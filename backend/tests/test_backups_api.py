@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -14,8 +15,13 @@ from app.core.paths import get_storage_root, set_storage_root
 from app.core.security import get_password_hash
 from app.db.base import Base
 from app.main import app
+from app.models.document import Document
+from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, VehicleStatus, VehicleType
+from app.models.repair import Repair
+from app.models.service import Service
 from app.models.enums import UserRole
 from app.models.user import User
+from app.models.vehicle import Vehicle
 from app.services import backups as backups_service
 from tests.sqlite_test_utils import create_sqlite_test_engine, reset_database
 
@@ -72,16 +78,69 @@ class BackupsApiTestCase(unittest.TestCase):
         backups_service.BACKUP_DIR = self.storage_root / "backups"
 
         with self.SessionLocal() as db:
-            db.add(
-                User(
-                    full_name="Admin User",
-                    login="admin",
-                    email="admin@example.com",
-                    password_hash=get_password_hash("secret123"),
-                    role=UserRole.ADMIN,
-                    is_active=True,
-                )
+            admin = User(
+                full_name="Admin User",
+                login="admin",
+                email="admin@example.com",
+                password_hash=get_password_hash("secret123"),
+                role=UserRole.ADMIN,
+                is_active=True,
             )
+            db.add(admin)
+            db.flush()
+
+            vehicle = Vehicle(
+                external_id="backup-truck",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="A001AA116",
+                brand="Dong Feng",
+                model="Backup Carrier",
+                status=VehicleStatus.ACTIVE,
+            )
+            service = Service(
+                name="Backup Service",
+                city="Kazan",
+                status=ServiceStatus.CONFIRMED,
+                created_by_user_id=admin.id,
+                confirmed_by_user_id=admin.id,
+            )
+            db.add_all([vehicle, service])
+            db.flush()
+
+            repair = Repair(
+                order_number="BACKUP-001",
+                repair_date=date(2025, 3, 1),
+                vehicle_id=vehicle.id,
+                service_id=service.id,
+                created_by_user_id=admin.id,
+                mileage=100000,
+                work_total=1000,
+                parts_total=500,
+                vat_total=300,
+                grand_total=1800,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+                is_partially_recognized=False,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="backup-order.pdf",
+                storage_key="documents/backup-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
             db.commit()
 
     def _get_auth_headers(self) -> dict[str, str]:
@@ -117,6 +176,18 @@ class BackupsApiTestCase(unittest.TestCase):
 
         file_path.write_text("mutated after backup", encoding="utf-8")
 
+        with self.SessionLocal() as db:
+            repair = db.scalar(select(Repair).where(Repair.order_number == "BACKUP-001"))
+            document = db.scalar(select(Document).where(Document.original_filename == "backup-order.pdf"))
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+            repair.order_number = "BACKUP-CHANGED"
+            repair.source_document_id = None
+            document.repair_id = None
+            db.commit()
+
         restore_response = self.client.post(
             f"/api/backups/{backup_id}/restore",
             headers=headers,
@@ -130,6 +201,14 @@ class BackupsApiTestCase(unittest.TestCase):
 
         with self.SessionLocal() as db:
             restored_user = db.scalar(select(User).where(User.login == "temporary"))
+            restored_repair = db.scalar(select(Repair).where(Repair.order_number == "BACKUP-001"))
+            restored_document = db.scalar(select(Document).where(Document.original_filename == "backup-order.pdf"))
             self.assertIsNone(restored_user)
+            self.assertIsNotNone(restored_repair)
+            self.assertIsNotNone(restored_document)
+            assert restored_repair is not None
+            assert restored_document is not None
+            self.assertEqual(restored_repair.source_document_id, restored_document.id)
+            self.assertEqual(restored_document.repair_id, restored_repair.id)
 
         self.assertEqual(file_path.read_text(encoding="utf-8"), "before restore")

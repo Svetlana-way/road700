@@ -4,6 +4,7 @@ import json
 import shutil
 import tempfile
 import uuid
+import warnings
 import zipfile
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -13,6 +14,7 @@ from typing import Any
 
 from sqlalchemy import Boolean, Date, DateTime, Enum as SqlEnum, Float, Integer, Numeric, select, text
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import SAWarning
 from sqlalchemy.orm import Session
 
 from app.core.paths import STORAGE_ROOT
@@ -25,6 +27,8 @@ BACKUP_DIR = STORAGE_ROOT / "backups"
 BACKUP_FORMAT = "road700_backup_v1"
 DATABASE_SNAPSHOT_ENTRY = "database.json"
 BACKUP_MANIFEST_SUFFIX = ".manifest.json"
+REPAIR_DOCUMENT_CYCLE_TABLES = ("repairs", "documents")
+REPAIR_DOCUMENT_CYCLE_DEPENDENCIES = ("users", "vehicles", "services")
 
 
 def utc_now() -> datetime:
@@ -96,9 +100,37 @@ def iter_storage_files() -> list[Path]:
     return sorted(files)
 
 
+def get_backup_table_order() -> list:
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Cannot correctly sort tables; there are unresolvable cycles between tables",
+            category=SAWarning,
+        )
+        sorted_tables = list(Base.metadata.sorted_tables)
+
+    cycle_tables_by_name = {table.name: table for table in sorted_tables if table.name in REPAIR_DOCUMENT_CYCLE_TABLES}
+    if len(cycle_tables_by_name) < 2:
+        return sorted_tables
+
+    non_cycle_tables = [table for table in sorted_tables if table.name not in cycle_tables_by_name]
+    dependency_indexes = [
+        index
+        for index, table in enumerate(non_cycle_tables)
+        if table.name in REPAIR_DOCUMENT_CYCLE_DEPENDENCIES
+    ]
+    insert_index = (max(dependency_indexes) + 1) if dependency_indexes else 0
+
+    return [
+        *non_cycle_tables[:insert_index],
+        *(cycle_tables_by_name[name] for name in REPAIR_DOCUMENT_CYCLE_TABLES if name in cycle_tables_by_name),
+        *non_cycle_tables[insert_index:],
+    ]
+
+
 def build_database_snapshot(db: Session) -> dict[str, Any]:
     tables_payload: list[dict[str, Any]] = []
-    for table in Base.metadata.sorted_tables:
+    for table in get_backup_table_order():
         rows = db.execute(select(table)).mappings().all()
         tables_payload.append(
             {
@@ -207,9 +239,21 @@ def load_database_snapshot(backup_id: str) -> dict[str, Any]:
 
 
 def restore_database_snapshot(connection: Connection, snapshot: dict[str, Any]) -> None:
-    tables_by_name = {table.name: table for table in Base.metadata.sorted_tables}
-    for table in reversed(Base.metadata.sorted_tables):
+    ordered_tables = get_backup_table_order()
+    tables_by_name = {table.name: table for table in ordered_tables}
+    repairs_table = tables_by_name.get("repairs")
+    documents_table = tables_by_name.get("documents")
+
+    if repairs_table is not None:
+        connection.execute(repairs_table.update().values(source_document_id=None))
+    if documents_table is not None:
+        connection.execute(documents_table.update().values(repair_id=None))
+
+    for table in reversed(ordered_tables):
         connection.execute(table.delete())
+
+    deferred_repair_source_updates: list[tuple[int, int]] = []
+    deferred_document_repair_updates: list[tuple[int, int]] = []
 
     for table_payload in snapshot.get("tables", []):
         table = tables_by_name.get(str(table_payload.get("table")))
@@ -221,16 +265,47 @@ def restore_database_snapshot(connection: Connection, snapshot: dict[str, Any]) 
             for column in table.columns:
                 if column.name in row:
                     converted_row[column.name] = deserialize_value(column, row[column.name])
+
+            if table.name == "repairs":
+                source_document_id = converted_row.get("source_document_id")
+                repair_id = converted_row.get("id")
+                if source_document_id is not None and repair_id is not None:
+                    deferred_repair_source_updates.append((int(repair_id), int(source_document_id)))
+                    converted_row["source_document_id"] = None
+
+            if table.name == "documents":
+                repair_id = converted_row.get("repair_id")
+                document_id = converted_row.get("id")
+                if repair_id is not None and document_id is not None:
+                    deferred_document_repair_updates.append((int(document_id), int(repair_id)))
+                    converted_row["repair_id"] = None
+
             rows.append(converted_row)
         if rows:
             connection.execute(table.insert(), rows)
+
+    if repairs_table is not None:
+        for repair_id, source_document_id in deferred_repair_source_updates:
+            connection.execute(
+                repairs_table.update()
+                .where(repairs_table.c.id == repair_id)
+                .values(source_document_id=source_document_id)
+            )
+
+    if documents_table is not None:
+        for document_id, repair_id in deferred_document_repair_updates:
+            connection.execute(
+                documents_table.update()
+                .where(documents_table.c.id == document_id)
+                .values(repair_id=repair_id)
+            )
 
 
 def reset_postgres_sequences(connection: Connection) -> None:
     if connection.dialect.name != "postgresql":
         return
 
-    for table in Base.metadata.sorted_tables:
+    for table in get_backup_table_order():
         primary_keys = list(table.primary_key.columns)
         if len(primary_keys) != 1:
             continue

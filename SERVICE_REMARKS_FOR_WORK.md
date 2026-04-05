@@ -5,7 +5,7 @@
 Источники:
 - [OCR_QUALITY_REPORT.md](/Users/svetlanasamojlova/курсор/road700/OCR_QUALITY_REPORT.md)
 - [AXB_LABOR_NORM_COVERAGE_REPORT.md](/Users/svetlanasamojlova/курсор/road700/AXB_LABOR_NORM_COVERAGE_REPORT.md)
-- текущая серверная проверка `https://768043.cloud4box.ru` на стеке `tesseract + pdftoppm`
+- текущая серверная проверка на production URL (`PUBLIC_BASE_URL`) на стеке `tesseract + pdftoppm`
 
 ## Общие замечания
 

@@ -2,10 +2,13 @@
 .github
 .codespaces
 .devcontainer
+.env
+.env.*
 frontend/node_modules
 frontend/dist
 backend/.venv
 backend/local.db
+*.db
 backend/__pycache__
 backend/app/__pycache__
 **/__pycache__
@@ -13,3 +16,5 @@ backend/app/__pycache__
 *.pyo
 .DS_Store
 storage
+signoff_artifacts
+tmp

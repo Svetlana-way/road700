@@ -1,13 +1,12 @@
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from app.api.router import api_router
 from app.core.config import settings
-from app.core.paths import FRONTEND_DIST_DIR
-
-
-FRONTEND_INDEX_FILE = FRONTEND_DIST_DIR / "index.html"
+from app.core.paths import get_frontend_dist_dir
 
 
 app = FastAPI(
@@ -30,8 +29,9 @@ app.include_router(api_router, prefix="/api")
 
 @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def serve_frontend_index():
-    if FRONTEND_INDEX_FILE.exists():
-        return FileResponse(FRONTEND_INDEX_FILE)
+    frontend_index_file = get_frontend_dist_dir() / "index.html"
+    if frontend_index_file.exists():
+        return FileResponse(frontend_index_file)
     raise HTTPException(status_code=503, detail="Frontend build not found")
 
 
@@ -40,14 +40,21 @@ async def serve_frontend_app(full_path: str):
     if full_path.startswith(("api/", "docs", "redoc", "openapi.json")):
         raise HTTPException(status_code=404, detail="Not Found")
 
-    if not FRONTEND_DIST_DIR.exists():
+    frontend_dist_dir = get_frontend_dist_dir()
+    frontend_index_file = frontend_dist_dir / "index.html"
+
+    if not frontend_dist_dir.exists():
         raise HTTPException(status_code=503, detail="Frontend build not found")
 
-    candidate = FRONTEND_DIST_DIR / full_path
+    candidate = frontend_dist_dir / full_path
     if candidate.is_file():
         return FileResponse(candidate)
 
-    if FRONTEND_INDEX_FILE.exists():
-        return FileResponse(FRONTEND_INDEX_FILE)
+    requested_path = Path(full_path)
+    if requested_path.suffix:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    if frontend_index_file.exists():
+        return FileResponse(frontend_index_file)
 
     raise HTTPException(status_code=503, detail="Frontend build not found")

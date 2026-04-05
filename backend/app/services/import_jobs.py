@@ -4,11 +4,12 @@ from datetime import datetime, timezone
 
 from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session, aliased, joinedload
 
 from app.models.document import Document
 from app.models.enums import ImportStatus
 from app.models.imports import ImportJob
+from app.models.repair import Repair
 
 
 DOCUMENT_OCR_IMPORT_TYPE = "document_ocr"
@@ -73,6 +74,28 @@ def get_canonical_active_import_job(
 ) -> ImportJob | None:
     active_jobs = get_active_import_jobs(db, document_id=document_id, import_type=import_type)
     return choose_canonical_active_job(active_jobs)
+
+
+def fail_superseded_active_jobs(
+    db: Session,
+    *,
+    canonical_job: ImportJob,
+    active_jobs: list[ImportJob],
+    reason: str,
+) -> None:
+    for job in active_jobs:
+        if job.id == canonical_job.id:
+            continue
+        if job.status not in ACTIVE_IMPORT_JOB_STATUSES:
+            continue
+        mark_job_failed(
+            db,
+            job,
+            error_message=reason,
+            summary={
+                "superseded_by_job_id": canonical_job.id,
+            },
+        )
 
 
 def mark_job_processing(db: Session, job: ImportJob, *, commit: bool = False) -> ImportJob:
@@ -204,39 +227,102 @@ def start_document_processing_job(
     return job, created
 
 
-def claim_next_document_processing_job(db: Session) -> ImportJob | None:
-    processing_job = aliased(ImportJob)
-    stmt = (
-        select(ImportJob)
-        .where(
-            ImportJob.import_type == DOCUMENT_OCR_IMPORT_TYPE,
-            ImportJob.status.in_(QUEUEABLE_IMPORT_JOB_STATUSES),
-            ~exists(
-                select(processing_job.id)
-                .where(
-                    processing_job.document_id == ImportJob.document_id,
-                    processing_job.import_type == ImportJob.import_type,
-                    processing_job.status == ImportStatus.PROCESSING,
-                    processing_job.id != ImportJob.id,
-                )
-            ),
+def load_job_document_context(db: Session, *, document_id: int) -> Document | None:
+    return db.scalar(
+        select(Document)
+        .options(
+            joinedload(Document.repair).joinedload(Repair.vehicle),
+            joinedload(Document.repair).joinedload(Repair.service),
         )
-        .order_by(ImportJob.created_at.asc(), ImportJob.id.asc())
-        .limit(1)
+        .where(Document.id == document_id)
     )
 
+
+def get_non_operational_job_error(document: Document | None) -> str | None:
+    if document is None:
+        return "Document not found"
+    if document.status.value == "archived":
+        return "Archived documents cannot be modified"
+    if document.repair is None:
+        return "Document repair relation is incomplete"
+    if document.repair.status.value == "archived":
+        return "Archived repairs cannot be modified"
+    if document.repair.vehicle is not None and document.repair.vehicle.status.value == "archived":
+        return "Archived vehicles cannot be used in operational actions"
+    if document.repair.service is not None and document.repair.service.status.value == "archived":
+        return "Repairs for archived services cannot be modified"
+    return None
+
+
+def claim_next_document_processing_job(db: Session) -> ImportJob | None:
+    processing_job = aliased(ImportJob)
     bind = db.get_bind()
-    if bind is not None and bind.dialect.name != "sqlite":
-        stmt = stmt.with_for_update(skip_locked=True)
 
-    job = db.execute(stmt).scalars().first()
-    if job is None:
-        return None
+    while True:
+        stmt = (
+            select(ImportJob)
+            .where(
+                ImportJob.import_type == DOCUMENT_OCR_IMPORT_TYPE,
+                ImportJob.status.in_(QUEUEABLE_IMPORT_JOB_STATUSES),
+                ~exists(
+                    select(processing_job.id)
+                    .where(
+                        processing_job.document_id == ImportJob.document_id,
+                        processing_job.import_type == ImportJob.import_type,
+                        processing_job.status == ImportStatus.PROCESSING,
+                        processing_job.id != ImportJob.id,
+                    )
+                ),
+            )
+            .order_by(ImportJob.created_at.asc(), ImportJob.id.asc())
+            .limit(1)
+        )
 
-    processing_job = mark_job_processing(db, job, commit=True)
-    if processing_job.id != job.id:
-        return None
-    return processing_job
+        if bind is not None and bind.dialect.name != "sqlite":
+            stmt = stmt.with_for_update(skip_locked=True)
+
+        job = db.execute(stmt).scalars().first()
+        if job is None:
+            return None
+
+        if job.document_id is None:
+            mark_job_failed(
+                db,
+                job,
+                error_message="Document OCR job does not have a document_id",
+                summary={"failed_during_claim": True},
+            )
+            db.commit()
+            continue
+
+        claim_document = load_job_document_context(db, document_id=job.document_id)
+        non_operational_error = get_non_operational_job_error(claim_document)
+        if non_operational_error is not None:
+            mark_job_failed(
+                db,
+                job,
+                error_message=non_operational_error,
+                summary={"failed_during_claim": True},
+            )
+            db.commit()
+            continue
+
+        active_jobs = get_active_import_jobs(db, document_id=job.document_id, import_type=job.import_type)
+        canonical_job = choose_canonical_active_job(active_jobs)
+        if canonical_job is None:
+            return None
+        fail_superseded_active_jobs(
+            db,
+            canonical_job=canonical_job,
+            active_jobs=active_jobs,
+            reason="Superseded by canonical OCR job during worker claim",
+        )
+        job = canonical_job
+
+        processing_job = mark_job_processing(db, job, commit=True)
+        if processing_job.id != job.id:
+            return None
+        return processing_job
 
 
 def mark_job_completed(

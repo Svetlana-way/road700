@@ -32,6 +32,7 @@ def process_single_job() -> bool:
     with SessionLocal() as db:
         attached_job = db.get(ImportJob, job.id)
         if attached_job is None:
+            logger.warning("job_worker_claimed_job_missing_on_reload", extra={"job_id": job.id, "document_id": job.document_id})
             return False
         try:
             run_document_processing_job(db, attached_job)
@@ -46,6 +47,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     parser = build_argument_parser()
     args = parser.parse_args()
+    idle_sleep_seconds = max(args.poll_interval, 0.2)
 
     for line in format_ocr_runtime_status_lines():
         logger.info("job_worker_ocr_runtime %s", line)
@@ -53,11 +55,18 @@ def main() -> None:
         ensure_ocr_runtime()
 
     while True:
-        processed = process_single_job()
+        try:
+            processed = process_single_job()
+        except Exception:
+            logger.exception("job_worker_iteration_failed")
+            if args.once:
+                raise
+            time.sleep(idle_sleep_seconds)
+            continue
         if args.once:
             return
         if not processed:
-            time.sleep(max(args.poll_interval, 0.2))
+            time.sleep(idle_sleep_seconds)
 
 
 if __name__ == "__main__":

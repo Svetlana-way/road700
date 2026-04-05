@@ -10,9 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.api.upload_validation import validate_labor_norm_import_upload
-from app.core.paths import STORAGE_ROOT
+from app.core.paths import get_storage_root
 from app.models.audit import AuditLog
-from app.models.enums import CatalogStatus
+from app.models.enums import CatalogStatus, UserRole
 from app.models.labor_norm import LaborNorm
 from app.models.labor_norm_catalog import LaborNormCatalog
 from app.models.user import User
@@ -199,9 +199,9 @@ def populate_labor_norm_from_payload(
 @router.get("/catalogs", response_model=LaborNormCatalogListResponse)
 def list_labor_norm_catalogs(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_admin: User = Depends(get_current_admin),
 ) -> LaborNormCatalogListResponse:
-    _ = current_user
+    _ = current_admin
     items = load_labor_norm_catalogs(db, include_archived=True)
     return LaborNormCatalogListResponse(
         items=[LaborNormCatalogRead.model_validate(item) for item in items],
@@ -303,13 +303,20 @@ def list_labor_norms(
     category: str | None = Query(default=None),
     status_filter: CatalogStatus | None = Query(default=None, alias="status"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_admin: User = Depends(get_current_admin),
 ) -> LaborNormListResponse:
-    _ = current_user
-
-    stmt = select(LaborNorm)
-    count_stmt = select(func.count(LaborNorm.id))
+    _ = current_admin
+    stmt = select(LaborNorm).outerjoin(LaborNormCatalog, LaborNormCatalog.scope == LaborNorm.scope)
+    count_stmt = (
+        select(func.count(LaborNorm.id))
+        .select_from(LaborNorm)
+        .outerjoin(LaborNormCatalog, LaborNormCatalog.scope == LaborNorm.scope)
+    )
     normalized_scope = normalize_labor_norm_scope(scope)
+    catalog_operational_clause = or_(
+        LaborNormCatalog.id.is_(None),
+        LaborNormCatalog.status != CatalogStatus.ARCHIVED,
+    )
 
     if q:
         normalized_query = f"%{q.strip().lower()}%"
@@ -334,32 +341,59 @@ def list_labor_norms(
     if status_filter is not None:
         stmt = stmt.where(LaborNorm.status == status_filter)
         count_stmt = count_stmt.where(LaborNorm.status == status_filter)
+    else:
+        stmt = stmt.where(
+            LaborNorm.status != CatalogStatus.ARCHIVED,
+            catalog_operational_clause,
+        )
+        count_stmt = count_stmt.where(
+            LaborNorm.status != CatalogStatus.ARCHIVED,
+            catalog_operational_clause,
+        )
 
     stmt = stmt.order_by(LaborNorm.scope.asc(), LaborNorm.category.asc(), LaborNorm.code.asc()).offset(offset).limit(limit)
     items = db.execute(stmt).scalars().all()
     total = db.scalar(count_stmt) or 0
 
-    scopes = db.scalars(
+    scope_stmt = (
         select(distinct(LaborNorm.scope))
+        .select_from(LaborNorm)
+        .outerjoin(LaborNormCatalog, LaborNormCatalog.scope == LaborNorm.scope)
         .where(LaborNorm.scope.is_not(None))
         .order_by(LaborNorm.scope.asc())
-    ).all()
-    categories = db.scalars(
+    )
+    category_stmt = (
         select(distinct(LaborNorm.category))
+        .select_from(LaborNorm)
+        .outerjoin(LaborNormCatalog, LaborNormCatalog.scope == LaborNorm.scope)
         .where(
             LaborNorm.category.is_not(None),
             LaborNorm.scope == normalized_scope if normalized_scope else true(),
         )
         .order_by(LaborNorm.category.asc())
-    ).all()
-    source_files = db.scalars(
+    )
+    source_file_stmt = (
         select(distinct(LaborNorm.source_file))
+        .select_from(LaborNorm)
+        .outerjoin(LaborNormCatalog, LaborNormCatalog.scope == LaborNorm.scope)
         .where(
             LaborNorm.source_file.is_not(None),
             LaborNorm.scope == normalized_scope if normalized_scope else true(),
         )
         .order_by(LaborNorm.source_file.asc())
-    ).all()
+    )
+    if status_filter is not None:
+        scope_stmt = scope_stmt.where(LaborNorm.status == status_filter)
+        category_stmt = category_stmt.where(LaborNorm.status == status_filter)
+        source_file_stmt = source_file_stmt.where(LaborNorm.status == status_filter)
+    else:
+        scope_stmt = scope_stmt.where(LaborNorm.status != CatalogStatus.ARCHIVED, catalog_operational_clause)
+        category_stmt = category_stmt.where(LaborNorm.status != CatalogStatus.ARCHIVED, catalog_operational_clause)
+        source_file_stmt = source_file_stmt.where(LaborNorm.status != CatalogStatus.ARCHIVED, catalog_operational_clause)
+
+    scopes = db.scalars(scope_stmt).all()
+    categories = db.scalars(category_stmt).all()
+    source_files = db.scalars(source_file_stmt).all()
 
     return LaborNormListResponse(
         items=[LaborNormRead.model_validate(item) for item in items],
@@ -519,7 +553,7 @@ def import_labor_norms(
     effective_catalog_name = normalized_catalog_name if normalized_catalog_name is not None else catalog.catalog_name if catalog else normalized_scope
 
     timestamp = datetime.now(timezone.utc)
-    storage_dir = STORAGE_ROOT / "catalogs" / "labor-norms" / timestamp.strftime("%Y/%m")
+    storage_dir = get_storage_root() / "catalogs" / "labor-norms" / timestamp.strftime("%Y/%m")
     storage_dir.mkdir(parents=True, exist_ok=True)
     stored_filename = normalize_catalog_filename(file.filename)
     stored_path = storage_dir / f"{timestamp.strftime('%Y%m%d_%H%M%S')}_{stored_filename}"
@@ -553,6 +587,8 @@ def import_labor_norms(
         )
     except Exception as error:
         db.rollback()
+        if stored_path.exists():
+            stored_path.unlink()
         write_audit_entry(
             db,
             user_id=current_admin.id,

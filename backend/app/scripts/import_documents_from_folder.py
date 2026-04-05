@@ -10,15 +10,16 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.paths import PROJECT_ROOT, STORAGE_ROOT
+from app.core.paths import PROJECT_ROOT, get_storage_root
 from app.db.session import SessionLocal
 from app.models.document import Document, DocumentVersion
-from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, UserRole, VehicleStatus, VehicleType
+from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
 from app.models.repair import Repair
+from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.services.document_processing import process_document
@@ -137,10 +138,10 @@ def extract_identifiers_from_text(value: Optional[str]) -> tuple[list[str], list
 
 
 def get_admin_user(db: Session) -> User:
-    preferred_login = (settings.initial_admin_login or "").strip()
+    preferred_login = (settings.initial_admin_login or "").strip().lower()
     stmt = select(User).where(User.role == UserRole.ADMIN)
     if preferred_login:
-        preferred = db.scalar(stmt.where(User.login == preferred_login))
+        preferred = db.scalar(stmt.where(func.lower(User.login) == preferred_login))
         if preferred is not None:
             return preferred
 
@@ -153,6 +154,8 @@ def get_admin_user(db: Session) -> User:
 def ensure_placeholder_vehicle(db: Session) -> Vehicle:
     existing = db.scalar(select(Vehicle).where(Vehicle.external_id == PLACEHOLDER_EXTERNAL_ID))
     if existing is not None:
+        if existing.status == VehicleStatus.ARCHIVED:
+            raise RuntimeError("Archived placeholder vehicle cannot be used for batch import")
         return existing
 
     vehicle = Vehicle(
@@ -170,7 +173,12 @@ def ensure_placeholder_vehicle(db: Session) -> Vehicle:
 
 
 def build_vehicle_lookup(db: Session) -> tuple[dict[str, Vehicle], dict[str, Vehicle]]:
-    vehicles = db.scalars(select(Vehicle).where(Vehicle.external_id != PLACEHOLDER_EXTERNAL_ID)).all()
+    vehicles = db.scalars(
+        select(Vehicle).where(
+            Vehicle.external_id != PLACEHOLDER_EXTERNAL_ID,
+            Vehicle.status != VehicleStatus.ARCHIVED,
+        )
+    ).all()
     by_vin: dict[str, Vehicle] = {}
     by_plate: dict[str, Vehicle] = {}
     for vehicle in vehicles:
@@ -226,7 +234,14 @@ def rebind_document_vehicle(
     by_vin: dict[str, Vehicle],
     by_plate: dict[str, Vehicle],
 ) -> bool:
-    if document.repair is None:
+    if (
+        document.repair is None
+        or document.status == DocumentStatus.ARCHIVED
+        or document.repair.status == RepairStatus.ARCHIVED
+        or document.repair.vehicle is None
+        or document.repair.vehicle.status == VehicleStatus.ARCHIVED
+        or (document.repair.service is not None and document.repair.service.status == ServiceStatus.ARCHIVED)
+    ):
         return False
 
     vehicle = match_vehicle_from_document(db, document, by_vin=by_vin, by_plate=by_plate)
@@ -248,7 +263,7 @@ def create_document_record(
     source_root: Path,
     storage_key: str,
 ) -> int:
-    destination = STORAGE_ROOT / storage_key
+    destination = get_storage_root() / storage_key
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, destination)
 
@@ -334,7 +349,7 @@ def import_documents_with_session(
             continue
 
         created_document_id: Optional[int] = None
-        destination = STORAGE_ROOT / storage_key
+        destination = get_storage_root() / storage_key
         try:
             created_document_id = create_document_record(
                 db,
@@ -389,7 +404,13 @@ def retry_unmatched_documents_with_session(
     stmt = (
         select(Document)
         .join(Repair, Repair.id == Document.repair_id)
+        .outerjoin(Service, Service.id == Repair.service_id)
         .where(Repair.vehicle_id == placeholder_vehicle.id)
+        .where(
+            Document.status != DocumentStatus.ARCHIVED,
+            Repair.status != RepairStatus.ARCHIVED,
+            or_(Repair.service_id.is_(None), Service.status != ServiceStatus.ARCHIVED),
+        )
         .order_by(Document.id.asc())
     )
     documents = db.scalars(stmt).all()

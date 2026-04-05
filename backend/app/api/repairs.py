@@ -11,14 +11,16 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.access import get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_current_admin, get_db
-from app.core.paths import STORAGE_ROOT
+from app.core.paths import get_storage_root
 from app.models.audit import AuditLog
 from app.models.document import Document
-from app.models.enums import CheckSeverity, DocumentStatus, ImportStatus, RepairStatus, UserRole, VehicleStatus
+from app.models.enums import CheckSeverity, DocumentStatus, ImportStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus
 from app.models.imports import ImportJob
 from app.models.ocr_learning_signal import OcrLearningSignal
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
+from app.models.service import Service
 from app.models.user import User
+from app.models.vehicle import Vehicle
 from app.schemas.repair import (
     RepairDeleteResponse,
     RepairCheckUpdateRequest,
@@ -71,6 +73,8 @@ CHECK_REPORT_SECTION_LABELS = {
     "history": "История и аномалии",
     "ocr": "OCR и ручная проверка",
 }
+
+
 def build_repair_snapshot(repair: Repair) -> dict:
     return {
         "order_number": repair.order_number,
@@ -151,6 +155,18 @@ def load_repair_for_user(db: Session, repair_id: int, current_user: User) -> Rep
     return repair
 
 
+def load_operational_repair_for_user(db: Session, repair_id: int, current_user: User) -> Repair:
+    repair = load_repair_for_user(db, repair_id, current_user)
+    if current_user.role != UserRole.ADMIN and (
+        repair.status == RepairStatus.ARCHIVED
+        or repair.vehicle is None
+        or repair.vehicle.status == VehicleStatus.ARCHIVED
+        or (repair.service is not None and repair.service.status == ServiceStatus.ARCHIVED)
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
+    return repair
+
+
 def ensure_repair_is_operational(repair: Repair) -> None:
     if repair.status == RepairStatus.ARCHIVED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Archived repairs cannot be modified")
@@ -158,6 +174,11 @@ def ensure_repair_is_operational(repair: Repair) -> None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Repairs for archived vehicles cannot be modified",
+        )
+    if repair.service is not None and repair.service.status == ServiceStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Repairs for archived services cannot be modified",
         )
 
 
@@ -181,6 +202,11 @@ def restore_repair_state(repair: Repair) -> None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cannot restore a repair for an archived vehicle",
+        )
+    if repair.service is not None and repair.service.status == ServiceStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot restore a repair for an archived service",
         )
 
     repair.status = RepairStatus.IN_REVIEW
@@ -223,6 +249,17 @@ def fetch_document_history(db: Session, repair: Repair) -> list[AuditLog]:
     return db.execute(stmt).scalars().all()
 
 
+def get_repair_documents_for_view(
+    repair: Repair,
+    *,
+    include_archived_documents: bool = True,
+) -> list[Document]:
+    documents = sorted(repair.documents, key=lambda item: (item.created_at, item.id), reverse=True)
+    if include_archived_documents:
+        return documents
+    return [item for item in documents if item.status != DocumentStatus.ARCHIVED]
+
+
 def serialize_document_history_entry(entry: AuditLog, documents_by_id: dict[str, Document]) -> dict:
     document = documents_by_id.get(entry.entity_id)
     new_value = entry.new_value if isinstance(entry.new_value, dict) else {}
@@ -256,9 +293,13 @@ def serialize_repair(
     repair: Repair,
     history_entries: list[AuditLog],
     document_history_entries: list[AuditLog],
+    *,
+    include_archived_documents: bool = True,
 ) -> RepairDetailResponse:
-    documents = sorted(repair.documents, key=lambda item: (item.created_at, item.id), reverse=True)
+    documents = get_repair_documents_for_view(repair, include_archived_documents=include_archived_documents)
     documents_by_id = {str(item.id): item for item in documents}
+    if not include_archived_documents:
+        document_history_entries = [entry for entry in document_history_entries if entry.entity_id in documents_by_id]
     source_document = get_repair_source_document(repair)
     executive_report = build_repair_executive_report(
         repair,
@@ -365,10 +406,11 @@ def serialize_repair(
 
 
 def cleanup_storage_files(storage_keys: set[str]) -> None:
+    storage_root = get_storage_root()
     for storage_key in storage_keys:
         if not storage_key:
             continue
-        path = STORAGE_ROOT / storage_key
+        path = storage_root / storage_key
         if path.exists():
             path.unlink()
 
@@ -415,7 +457,7 @@ def replace_manual_lines(
 
 
 def get_learning_source_document(repair: Repair) -> Document | None:
-    return get_repair_source_document(repair, include_archived_fallback=True)
+    return get_repair_source_document(repair)
 
 
 def get_latest_document_version(document: Document | None):
@@ -479,6 +521,61 @@ def build_report_status_summary(repair: Repair) -> tuple[str, str]:
     if findings:
         return "Требует ручной проверки", "По заказ-наряду есть открытые предупреждения, которые нужно проверить."
     return "Готов к следующему этапу", "Открытых несоответствий по заказ-наряду не найдено."
+
+
+def build_report_workflow_summary(repair: Repair) -> tuple[str, str]:
+    if repair.status == RepairStatus.DRAFT:
+        return "Черновик", "Ремонт создан, но ещё не переведён в рабочий процесс проверки."
+    if repair.status == RepairStatus.IN_REVIEW:
+        return "Ручная проверка сотрудником", "Сотрудник сверяет документ, реквизиты и предупреждения перед подтверждением."
+    if repair.status == RepairStatus.EMPLOYEE_CONFIRMED:
+        return (
+            "Ожидает финального подтверждения администратора",
+            "Сотрудник завершил свою часть проверки. Теперь нужен финальный review администратора.",
+        )
+    if repair.status == RepairStatus.CONFIRMED:
+        return "Подтверждён", "Ремонт прошёл employee-review и финальное подтверждение администратора."
+    if repair.status == RepairStatus.SUSPICIOUS:
+        return "Подозрительный ремонт", "По ремонту зафиксирован риск, требующий отдельного управленческого решения."
+    if repair.status == RepairStatus.OCR_ERROR:
+        return "Ошибка OCR", "Автоматическое распознавание завершилось ошибкой, поэтому ремонт требует ручной обработки."
+    if repair.status == RepairStatus.ARCHIVED:
+        return "Архив", "Ремонт выведен из активного потока и доступен только для просмотра, поиска и экспорта."
+    return repair.status.value, ""
+
+
+def build_report_executive_sections(repair: Repair) -> list[tuple[str, list[str]]]:
+    executive_report = build_repair_executive_report(
+        repair,
+        source_payload=get_report_source_payload(repair),
+        manual_review_reason_labels=MANUAL_REVIEW_REASON_LABELS,
+    )
+    sections: list[tuple[str, list[str]]] = []
+    overview_lines = [
+        str(executive_report["headline"]),
+        str(executive_report["summary"]),
+        f"Общий риск: {executive_report['status']}",
+    ]
+    highlights = executive_report.get("highlights")
+    if isinstance(highlights, list):
+        overview_lines.extend(str(item) for item in highlights if str(item))
+    sections.append(("Короткий отчёт для руководителя", overview_lines))
+
+    raw_sections = executive_report.get("full_report_sections")
+    if not isinstance(raw_sections, list):
+        return sections
+
+    for raw_section in raw_sections:
+        if not isinstance(raw_section, dict):
+            continue
+        title = str(raw_section.get("title") or raw_section.get("key") or "Раздел")
+        items = raw_section.get("items")
+        if not isinstance(items, list):
+            continue
+        normalized_items = [str(item) for item in items if str(item)]
+        if normalized_items:
+            sections.append((title, normalized_items))
+    return sections
 
 
 def build_export_warning_rows(repair: Repair) -> list[tuple[object, ...]]:
@@ -545,14 +642,21 @@ def build_export_warning_rows(repair: Repair) -> list[tuple[object, ...]]:
     return rows
 
 
-def build_repair_pdf_sections(repair: Repair) -> list[tuple[str, list[str]]]:
+def build_repair_pdf_sections(
+    repair: Repair,
+    *,
+    include_archived_documents: bool = True,
+) -> list[tuple[str, list[str]]]:
     source_document = get_report_source_document(repair)
     source_payload = get_report_source_payload(repair)
     report_status, report_status_comment = build_report_status_summary(repair)
+    workflow_status, workflow_comment = build_report_workflow_summary(repair)
+    executive_sections = build_report_executive_sections(repair)
     raw_reasons = source_payload.get("manual_review_reasons")
     manual_review_reasons = [str(item) for item in raw_reasons] if isinstance(raw_reasons, list) else []
     extracted_fields = source_payload.get("extracted_fields") if isinstance(source_payload.get("extracted_fields"), dict) else {}
     warning_rows = build_export_warning_rows(repair)
+    documents = get_repair_documents_for_view(repair, include_archived_documents=include_archived_documents)
 
     warning_lines = [
         (
@@ -572,6 +676,8 @@ def build_repair_pdf_sections(repair: Repair) -> list[tuple[str, list[str]]]:
                 f"Номер заказ-наряда: {repair.order_number or 'Не указан'}",
                 f"Дата ремонта: {repair.repair_date.isoformat()}",
                 f"Статус ремонта: {repair.status.value}",
+                f"Этап workflow: {workflow_status}",
+                f"Комментарий к workflow: {workflow_comment}",
                 f"Итоговый статус отчёта: {report_status}",
                 f"Комментарий к статусу: {report_status_comment}",
                 f"Предварительный: {'Да' if repair.is_preliminary else 'Нет'}",
@@ -609,6 +715,7 @@ def build_repair_pdf_sections(repair: Repair) -> list[tuple[str, list[str]]]:
                 f"Обновлён: {repair.updated_at.isoformat()}",
             ],
         ),
+        *executive_sections,
         (
             "Несоответствия",
             warning_lines
@@ -664,7 +771,7 @@ def build_repair_pdf_sections(repair: Repair) -> list[tuple[str, list[str]]]:
                     f"OCR {item.ocr_confidence if item.ocr_confidence is not None else '—'} | "
                     f"создан {item.created_at.isoformat()} | обновлён {item.updated_at.isoformat()}"
                 )
-                for item in sorted(repair.documents, key=lambda item: item.id)
+                for item in sorted(documents, key=lambda item: item.id)
             ]
             or ["Документы отсутствуют."],
         ),
@@ -825,10 +932,15 @@ def get_repair(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> RepairDetailResponse:
-    repair = load_repair_for_user(db, repair_id, current_user)
+    repair = load_operational_repair_for_user(db, repair_id, current_user)
     history_entries = fetch_repair_history(db, repair.id)
     document_history_entries = fetch_document_history(db, repair)
-    return serialize_repair(repair, history_entries, document_history_entries)
+    return serialize_repair(
+        repair,
+        history_entries,
+        document_history_entries,
+        include_archived_documents=current_user.role == UserRole.ADMIN,
+    )
 
 
 @router.delete("/{repair_id}", response_model=RepairDeleteResponse)
@@ -1073,11 +1185,17 @@ def export_repair(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> StreamingResponse:
-    repair = load_repair_for_user(db, repair_id, current_user)
+    repair = load_operational_repair_for_user(db, repair_id, current_user)
     source_document = get_report_source_document(repair)
     source_payload = get_report_source_payload(repair)
     report_status, report_status_comment = build_report_status_summary(repair)
+    workflow_status, workflow_comment = build_report_workflow_summary(repair)
+    executive_sections = build_report_executive_sections(repair)
     warning_rows = build_export_warning_rows(repair)
+    documents = get_repair_documents_for_view(
+        repair,
+        include_archived_documents=current_user.role == UserRole.ADMIN,
+    )
     raw_reasons = source_payload.get("manual_review_reasons")
     manual_review_reasons = [str(item) for item in raw_reasons] if isinstance(raw_reasons, list) else []
     extracted_fields = source_payload.get("extracted_fields") if isinstance(source_payload.get("extracted_fields"), dict) else {}
@@ -1093,6 +1211,8 @@ def export_repair(
             ("Номер заказ-наряда", repair.order_number or ""),
             ("Дата ремонта", repair.repair_date.isoformat()),
             ("Статус", repair.status.value),
+            ("Этап workflow", workflow_status),
+            ("Комментарий к workflow", workflow_comment),
             ("Итоговый статус отчёта", report_status),
             ("Комментарий к статусу", report_status_comment),
             ("Предварительный", "Да" if repair.is_preliminary else "Нет"),
@@ -1120,6 +1240,17 @@ def export_repair(
             ("Открытых предупреждений", len(warning_rows)),
             ("Создан", repair.created_at.isoformat()),
             ("Обновлен", repair.updated_at.isoformat()),
+        ],
+    )
+
+    executive_sheet = workbook.create_sheet("Итоговый отчет")
+    append_rows(
+        executive_sheet,
+        [("Раздел", "Пункт")]
+        + [
+            (title, item)
+            for title, items in executive_sections
+            for item in items
         ],
     )
 
@@ -1199,7 +1330,7 @@ def export_repair(
                 item.created_at.isoformat(),
                 item.updated_at.isoformat(),
             )
-            for item in sorted(repair.documents, key=lambda item: item.id)
+            for item in sorted(documents, key=lambda item: item.id)
         ],
     )
 
@@ -1223,14 +1354,17 @@ def export_repair_pdf(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> StreamingResponse:
-    repair = load_repair_for_user(db, repair_id, current_user)
+    repair = load_operational_repair_for_user(db, repair_id, current_user)
     filename = safe_filename(
         f"repair_{repair.id}_{repair.order_number or repair.vehicle.plate_number or 'card'}",
         f"repair_{repair.id}",
     )
     pdf_bytes = render_text_report_pdf(
         "Карточка ремонта",
-        build_repair_pdf_sections(repair),
+        build_repair_pdf_sections(
+            repair,
+            include_archived_documents=current_user.role == UserRole.ADMIN,
+        ),
         subtitle=f"Ремонт #{repair.id} · {repair.order_number or repair.vehicle.plate_number or 'без номера'}",
     )
     return StreamingResponse(
@@ -1366,7 +1500,12 @@ def update_repair_service(
     db.commit()
     history_entries = fetch_repair_history(db, refreshed.id)
     document_history_entries = fetch_document_history(db, refreshed)
-    return serialize_repair(refreshed, history_entries, document_history_entries)
+    return serialize_repair(
+        refreshed,
+        history_entries,
+        document_history_entries,
+        include_archived_documents=current_user.role == UserRole.ADMIN,
+    )
 
 
 @router.patch("/{repair_id}/review-fields", response_model=RepairDetailResponse)
@@ -1409,6 +1548,7 @@ def update_repair_review_fields(
             setattr(repair, field_name, update_data[field_name])
 
     repair.is_manually_completed = True
+    refresh_repair_status_after_check_updates(repair, current_user)
     db.flush()
     refreshed = load_repair_for_user(db, repair_id, current_user)
     if current_user.role == UserRole.ADMIN:
@@ -1427,7 +1567,12 @@ def update_repair_review_fields(
     db.commit()
     history_entries = fetch_repair_history(db, refreshed.id)
     document_history_entries = fetch_document_history(db, refreshed)
-    return serialize_repair(refreshed, history_entries, document_history_entries)
+    return serialize_repair(
+        refreshed,
+        history_entries,
+        document_history_entries,
+        include_archived_documents=current_user.role == UserRole.ADMIN,
+    )
 
 
 def update_check_resolution_payload(
@@ -1506,4 +1651,9 @@ def update_repair_check(
 
     history_entries = fetch_repair_history(db, refreshed.id)
     document_history_entries = fetch_document_history(db, refreshed)
-    return serialize_repair(refreshed, history_entries, document_history_entries)
+    return serialize_repair(
+        refreshed,
+        history_entries,
+        document_history_entries,
+        include_archived_documents=current_user.role == UserRole.ADMIN,
+    )

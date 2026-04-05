@@ -1,7 +1,8 @@
 from functools import lru_cache
 from typing import Annotated, Optional
+from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -43,9 +44,6 @@ class Settings(BaseSettings):
     smtp_from_name: str = "Road700"
     smtp_use_tls: bool = True
     smtp_use_ssl: bool = False
-    s3_bucket: str = "road700-documents"
-    s3_region: str = "us-east-1"
-    s3_endpoint: str = "http://minio:9000"
     require_full_ocr_runtime: bool = False
 
     model_config = SettingsConfigDict(
@@ -63,6 +61,32 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @field_validator("public_base_url", mode="before")
+    @classmethod
+    def normalize_public_base_url(cls, value: object) -> object:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+
+        normalized = value.strip().rstrip("/")
+        if not normalized:
+            return None
+
+        parsed = urlsplit(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("PUBLIC_BASE_URL must be a full http(s) URL")
+
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_smtp_settings(self) -> "Settings":
+        if self.smtp_use_tls and self.smtp_use_ssl:
+            raise ValueError("SMTP_USE_TLS and SMTP_USE_SSL cannot both be enabled")
+        if bool(self.smtp_username) != bool(self.smtp_password):
+            raise ValueError("SMTP_USERNAME and SMTP_PASSWORD must be set together")
+        return self
 
     @property
     def database_url(self) -> str:

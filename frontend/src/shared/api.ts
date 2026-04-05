@@ -1,10 +1,6 @@
 export const TOKEN_STORAGE_KEY = "road700.access_token";
 
-export const API_BASE_URL =
-  import.meta.env.VITE_API_URL?.replace(/\/$/, "") ??
-  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-    ? "http://localhost:8000/api"
-    : "/api");
+export const API_BASE_URL = import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "/api";
 
 export class ApiError extends Error {
   status: number;

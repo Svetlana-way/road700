@@ -1,0 +1,12 @@
+.venv
+local.db
+*.db
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+road700_backend.egg-info
+.pytest_cache
+.DS_Store
+tests
+data

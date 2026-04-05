@@ -17,13 +17,13 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.exc import SAWarning
 from sqlalchemy.orm import Session
 
-from app.core.paths import STORAGE_ROOT
+from app.core.paths import get_storage_root
+from app.core.security import rotate_auth_session_epoch
 from app.db.base import Base
 from app.db.session import engine
 from app.models.audit import AuditLog
 
 
-BACKUP_DIR = STORAGE_ROOT / "backups"
 BACKUP_FORMAT = "road700_backup_v1"
 DATABASE_SNAPSHOT_ENTRY = "database.json"
 BACKUP_MANIFEST_SUFFIX = ".manifest.json"
@@ -38,8 +38,12 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def get_backup_dir() -> Path:
+    return get_storage_root() / "backups"
+
+
 def ensure_backup_dir() -> None:
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    get_backup_dir().mkdir(parents=True, exist_ok=True)
 
 
 def build_backup_id() -> str:
@@ -47,11 +51,11 @@ def build_backup_id() -> str:
 
 
 def archive_path_for(backup_id: str) -> Path:
-    return BACKUP_DIR / f"{backup_id}.zip"
+    return get_backup_dir() / f"{backup_id}.zip"
 
 
 def manifest_path_for(backup_id: str) -> Path:
-    return BACKUP_DIR / f"{backup_id}{BACKUP_MANIFEST_SUFFIX}"
+    return get_backup_dir() / f"{backup_id}{BACKUP_MANIFEST_SUFFIX}"
 
 
 def serialize_value(value: Any) -> Any:
@@ -90,14 +94,16 @@ def deserialize_value(column, value: Any) -> Any:
 
 
 def iter_storage_files() -> list[Path]:
-    if not STORAGE_ROOT.exists():
+    storage_root = get_storage_root()
+    backup_dir = get_backup_dir()
+    if not storage_root.exists():
         return []
 
     files: list[Path] = []
-    for path in STORAGE_ROOT.rglob("*"):
+    for path in storage_root.rglob("*"):
         if not path.is_file():
             continue
-        if BACKUP_DIR in path.parents:
+        if backup_dir in path.parents:
             continue
         files.append(path)
     return sorted(files)
@@ -181,8 +187,9 @@ def manifest_to_item(manifest: dict[str, Any]) -> dict[str, Any]:
 
 def list_backup_items() -> list[dict[str, Any]]:
     ensure_backup_dir()
+    backup_dir = get_backup_dir()
     items: list[dict[str, Any]] = []
-    for manifest_path in BACKUP_DIR.glob(f"*{BACKUP_MANIFEST_SUFFIX}"):
+    for manifest_path in backup_dir.glob(f"*{BACKUP_MANIFEST_SUFFIX}"):
         manifest = read_manifest(manifest_path)
         archive_path = archive_path_for(str(manifest["backup_id"]))
         if not archive_path.exists():
@@ -200,6 +207,7 @@ def create_backup_archive(db: Session, *, source: str = "manual") -> dict[str, A
     archive_path = archive_path_for(backup_id)
     snapshot = build_database_snapshot(db)
     storage_files = iter_storage_files()
+    storage_root = get_storage_root()
 
     with zipfile.ZipFile(archive_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(
@@ -207,7 +215,7 @@ def create_backup_archive(db: Session, *, source: str = "manual") -> dict[str, A
             json.dumps(snapshot, ensure_ascii=False, indent=2),
         )
         for file_path in storage_files:
-            relative_path = file_path.relative_to(STORAGE_ROOT)
+            relative_path = file_path.relative_to(storage_root)
             archive.write(file_path, arcname=f"storage/{relative_path.as_posix()}")
 
     manifest = {
@@ -337,7 +345,7 @@ def extract_storage_snapshot_to_temp(backup_id: str) -> Path:
     if not archive_path.exists():
         raise FileNotFoundError("Backup archive not found")
 
-    temp_dir = Path(tempfile.mkdtemp(prefix="road700-backup-", dir=BACKUP_DIR))
+    temp_dir = Path(tempfile.mkdtemp(prefix="road700-backup-", dir=get_backup_dir()))
     with zipfile.ZipFile(archive_path, mode="r") as archive:
         for member in archive.namelist():
             if not member.startswith("storage/") or member.endswith("/"):
@@ -353,19 +361,47 @@ def extract_storage_snapshot_to_temp(backup_id: str) -> Path:
     return temp_dir
 
 
+def move_storage_children(source_dir: Path, destination_dir: Path) -> None:
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    if not source_dir.exists():
+        return
+
+    for child in source_dir.iterdir():
+        destination = destination_dir / child.name
+        if destination.exists():
+            if destination.is_dir():
+                shutil.rmtree(destination)
+            else:
+                destination.unlink()
+        shutil.move(str(child), str(destination))
+
+
+def snapshot_current_storage_to_temp() -> Path:
+    ensure_backup_dir()
+    storage_root = get_storage_root()
+    backup_dir = get_backup_dir()
+    temp_dir = Path(tempfile.mkdtemp(prefix="road700-storage-current-", dir=backup_dir))
+    storage_root.mkdir(parents=True, exist_ok=True)
+    for child in storage_root.iterdir():
+        if child == backup_dir:
+            continue
+        destination = temp_dir / child.name
+        shutil.move(str(child), str(destination))
+    return temp_dir
+
+
 def replace_storage_with_snapshot(snapshot_dir: Path) -> None:
-    STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
-    for child in STORAGE_ROOT.iterdir():
-        if child == BACKUP_DIR:
+    storage_root = get_storage_root()
+    backup_dir = get_backup_dir()
+    storage_root.mkdir(parents=True, exist_ok=True)
+    for child in storage_root.iterdir():
+        if child == backup_dir:
             continue
         if child.is_dir():
             shutil.rmtree(child)
         else:
             child.unlink()
-
-    for child in snapshot_dir.iterdir():
-        destination = STORAGE_ROOT / child.name
-        shutil.move(str(child), str(destination))
+    move_storage_children(snapshot_dir, storage_root)
 
 
 def restore_backup_archive(
@@ -377,33 +413,39 @@ def restore_backup_archive(
     backup_item = load_backup_item_or_raise(backup_id)
     snapshot = load_database_snapshot(backup_id)
     extracted_storage_dir = extract_storage_snapshot_to_temp(backup_id)
+    current_storage_dir = snapshot_current_storage_to_temp()
     restored_at = utc_now()
 
     try:
-        with engine.begin() as connection:
-            restore_database_snapshot(connection, snapshot)
-            reset_postgres_sequences(connection)
-            connection.execute(
-                AuditLog.__table__.insert().values(
-                    user_id=None,
-                    entity_type="system",
-                    entity_id="backups",
-                    action_type="backup_restored",
-                    old_value=None,
-                    new_value={
-                        "backup_id": backup_id,
-                        "filename": backup_item["filename"],
-                        "requested_by_user_id": requested_by_user_id,
-                        "requested_by_login": requested_by_login,
-                        "restored_at": restored_at.isoformat(),
-                    },
-                    created_at=restored_at,
-                    updated_at=restored_at,
-                )
-            )
-
         replace_storage_with_snapshot(extracted_storage_dir)
+        try:
+            with engine.begin() as connection:
+                restore_database_snapshot(connection, snapshot)
+                reset_postgres_sequences(connection)
+                connection.execute(
+                    AuditLog.__table__.insert().values(
+                        user_id=None,
+                        entity_type="system",
+                        entity_id="backups",
+                        action_type="backup_restored",
+                        old_value=None,
+                        new_value={
+                            "backup_id": backup_id,
+                            "filename": backup_item["filename"],
+                            "requested_by_user_id": requested_by_user_id,
+                            "requested_by_login": requested_by_login,
+                            "restored_at": restored_at.isoformat(),
+                        },
+                        created_at=restored_at,
+                        updated_at=restored_at,
+                    )
+                )
+        except Exception:
+            replace_storage_with_snapshot(current_storage_dir)
+            raise
+        rotate_auth_session_epoch()
     finally:
         shutil.rmtree(extracted_storage_dir, ignore_errors=True)
+        shutil.rmtree(current_storage_dir, ignore_errors=True)
 
     return backup_item

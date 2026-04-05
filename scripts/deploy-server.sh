@@ -8,12 +8,11 @@ REMOTE_HOST="${DEPLOY_HOST:-}"
 REMOTE_DIR="${DEPLOY_PATH:-/opt/road700}"
 REMOTE_ENV_FILE="${DEPLOY_ENV_FILE:-.env.server}"
 SSH_PASSWORD="${DEPLOY_PASSWORD:-${SSH_PASSWORD:-}}"
-REMOTE_ENV_BASENAME="$(basename "$REMOTE_ENV_FILE")"
 
 usage() {
   cat <<'EOF'
 Usage:
-  DEPLOY_HOST=46.8.220.177 DEPLOY_PASSWORD=secret ./scripts/deploy-server.sh
+  DEPLOY_HOST=your-server-ip-or-hostname DEPLOY_PASSWORD=secret ./scripts/deploy-server.sh
 
 Optional environment variables:
   DEPLOY_USER       SSH user, default: root
@@ -63,6 +62,11 @@ run_rsync() {
   rsync "$@"
 }
 
+looks_like_ip_address() {
+  local value="$1"
+  [[ "$value" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ || "$value" == *:* ]]
+}
+
 echo "Creating remote directory $REMOTE_DIR"
 run_ssh "mkdir -p '$REMOTE_DIR'"
 
@@ -70,16 +74,22 @@ echo "Syncing project files"
 run_rsync \
   -az \
   --delete \
-  --filter="P $REMOTE_ENV_BASENAME" \
+  --filter="P $REMOTE_ENV_FILE" \
+  --exclude "$REMOTE_ENV_FILE" \
   --filter='P storage/' \
   --exclude '.git' \
   --exclude '.github' \
   --exclude '.codespaces' \
   --exclude '.devcontainer' \
+  --exclude '.env' \
+  --exclude '.env.*' \
+  --exclude 'signoff_artifacts' \
+  --exclude 'tmp' \
   --exclude 'frontend/node_modules' \
   --exclude 'frontend/dist' \
   --exclude 'backend/.venv' \
   --exclude 'backend/local.db' \
+  --exclude '*.db' \
   --exclude 'storage' \
   -e "$REMOTE_SHELL" \
   "$ROOT_DIR/" \
@@ -98,12 +108,14 @@ echo "Running OCR runtime smoke test"
 run_ssh "cd '$REMOTE_DIR' && chmod +x ./scripts/smoke-test-ocr-runtime.sh && ENV_FILE='$REMOTE_ENV_FILE' COMPOSE_FILE='docker-compose.server.yml' ./scripts/smoke-test-ocr-runtime.sh"
 
 if command -v curl >/dev/null 2>&1; then
-  REMOTE_DOMAIN="$(run_ssh "cd '$REMOTE_DIR' && sed -n 's/^DOMAIN=//p' '$REMOTE_ENV_FILE' | tail -n 1")"
+  REMOTE_DOMAIN="$(run_ssh "cd '$REMOTE_DIR' && awk -F= '/^[[:space:]]*#/ || !/=/{next} {key=\$1; sub(/^[[:space:]]+/, \"\", key); sub(/[[:space:]]+$/, \"\", key); if (key != \"DOMAIN\") next; value=substr(\$0, index(\$0, \"=\")+1); sub(/^[[:space:]]+/, \"\", value); sub(/[[:space:]]+$/, \"\", value); if ((value ~ /^\".*\"$/) || (value ~ /^'\"'\"'.*'\"'\"'$/)) value=substr(value, 2, length(value)-2); print value }' '$REMOTE_ENV_FILE' | tail -n 1")"
   if [[ -n "$REMOTE_DOMAIN" ]]; then
     echo "Running external access smoke test"
     curl --fail --silent --show-error --max-time 20 "https://$REMOTE_DOMAIN/api/health" >/dev/null
-    curl --fail --silent --show-error --max-time 20 "http://$REMOTE_DOMAIN/api/health" >/dev/null
-    curl --fail --silent --show-error --max-time 20 "http://$REMOTE_HOST/api/health" >/dev/null
+    curl --fail --silent --show-error --location --max-time 20 "http://$REMOTE_DOMAIN/api/health" >/dev/null
+    if looks_like_ip_address "$REMOTE_HOST"; then
+      curl --fail --silent --show-error --max-time 20 "http://$REMOTE_HOST/api/health" >/dev/null
+    fi
     echo "External access smoke test passed."
   fi
 fi

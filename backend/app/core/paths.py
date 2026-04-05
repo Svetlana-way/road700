@@ -32,3 +32,13 @@ def set_storage_root(path: str | Path) -> Path:
     global STORAGE_ROOT
     STORAGE_ROOT = Path(path).resolve()
     return STORAGE_ROOT
+
+
+def get_frontend_dist_dir() -> Path:
+    return FRONTEND_DIST_DIR
+
+
+def set_frontend_dist_dir(path: str | Path) -> Path:
+    global FRONTEND_DIST_DIR
+    FRONTEND_DIST_DIR = Path(path).resolve()
+    return FRONTEND_DIST_DIR

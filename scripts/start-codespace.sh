@@ -9,6 +9,8 @@ mkdir -p "$LOG_DIR"
 
 BACKEND_PID_FILE="$RUNTIME_DIR/backend.pid"
 BACKEND_LOG="$LOG_DIR/backend.log"
+WORKER_PID_FILE="$RUNTIME_DIR/worker.pid"
+WORKER_LOG="$LOG_DIR/worker.log"
 FRONTEND_BUILD_LOG="$LOG_DIR/frontend-build.log"
 REVISION_FILE="$RUNTIME_DIR/revision.txt"
 ADMIN_ENV_FILE="$RUNTIME_DIR/admin.env"
@@ -23,30 +25,68 @@ print(secrets.token_urlsafe(14))
 PY
 }
 
-prepare_admin_credentials() {
-  if [[ -f "$ADMIN_ENV_FILE" ]]; then
-    # shellcheck disable=SC1090
-    source "$ADMIN_ENV_FILE"
-  else
-    local generated_password
-    generated_password="$(generate_admin_password)"
-    cat >"$ADMIN_ENV_FILE" <<EOF
-INITIAL_ADMIN_FULL_NAME=${INITIAL_ADMIN_FULL_NAME:-System Administrator}
-INITIAL_ADMIN_LOGIN=${INITIAL_ADMIN_LOGIN:-admin}
-INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL:-admin@road700.local}
-INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-$generated_password}
-EOF
-    chmod 600 "$ADMIN_ENV_FILE"
-    cat >"$ADMIN_CREDENTIALS_FILE" <<EOF
+write_shell_assignment() {
+  local key="$1"
+  local value="$2"
+  printf '%s=%q\n' "$key" "$value"
+}
+
+write_admin_credentials_files() {
+  local generated_password
+  local admin_full_name
+  local admin_login
+  local admin_email
+  local admin_password
+
+  generated_password="$(generate_admin_password)"
+  admin_full_name="${INITIAL_ADMIN_FULL_NAME:-System Administrator}"
+  admin_login="${INITIAL_ADMIN_LOGIN:-admin}"
+  admin_email="${INITIAL_ADMIN_EMAIL:-admin@road700.local}"
+  admin_password="${INITIAL_ADMIN_PASSWORD:-$generated_password}"
+
+  {
+    write_shell_assignment "INITIAL_ADMIN_FULL_NAME" "$admin_full_name"
+    write_shell_assignment "INITIAL_ADMIN_LOGIN" "$admin_login"
+    write_shell_assignment "INITIAL_ADMIN_EMAIL" "$admin_email"
+    write_shell_assignment "INITIAL_ADMIN_PASSWORD" "$admin_password"
+  } >"$ADMIN_ENV_FILE"
+  chmod 600 "$ADMIN_ENV_FILE"
+  cat >"$ADMIN_CREDENTIALS_FILE" <<EOF
 Road700 Codespaces admin credentials
-login: ${INITIAL_ADMIN_LOGIN:-admin}
-email: ${INITIAL_ADMIN_EMAIL:-admin@road700.local}
-password: ${INITIAL_ADMIN_PASSWORD:-$generated_password}
+login: $admin_login
+email: $admin_email
+password: $admin_password
 EOF
-    chmod 600 "$ADMIN_CREDENTIALS_FILE"
-    # shellcheck disable=SC1090
-    source "$ADMIN_ENV_FILE"
+  chmod 600 "$ADMIN_CREDENTIALS_FILE"
+}
+
+load_admin_credentials() {
+  local loaded_assignments
+  loaded_assignments="$(
+    ADMIN_ENV_FILE="$ADMIN_ENV_FILE" bash <<'EOF'
+set -euo pipefail
+
+# shellcheck disable=SC1090
+source "$ADMIN_ENV_FILE"
+printf 'INITIAL_ADMIN_FULL_NAME=%q\n' "$INITIAL_ADMIN_FULL_NAME"
+printf 'INITIAL_ADMIN_LOGIN=%q\n' "$INITIAL_ADMIN_LOGIN"
+printf 'INITIAL_ADMIN_EMAIL=%q\n' "$INITIAL_ADMIN_EMAIL"
+printf 'INITIAL_ADMIN_PASSWORD=%q\n' "$INITIAL_ADMIN_PASSWORD"
+EOF
+  )" || return 1
+
+  eval "$loaded_assignments"
+}
+
+prepare_admin_credentials() {
+  if [[ ! -f "$ADMIN_ENV_FILE" ]]; then
+    write_admin_credentials_files
+  elif ! load_admin_credentials 2>/dev/null; then
+    rm -f "$ADMIN_ENV_FILE" "$ADMIN_CREDENTIALS_FILE"
+    write_admin_credentials_files
   fi
+
+  load_admin_credentials
 
   export INITIAL_ADMIN_FULL_NAME
   export INITIAL_ADMIN_LOGIN
@@ -59,6 +99,7 @@ prepare_admin_credentials
 cd "$ROOT_DIR/backend"
 ./.venv/bin/alembic upgrade head
 ./.venv/bin/python -m app.scripts.init_admin
+./.venv/bin/python -m app.scripts.check_ocr_runtime
 
 current_revision="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
 previous_revision=""
@@ -159,9 +200,40 @@ start_backend() {
   wait_for_url "http://127.0.0.1:8000/api/health" 30 1
 }
 
+start_worker() {
+  if [[ "$force_restart" == "true" ]]; then
+    stop_process "$WORKER_PID_FILE"
+  fi
+
+  if is_running "$WORKER_PID_FILE"; then
+    return
+  fi
+
+  stop_process "$WORKER_PID_FILE"
+
+  (
+    cd "$ROOT_DIR/backend"
+    nohup env DATABASE_URL="$DATABASE_URL" \
+      ./.venv/bin/python -m app.scripts.run_job_worker \
+      >"$WORKER_LOG" 2>&1 &
+    echo $! >"$WORKER_PID_FILE"
+  )
+
+  for ((i = 1; i <= 10; i += 1)); do
+    if is_running "$WORKER_PID_FILE"; then
+      return
+    fi
+    sleep 1
+  done
+
+  echo "Worker failed to start; see $WORKER_LOG" >&2
+  return 1
+}
+
 build_frontend
 
 start_backend
+start_worker
 frontend_is_healthy
 
 printf '%s\n' "$current_revision" >"$REVISION_FILE"

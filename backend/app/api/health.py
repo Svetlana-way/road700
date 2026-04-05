@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import text
 
 from app.core.config import settings
-from app.core.paths import STORAGE_ROOT
+from app.core.paths import get_storage_root
 from app.db.session import engine
 from app.services.document_processing import get_ocr_runtime_status
 
@@ -29,8 +29,9 @@ def healthcheck() -> dict[str, object]:
         ) from exc
 
     try:
-        STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=STORAGE_ROOT, prefix=".healthcheck-", delete=True):
+        storage_root = get_storage_root()
+        storage_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=storage_root, prefix=".healthcheck-", delete=True):
             pass
         checks["storage"] = "ok"
     except Exception as exc:

@@ -13,12 +13,23 @@ https://{$DOMAIN} {
   reverse_proxy app:8000
 }
 
-http://{$DOMAIN}, http://46.8.220.177 {
-  encode gzip zstd
+http://{$DOMAIN} {
+  redir https://{$DOMAIN}{uri} 308
+}
 
-  request_body {
-    max_size 100MB
+:80 {
+  @domain host {$DOMAIN}
+  handle @domain {
+    redir https://{$DOMAIN}{uri} 308
   }
 
-  reverse_proxy app:8000
+  handle {
+    encode gzip zstd
+
+    request_body {
+      max_size 100MB
+    }
+
+    reverse_proxy app:8000
+  }
 }

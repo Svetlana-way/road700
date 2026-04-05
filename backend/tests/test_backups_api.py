@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -33,12 +34,8 @@ class BackupsApiTestCase(unittest.TestCase):
         cls.storage_root = Path(cls.temp_dir.name) / "storage"
         cls.storage_root.mkdir(parents=True, exist_ok=True)
         cls.original_storage_root = get_storage_root()
-        cls.original_backups_storage_root = backups_service.STORAGE_ROOT
-        cls.original_backup_dir = backups_service.BACKUP_DIR
         cls.original_backup_engine = backups_service.engine
         set_storage_root(cls.storage_root)
-        backups_service.STORAGE_ROOT = cls.storage_root
-        backups_service.BACKUP_DIR = cls.storage_root / "backups"
 
         cls.engine = create_sqlite_test_engine(enforce_foreign_keys=True)
         backups_service.engine = cls.engine
@@ -59,8 +56,6 @@ class BackupsApiTestCase(unittest.TestCase):
     def tearDownClass(cls) -> None:
         app.dependency_overrides.clear()
         cls.engine.dispose()
-        backups_service.STORAGE_ROOT = cls.original_backups_storage_root
-        backups_service.BACKUP_DIR = cls.original_backup_dir
         backups_service.engine = cls.original_backup_engine
         set_storage_root(cls.original_storage_root)
         cls.temp_dir.cleanup()
@@ -75,7 +70,6 @@ class BackupsApiTestCase(unittest.TestCase):
                 else:
                     child.unlink()
         self.storage_root.mkdir(parents=True, exist_ok=True)
-        backups_service.BACKUP_DIR = self.storage_root / "backups"
 
         with self.SessionLocal() as db:
             admin = User(
@@ -170,7 +164,7 @@ class BackupsApiTestCase(unittest.TestCase):
             ["replace_database", "replace_storage_files", "keep_backup_archives", "relogin_required"],
         )
 
-        backup_dir_note = backups_service.BACKUP_DIR / "keep-local-note.txt"
+        backup_dir_note = backups_service.get_backup_dir() / "keep-local-note.txt"
         backup_dir_note.parent.mkdir(parents=True, exist_ok=True)
         backup_dir_note.write_text("preserve backup directory", encoding="utf-8")
 
@@ -216,6 +210,9 @@ class BackupsApiTestCase(unittest.TestCase):
             payload["backup"]["restore_effects"],
             ["replace_database", "replace_storage_files", "keep_backup_archives", "relogin_required"],
         )
+        stale_session_response = self.client.get("/api/auth/me", headers=headers)
+        self.assertEqual(stale_session_response.status_code, 401, stale_session_response.text)
+        self.assertEqual(stale_session_response.json()["detail"], "Could not validate credentials")
 
         with self.SessionLocal() as db:
             restored_user = db.scalar(select(User).where(User.login == "temporary"))
@@ -231,3 +228,36 @@ class BackupsApiTestCase(unittest.TestCase):
 
         self.assertEqual(file_path.read_text(encoding="utf-8"), "before restore")
         self.assertEqual(backup_dir_note.read_text(encoding="utf-8"), "preserve backup directory")
+
+        fresh_headers = self._get_auth_headers()
+        fresh_session_response = self.client.get("/api/auth/me", headers=fresh_headers)
+        self.assertEqual(fresh_session_response.status_code, 200, fresh_session_response.text)
+
+    def test_restore_backup_restores_previous_storage_if_database_restore_fails(self) -> None:
+        file_path = self.storage_root / "documents" / "sample.txt"
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("before restore", encoding="utf-8")
+
+        with self.SessionLocal() as db:
+            backup_id = backups_service.create_backup_archive(db, source="manual")["backup_id"]
+
+        file_path.write_text("mutated after backup", encoding="utf-8")
+
+        original_restore_database_snapshot = backups_service.restore_database_snapshot
+
+        def failing_restore_database_snapshot(*args, **kwargs):
+            original_restore_database_snapshot(*args, **kwargs)
+            raise RuntimeError("forced restore failure")
+
+        with patch.object(
+            backups_service,
+            "restore_database_snapshot",
+            side_effect=failing_restore_database_snapshot,
+        ):
+            with self.assertRaises(RuntimeError):
+                backups_service.restore_backup_archive(
+                    backup_id,
+                    requested_by_login="admin",
+                    requested_by_user_id=1,
+                )
+        self.assertEqual(file_path.read_text(encoding="utf-8"), "mutated after backup")

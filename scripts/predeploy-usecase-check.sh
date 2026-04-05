@@ -4,10 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-echo "[1/4] Компиляция backend"
+echo "[1/6] Компиляция backend"
 python3 -m compileall backend/app >/dev/null
 
-echo "[2/4] Backend tests"
+echo "[2/6] Backend tests"
 (
   cd backend
   DATABASE_URL=sqlite:///local.db \
@@ -17,7 +17,19 @@ echo "[2/4] Backend tests"
   ./.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 )
 
-echo "[3/4] Статическая проверка покрытия use case"
+echo "[3/6] Frontend typecheck"
+(
+  cd frontend
+  npx tsc --noEmit --noUnusedLocals --noUnusedParameters
+)
+
+echo "[4/6] Frontend build"
+(
+  cd frontend
+  npm run build
+)
+
+echo "[5/6] Статическая проверка покрытия use case"
 ROOT_DIR="$ROOT_DIR" python3 - <<'PY'
 from __future__ import annotations
 
@@ -30,12 +42,12 @@ root = Path(os.environ["ROOT_DIR"])
 
 checks: list[tuple[str, list[str]]] = [
     (
-        "Use Case сотрудника и чек-лист соответствия.md",
+        "UAT_CHECKLIST_ЗАКАЗЧИК.md",
         [
-            "## Чек-лист соответствия перед деплоем",
-            "### Блок 4. Проверка справочников",
-            "### Блок 5. Нормо-часы",
-            "### Блок 7. Итоговый результат",
+            "## 6. Итоговый отчет по заказ-наряду",
+            "## 9. Сквозной сценарий сотрудника и администратора",
+            "## 10. Экспорт",
+            "этап workflow",
         ],
     ),
     (
@@ -43,6 +55,23 @@ checks: list[tuple[str, list[str]]] = [
         [
             "### P4. Контур качества и pre-deploy соответствие",
             "### P2. Итоговый отчёт по заказ-наряду",
+        ],
+    ),
+    (
+        "RELEASE_CHECKLIST.md",
+        [
+            "## 1. Автоматические проверки перед релизом",
+            "scripts/predeploy-usecase-check.sh",
+            "## 2. Обязательная ручная проверка",
+            "## 3. OCR Runtime Gate",
+        ],
+    ),
+    (
+        "BUSINESS_SIGNOFF_REPORT_EXPORT.md",
+        [
+            "## 3. Проверка экранного отчёта",
+            "## 4. Проверка PDF/XLSX экспорта",
+            "Report/export business sign-off",
         ],
     ),
     (
@@ -88,8 +117,11 @@ checks: list[tuple[str, list[str]]] = [
         "backend/app/api/repairs.py",
         [
             'summary_sheet.title = "Отчет"',
+            'executive_sheet = workbook.create_sheet("Итоговый отчет")',
             'warnings_sheet = workbook.create_sheet("Несоответствия")',
             "def build_report_status_summary(",
+            "def build_report_workflow_summary(",
+            "def build_report_executive_sections(",
             "def build_export_warning_rows(",
             "def sync_service_checks(",
             "def update_repair_service(",
@@ -132,13 +164,14 @@ if errors:
 print("Static use case markers are present.")
 PY
 
-echo "[4/4] Напоминание по ручной проверке"
+echo "[6/6] Напоминание по ручной проверке"
 cat <<'EOF'
 Перед production deploy дополнительно подтвердите вручную:
 - сотрудник может загрузить заказ-наряд и документ уходит в OCR, а не теряется;
 - предупреждения по машине, сервису, нормо-часам и суммам видны в карточке ремонта;
 - ручное назначение сервиса снимает сервисное warning без дублирования;
-- итоговый отчёт по заказ-наряду содержит несоответствия и итоговый статус проверки.
+- итоговый отчёт по заказ-наряду содержит executive sections, несоответствия и итоговый статус проверки;
+- PDF/XLSX экспорт ремонта показывает тот же workflow-этап и смысловой итог, что и экран.
 EOF
 
 echo "Pre-deploy use case check passed."

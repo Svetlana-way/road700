@@ -38,6 +38,10 @@ ALLOWED_CONFLICT_STATUSES = {"pending", "resolved", "ignored"}
 REFERENCE_OPERATIONAL_STATUSES = (RepairStatus.CONFIRMED, RepairStatus.EMPLOYEE_CONFIRMED)
 
 
+def coerce_json_object(value: object) -> dict:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def build_historical_work_reference(
     db: Session,
     *,
@@ -359,7 +363,7 @@ def resolve_import_conflict(
         "status": conflict.status,
         "resolution_payload": conflict.resolution_payload,
     }
-    resolution_payload = dict(conflict.resolution_payload or {})
+    resolution_payload = coerce_json_object(conflict.resolution_payload)
     resolution_payload.update(
         {
             "status": normalized_status,

@@ -18,7 +18,7 @@ QUEUEABLE_IMPORT_JOB_STATUSES = (ImportStatus.QUEUED, ImportStatus.RETRY)
 
 
 def _merge_summary(job: ImportJob, **updates: object) -> dict[str, object]:
-    summary = dict(job.summary or {})
+    summary = dict(job.summary) if isinstance(job.summary, dict) else {}
     summary.update({key: value for key, value in updates.items() if value is not None})
     return summary
 

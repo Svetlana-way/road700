@@ -75,6 +75,10 @@ CHECK_REPORT_SECTION_LABELS = {
 }
 
 
+def coerce_json_object(value: object) -> dict:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def build_repair_snapshot(repair: Repair) -> dict:
     return {
         "order_number": repair.order_number,
@@ -812,7 +816,7 @@ def sync_service_checks(repair: Repair, service_name: str | None, current_user: 
     service_checks = [item for item in repair.checks if item.check_type in service_check_types]
 
     for check in service_checks:
-        payload = dict(check.calculation_payload or {})
+        payload = coerce_json_object(check.calculation_payload)
         should_be_resolved = bool(service_name) or check.check_type == "ocr_service_not_found"
         payload["resolution"] = {
             "is_resolved": should_be_resolved,
@@ -1581,7 +1585,7 @@ def update_check_resolution_payload(
     comment: str | None,
     current_user: User,
 ) -> dict:
-    payload = dict(check.calculation_payload or {})
+    payload = coerce_json_object(check.calculation_payload)
     payload["resolution"] = {
         "is_resolved": is_resolved,
         "comment": comment,

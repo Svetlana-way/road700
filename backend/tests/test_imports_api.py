@@ -211,6 +211,44 @@ class ImportsApiTestCase(unittest.TestCase):
             self.assertEqual(audit_entries[0].old_value["status"], "pending")
             self.assertEqual(audit_entries[0].new_value["status"], "resolved")
 
+    def test_resolve_import_conflict_tolerates_non_object_resolution_payload(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            job = ImportJob(
+                import_type="historical_repairs",
+                source_filename="history.xlsx",
+                status=ImportStatus.COMPLETED_WITH_CONFLICTS,
+                summary={"stage": "completed"},
+                error_message=None,
+                attempts=1,
+            )
+            db.add(job)
+            db.flush()
+            conflict = ImportConflict(
+                import_job_id=job.id,
+                entity_type="repair",
+                conflict_key="B123BC116|service|reg|2025-01-10",
+                incoming_payload={"plate_number": "B123BC116"},
+                existing_payload={"reason": "historical_import:key"},
+                resolution_payload=["legacy-broken-payload"],
+                status="pending",
+            )
+            db.add(conflict)
+            db.commit()
+            conflict_id = conflict.id
+
+        response = self.client.patch(
+            f"/api/imports/conflicts/{conflict_id}",
+            headers=headers,
+            json={"status": "ignored", "comment": "Оставили для ручной проверки"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["conflict"]["status"], "ignored")
+        self.assertEqual(payload["conflict"]["resolution_payload"]["comment"], "Оставили для ручной проверки")
+
     def test_list_import_jobs_filters_by_import_type(self) -> None:
         headers = self._get_auth_headers()
 

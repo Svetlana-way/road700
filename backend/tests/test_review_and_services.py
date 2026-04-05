@@ -2957,6 +2957,58 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(latest_payload["manual_review_reasons"], [])
         self.assertEqual(latest_payload["extracted_fields"]["service_name"], "Service Alpha")
 
+    def test_manual_service_assignment_tolerates_non_object_check_payload(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+
+            repair.service_id = None
+            document.status = DocumentStatus.RECOGNIZED
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=1,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "extracted_fields": {},
+                        "manual_review_reasons": ["service_name_missing"],
+                    },
+                    field_confidence_map={},
+                    change_summary="Initial OCR payload",
+                )
+            )
+            db.add(
+                RepairCheck(
+                    repair_id=repair.id,
+                    check_type="ocr_service_missing",
+                    severity=CheckSeverity.WARNING,
+                    title="Не удалось определить сервис",
+                    details="Сервис у ремонта не назначен. Нужна ручная проверка.",
+                    calculation_payload=["legacy-broken-payload"],
+                    is_resolved=False,
+                )
+            )
+            db.commit()
+
+        response = self.client.patch(
+            "/api/repairs/1/service",
+            headers=headers,
+            json={"service_name": "Service Alpha"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        service_checks = [item for item in payload["checks"] if item["check_type"] == "ocr_service_missing"]
+        self.assertEqual(len(service_checks), 1)
+        self.assertTrue(service_checks[0]["is_resolved"])
+        self.assertEqual(payload["service"]["name"], "Service Alpha")
+
     def test_admin_created_service_keeps_confirmed_status(self) -> None:
         headers = self._get_auth_headers("admin")
 

@@ -62,6 +62,11 @@ services:
       - "${BACKEND_PORT}:8000"
     volumes:
       - app_storage:/app/storage
+      - ./backend/data:/app/data:ro
+      - ./Реестр автомобилей:/app/Реестр автомобилей:ro
+      - ./Заказ-наряды:/app/Заказ-наряды:ro
+      - ./Сервисы:/app/Сервисы:ro
+      - ./Норма часов Донг Фенг 2025 год.xlsx:/app/Норма часов Донг Фенг 2025 год.xlsx:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')\""]
       interval: 15s
@@ -113,6 +118,11 @@ services:
       SMTP_USE_SSL: ${SMTP_USE_SSL}
     volumes:
       - app_storage:/app/storage
+      - ./backend/data:/app/data:ro
+      - ./Реестр автомобилей:/app/Реестр автомобилей:ro
+      - ./Заказ-наряды:/app/Заказ-наряды:ro
+      - ./Сервисы:/app/Сервисы:ro
+      - ./Норма часов Донг Фенг 2025 год.xlsx:/app/Норма часов Донг Фенг 2025 год.xlsx:ro
     depends_on:
       postgres:
         condition: service_healthy

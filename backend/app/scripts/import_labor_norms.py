@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.paths import PROJECT_ROOT
+from app.core.paths import PROJECT_ROOT, get_backend_data_root
 from app.db.session import SessionLocal
 from app.models.enums import CatalogStatus
 from app.models.labor_norm import LaborNorm
@@ -117,7 +117,7 @@ def read_csv_rows(path: Path) -> list[dict[str, object]]:
 def overlay_paths_for_scope(scope: str) -> list[Path]:
     normalized_scope = normalize_labor_norm_scope(scope)
     if normalized_scope == DEFAULT_DONGFENG_LABOR_NORM_SCOPE:
-        overlay_path = PROJECT_ROOT / "backend" / "data" / "labor_norms" / "dongfeng_2025_overrides.csv"
+        overlay_path = get_backend_data_root() / "labor_norms" / "dongfeng_2025_overrides.csv"
         return [overlay_path] if overlay_path.exists() else []
     return []
 

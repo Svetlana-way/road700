@@ -24,6 +24,30 @@ STORAGE_ROOT = Path(os.getenv("ROAD700_STORAGE_ROOT", str(PROJECT_ROOT / "storag
 FRONTEND_DIST_DIR = Path(os.getenv("ROAD700_FRONTEND_DIST", str(PROJECT_ROOT / "frontend" / "dist"))).resolve()
 
 
+def get_backend_data_root() -> Path:
+    override = os.getenv("ROAD700_BACKEND_DATA_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+
+    candidates: list[Path] = []
+    for candidate in (
+        PROJECT_ROOT / "data",
+        PROJECT_ROOT / "backend" / "data",
+        BACKEND_ROOT / "data",
+    ):
+        resolved = candidate.resolve()
+        if resolved not in candidates:
+            candidates.append(resolved)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    if (PROJECT_ROOT / "backend").exists():
+        return (PROJECT_ROOT / "backend" / "data").resolve()
+    return (BACKEND_ROOT / "data").resolve()
+
+
 def get_storage_root() -> Path:
     return STORAGE_ROOT
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
@@ -76,6 +77,44 @@ class ImportLaborNormsTestCase(unittest.TestCase):
             self.assertGreater(stats.updated, 0)
 
             norm = db.scalar(select(LaborNorm).where(LaborNorm.scope == "dongfeng_2025", LaborNorm.code == "11170102"))
+
+        self.assertIsNotNone(norm)
+        self.assertIn("тонкой очистки", norm.name_ru_alt or "")
+
+    def test_overlay_paths_use_resolved_backend_data_root(self) -> None:
+        base_csv_content = "\n".join(
+            [
+                "code,category,source_sheet,name_ru,name_ru_alt,name_cn,name_en,standard_hours",
+                "11170102,Система питания,Система питания,Замена фильтра,,,,0.80",
+            ]
+        )
+        overlay_csv_content = "\n".join(
+            [
+                "code,category,source_sheet,name_ru,name_ru_alt,name_cn,name_en,standard_hours",
+                "11170102,Система питания,Система питания,Замена фильтра,Фильтра тонкой очистки топлива,,,0.80",
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            catalog_path = temp_root / "dongfeng.csv"
+            catalog_path.write_text(base_csv_content, encoding="utf-8")
+
+            data_root = temp_root / "container-data"
+            overlay_dir = data_root / "labor_norms"
+            overlay_dir.mkdir(parents=True)
+            (overlay_dir / "dongfeng_2025_overrides.csv").write_text(overlay_csv_content, encoding="utf-8")
+
+            with patch("app.scripts.import_labor_norms.get_backend_data_root", return_value=data_root):
+                with self.SessionLocal() as db:
+                    stats = import_labor_norms_with_session(db, path=catalog_path)
+                    self.assertEqual(stats.created, 1)
+                    self.assertEqual(stats.updated, 1)
+                    self.assertEqual(stats.skipped, 0)
+
+                    norm = db.scalar(
+                        select(LaborNorm).where(LaborNorm.scope == "dongfeng_2025", LaborNorm.code == "11170102")
+                    )
 
         self.assertIsNotNone(norm)
         self.assertIn("тонкой очистки", norm.name_ru_alt or "")

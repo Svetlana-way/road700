@@ -10,7 +10,7 @@ from typing import Iterable, Optional
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.core.paths import PROJECT_ROOT
+from app.core.paths import PROJECT_ROOT, get_backend_data_root
 from app.db.base import Base
 from app.db.sqlite import create_sqlite_in_memory_engine
 from app.models.labor_norm import LaborNorm
@@ -92,10 +92,11 @@ def resolve_catalog_path(labor_scope: str, catalog_path: str | None) -> Path:
         return Path(catalog_path).expanduser().resolve()
 
     normalized_scope = normalize_labor_norm_scope(labor_scope) or labor_scope
+    backend_data_root = get_backend_data_root()
     known_paths = {
         "dongfeng_2025": default_labor_norms_path(PROJECT_ROOT),
-        "man_tgx_approx_srt_2026": PROJECT_ROOT / "backend" / "data" / "labor_norms" / "man_tgx_approx_srt_2026.csv",
-        "volvo_fh_approx_vstg_2026": PROJECT_ROOT / "backend" / "data" / "labor_norms" / "volvo_fh_approx_vstg_2026.csv",
+        "man_tgx_approx_srt_2026": backend_data_root / "labor_norms" / "man_tgx_approx_srt_2026.csv",
+        "volvo_fh_approx_vstg_2026": backend_data_root / "labor_norms" / "volvo_fh_approx_vstg_2026.csv",
     }
     return known_paths.get(normalized_scope, default_labor_norms_path(PROJECT_ROOT))
 

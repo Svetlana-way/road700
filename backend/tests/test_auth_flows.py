@@ -6,6 +6,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
+from app.api import auth as auth_api
 from app.api.deps import get_db
 from app.core.rate_limit import rate_limiter
 from app.core.security import get_password_hash
@@ -441,9 +442,11 @@ class AuthFlowsTestCase(unittest.TestCase):
         self.assertEqual(limited_response.json()["detail"], "Too many password reset requests. Please try again later.")
         self.assertIn("Retry-After", limited_response.headers)
 
-    def test_password_reset_link_uses_forwarded_public_origin(self) -> None:
+    def test_password_reset_link_uses_configured_public_base_url(self) -> None:
         with (
             patch("app.api.auth.generate_secure_token", return_value="fixed-reset-token-origin"),
+            patch("app.api.auth.is_email_delivery_configured", return_value=True),
+            patch.object(auth_api.settings, "public_base_url", "https://road700.example.com"),
             patch("app.api.auth.send_password_reset_email", return_value=(True, None)) as send_email_mock,
         ):
             response = self.client.post(
@@ -461,44 +464,20 @@ class AuthFlowsTestCase(unittest.TestCase):
             reset_link="https://road700.example.com/?reset_token=fixed-reset-token-origin",
         )
 
-    def test_password_reset_link_uses_forwarded_proto_with_host_header_when_forwarded_host_missing(self) -> None:
+    def test_password_reset_request_falls_back_to_manual_when_public_base_url_missing(self) -> None:
         with (
-            patch("app.api.auth.generate_secure_token", return_value="fixed-reset-token-forwarded-proto"),
+            patch("app.api.auth.generate_secure_token", return_value="fixed-reset-token-manual"),
+            patch("app.api.auth.is_email_delivery_configured", return_value=False),
             patch("app.api.auth.send_password_reset_email", return_value=(True, None)) as send_email_mock,
         ):
             response = self.client.post(
                 "/api/auth/password-reset/request",
                 json={"email": "employee@example.com"},
-                headers={
-                    "x-forwarded-proto": "https",
-                    "host": "road700.example.com",
-                },
             )
 
         self.assertEqual(response.status_code, 200, response.text)
-        send_email_mock.assert_called_once_with(
-            recipient_email="employee@example.com",
-            reset_link="https://road700.example.com/?reset_token=fixed-reset-token-forwarded-proto",
-        )
-
-    def test_password_reset_link_uses_forwarded_host_with_request_scheme_when_forwarded_proto_missing(self) -> None:
-        with (
-            patch("app.api.auth.generate_secure_token", return_value="fixed-reset-token-forwarded-host"),
-            patch("app.api.auth.send_password_reset_email", return_value=(True, None)) as send_email_mock,
-        ):
-            response = self.client.post(
-                "/api/auth/password-reset/request",
-                json={"email": "employee@example.com"},
-                headers={
-                    "x-forwarded-host": "road700.example.com",
-                },
-            )
-
-        self.assertEqual(response.status_code, 200, response.text)
-        send_email_mock.assert_called_once_with(
-            recipient_email="employee@example.com",
-            reset_link="http://road700.example.com/?reset_token=fixed-reset-token-forwarded-host",
-        )
+        self.assertEqual(response.json()["delivery_method"], "manual")
+        send_email_mock.assert_not_called()
 
 
 if __name__ == "__main__":

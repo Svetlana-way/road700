@@ -30,7 +30,11 @@ from app.schemas.auth import (
     TokenResponse,
 )
 from app.schemas.user import UserRead
-from app.services.email_delivery import send_password_reset_email
+from app.services.email_delivery import (
+    get_email_delivery_unavailable_reason,
+    is_email_delivery_configured,
+    send_password_reset_email,
+)
 from app.services.password_reset_tokens import invalidate_password_reset_tokens
 
 
@@ -74,26 +78,11 @@ def normalize_utc_datetime(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def _first_forwarded_header_value(raw_value: str | None) -> str | None:
-    if raw_value is None:
-        return None
-    normalized = raw_value.split(",")[0].strip()
-    return normalized or None
-
-
-def build_external_base_url(request: Request) -> str:
+def build_external_base_url() -> str:
     configured_base_url = (settings.public_base_url or "").strip().rstrip("/")
     if configured_base_url:
         return configured_base_url
-
-    forwarded_proto = _first_forwarded_header_value(request.headers.get("x-forwarded-proto"))
-    forwarded_host = _first_forwarded_header_value(request.headers.get("x-forwarded-host"))
-    host = forwarded_host or request.headers.get("host")
-    scheme = forwarded_proto or request.url.scheme
-    if host:
-        return f"{scheme}://{host}"
-
-    return str(request.base_url).rstrip("/")
+    raise RuntimeError("PUBLIC_BASE_URL must be configured for password reset email delivery")
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -202,9 +191,12 @@ def request_password_reset(
     db.add(reset_token)
     db.flush()
 
-    base_url = build_external_base_url(request)
-    reset_link = f"{base_url}/?reset_token={raw_token}"
-    sent, delivery_error = send_password_reset_email(recipient_email=user.email, reset_link=reset_link)
+    sent = False
+    delivery_error = get_email_delivery_unavailable_reason()
+    if is_email_delivery_configured():
+        base_url = build_external_base_url()
+        reset_link = f"{base_url}/?reset_token={raw_token}"
+        sent, delivery_error = send_password_reset_email(recipient_email=user.email, reset_link=reset_link)
     reset_token.delivery_status = "sent" if sent else "pending_manual"
     reset_token.delivery_error = delivery_error
     db.add(reset_token)

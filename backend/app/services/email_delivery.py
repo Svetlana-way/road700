@@ -6,13 +6,22 @@ from email.message import EmailMessage
 from app.core.config import settings
 
 
+def get_email_delivery_unavailable_reason() -> str | None:
+    if not settings.smtp_host or not settings.smtp_from_email:
+        return "SMTP not configured"
+    if not settings.public_base_url:
+        return "PUBLIC_BASE_URL not configured"
+    return None
+
+
 def is_email_delivery_configured() -> bool:
-    return bool(settings.smtp_host and settings.smtp_from_email)
+    return get_email_delivery_unavailable_reason() is None
 
 
 def send_password_reset_email(*, recipient_email: str, reset_link: str) -> tuple[bool, str | None]:
-    if not is_email_delivery_configured():
-        return False, "SMTP not configured"
+    unavailable_reason = get_email_delivery_unavailable_reason()
+    if unavailable_reason is not None:
+        return False, unavailable_reason
 
     message = EmailMessage()
     message["Subject"] = "Восстановление пароля Road700"

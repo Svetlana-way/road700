@@ -29,12 +29,13 @@ export function buildDocumentsContentSectionParams(
     repairDerivedViewModel,
     repairEditingWorkflow,
     repairWorkspaceActions,
+    fleetWorkspace,
   } = context;
 
   return {
     activeWorkspaceTab: rootState.activeWorkspaceTab,
     uploadForm: documentsWorkspace.uploadForm,
-    vehicles: rootState.vehicles,
+    vehicles: fleetWorkspace.vehicleOptions.filter((item) => !isPlaceholderVehicle(item.external_id)),
     rootDocumentKindOptions,
     selectedFiles: documentsWorkspace.selectedFiles,
     uploadMissingRequirements: repairDerivedViewModel.uploadMissingRequirements,

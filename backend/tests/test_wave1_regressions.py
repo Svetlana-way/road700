@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
@@ -244,6 +245,23 @@ class Wave1DomainRegressionTestCase(unittest.TestCase):
         self.assertEqual(restored_payload["source_document_id"], 1)
         self.assertTrue(any(item["id"] == 1 and item["is_primary"] is True for item in restored_payload["documents"]))
 
+    def test_repair_restore_rejects_archived_service(self) -> None:
+        headers = self._auth_headers("admin")
+
+        archive_response = self.client.post("/api/repairs/1/archive", headers=headers)
+        self.assertEqual(archive_response.status_code, 200, archive_response.text)
+
+        with self.SessionLocal() as db:
+            service = db.get(Service, 1)
+            self.assertIsNotNone(service)
+            assert service is not None
+            service.status = ServiceStatus.ARCHIVED
+            db.commit()
+
+        restore_response = self.client.post("/api/repairs/1/restore", headers=headers)
+        self.assertEqual(restore_response.status_code, 409, restore_response.text)
+        self.assertEqual(restore_response.json()["detail"], "Cannot restore a repair for an archived service")
+
     def test_document_archive_and_restore_use_explicit_endpoints(self) -> None:
         headers = self._auth_headers("admin")
 
@@ -274,6 +292,56 @@ class Wave1DomainRegressionTestCase(unittest.TestCase):
             self.assertEqual(repair.source_document_id, document.id)
             self.assertTrue(document.is_primary)
 
+    def test_document_restore_rejects_archived_vehicle(self) -> None:
+        headers = self._auth_headers("admin")
+
+        archive_response = self.client.post("/api/documents/1/archive", headers=headers)
+        self.assertEqual(archive_response.status_code, 200, archive_response.text)
+
+        with self.SessionLocal() as db:
+            vehicle = db.get(Vehicle, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(vehicle)
+            self.assertIsNotNone(document)
+            assert vehicle is not None
+            assert document is not None
+            vehicle.status = VehicleStatus.ARCHIVED
+            document.status = DocumentStatus.ARCHIVED
+            document.review_queue_priority = 0
+            db.commit()
+
+        restore_response = self.client.post("/api/documents/1/restore", headers=headers)
+        self.assertEqual(restore_response.status_code, 409, restore_response.text)
+        self.assertEqual(restore_response.json()["detail"], "Cannot restore a document while its vehicle is archived")
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, 1)
+            self.assertIsNotNone(document)
+            assert document is not None
+            self.assertEqual(document.status, DocumentStatus.ARCHIVED)
+
+    def test_document_restore_rejects_archived_service(self) -> None:
+        headers = self._auth_headers("admin")
+
+        archive_response = self.client.post("/api/documents/1/archive", headers=headers)
+        self.assertEqual(archive_response.status_code, 200, archive_response.text)
+
+        with self.SessionLocal() as db:
+            service = db.get(Service, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(service)
+            self.assertIsNotNone(document)
+            assert service is not None
+            assert document is not None
+            service.status = ServiceStatus.ARCHIVED
+            document.status = DocumentStatus.ARCHIVED
+            document.review_queue_priority = 0
+            db.commit()
+
+        restore_response = self.client.post("/api/documents/1/restore", headers=headers)
+        self.assertEqual(restore_response.status_code, 409, restore_response.text)
+        self.assertEqual(restore_response.json()["detail"], "Cannot restore a document while its service is archived")
+
     def test_first_attachment_uploaded_to_repair_does_not_become_primary_or_source(self) -> None:
         with self.SessionLocal() as db:
             repair = Repair(
@@ -299,6 +367,10 @@ class Wave1DomainRegressionTestCase(unittest.TestCase):
             files={"file": ("attachment.pdf", b"%PDF-1.4\n%test\n", "application/pdf")},
         )
         self.assertEqual(response.status_code, 200, response.text)
+
+        repair_response = self.client.get(f"/api/repairs/{repair_id}", headers=headers)
+        self.assertEqual(repair_response.status_code, 200, repair_response.text)
+        self.assertIsNone(repair_response.json()["source_document_id"])
 
         with self.SessionLocal() as db:
             repair = db.get(Repair, repair_id)
@@ -402,6 +474,34 @@ class Wave1AuthRegressionTestCase(unittest.TestCase):
         fresh_login_response = self.client.post(
             "/api/auth/login",
             data={"username": "employee", "password": "adminreset123"},
+        )
+        self.assertEqual(fresh_login_response.status_code, 200, fresh_login_response.text)
+
+    def test_old_access_token_is_rejected_after_password_recovery(self) -> None:
+        original_headers = self._auth_headers("employee")
+
+        with (
+            patch("app.api.auth.generate_secure_token", return_value="fixed-reset-token-wave1"),
+            patch("app.api.auth.send_password_reset_email", return_value=(False, "SMTP not configured")),
+        ):
+            request_response = self.client.post(
+                "/api/auth/password-reset/request",
+                json={"email": "employee@example.com"},
+            )
+        self.assertEqual(request_response.status_code, 200, request_response.text)
+
+        confirm_response = self.client.post(
+            "/api/auth/password-reset/confirm",
+            json={"token": "fixed-reset-token-wave1", "new_password": "recoveredpass123"},
+        )
+        self.assertEqual(confirm_response.status_code, 200, confirm_response.text)
+
+        stale_token_response = self.client.get("/api/auth/me", headers=original_headers)
+        self.assertEqual(stale_token_response.status_code, 401, stale_token_response.text)
+
+        fresh_login_response = self.client.post(
+            "/api/auth/login",
+            data={"username": "employee", "password": "recoveredpass123"},
         )
         self.assertEqual(fresh_login_response.status_code, 200, fresh_login_response.text)
 

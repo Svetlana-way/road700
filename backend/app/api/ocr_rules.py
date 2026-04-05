@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.api.deps import get_current_admin, get_db
 from app.models.ocr_rule import OcrRule
 from app.models.user import User
 from app.schemas.ocr_rule import OcrRuleCreate, OcrRuleListResponse, OcrRuleRead, OcrRuleUpdate
@@ -59,9 +59,9 @@ def check_rule_duplicate(
 def list_ocr_rules(
     profile_scope: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_admin: User = Depends(get_current_admin),
 ) -> OcrRuleListResponse:
-    _ = current_user
+    _ = current_admin
     ensure_default_ocr_rules(db)
     db.flush()
 

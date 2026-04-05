@@ -1,19 +1,24 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { LoadRepairDetailResult } from "./useRepairDetailLoader";
-import { loadWorkspaceBootstrapData, type LoadedWorkspaceData } from "../shared/loadWorkspaceBootstrap";
+import type { WorkspaceTab } from "../shared/appRoute";
+import {
+  loadWorkspaceBootstrapData,
+  loadWorkspaceDataQualityDetails,
+  loadWorkspaceMetricsData,
+  loadWorkspaceOperationalData,
+  loadWorkspaceReviewData,
+  type WorkspaceRefreshScope,
+} from "../shared/loadWorkspaceBootstrap";
 import { repairHasDocumentsAwaitingOcr, type RepairDetailForDraft } from "../shared/repairUiHelpers";
 import type {
   DashboardDataQuality,
   DashboardDataQualityDetails,
   DashboardSummary,
   DocumentItem,
-  DocumentsResponse,
   ReviewQueueCategory,
   ReviewQueueItem,
   User,
-  Vehicle,
 } from "../shared/workspaceBootstrapTypes";
-import { apiRequest } from "../shared/api";
 import { documentHasActiveImportJob, isDocumentAwaitingOcr } from "../shared/displayFormatters";
 
 type ReviewQueueCounts = Record<ReviewQueueCategory, number>;
@@ -27,7 +32,6 @@ export type WorkspaceStateAppliers = {
   setSummary: (value: DashboardSummary | null) => void;
   setDataQuality: (value: DashboardDataQuality | null) => void;
   setDataQualityDetails: (value: DashboardDataQualityDetails | null) => void;
-  setVehicles: (value: Vehicle[]) => void;
   setDocuments: (value: DocumentItem[]) => void;
   setReviewQueue: (value: ReviewQueueItem[]) => void;
   setReviewQueueCounts: (value: ReviewQueueCounts) => void;
@@ -35,20 +39,6 @@ export type WorkspaceStateAppliers = {
   clearSelectedRepair: () => void;
   setLastUploadedDocument: Dispatch<SetStateAction<DocumentItem | null>>;
   setErrorMessage: (value: string) => void;
-  applyBootstrapVehicleList: (value: LoadedWorkspaceData["vehicleList"]) => void;
-  applyBootstrapUsers: (value: LoadedWorkspaceData["usersPayload"]) => void;
-  applyBootstrapLaborNorms: (value: {
-    laborNormCatalog: LoadedWorkspaceData["laborNormCatalog"];
-    laborNormCatalogConfigs: LoadedWorkspaceData["laborNormCatalogConfigs"];
-  }) => void;
-  applyBootstrapServices: (value: LoadedWorkspaceData["servicesPayload"]) => void;
-  applyBootstrapReviewRules: (value: LoadedWorkspaceData["reviewRulesPayload"]) => void;
-  applyBootstrapOcrAdmin: (value: {
-    ocrRulesPayload: LoadedWorkspaceData["ocrRulesPayload"];
-    ocrProfileMatchersPayload: LoadedWorkspaceData["ocrProfileMatchersPayload"];
-    ocrLearningPayload: LoadedWorkspaceData["ocrLearningPayload"];
-    systemStatusPayload: LoadedWorkspaceData["systemStatusPayload"];
-  }) => void;
 };
 
 export type WorkspaceResetters = {
@@ -79,17 +69,16 @@ type LoadRepairDetailOptions = {
 
 type UseWorkspaceDataLifecycleParams = {
   token: string | null;
+  activeWorkspaceTab: WorkspaceTab;
   selectedReviewCategory: ReviewQueueCategory;
-  laborNormQuery: string;
-  laborNormScope: string;
-  laborNormCategory: string;
   selectedDocumentId: number | null;
   documents: DocumentItem[];
   reviewQueue: ReviewQueueItem[];
+  dataQualityDetails: DashboardDataQualityDetails | null;
   selectedRepair: RepairDetailForLifecycle | null;
   isEditingRepair: boolean;
   lastUploadedDocument: DocumentItem | null;
-  invalidateSession: () => void;
+  invalidateSession: (options?: { message?: string; reload?: boolean }) => void;
   loadRepairDetail: (
     token: string,
     repairId: number,
@@ -113,8 +102,20 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
   const [bootLoading, setBootLoading] = useState(false);
   const workspaceAutoRefreshInFlightRef = useRef(false);
   const repairAutoRefreshInFlightRef = useRef(false);
+  const workspaceLoadRequestIdRef = useRef(0);
+  const visibleWorkspaceLoadRequestIdRef = useRef(0);
+  const dataQualityDetailsRequestIdRef = useRef(0);
+  const lastBootstrapTokenRef = useRef<string | null>(null);
+  const previousWorkspaceTabRef = useRef<WorkspaceTab | null>(null);
   const latestRef = useRef(params);
   latestRef.current = params;
+
+  function invalidateWorkspaceLoadState() {
+    workspaceLoadRequestIdRef.current += 1;
+    visibleWorkspaceLoadRequestIdRef.current = workspaceLoadRequestIdRef.current;
+    dataQualityDetailsRequestIdRef.current += 1;
+    setBootLoading(false);
+  }
 
   function syncRecentDocuments(items: DocumentItem[]) {
     const { workspaceState } = latestRef.current;
@@ -130,53 +131,66 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
   async function loadWorkspace(
     activeToken: string,
     reviewCategory: ReviewQueueCategory = latestRef.current.selectedReviewCategory,
-    options?: { silent?: boolean },
+    options?: { silent?: boolean; scope?: WorkspaceRefreshScope },
   ) {
-    const { laborNormQuery, laborNormScope, laborNormCategory, selectedDocumentId, invalidateSession, workspaceState } =
-      latestRef.current;
+    const { invalidateSession, workspaceState } = latestRef.current;
     const silent = options?.silent ?? false;
+    const scope = options?.scope ?? "full";
+    const requestId = workspaceLoadRequestIdRef.current + 1;
+    workspaceLoadRequestIdRef.current = requestId;
     if (!silent) {
+      visibleWorkspaceLoadRequestIdRef.current = requestId;
       setBootLoading(true);
     }
     try {
-      const data = await loadWorkspaceBootstrapData(activeToken, reviewCategory, {
-        query: laborNormQuery,
-        scope: laborNormScope,
-        category: laborNormCategory,
-      });
-
-      workspaceState.setUser(data.me);
-      workspaceState.setSummary(data.dashboard);
-      workspaceState.setDataQuality(data.dataQualityPayload);
-      workspaceState.setDataQualityDetails(data.dataQualityDetailsPayload);
-      workspaceState.setVehicles(data.vehicleList.items);
-      workspaceState.applyBootstrapVehicleList(data.vehicleList);
-      syncRecentDocuments(data.recentDocuments.items);
-      workspaceState.applyBootstrapUsers(data.usersPayload);
-      workspaceState.applyBootstrapLaborNorms({
-        laborNormCatalog: data.laborNormCatalog,
-        laborNormCatalogConfigs: data.laborNormCatalogConfigs,
-      });
-      workspaceState.setReviewQueue(data.reviewQueueData.items);
-      workspaceState.setReviewQueueCounts(data.reviewQueueData.counts);
-      workspaceState.applyBootstrapServices(data.servicesPayload);
-      workspaceState.applyBootstrapReviewRules(data.reviewRulesPayload);
-      workspaceState.applyBootstrapOcrAdmin({
-        ocrRulesPayload: data.ocrRulesPayload,
-        ocrProfileMatchersPayload: data.ocrProfileMatchersPayload,
-        ocrLearningPayload: data.ocrLearningPayload,
-        systemStatusPayload: data.systemStatusPayload,
-      });
-      if (selectedDocumentId === null) {
-        const defaultDocumentId = data.reviewQueueData.items[0]?.document.id ?? data.recentDocuments.items[0]?.id ?? null;
-        if (defaultDocumentId !== null) {
-          workspaceState.setSelectedDocumentId(defaultDocumentId);
+      if (scope === "documents") {
+        const data = await loadWorkspaceOperationalData(activeToken, reviewCategory);
+        if (workspaceLoadRequestIdRef.current !== requestId) {
+          return;
         }
+        workspaceState.setSummary(data.dashboard);
+        workspaceState.setDataQuality(data.dataQualityPayload);
+        syncRecentDocuments(data.recentDocuments.items);
+        workspaceState.setReviewQueue(data.reviewQueueData.items);
+        workspaceState.setReviewQueueCounts(data.reviewQueueData.counts);
+      } else if (scope === "metrics") {
+        const data = await loadWorkspaceMetricsData(activeToken);
+        if (workspaceLoadRequestIdRef.current !== requestId) {
+          return;
+        }
+        workspaceState.setSummary(data.dashboard);
+        workspaceState.setDataQuality(data.dataQualityPayload);
+        workspaceState.setDataQualityDetails(data.dataQualityDetailsPayload);
+      } else if (scope === "review") {
+        const data = await loadWorkspaceReviewData(activeToken, reviewCategory);
+        if (workspaceLoadRequestIdRef.current !== requestId) {
+          return;
+        }
+        workspaceState.setSummary(data.dashboard);
+        workspaceState.setDataQuality(data.dataQualityPayload);
+        workspaceState.setReviewQueue(data.reviewQueueData.items);
+        workspaceState.setReviewQueueCounts(data.reviewQueueData.counts);
+      } else {
+        const data = await loadWorkspaceBootstrapData(activeToken, reviewCategory);
+        if (workspaceLoadRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        workspaceState.setUser(data.me);
+        workspaceState.setSummary(data.dashboard);
+        workspaceState.setDataQuality(data.dataQualityPayload);
+        workspaceState.setDataQualityDetails(null);
+        syncRecentDocuments(data.recentDocuments.items);
+        workspaceState.setReviewQueue(data.reviewQueueData.items);
+        workspaceState.setReviewQueueCounts(data.reviewQueueData.counts);
       }
       if (!silent) {
         workspaceState.setErrorMessage("");
       }
     } catch (error) {
+      if (workspaceLoadRequestIdRef.current !== requestId) {
+        return;
+      }
       const message = error instanceof Error ? error.message : "Не удалось загрузить рабочее пространство";
       if (!silent) {
         workspaceState.setErrorMessage(message);
@@ -186,20 +200,27 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
         workspaceState.setUser(null);
       }
     } finally {
-      if (!silent) {
+      if (!silent && visibleWorkspaceLoadRequestIdRef.current === requestId) {
         setBootLoading(false);
       }
     }
   }
 
-  async function loadRecentDocuments(activeToken: string) {
-    const recentDocuments = await apiRequest<DocumentsResponse>("/documents?limit=8", { method: "GET" }, activeToken);
-    syncRecentDocuments(recentDocuments.items);
+  async function loadDataQualityDetails(activeToken: string) {
+    const requestId = dataQualityDetailsRequestIdRef.current + 1;
+    dataQualityDetailsRequestIdRef.current = requestId;
+    const payload = await loadWorkspaceDataQualityDetails(activeToken);
+    if (dataQualityDetailsRequestIdRef.current !== requestId) {
+      return;
+    }
+    latestRef.current.workspaceState.setDataQualityDetails(payload);
   }
 
   useEffect(() => {
     const { token, selectedReviewCategory, resetters, workspaceState } = latestRef.current;
     if (!token) {
+      invalidateWorkspaceLoadState();
+      lastBootstrapTokenRef.current = null;
       workspaceState.setUser(null);
       resetters.setShowTechAdminTab(false);
       resetters.setShowPasswordChange(false);
@@ -208,7 +229,6 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
       workspaceState.setSummary(null);
       workspaceState.setDataQuality(null);
       workspaceState.setDataQualityDetails(null);
-      workspaceState.setVehicles([]);
       resetters.resetFleetState();
       resetters.resetOperationsState();
       resetters.resetLaborNormsState();
@@ -230,14 +250,27 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
       resetters.setDocumentVehicleFormToEmpty();
       return;
     }
-    void loadWorkspace(token, selectedReviewCategory);
+    const nextScope = lastBootstrapTokenRef.current === token ? "documents" : "full";
+    lastBootstrapTokenRef.current = token;
+    void loadWorkspace(token, selectedReviewCategory, { scope: nextScope });
   }, [params.selectedReviewCategory, params.token]);
 
   useEffect(() => {
-    const { token, selectedDocumentId, documents, reviewQueue, selectedRepair, loadRepairDetail, isEditingRepair, workspaceState } =
+    const { token, dataQualityDetails } = latestRef.current;
+    if (!token || dataQualityDetails !== null) {
+      return;
+    }
+    void loadDataQualityDetails(token).catch(() => {});
+  }, [params.dataQualityDetails, params.token]);
+
+  useEffect(() => {
+    const { token, activeWorkspaceTab, selectedDocumentId, documents, reviewQueue, selectedRepair, loadRepairDetail, workspaceState } =
       latestRef.current;
     if (!token) {
       workspaceState.clearSelectedRepair();
+      return;
+    }
+    if (activeWorkspaceTab === "repair") {
       return;
     }
     if (selectedDocumentId === null) {
@@ -250,19 +283,33 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
       (selectedRepair?.documents.some((item) => item.id === selectedDocumentId) ? selectedRepair.id : null);
 
     if (!selectedRepairId) {
+      workspaceState.setSelectedDocumentId(null);
       workspaceState.clearSelectedRepair();
       return;
     }
 
     const repairAlreadyLoaded = selectedRepair?.id === selectedRepairId;
+    const selectedDocumentAlreadyPresentInLoadedRepair =
+      repairAlreadyLoaded && selectedRepair.documents.some((item) => item.id === selectedDocumentId);
+    if (selectedDocumentAlreadyPresentInLoadedRepair) {
+      return;
+    }
     void loadRepairDetail(token, selectedRepairId, selectedDocumentId, {
       silent: repairAlreadyLoaded,
       resetTransientState: !repairAlreadyLoaded,
     });
-  }, [params.documents, params.isEditingRepair, params.reviewQueue, params.selectedDocumentId, params.selectedRepair, params.token]);
+  }, [
+    params.activeWorkspaceTab,
+    params.documents,
+    params.isEditingRepair,
+    params.reviewQueue,
+    params.selectedDocumentId,
+    params.selectedRepair,
+    params.token,
+  ]);
 
   useEffect(() => {
-    const { token, documents, lastUploadedDocument, selectedRepair, selectedDocumentId, loadRepairDetail } = latestRef.current;
+    const { token, activeWorkspaceTab, documents, lastUploadedDocument, selectedRepair, isEditingRepair, loadRepairDetail } = latestRef.current;
     if (!token) {
       workspaceAutoRefreshInFlightRef.current = false;
       repairAutoRefreshInFlightRef.current = false;
@@ -270,10 +317,12 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
     }
 
     const shouldRefreshWorkspace =
-      documents.some((document) => isDocumentAwaitingOcr(document.status) || documentHasActiveImportJob(document)) ||
-      (lastUploadedDocument !== null &&
-        (isDocumentAwaitingOcr(lastUploadedDocument.status) || documentHasActiveImportJob(lastUploadedDocument)));
-    const shouldRefreshRepair = repairHasDocumentsAwaitingOcr(selectedRepair);
+      activeWorkspaceTab === "documents" &&
+      (documents.some((document) => isDocumentAwaitingOcr(document.status) || documentHasActiveImportJob(document)) ||
+        (lastUploadedDocument !== null &&
+          (isDocumentAwaitingOcr(lastUploadedDocument.status) || documentHasActiveImportJob(lastUploadedDocument))));
+    const shouldRefreshRepair =
+      activeWorkspaceTab === "repair" && !isEditingRepair && repairHasDocumentsAwaitingOcr(selectedRepair);
 
     if (!shouldRefreshWorkspace && !shouldRefreshRepair) {
       workspaceAutoRefreshInFlightRef.current = false;
@@ -285,12 +334,15 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
       const current = latestRef.current;
       if (shouldRefreshWorkspace && !workspaceAutoRefreshInFlightRef.current) {
         workspaceAutoRefreshInFlightRef.current = true;
-        void loadRecentDocuments(current.token as string).finally(() => {
+        void loadWorkspace(current.token as string, current.selectedReviewCategory, {
+          scope: "documents",
+          silent: true,
+        }).finally(() => {
           workspaceAutoRefreshInFlightRef.current = false;
         });
       }
 
-      if (shouldRefreshRepair && current.selectedRepair && !repairAutoRefreshInFlightRef.current) {
+      if (shouldRefreshRepair && !current.isEditingRepair && current.selectedRepair && !repairAutoRefreshInFlightRef.current) {
         repairAutoRefreshInFlightRef.current = true;
         void loadRepairDetail(current.token as string, current.selectedRepair.id, current.selectedDocumentId, {
           silent: true,
@@ -304,7 +356,23 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [params.documents, params.lastUploadedDocument, params.selectedDocumentId, params.selectedRepair, params.token]);
+  }, [params.activeWorkspaceTab, params.documents, params.lastUploadedDocument, params.selectedDocumentId, params.selectedRepair, params.token]);
+
+  useEffect(() => {
+    const { token, activeWorkspaceTab, selectedReviewCategory } = latestRef.current;
+    const previousWorkspaceTab = previousWorkspaceTabRef.current;
+    previousWorkspaceTabRef.current = activeWorkspaceTab;
+
+    if (!token) {
+      return;
+    }
+    if (previousWorkspaceTab === null || previousWorkspaceTab === activeWorkspaceTab) {
+      return;
+    }
+    if (activeWorkspaceTab === "documents") {
+      void loadWorkspace(token, selectedReviewCategory, { scope: "documents", silent: true });
+    }
+  }, [params.activeWorkspaceTab, params.selectedReviewCategory, params.token]);
 
   return {
     bootLoading,

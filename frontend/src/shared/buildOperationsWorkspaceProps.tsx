@@ -50,8 +50,9 @@ export type BuildOperationsWorkspacePropsParams = {
   setAuditUserIdFilter: AuditProps["onAuditUserIdFilterChange"];
   setAuditDateFrom: AuditProps["onAuditDateFromChange"];
   setAuditDateTo: AuditProps["onAuditDateToChange"];
-  loadAuditLog: () => void | Promise<void>;
-  resetAudit: AuditProps["onReset"];
+  handleRefreshAuditLog: AuditProps["onRefresh"];
+  handleResetAuditFilters: AuditProps["onReset"];
+  resetAudit: () => void;
   formatAuditEntityLabel: AuditProps["formatAuditEntityLabel"];
   formatHistoryActionLabel: AuditProps["formatHistoryActionLabel"];
   historyDetailFormatters: Parameters<typeof buildAuditEntryDetails>[1];
@@ -136,9 +137,11 @@ export function buildOperationsWorkspaceProps(params: BuildOperationsWorkspacePr
       onAuditDateFromChange: params.setAuditDateFrom,
       onAuditDateToChange: params.setAuditDateTo,
       onRefresh: () => {
-        void params.loadAuditLog();
+        void params.handleRefreshAuditLog();
       },
-      onReset: params.resetAudit,
+      onReset: () => {
+        void params.handleResetAuditFilters();
+      },
       formatAuditEntityLabel: params.formatAuditEntityLabel,
       formatHistoryActionLabel: params.formatHistoryActionLabel,
       formatDateTime: params.formatDateTime,

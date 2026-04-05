@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
 import { buildServicePayload } from "../shared/adminPayloadBuilders";
 import { apiRequest } from "../shared/api";
 import { createEmptyServiceForm, createServiceFormFromItem } from "../shared/formStateFactories";
@@ -9,6 +10,8 @@ import type { ServiceFormState } from "../shared/workspaceFormTypes";
 type UseServicesAdminParams = {
   token: string;
   userRole: UserRole | null | undefined;
+  activeWorkspaceTab: WorkspaceTab;
+  activeAdminTab: AdminTab;
   setErrorMessage: (message: string) => void;
   setSuccessMessage: (message: string) => void;
 };
@@ -16,10 +19,14 @@ type UseServicesAdminParams = {
 export function useServicesAdmin({
   token,
   userRole,
+  activeWorkspaceTab,
+  activeAdminTab,
   setErrorMessage,
   setSuccessMessage,
 }: UseServicesAdminParams) {
   const [services, setServices] = useState<ServiceItem[]>([]);
+  const [allServices, setAllServices] = useState<ServiceItem[]>([]);
+  const [serviceOptions, setServiceOptions] = useState<ServiceItem[]>([]);
   const [serviceCities, setServiceCities] = useState<string[]>([]);
   const [serviceQuery, setServiceQuery] = useState("");
   const [serviceCityFilter, setServiceCityFilter] = useState("");
@@ -29,10 +36,32 @@ export function useServicesAdmin({
   const [serviceForm, setServiceForm] = useState<ServiceFormState>(createEmptyServiceForm);
   const [showServiceEditor, setShowServiceEditor] = useState(false);
   const [showServiceListDialog, setShowServiceListDialog] = useState(false);
+  const serviceCatalogRequestIdRef = useRef(0);
+  const serviceOptionsInitializedRef = useRef(false);
+  const servicesCatalogInitializedRef = useRef(false);
 
   function applyBootstrapServices(payload: ServicesResponse | null | undefined) {
-    setServices(payload?.items || []);
+    if (payload !== null && payload !== undefined) {
+      serviceOptionsInitializedRef.current = true;
+      servicesCatalogInitializedRef.current = true;
+    }
+    const items = payload?.items || [];
+    setServices(items);
+    setAllServices(items);
+    setServiceOptions(items.filter((item) => item.status !== "archived"));
     setServiceCities(payload?.cities || []);
+  }
+
+  async function fetchServices(
+    query: string = serviceQuery,
+    city: string = serviceCityFilter,
+    statusFilter: string = serviceStatusFilter,
+  ) {
+    return apiRequest<ServicesResponse>(
+      `/services?${buildServiceQueryString(query, city, statusFilter)}`,
+      { method: "GET" },
+      token,
+    );
   }
 
   async function loadServices(
@@ -43,16 +72,50 @@ export function useServicesAdmin({
     if (!token) {
       return;
     }
+    const requestId = serviceCatalogRequestIdRef.current + 1;
+    serviceCatalogRequestIdRef.current = requestId;
     setServiceLoading(true);
     try {
-      const payload = await apiRequest<ServicesResponse>(
-        `/services?${buildServiceQueryString(query, city, statusFilter)}`,
-        { method: "GET" },
-        token,
-      );
-      applyBootstrapServices(payload);
+      const [payload, fullPayload] = await Promise.all([
+        fetchServices(query, city, statusFilter),
+        query || city || statusFilter ? fetchServices("", "", "") : Promise.resolve<ServicesResponse | null>(null),
+      ]);
+      if (serviceCatalogRequestIdRef.current !== requestId) {
+        return;
+      }
+      servicesCatalogInitializedRef.current = true;
+      serviceOptionsInitializedRef.current = true;
+      setServices(payload.items);
+      setServiceCities(payload.cities);
+      const nextAllServices = fullPayload?.items || payload.items;
+      setAllServices(nextAllServices);
+      setServiceOptions(nextAllServices.filter((item) => item.status !== "archived"));
     } finally {
-      setServiceLoading(false);
+      if (serviceCatalogRequestIdRef.current === requestId) {
+        setServiceLoading(false);
+      }
+    }
+  }
+
+  async function loadServiceOptions() {
+    if (!token) {
+      return;
+    }
+    const requestId = serviceCatalogRequestIdRef.current + 1;
+    serviceCatalogRequestIdRef.current = requestId;
+    const payload = await fetchServices("", "", "");
+    if (serviceCatalogRequestIdRef.current !== requestId) {
+      return;
+    }
+    serviceOptionsInitializedRef.current = true;
+    setAllServices(payload.items);
+    setServiceOptions(payload.items.filter((item) => item.status !== "archived"));
+  }
+
+  async function refreshServicesState() {
+    await loadServices();
+    if (serviceQuery || serviceCityFilter || serviceStatusFilter) {
+      await loadServiceOptions();
     }
   }
 
@@ -136,7 +199,7 @@ export function useServicesAdmin({
         setSuccessMessage("Сервис создан");
       }
 
-      await loadServices();
+      await refreshServicesState();
       resetServiceEditor();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить сервис");
@@ -159,7 +222,7 @@ export function useServicesAdmin({
         resetServiceEditor();
         setShowServiceEditor(false);
       }
-      await loadServices();
+      await refreshServicesState();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось архивировать сервис");
     } finally {
@@ -178,6 +241,7 @@ export function useServicesAdmin({
       await apiRequest<ServiceItem>(`/services/${item.id}/restore`, { method: "POST" }, token);
       setSuccessMessage(`Сервис «${item.name}» восстановлен`);
       await loadServices(serviceQuery, serviceCityFilter, serviceStatusFilter || "archived");
+      await loadServiceOptions();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось восстановить сервис");
     } finally {
@@ -186,7 +250,12 @@ export function useServicesAdmin({
   }
 
   function resetServicesState() {
+    serviceCatalogRequestIdRef.current += 1;
+    serviceOptionsInitializedRef.current = false;
+    servicesCatalogInitializedRef.current = false;
     setServices([]);
+    setAllServices([]);
+    setServiceOptions([]);
     setServiceCities([]);
     setServiceQuery("");
     setServiceCityFilter("");
@@ -198,8 +267,45 @@ export function useServicesAdmin({
     setShowServiceListDialog(false);
   }
 
+  useEffect(() => {
+    if (!token || activeWorkspaceTab !== "repair") {
+      return;
+    }
+    if (serviceOptionsInitializedRef.current) {
+      return;
+    }
+    void loadServiceOptions().catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить сервисы");
+    });
+  }, [activeWorkspaceTab, setErrorMessage, token]);
+
+  useEffect(() => {
+    if (!token || userRole !== "admin" || activeWorkspaceTab !== "admin" || activeAdminTab !== "services") {
+      return;
+    }
+    if (servicesCatalogInitializedRef.current) {
+      return;
+    }
+    void loadServices("", "", "").catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить сервисы");
+    });
+  }, [activeAdminTab, activeWorkspaceTab, setErrorMessage, token, userRole]);
+
+  useEffect(() => {
+    if (!showServiceEditor || serviceForm.id === null) {
+      return;
+    }
+    if (allServices.some((item) => item.id === serviceForm.id)) {
+      return;
+    }
+    resetServiceEditor();
+    setShowServiceEditor(false);
+  }, [allServices, serviceForm.id, showServiceEditor]);
+
   return {
     services,
+    allServices,
+    serviceOptions,
     serviceCities,
     serviceQuery,
     setServiceQuery,
@@ -216,6 +322,7 @@ export function useServicesAdmin({
     setShowServiceListDialog,
     applyBootstrapServices,
     loadServices,
+    loadServiceOptions,
     updateServiceFormField,
     editService,
     resetServiceEditor,

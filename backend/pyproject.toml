@@ -5,7 +5,6 @@ description = "Backend for the Road700 fleet repairs platform"
 requires-python = ">=3.10"
 dependencies = [
   "alembic>=1.14.0",
-  "boto3>=1.35.0",
   "bcrypt<4",
   "email-validator>=2.2.0",
   "eval_type_backport>=0.3.0",

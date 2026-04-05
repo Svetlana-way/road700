@@ -15,8 +15,9 @@ from app.core.config import settings
 from app.core.paths import get_storage_root
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
-from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, UserRole, VehicleStatus, VehicleType
+from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
 from app.models.repair import Repair
+from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.schemas.document import (
@@ -259,6 +260,14 @@ def get_visible_document(
         visible_repair = get_visible_repair(db, current_user, document.repair.id)
         if visible_repair is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+        if (
+            document.status == DocumentStatus.ARCHIVED
+            or document.repair.status == RepairStatus.ARCHIVED
+            or document.repair.vehicle is None
+            or document.repair.vehicle.status == VehicleStatus.ARCHIVED
+            or (document.repair.service is not None and document.repair.service.status == ServiceStatus.ARCHIVED)
+        ):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     return document
 
@@ -273,6 +282,11 @@ def ensure_repair_is_operational(repair: Repair) -> None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Archived repairs cannot be modified")
     if repair.vehicle is not None:
         ensure_vehicle_is_operational(repair.vehicle)
+    if repair.service is not None and repair.service.status == ServiceStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Repairs for archived services cannot be modified",
+        )
 
 
 def ensure_document_is_operational(document: Document) -> None:
@@ -283,9 +297,16 @@ def ensure_document_is_operational(document: Document) -> None:
     ensure_repair_is_operational(document.repair)
 
 
+def reopen_repair_review_workflow(repair: Repair) -> None:
+    if repair.status in {RepairStatus.CONFIRMED, RepairStatus.EMPLOYEE_CONFIRMED}:
+        repair.status = RepairStatus.IN_REVIEW
+        repair.is_preliminary = True
+
+
 def get_or_create_placeholder_vehicle(db: Session) -> Vehicle:
     placeholder_vehicle = db.scalar(select(Vehicle).where(Vehicle.external_id == PLACEHOLDER_EXTERNAL_ID))
     if placeholder_vehicle is not None:
+        ensure_vehicle_is_operational(placeholder_vehicle)
         return placeholder_vehicle
 
     placeholder_vehicle = Vehicle(
@@ -344,7 +365,10 @@ def find_existing_vehicle_match(
         return None
 
     vehicles = db.scalars(
-        select(Vehicle).where(or_(Vehicle.external_id.is_(None), Vehicle.external_id != PLACEHOLDER_EXTERNAL_ID))
+        select(Vehicle).where(
+            Vehicle.status != VehicleStatus.ARCHIVED,
+            or_(Vehicle.external_id.is_(None), Vehicle.external_id != PLACEHOLDER_EXTERNAL_ID),
+        )
     ).all()
     matches: dict[int, Vehicle] = {}
     for vehicle in vehicles:
@@ -403,7 +427,7 @@ def build_comparison_field(
 
 
 def build_primary_document_snapshot(repair: Repair, documents: list[Document]) -> dict:
-    source_document = get_repair_source_document(repair, include_archived_fallback=True)
+    source_document = get_repair_source_document(repair)
     return {
         "repair_id": repair.id,
         "source_document_id": source_document.id if source_document is not None else None,
@@ -477,6 +501,16 @@ def restore_document_state(document: Document) -> None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cannot restore a document while its repair is archived",
+        )
+    if document.repair.vehicle is not None and document.repair.vehicle.status == VehicleStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot restore a document while its vehicle is archived",
+        )
+    if document.repair.service is not None and document.repair.service.status == ServiceStatus.ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot restore a document while its service is archived",
         )
     if document.status != DocumentStatus.ARCHIVED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Document is not archived")
@@ -579,6 +613,8 @@ def create_or_link_vehicle_from_document(
                 },
             )
         )
+    else:
+        ensure_vehicle_is_operational(target_vehicle)
 
     document.repair.vehicle_id = target_vehicle.id
     db.add(document.repair)
@@ -710,6 +746,7 @@ def mark_document_for_reprocessing(db: Session, document_id: int) -> Document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     ensure_document_is_operational(document)
 
+    reopen_repair_review_workflow(document.repair)
     document.status = DocumentStatus.UPLOADED
     document.review_queue_priority = 100
     document.ocr_confidence = None
@@ -730,6 +767,21 @@ def queue_document_processing(db: Session, document_id: int, *, retry_failed: bo
     return job
 
 
+def build_operational_document_id_query():
+    return (
+        select(Document.id)
+        .join(Repair, Repair.id == Document.repair_id)
+        .join(Vehicle, Vehicle.id == Repair.vehicle_id)
+        .outerjoin(Service, Service.id == Repair.service_id)
+        .where(
+            Document.status != DocumentStatus.ARCHIVED,
+            Repair.status != RepairStatus.ARCHIVED,
+            Vehicle.status != VehicleStatus.ARCHIVED,
+            or_(Repair.service_id.is_(None), Service.status != ServiceStatus.ARCHIVED),
+        )
+    )
+
+
 @router.get("", response_model=DocumentListResponse)
 def list_documents(
     limit: int = Query(default=20, ge=1, le=100),
@@ -748,6 +800,10 @@ def list_documents(
         )
     )
     count_stmt = select(func.count(Document.id)).join(Document.repair)
+
+    operational_document_ids = build_operational_document_id_query()
+    stmt = stmt.where(Document.id.in_(operational_document_ids))
+    count_stmt = count_stmt.where(Document.id.in_(operational_document_ids))
 
     if current_user.role != UserRole.ADMIN:
         visibility_clause = get_repair_visibility_clause(current_user)
@@ -942,6 +998,7 @@ def upload_document(
         vehicle = get_visible_vehicle(db, current_user, vehicle_id)
         if vehicle is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
+        ensure_vehicle_is_operational(vehicle)
     else:
         vehicle = get_or_create_placeholder_vehicle(db)
 
@@ -1058,15 +1115,19 @@ def create_vehicle_from_document(
         comment=normalize_text_field(payload.comment),
     )
 
-    updated_document, created_new_vehicle = create_or_link_vehicle_from_document(
-        db,
-        document=document,
-        payload=normalized_payload,
-        current_admin=current_admin,
-    )
-    updated_document = mark_document_for_reprocessing(db, updated_document.id)
-    job = queue_document_processing(db, updated_document.id)
-    db.commit()
+    try:
+        updated_document, created_new_vehicle = create_or_link_vehicle_from_document(
+            db,
+            document=document,
+            payload=normalized_payload,
+            current_admin=current_admin,
+        )
+        updated_document = mark_document_for_reprocessing(db, updated_document.id)
+        job = queue_document_processing(db, updated_document.id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     message = (
         "Карточка техники создана и документ поставлен в очередь на перепроверку"
         if created_new_vehicle
@@ -1096,15 +1157,19 @@ def link_vehicle_to_document(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Техника не найдена")
     ensure_vehicle_is_operational(vehicle)
 
-    updated_document = link_existing_vehicle_to_document(
-        db,
-        document=document,
-        vehicle=vehicle,
-        current_user=current_user,
-    )
-    updated_document = mark_document_for_reprocessing(db, updated_document.id)
-    job = queue_document_processing(db, updated_document.id)
-    db.commit()
+    try:
+        updated_document = link_existing_vehicle_to_document(
+            db,
+            document=document,
+            vehicle=vehicle,
+            current_user=current_user,
+        )
+        updated_document = mark_document_for_reprocessing(db, updated_document.id)
+        job = queue_document_processing(db, updated_document.id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return DocumentCreateVehicleResponse(
         message="Ремонт перепривязан к выбранной карточке техники и поставлен в очередь на перепроверку",
         document=serialize_document(updated_document),
@@ -1129,6 +1194,7 @@ def upload_document_to_repair(
     if repair is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
     ensure_repair_is_operational(repair)
+    reopen_repair_review_workflow(repair)
 
     uploads = collect_document_uploads(file, files)
     upload_artifact = build_document_upload_artifact(file, files)
@@ -1215,6 +1281,7 @@ def process_single_document(
 ) -> DocumentProcessResponse:
     document = get_visible_document(db, current_user, document_id)
     ensure_document_is_operational(document)
+    document = mark_document_for_reprocessing(db, document.id)
 
     job = queue_document_processing(db, document_id, retry_failed=True)
     db.commit()
@@ -1336,6 +1403,7 @@ def set_primary_document(
     old_snapshot = build_primary_document_snapshot(document.repair, sibling_documents)
 
     assign_primary_document(document.repair, document)
+    reopen_repair_review_workflow(document.repair)
 
     db.commit()
 
@@ -1387,10 +1455,7 @@ def review_document_comparison(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot compare a document with itself")
     if compared_document.repair_id != primary_document.repair_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Documents must belong to the same repair")
-    canonical_source_document = get_repair_source_document(
-        primary_document.repair,
-        include_archived_fallback=True,
-    )
+    canonical_source_document = get_repair_source_document(primary_document.repair)
     if canonical_source_document is None or canonical_source_document.id != primary_document.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reference document must be primary")
     ensure_document_can_be_primary(compared_document)
@@ -1416,10 +1481,13 @@ def review_document_comparison(
                 detail="Only order documents and repeat scans can be primary",
             )
         assign_primary_document(compared_document.repair, compared_document)
+        reopen_repair_review_workflow(compared_document.repair)
         message = "Сравниваемый документ назначен основным"
     elif action == "keep_current_primary":
+        assign_primary_document(compared_document.repair, primary_document)
         message = "Текущий основной документ сохранён"
     else:
+        assign_primary_document(compared_document.repair, primary_document)
         message = "Сравнение документов отмечено как проверенное"
 
     compared_document.notes = append_comparison_review_note(
@@ -1472,10 +1540,7 @@ def review_document_comparison(
     )
     db.commit()
 
-    refreshed_source_document = get_repair_source_document(
-        refreshed_compared.repair,
-        include_archived_fallback=True,
-    )
+    refreshed_source_document = get_repair_source_document(refreshed_compared.repair)
     return DocumentComparisonReviewResponse(
         message=message,
         action=action,
@@ -1492,7 +1557,7 @@ def process_pending_documents(
     _: User = Depends(get_current_admin),
 ) -> DocumentBatchProcessResponse:
     pending_documents = db.execute(
-        select(Document.id)
+        build_operational_document_id_query()
         .where(Document.status.in_([DocumentStatus.UPLOADED, DocumentStatus.OCR_ERROR, DocumentStatus.NEEDS_REVIEW]))
         .order_by(Document.created_at.asc(), Document.id.asc())
         .limit(limit)
@@ -1500,11 +1565,18 @@ def process_pending_documents(
 
     processed_ids = []
     job_ids: list[int] = []
-    for document_id in pending_documents:
-        job = queue_document_processing(db, document_id, retry_failed=True)
-        processed_ids.append(document_id)
-        job_ids.append(job.id)
-    db.commit()
+    batch_savepoint = db.begin_nested()
+    try:
+        for document_id in pending_documents:
+            job = queue_document_processing(db, document_id, retry_failed=True)
+            processed_ids.append(document_id)
+            job_ids.append(job.id)
+        batch_savepoint.commit()
+        db.commit()
+    except Exception:
+        batch_savepoint.rollback()
+        db.rollback()
+        raise
 
     return DocumentBatchProcessResponse(
         processed_count=len(processed_ids),
@@ -1523,7 +1595,7 @@ def reprocess_existing_documents(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_admin),
 ) -> DocumentBatchProcessResponse:
-    stmt = select(Document.id).where(
+    stmt = build_operational_document_id_query().where(
         Document.kind.in_(REPROCESSABLE_DOCUMENT_KINDS),
     )
 
@@ -1533,10 +1605,7 @@ def reprocess_existing_documents(
         stmt = stmt.where(Document.status.in_(REPROCESSABLE_DOCUMENT_STATUSES))
 
     if only_primary:
-        stmt = (
-            stmt.join(Repair, Repair.id == Document.repair_id)
-            .where(Document.id == build_canonical_source_document_id_expr())
-        )
+        stmt = stmt.where(Document.id == build_canonical_source_document_id_expr())
 
     document_ids = db.execute(
         stmt.order_by(Document.created_at.asc(), Document.id.asc()).limit(limit)
@@ -1545,13 +1614,20 @@ def reprocess_existing_documents(
     processed_ids: list[int] = []
     job_ids: list[int] = []
     status_counts: dict[str, int] = {}
-    for document_id in document_ids:
-        result = queue_document_processing(db, document_id, retry_failed=True)
-        processed_ids.append(document_id)
-        job_ids.append(result.id)
-        status_key = result.status.value
-        status_counts[status_key] = status_counts.get(status_key, 0) + 1
-    db.commit()
+    batch_savepoint = db.begin_nested()
+    try:
+        for document_id in document_ids:
+            result = queue_document_processing(db, document_id, retry_failed=True)
+            processed_ids.append(document_id)
+            job_ids.append(result.id)
+            status_key = result.status.value
+            status_counts[status_key] = status_counts.get(status_key, 0) + 1
+        batch_savepoint.commit()
+        db.commit()
+    except Exception:
+        batch_savepoint.rollback()
+        db.rollback()
+        raise
 
     return DocumentBatchProcessResponse(
         processed_count=len(processed_ids),

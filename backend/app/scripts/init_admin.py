@@ -10,11 +10,22 @@ from app.models.user import User
 
 
 def init_admin() -> None:
-    normalized_email = settings.initial_admin_email.strip().lower()
+    normalized_full_name = (settings.initial_admin_full_name or "").strip()
+    if not normalized_full_name:
+        raise RuntimeError("Initial admin full name must not be empty")
+    normalized_login = (settings.initial_admin_login or "").strip().lower()
+    if not normalized_login:
+        raise RuntimeError("Initial admin login must not be empty")
+    normalized_email = (settings.initial_admin_email or "").strip().lower()
+    if not normalized_email:
+        raise RuntimeError("Initial admin email must not be empty")
+    initial_admin_password = settings.initial_admin_password or ""
+    if len(initial_admin_password) < 8:
+        raise RuntimeError("Initial admin password must be at least 8 characters long")
     with SessionLocal() as db:
         existing_user = db.scalar(
             select(User).where(
-                (User.login == settings.initial_admin_login)
+                (User.login.ilike(normalized_login))
                 | (User.email.ilike(normalized_email))
             )
         )
@@ -27,8 +38,11 @@ def init_admin() -> None:
             if not existing_user.is_active:
                 existing_user.is_active = True
                 changed = True
-            if not existing_user.full_name and settings.initial_admin_full_name:
-                existing_user.full_name = settings.initial_admin_full_name
+            if existing_user.full_name != normalized_full_name:
+                existing_user.full_name = normalized_full_name
+                changed = True
+            if existing_user.login != normalized_login:
+                existing_user.login = normalized_login
                 changed = True
             if existing_user.email != normalized_email:
                 existing_user.email = normalized_email
@@ -43,10 +57,10 @@ def init_admin() -> None:
             return
 
         admin = User(
-            full_name=settings.initial_admin_full_name,
-            login=settings.initial_admin_login,
+            full_name=normalized_full_name,
+            login=normalized_login,
             email=normalized_email,
-            password_hash=get_password_hash(settings.initial_admin_password),
+            password_hash=get_password_hash(initial_admin_password),
             role=UserRole.ADMIN,
             is_active=True,
         )

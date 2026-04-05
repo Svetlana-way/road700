@@ -65,7 +65,7 @@ export function buildRepairReviewStateSectionParams(
     reviewVehicleSearchResults: repairReviewWorkflow.reviewVehicleSearchResults,
     selectedRepairDocumentOcrServiceName: repairDerivedViewModel.selectedRepairDocumentOcrServiceName,
     reviewServiceName: repairReviewWorkflow.reviewServiceName,
-    services: servicesAdmin.services,
+    services: servicesAdmin.serviceOptions,
     reviewServiceAssigning: repairReviewWorkflow.reviewServiceAssigning,
     reviewServiceSaving: repairReviewWorkflow.reviewServiceSaving,
     reviewFieldSaving: repairReviewWorkflow.reviewFieldSaving,

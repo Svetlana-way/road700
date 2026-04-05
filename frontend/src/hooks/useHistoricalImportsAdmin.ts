@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../shared/api";
 import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
 import {
@@ -24,7 +24,7 @@ type UseHistoricalImportsAdminParams = {
   activeAdminTab: AdminTab;
   setErrorMessage: (message: string) => void;
   setSuccessMessage: (message: string) => void;
-  refreshWorkspace: () => Promise<void>;
+  refreshWorkspace: (scope?: "full" | "documents" | "metrics") => Promise<void>;
 };
 
 export function useHistoricalImportsAdmin({
@@ -54,11 +54,17 @@ export function useHistoricalImportsAdmin({
   const [importConflictLoading, setImportConflictLoading] = useState(false);
   const [importConflictSaving, setImportConflictSaving] = useState(false);
   const [importConflictComment, setImportConflictComment] = useState("");
+  const historicalImportJobsRequestIdRef = useRef(0);
+  const historicalWorkReferenceRequestIdRef = useRef(0);
+  const importConflictsRequestIdRef = useRef(0);
+  const importConflictRequestIdRef = useRef(0);
 
   async function loadHistoricalImportJobs() {
-    if (!token) {
+    if (!token || userRole !== "admin") {
       return;
     }
+    const requestId = historicalImportJobsRequestIdRef.current + 1;
+    historicalImportJobsRequestIdRef.current = requestId;
     setHistoricalImportJobsLoading(true);
     try {
       const payload = await apiRequest<ImportJobsResponse>(
@@ -66,9 +72,14 @@ export function useHistoricalImportsAdmin({
         { method: "GET" },
         token,
       );
+      if (historicalImportJobsRequestIdRef.current !== requestId) {
+        return;
+      }
       setHistoricalImportJobs(payload.items);
     } finally {
-      setHistoricalImportJobsLoading(false);
+      if (historicalImportJobsRequestIdRef.current === requestId) {
+        setHistoricalImportJobsLoading(false);
+      }
     }
   }
 
@@ -76,9 +87,11 @@ export function useHistoricalImportsAdmin({
     query: string = historicalWorkReferenceQuery,
     minSamplesValue: string = historicalWorkReferenceMinSamples,
   ) {
-    if (!token) {
+    if (!token || userRole !== "admin") {
       return;
     }
+    const requestId = historicalWorkReferenceRequestIdRef.current + 1;
+    historicalWorkReferenceRequestIdRef.current = requestId;
     setHistoricalWorkReferenceLoading(true);
     try {
       const payload = await apiRequest<HistoricalWorkReferenceResponse>(
@@ -86,17 +99,24 @@ export function useHistoricalImportsAdmin({
         { method: "GET" },
         token,
       );
+      if (historicalWorkReferenceRequestIdRef.current !== requestId) {
+        return;
+      }
       setHistoricalWorkReference(payload.items);
       setHistoricalWorkReferenceTotal(payload.total);
     } finally {
-      setHistoricalWorkReferenceLoading(false);
+      if (historicalWorkReferenceRequestIdRef.current === requestId) {
+        setHistoricalWorkReferenceLoading(false);
+      }
     }
   }
 
   async function loadImportConflicts(status: string = "pending") {
-    if (!token) {
+    if (!token || userRole !== "admin") {
       return;
     }
+    const requestId = importConflictsRequestIdRef.current + 1;
+    importConflictsRequestIdRef.current = requestId;
     setImportConflictsLoading(true);
     try {
       const payload = await apiRequest<ImportConflictsResponse>(
@@ -104,10 +124,28 @@ export function useHistoricalImportsAdmin({
         { method: "GET" },
         token,
       );
+      if (importConflictsRequestIdRef.current !== requestId) {
+        return;
+      }
       setImportConflicts(payload.items);
     } finally {
-      setImportConflictsLoading(false);
+      if (importConflictsRequestIdRef.current === requestId) {
+        setImportConflictsLoading(false);
+      }
     }
+  }
+
+  function applyResolvedImportConflict(conflictId: number) {
+    setImportConflicts((current) => current.filter((item) => item.id !== conflictId));
+    setSelectedImportConflict((current) => (current?.id === conflictId ? null : current));
+  }
+
+  function closeImportConflictDialog() {
+    importConflictRequestIdRef.current += 1;
+    setShowImportConflictDialog(false);
+    setSelectedImportConflict(null);
+    setImportConflictLoading(false);
+    setImportConflictComment("");
   }
 
   async function refreshHistoricalImportsJournal() {
@@ -122,18 +160,28 @@ export function useHistoricalImportsAdmin({
     if (!token || userRole !== "admin") {
       return;
     }
+    const requestId = importConflictRequestIdRef.current + 1;
+    importConflictRequestIdRef.current = requestId;
     setImportConflictLoading(true);
     setImportConflictComment("");
     setSelectedImportConflict(null);
     setShowImportConflictDialog(true);
     try {
       const payload = await apiRequest<ImportConflictItem>(`/imports/conflicts/${conflictId}`, { method: "GET" }, token);
+      if (importConflictRequestIdRef.current !== requestId) {
+        return;
+      }
       setSelectedImportConflict(payload);
     } catch (error) {
-      setShowImportConflictDialog(false);
+      if (importConflictRequestIdRef.current !== requestId) {
+        return;
+      }
+      closeImportConflictDialog();
       setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить конфликт импорта");
     } finally {
-      setImportConflictLoading(false);
+      if (importConflictRequestIdRef.current === requestId) {
+        setImportConflictLoading(false);
+      }
     }
   }
 
@@ -169,7 +217,7 @@ export function useHistoricalImportsAdmin({
       );
       setHistoricalImportFile(null);
       await refreshHistoricalImportsJournal();
-      await refreshWorkspace();
+      await refreshWorkspace("metrics");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось импортировать историю ремонтов");
     } finally {
@@ -199,9 +247,9 @@ export function useHistoricalImportsAdmin({
       );
       setSelectedImportConflict(payload.conflict);
       setSuccessMessage(payload.message);
-      setShowImportConflictDialog(false);
-      setImportConflictComment("");
-      await Promise.all([loadImportConflicts(), refreshWorkspace()]);
+      applyResolvedImportConflict(payload.conflict.id);
+      closeImportConflictDialog();
+      await refreshWorkspace("metrics");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось обновить конфликт импорта");
     } finally {
@@ -210,6 +258,10 @@ export function useHistoricalImportsAdmin({
   }
 
   function resetHistoricalImportsState() {
+    historicalImportJobsRequestIdRef.current += 1;
+    historicalWorkReferenceRequestIdRef.current += 1;
+    importConflictsRequestIdRef.current += 1;
+    importConflictRequestIdRef.current += 1;
     setHistoricalImportLoading(false);
     setHistoricalImportFile(null);
     setHistoricalImportLimit("1000");
@@ -239,6 +291,22 @@ export function useHistoricalImportsAdmin({
     });
   }, [activeAdminTab, activeWorkspaceTab, setErrorMessage, token, userRole]);
 
+  useEffect(() => {
+    if (!showImportConflictDialog || !selectedImportConflict || importConflictLoading || importConflictSaving) {
+      return;
+    }
+    if (importConflicts.some((item) => item.id === selectedImportConflict.id)) {
+      return;
+    }
+    closeImportConflictDialog();
+  }, [
+    importConflictLoading,
+    importConflictSaving,
+    importConflicts,
+    selectedImportConflict,
+    showImportConflictDialog,
+  ]);
+
   return {
     historicalImportLoading,
     historicalImportFile,
@@ -263,7 +331,7 @@ export function useHistoricalImportsAdmin({
     importConflictSaving,
     importConflictComment,
     setImportConflictComment,
-    setShowImportConflictDialog,
+    closeImportConflictDialog,
     loadHistoricalWorkReference,
     refreshHistoricalImportsJournal,
     openImportConflict,

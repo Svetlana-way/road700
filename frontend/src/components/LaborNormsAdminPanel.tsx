@@ -16,7 +16,6 @@ import {
 import type {
   LaborNormCatalogConfigItem,
   LaborNormCatalogItem,
-  VehicleType,
 } from "../shared/workspaceBootstrapTypes";
 import type { LaborNormCatalogFormState, LaborNormEntryFormState } from "../shared/workspaceFormTypes";
 

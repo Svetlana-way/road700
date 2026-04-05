@@ -1,6 +1,8 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiRequest } from "../shared/api";
+import type { DocumentBatchProcessResponse, DocumentUploadResponse } from "../shared/documentApiTypes";
 import { parseOrderNumberFromFilename, parseRepairDateFromFilename } from "../shared/fleetDocumentHelpers";
+import type { WorkspaceTab } from "../shared/appRoute";
 import type {
   DocumentItem,
   DocumentStatus,
@@ -8,28 +10,14 @@ import type {
 } from "../shared/workspaceBootstrapTypes";
 import type { UploadFormState } from "../shared/workspaceFormTypes";
 
-type DocumentUploadResponse = {
-  document: DocumentItem;
-  message: string;
-  job_id?: number | null;
-  import_status?: string | null;
-};
-
-type DocumentBatchProcessResponse = {
-  processed_count: number;
-  document_ids: number[];
-  job_ids?: number[];
-  status_counts: Record<string, number>;
-  message: string;
-};
-
 type UseDocumentsWorkspaceParams = {
   token: string | null;
   userRole: UserRole | null | undefined;
+  activeWorkspaceTab: WorkspaceTab;
   emptyUploadForm: () => UploadFormState;
   setErrorMessage: (message: string) => void;
   setSuccessMessage: (message: string) => void;
-  refreshWorkspace: () => Promise<void>;
+  refreshWorkspace: (scope?: "full" | "documents") => Promise<void>;
   openRepairByIds: (documentId: number | null, repairId: number) => Promise<void>;
   selectedDocumentId: number | null;
   selectedRepairId: number | null;
@@ -39,6 +27,7 @@ type UseDocumentsWorkspaceParams = {
 export function useDocumentsWorkspace({
   token,
   userRole,
+  activeWorkspaceTab,
   emptyUploadForm,
   setErrorMessage,
   setSuccessMessage,
@@ -60,6 +49,22 @@ export function useDocumentsWorkspace({
   const [batchReprocessStatusFilter, setBatchReprocessStatusFilter] = useState("");
   const [batchReprocessPrimaryOnly, setBatchReprocessPrimaryOnly] = useState<"false" | "true">("false");
   const [documentArchiveLoadingId, setDocumentArchiveLoadingId] = useState<number | null>(null);
+  const uploadRequestIdRef = useRef(0);
+  const reprocessRequestIdRef = useRef(0);
+  const batchReprocessRequestIdRef = useRef(0);
+  const documentArchiveRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    uploadRequestIdRef.current += 1;
+    reprocessRequestIdRef.current += 1;
+    batchReprocessRequestIdRef.current += 1;
+    documentArchiveRequestIdRef.current += 1;
+    setUploadLoading(false);
+    setReprocessLoading(false);
+    setReprocessLoadingId(null);
+    setBatchReprocessLoading(false);
+    setDocumentArchiveLoadingId(null);
+  }, [activeWorkspaceTab, selectedDocumentId, selectedRepairId, token]);
 
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -68,6 +73,8 @@ export function useDocumentsWorkspace({
       return;
     }
 
+    const requestId = uploadRequestIdRef.current + 1;
+    uploadRequestIdRef.current = requestId;
     setUploadLoading(true);
     setErrorMessage("");
     setSuccessMessage("");
@@ -108,16 +115,24 @@ export function useDocumentsWorkspace({
         },
         token,
       );
+      if (uploadRequestIdRef.current !== requestId) {
+        return;
+      }
 
       setSuccessMessage(result.message);
       setLastUploadedDocument(result.document);
       setUploadForm(emptyUploadForm());
       setSelectedFiles([]);
-      await refreshWorkspace();
+      await refreshWorkspace("documents");
     } catch (error) {
+      if (uploadRequestIdRef.current !== requestId) {
+        return;
+      }
       setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить документ");
     } finally {
-      setUploadLoading(false);
+      if (uploadRequestIdRef.current === requestId) {
+        setUploadLoading(false);
+      }
     }
   }
 
@@ -145,10 +160,21 @@ export function useDocumentsWorkspace({
     }));
   }
 
-  async function handleReprocessDocumentById(documentId: number, repairId: number) {
+  async function handleReprocessDocumentById(
+    documentId: number,
+    repairId: number,
+    documentStatus?: DocumentStatus | string | null,
+    repairStatus?: string | null,
+  ) {
     if (!token) {
       return;
     }
+    if (documentStatus === "archived" || repairStatus === "archived") {
+      setErrorMessage("Архивный ремонт доступен только для просмотра и экспорта");
+      return;
+    }
+    const requestId = reprocessRequestIdRef.current + 1;
+    reprocessRequestIdRef.current = requestId;
     setReprocessLoading(true);
     setReprocessLoadingId(documentId);
     setErrorMessage("");
@@ -159,19 +185,30 @@ export function useDocumentsWorkspace({
         { method: "POST" },
         token,
       );
+      if (reprocessRequestIdRef.current !== requestId) {
+        return;
+      }
       setSuccessMessage(result.message);
-      await refreshWorkspace();
+      await refreshWorkspace("documents");
+      if (reprocessRequestIdRef.current !== requestId) {
+        return;
+      }
       await openRepairByIds(documentId, repairId);
     } catch (error) {
+      if (reprocessRequestIdRef.current !== requestId) {
+        return;
+      }
       setErrorMessage(error instanceof Error ? error.message : "Не удалось повторно распознать документ");
     } finally {
-      setReprocessLoading(false);
-      setReprocessLoadingId(null);
+      if (reprocessRequestIdRef.current === requestId) {
+        setReprocessLoading(false);
+        setReprocessLoadingId(null);
+      }
     }
   }
 
   async function handleReprocessDocument(document: DocumentItem) {
-    await handleReprocessDocumentById(document.id, document.repair.id);
+    await handleReprocessDocumentById(document.id, document.repair.id, document.status, document.repair.status);
   }
 
   async function handleBatchReprocessDocuments() {
@@ -179,6 +216,8 @@ export function useDocumentsWorkspace({
       return;
     }
 
+    const requestId = batchReprocessRequestIdRef.current + 1;
+    batchReprocessRequestIdRef.current = requestId;
     setBatchReprocessLoading(true);
     setErrorMessage("");
     setSuccessMessage("");
@@ -198,6 +237,9 @@ export function useDocumentsWorkspace({
         { method: "POST" },
         token,
       );
+      if (batchReprocessRequestIdRef.current !== requestId) {
+        return;
+      }
 
       const statusSummary = Object.entries(result.status_counts)
         .map(([status, count]) => `${formatDocumentStatusLabel(status)}: ${count}`)
@@ -208,14 +250,22 @@ export function useDocumentsWorkspace({
           ? `Переобработано ${result.processed_count} документов. ${statusSummary}`
           : `Переобработано ${result.processed_count} документов.`,
       );
-      await refreshWorkspace();
-      if (selectedDocumentId !== null && selectedRepairId !== null) {
+      await refreshWorkspace("documents");
+      if (batchReprocessRequestIdRef.current !== requestId) {
+        return;
+      }
+      if (activeWorkspaceTab === "repair" && selectedDocumentId !== null && selectedRepairId !== null) {
         await openRepairByIds(selectedDocumentId, selectedRepairId);
       }
     } catch (error) {
+      if (batchReprocessRequestIdRef.current !== requestId) {
+        return;
+      }
       setErrorMessage(error instanceof Error ? error.message : "Не удалось запустить массовую переобработку");
     } finally {
-      setBatchReprocessLoading(false);
+      if (batchReprocessRequestIdRef.current === requestId) {
+        setBatchReprocessLoading(false);
+      }
     }
   }
 
@@ -224,6 +274,8 @@ export function useDocumentsWorkspace({
       return;
     }
 
+    const requestId = documentArchiveRequestIdRef.current + 1;
+    documentArchiveRequestIdRef.current = requestId;
     setDocumentArchiveLoadingId(documentId);
     setErrorMessage("");
     setSuccessMessage("");
@@ -236,19 +288,34 @@ export function useDocumentsWorkspace({
         },
         token,
       );
+      if (documentArchiveRequestIdRef.current !== requestId) {
+        return;
+      }
       setSuccessMessage(`Документ ${updatedDocument.original_filename} отправлен в архив`);
-      await refreshWorkspace();
-      if (selectedRepairId === repairId) {
+      await refreshWorkspace("documents");
+      if (documentArchiveRequestIdRef.current !== requestId) {
+        return;
+      }
+      if (activeWorkspaceTab === "repair" && selectedRepairId === repairId) {
         await openRepairByIds(updatedDocument.id, repairId);
       }
     } catch (error) {
+      if (documentArchiveRequestIdRef.current !== requestId) {
+        return;
+      }
       setErrorMessage(error instanceof Error ? error.message : "Не удалось отправить документ в архив");
     } finally {
-      setDocumentArchiveLoadingId(null);
+      if (documentArchiveRequestIdRef.current === requestId) {
+        setDocumentArchiveLoadingId(null);
+      }
     }
   }
 
   function resetDocumentsWorkspaceState() {
+    uploadRequestIdRef.current += 1;
+    reprocessRequestIdRef.current += 1;
+    batchReprocessRequestIdRef.current += 1;
+    documentArchiveRequestIdRef.current += 1;
     setUploadForm(emptyUploadForm());
     setSelectedFiles([]);
     setLastUploadedDocument(null);

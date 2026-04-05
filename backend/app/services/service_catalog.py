@@ -263,6 +263,16 @@ def get_service_lookup_entries(db: Session | None = None) -> tuple[ServiceLookup
         entry.name: entry.aliases for entry in get_service_catalog_entries()
     }
     if db is not None:
+        archived_catalog_names = set(
+            db.scalars(
+                select(Service.name).where(
+                    Service.name.in_(tuple(lookup_map.keys())),
+                    Service.status == ServiceStatus.ARCHIVED,
+                )
+            ).all()
+        )
+        for archived_name in archived_catalog_names:
+            lookup_map.pop(archived_name, None)
         for service_item in db.scalars(
             select(Service)
             .where(
@@ -292,18 +302,34 @@ def find_service_catalog_entry(service_name: str | None) -> ServiceCatalogEntry 
 
 
 def ensure_service_catalog_synced(db: Session, *, commit: bool = False) -> tuple[Service, ...]:
+    catalog_entries = get_service_catalog_entries()
+    if not catalog_entries:
+        return ()
+
+    existing_services = {
+        service_item.name: service_item
+        for service_item in db.scalars(
+            select(Service).where(Service.name.in_(tuple(entry.name for entry in catalog_entries)))
+        ).all()
+    }
     services: list[Service] = []
     changed = False
-    for entry in get_service_catalog_entries():
-        service_item = db.scalar(select(Service).where(Service.name == entry.name))
+    for entry in catalog_entries:
+        service_item = existing_services.get(entry.name)
         if service_item is None:
             service_item = Service(name=entry.name)
+            db.add(service_item)
             changed = True
         is_manual_override = service_item.created_by_user_id is not None or service_item.confirmed_by_user_id is not None
-        next_city = service_item.city if is_manual_override else entry.city
-        next_contact = service_item.contact if is_manual_override else entry.contact
-        next_comment = service_item.comment if is_manual_override else entry.comment
-        next_status = service_item.status if is_manual_override else ServiceStatus.CONFIRMED
+        preserve_existing_values = is_manual_override or service_item.status == ServiceStatus.ARCHIVED
+        next_city = service_item.city if preserve_existing_values else entry.city
+        next_contact = service_item.contact if preserve_existing_values else entry.contact
+        next_comment = service_item.comment if preserve_existing_values else entry.comment
+        next_status = (
+            service_item.status
+            if is_manual_override or service_item.status == ServiceStatus.ARCHIVED
+            else ServiceStatus.CONFIRMED
+        )
         if (
             service_item.city != next_city
             or service_item.contact != next_contact
@@ -315,9 +341,9 @@ def ensure_service_catalog_synced(db: Session, *, commit: bool = False) -> tuple
         service_item.contact = next_contact
         service_item.comment = next_comment
         service_item.status = next_status
-        db.add(service_item)
-        db.flush()
         services.append(service_item)
+    if changed:
+        db.flush()
     if commit and changed:
         db.commit()
     return tuple(services)
@@ -349,7 +375,12 @@ def resolve_service_by_name(db: Session, service_name: str | None) -> Service | 
     entry = find_service_catalog_entry(service_name)
     if entry is not None:
         ensure_service_catalog_synced(db)
-        return db.scalar(select(Service).where(Service.name == entry.name))
+        return db.scalar(
+            select(Service).where(
+                Service.name == entry.name,
+                Service.status != ServiceStatus.ARCHIVED,
+            )
+        )
 
     lookup_key = normalize_service_key(service_name)
     if not lookup_key:
@@ -374,4 +405,9 @@ def resolve_catalog_service(db: Session, service_name: str | None) -> Service | 
     if entry is None:
         return None
     ensure_service_catalog_synced(db)
-    return db.scalar(select(Service).where(Service.name == entry.name))
+    return db.scalar(
+        select(Service).where(
+            Service.name == entry.name,
+            Service.status != ServiceStatus.ARCHIVED,
+        )
+    )

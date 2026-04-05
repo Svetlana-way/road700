@@ -36,6 +36,7 @@ const historyActionLabels: Record<string, string> = {
   document_uploaded: "Загрузка нового документа",
   document_attached: "Прикрепление документа к ремонту",
   document_archived: "Документ отправлен в архив",
+  document_restored: "Документ восстановлен из архива",
   document_status_updated: "Изменение статуса документа",
   document_comparison_reviewed: "Результат сверки документов",
   repair_vehicle_relinked: "Перепривязка ремонта к технике",
@@ -45,6 +46,8 @@ const historyActionLabels: Record<string, string> = {
   comparison_make_document_primary: "Сверка: выбран новый основной документ",
   comparison_mark_reviewed: "Сверка отмечена как проверенная",
   historical_import_created: "Исторический ремонт загружен",
+  backup_created: "Резервная копия создана",
+  backup_restored: "Резервная копия восстановлена",
   user_created: "Пользователь создан",
   user_updated: "Пользователь обновлён",
   user_password_reset: "Пароль пользователя сброшен администратором",
@@ -54,6 +57,20 @@ const historyActionLabels: Record<string, string> = {
   user_assignment_created: "Назначение техники пользователю",
   user_assignment_updated: "Изменение назначения техники пользователю",
   vehicle_updated: "Карточка техники обновлена",
+  service_created: "Сервис создан",
+  service_updated: "Сервис обновлён",
+  service_archived: "Сервис отправлен в архив",
+  service_restored: "Сервис восстановлен из архива",
+  repair_restored: "Ремонт восстановлен из архива",
+  import_conflict_resolved: "Конфликт импорта разрешён",
+  labor_norm_catalog_created: "Каталог нормо-часов создан",
+  labor_norm_catalog_updated: "Каталог нормо-часов обновлён",
+  labor_norm_catalog_archived: "Каталог нормо-часов отправлен в архив",
+  labor_norm_import_succeeded: "Импорт нормо-часов завершён",
+  labor_norm_import_failed: "Импорт нормо-часов завершился ошибкой",
+  labor_norm_item_created: "Нормо-час создан",
+  labor_norm_item_updated: "Нормо-час обновлён",
+  labor_norm_item_archived: "Нормо-час отправлен в архив",
 };
 
 const auditEntityLabels: Record<string, string> = {
@@ -64,11 +81,15 @@ const auditEntityLabels: Record<string, string> = {
   user: "Пользователь",
   labor_norm_catalog_item: "Нормо-час",
   labor_norm_catalog_config: "Каталог нормо-часов",
+  labor_norm_catalog: "Каталог нормо-часов",
+  labor_norm_item: "Нормо-час",
+  labor_norm_import: "Импорт нормо-часов",
   review_rule: "Правило проверки",
   ocr_rule: "OCR правило",
   ocr_profile_matcher: "OCR подбор профиля",
   ocr_learning_signal: "OCR сигнал обучения",
   import_conflict: "Конфликт импорта",
+  system: "Система",
 };
 
 const repairStatusLabels: Record<string, string> = {

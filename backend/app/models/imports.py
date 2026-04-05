@@ -4,7 +4,7 @@ from typing import Optional
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, JSON, String, Text, text
+from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -22,6 +22,13 @@ class ImportJob(Base, TimestampMixin):
     __tablename__ = "import_jobs"
     __table_args__ = (
         Index("ix_import_jobs_created_at_id", "created_at", "id"),
+        Index(
+            "ix_import_jobs_import_type_status_created_at_id",
+            "import_type",
+            "status",
+            "created_at",
+            "id",
+        ),
         Index(
             "uq_import_jobs_active_document_ocr",
             "document_id",
@@ -52,6 +59,10 @@ class ImportJob(Base, TimestampMixin):
 class ImportConflict(Base, TimestampMixin):
     __tablename__ = "import_conflicts"
     __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'resolved', 'ignored')",
+            name="ck_import_conflicts_status_valid",
+        ),
         Index("ix_import_conflicts_status_created_at_id", "status", "created_at", "id"),
     )
 

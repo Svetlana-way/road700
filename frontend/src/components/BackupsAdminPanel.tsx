@@ -13,21 +13,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-
-type BackupItem = {
-  backup_id: string;
-  filename: string;
-  created_at: string;
-  backup_type: string;
-  source: string;
-  status: string;
-  size_bytes: number;
-  storage_files_total: number;
-  tables_total: number;
-  included_sections: Array<"database" | "storage_files">;
-  excluded_sections: Array<"backup_archives">;
-  restore_effects: Array<"replace_database" | "replace_storage_files" | "keep_backup_archives" | "relogin_required">;
-};
+import type { BackupItem } from "../shared/backupAdminTypes";
 
 const BACKUP_SECTION_LABELS: Record<BackupItem["included_sections"][number] | BackupItem["excluded_sections"][number], string> = {
   database: "база данных",

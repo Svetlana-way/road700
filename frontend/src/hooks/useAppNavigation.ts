@@ -19,6 +19,8 @@ type LoadRepairDetailOptions = {
   resetTransientState?: boolean;
 };
 
+type PendingRepairNavigationKind = "contextual" | "direct" | "internal";
+
 type UseAppNavigationParams = {
   userRole: UserRole | null | undefined;
   token: string | null;
@@ -35,8 +37,10 @@ type UseAppNavigationParams = {
   fleetViewMode: FleetViewMode;
   setFleetViewMode: (value: FleetViewMode) => void;
   selectedFleetVehicleId: number | null;
+  selectedFleetVehicleMissing: boolean;
   setSelectedFleetVehicleId: (value: number | null) => void;
   selectedRepairId: number | null;
+  selectedRepairDefaultDocumentId: number | null;
   selectedDocumentId: number | null;
   setSelectedDocumentId: (value: number | null) => void;
   clearSelectedRepair: () => void;
@@ -64,8 +68,10 @@ export function useAppNavigation({
   fleetViewMode,
   setFleetViewMode,
   selectedFleetVehicleId,
+  selectedFleetVehicleMissing,
   setSelectedFleetVehicleId,
   selectedRepairId,
+  selectedRepairDefaultDocumentId,
   selectedDocumentId,
   setSelectedDocumentId,
   clearSelectedRepair,
@@ -78,10 +84,30 @@ export function useAppNavigation({
   const [repairHasReturnTarget, setRepairHasReturnTarget] = useState(false);
   const loadRepairDetailRef = useRef(loadRepairDetail);
   const routeRepairLoadKeyRef = useRef<string | null>(null);
+  const repairRouteSessionKeyRef = useRef<string | null>(null);
+  const pendingRepairNavigationKindRef = useRef<PendingRepairNavigationKind | null>(null);
 
   useEffect(() => {
     loadRepairDetailRef.current = loadRepairDetail;
   }, [loadRepairDetail]);
+
+  function buildRepairRouteLoadKey(repairId: number, documentId: number | null) {
+    return `${repairId}:${documentId ?? "none"}`;
+  }
+
+  function buildRepairRouteSessionKey(route: AppRoute) {
+    if (route.workspace !== "repair") {
+      return null;
+    }
+    return `${route.repairId ?? "none"}:${route.documentId ?? "none"}`;
+  }
+
+  function clearRepairReturnTarget() {
+    repairReturnTabRef.current = "documents";
+    repairReturnRouteRef.current = { workspace: "documents" };
+    repairScrollPositionRef.current = 0;
+    setRepairHasReturnTarget(false);
+  }
 
   function handleMissingRepairRoute() {
     clearSelectedRepair();
@@ -121,8 +147,15 @@ export function useAppNavigation({
   }
 
   function handleWorkspaceTabChange(value: WorkspaceTab) {
+    if (userRole !== "admin" && (value === "admin" || value === "tech_admin" || value === "audit")) {
+      return;
+    }
     if (value === activeWorkspaceTab) {
       return;
+    }
+    if (value === "repair") {
+      pendingRepairNavigationKindRef.current = "direct";
+      clearRepairReturnTarget();
     }
     setActiveWorkspaceTab(value);
     updateBrowserRoute(buildRouteFromState(value), "push");
@@ -145,6 +178,7 @@ export function useAppNavigation({
   function handleRepairTabChange(value: RepairTab) {
     setActiveRepairTab(value);
     if (activeWorkspaceTab === "repair") {
+      pendingRepairNavigationKindRef.current = "internal";
       updateBrowserRoute({
         workspace: "repair",
         repairId: selectedRepairId,
@@ -155,12 +189,18 @@ export function useAppNavigation({
   }
 
   function openAdminTab(value: AdminTab) {
+    if (userRole !== "admin") {
+      return;
+    }
     setActiveWorkspaceTab("admin");
     setActiveAdminTab(value);
     updateBrowserRoute({ workspace: "admin", adminTab: value }, "push");
   }
 
   function openTechAdmin(tab: TechAdminTab = "learning") {
+    if (userRole !== "admin") {
+      return;
+    }
     setShowTechAdminTab(true);
     setActiveWorkspaceTab("tech_admin");
     setActiveTechAdminTab(tab);
@@ -183,6 +223,7 @@ export function useAppNavigation({
   }
 
   async function openRepairByIds(documentId: number | null, repairId: number) {
+    pendingRepairNavigationKindRef.current = activeWorkspaceTab !== "repair" ? "contextual" : "internal";
     if (activeWorkspaceTab !== "repair") {
       repairReturnTabRef.current = activeWorkspaceTab;
       repairReturnRouteRef.current = buildRouteFromState(activeWorkspaceTab);
@@ -196,19 +237,32 @@ export function useAppNavigation({
     if (!token) {
       return;
     }
-    const result = await loadRepairDetailRef.current(token, repairId, documentId, { resetTransientState: true });
-    if (result === "not_found") {
-      handleMissingRepairRoute();
+    const routeLoadKey = buildRepairRouteLoadKey(repairId, documentId);
+    routeRepairLoadKeyRef.current = routeLoadKey;
+    try {
+      const result = await loadRepairDetailRef.current(token, repairId, documentId, { resetTransientState: true });
+      if (result === "not_found") {
+        handleMissingRepairRoute();
+      }
+    } finally {
+      if (routeRepairLoadKeyRef.current === routeLoadKey) {
+        routeRepairLoadKeyRef.current = null;
+      }
     }
   }
 
   function returnFromRepairPage() {
-    const nextTab = repairHasReturnTarget ? repairReturnTabRef.current : "documents";
-    const nextRoute = repairHasReturnTarget ? repairReturnRouteRef.current : ({ workspace: "documents" } as const);
+    const hasReturnTarget = repairHasReturnTarget;
+    const nextTab = hasReturnTarget ? repairReturnTabRef.current : "documents";
+    const nextRoute = hasReturnTarget ? repairReturnRouteRef.current : ({ workspace: "documents" } as const);
+    const nextScrollPosition = hasReturnTarget ? repairScrollPositionRef.current : 0;
+    pendingRepairNavigationKindRef.current = null;
+    repairRouteSessionKeyRef.current = null;
+    clearRepairReturnTarget();
     setActiveWorkspaceTab(nextTab);
     updateBrowserRoute(nextRoute, "push");
     window.requestAnimationFrame(() => {
-      window.scrollTo({ top: repairHasReturnTarget ? repairScrollPositionRef.current : 0, behavior: "auto" });
+      window.scrollTo({ top: nextScrollPosition, behavior: "auto" });
     });
   }
 
@@ -223,10 +277,10 @@ export function useAppNavigation({
   }, [routeSnapshot, token]);
 
   useEffect(() => {
-    if (userRole === "admin") {
+    if (userRole == null || userRole === "admin") {
       return;
     }
-    if (activeWorkspaceTab === "admin" || activeWorkspaceTab === "tech_admin") {
+    if (activeWorkspaceTab === "admin" || activeWorkspaceTab === "tech_admin" || activeWorkspaceTab === "audit") {
       setActiveWorkspaceTab("documents");
     }
     if (showTechAdminTab) {
@@ -246,6 +300,52 @@ export function useAppNavigation({
   }, []);
 
   useEffect(() => {
+    const repairRouteSessionKey = buildRepairRouteSessionKey(routeSnapshot);
+
+    if (repairRouteSessionKey === null) {
+      pendingRepairNavigationKindRef.current = null;
+      repairRouteSessionKeyRef.current = null;
+      if (repairHasReturnTarget) {
+        clearRepairReturnTarget();
+      }
+      return;
+    }
+
+    const previousRepairRouteSessionKey = repairRouteSessionKeyRef.current;
+    if (
+      previousRepairRouteSessionKey !== null &&
+      previousRepairRouteSessionKey !== repairRouteSessionKey &&
+      pendingRepairNavigationKindRef.current === null &&
+      repairHasReturnTarget
+    ) {
+      clearRepairReturnTarget();
+    }
+
+    repairRouteSessionKeyRef.current = repairRouteSessionKey;
+    pendingRepairNavigationKindRef.current = null;
+  }, [repairHasReturnTarget, routeSnapshot]);
+
+  useEffect(() => {
+    if (routeSnapshot.workspace !== "fleet" || routeSnapshot.vehicleId === null || !selectedFleetVehicleMissing) {
+      return;
+    }
+    if (selectedFleetVehicleId !== null) {
+      setSelectedFleetVehicleId(null);
+    }
+    if (fleetViewMode !== "list") {
+      setFleetViewMode("list");
+    }
+    updateBrowserRoute({ workspace: "fleet", vehicleId: null });
+  }, [
+    fleetViewMode,
+    routeSnapshot,
+    selectedFleetVehicleId,
+    selectedFleetVehicleMissing,
+    setFleetViewMode,
+    setSelectedFleetVehicleId,
+  ]);
+
+  useEffect(() => {
     if (routeSnapshot.workspace === "documents") {
       if (activeWorkspaceTab !== "documents") {
         setActiveWorkspaceTab("documents");
@@ -261,6 +361,10 @@ export function useAppNavigation({
     }
 
     if (routeSnapshot.workspace === "audit") {
+      if (userRole != null && userRole !== "admin") {
+        updateBrowserRoute({ workspace: "documents" });
+        return;
+      }
       if (activeWorkspaceTab !== "audit") {
         setActiveWorkspaceTab("audit");
       }
@@ -268,7 +372,7 @@ export function useAppNavigation({
     }
 
     if (routeSnapshot.workspace === "admin") {
-      if (userRole !== "admin") {
+      if (userRole != null && userRole !== "admin") {
         updateBrowserRoute({ workspace: "documents" });
         return;
       }
@@ -282,7 +386,7 @@ export function useAppNavigation({
     }
 
     if (routeSnapshot.workspace === "tech_admin") {
-      if (userRole !== "admin") {
+      if (userRole != null && userRole !== "admin") {
         updateBrowserRoute({ workspace: "documents" });
         return;
       }
@@ -331,9 +435,38 @@ export function useAppNavigation({
       return;
     }
     const repairMatches = selectedRepairId === routeSnapshot.repairId;
+    const routeWithoutDocumentShouldResetSelection =
+      repairMatches &&
+      routeSnapshot.documentId === null &&
+      selectedDocumentId !== selectedRepairDefaultDocumentId;
+
+    if (routeWithoutDocumentShouldResetSelection) {
+      const routeLoadKey = buildRepairRouteLoadKey(routeSnapshot.repairId, routeSnapshot.documentId);
+      if (routeRepairLoadKeyRef.current === routeLoadKey) {
+        return;
+      }
+      routeRepairLoadKeyRef.current = routeLoadKey;
+      void loadRepairDetailRef
+        .current(token, routeSnapshot.repairId, null, {
+          silent: true,
+          resetTransientState: false,
+        })
+        .then((result) => {
+          if (result === "not_found") {
+            handleMissingRepairRoute();
+          }
+        })
+        .finally(() => {
+          if (routeRepairLoadKeyRef.current === routeLoadKey) {
+            routeRepairLoadKeyRef.current = null;
+          }
+        });
+      return;
+    }
+
     const documentMatches = routeSnapshot.documentId === null || selectedDocumentId === routeSnapshot.documentId;
     if (!repairMatches || !documentMatches) {
-      const routeLoadKey = `${routeSnapshot.repairId}:${routeSnapshot.documentId ?? "none"}`;
+      const routeLoadKey = buildRepairRouteLoadKey(routeSnapshot.repairId, routeSnapshot.documentId);
       if (routeRepairLoadKeyRef.current === routeLoadKey) {
         return;
       }
@@ -363,7 +496,9 @@ export function useAppNavigation({
     routeSnapshot,
     selectedDocumentId,
     selectedFleetVehicleId,
+    selectedFleetVehicleMissing,
     selectedRepairId,
+    selectedRepairDefaultDocumentId,
     setActiveAdminTab,
     setActiveRepairTab,
     setActiveTechAdminTab,

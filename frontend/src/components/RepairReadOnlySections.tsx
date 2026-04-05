@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import { Box, Button, Chip, Paper, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Chip, Paper, Stack, TextField, Typography } from "@mui/material";
 import type { RepairTab } from "../shared/appRoute";
 import type {
   RepairCheck,
@@ -13,7 +13,7 @@ import type { DocumentKind } from "../shared/workspaceBootstrapTypes";
 
 type RepairReadOnlySectionsProps = {
   activeRepairTab: RepairTab;
-  selectedRepair: Pick<RepairDetail, "works" | "parts" | "checks" | "document_history" | "history">;
+  selectedRepair: Pick<RepairDetail, "status" | "works" | "parts" | "checks" | "document_history" | "history">;
   filteredDocumentHistory: RepairDocumentHistoryEntry[];
   filteredRepairHistory: RepairHistoryEntry[];
   historySearch: string;
@@ -76,6 +76,8 @@ export function RepairReadOnlySections({
   buildRepairHistoryDetails,
   renderHistoryDetails,
 }: RepairReadOnlySectionsProps) {
+  const archivedReadOnly = selectedRepair.status === "archived";
+
   return (
     <>
       {activeRepairTab === "works" ? (
@@ -134,6 +136,9 @@ export function RepairReadOnlySections({
       {activeRepairTab === "checks" ? (
         <Stack spacing={1}>
           <Typography variant="h6">Проверки</Typography>
+          {archivedReadOnly ? (
+            <Alert severity="info">Архивный ремонт доступен только для просмотра истории и открытых проверок.</Alert>
+          ) : null}
           {selectedRepair.checks.length > 0 ? (
             selectedRepair.checks.map((check) => {
               const payloadDetails = buildCheckPayloadDetails(check);
@@ -177,6 +182,7 @@ export function RepairReadOnlySections({
                     <TextField
                       label="Комментарий по проверке"
                       value={checkComments[check.id] || ""}
+                      disabled={archivedReadOnly}
                       onChange={(event) => onCheckCommentChange(check.id, event.target.value)}
                       fullWidth
                       multiline
@@ -186,7 +192,7 @@ export function RepairReadOnlySections({
                       <Button
                         size="small"
                         variant="contained"
-                        disabled={checkActionLoadingId === check.id || check.is_resolved}
+                        disabled={archivedReadOnly || checkActionLoadingId === check.id || check.is_resolved}
                         onClick={() => onCheckResolution(check.id, true)}
                       >
                         {checkActionLoadingId === check.id ? "Сохранение..." : "Закрыть проверку"}
@@ -194,7 +200,7 @@ export function RepairReadOnlySections({
                       <Button
                         size="small"
                         variant="outlined"
-                        disabled={checkActionLoadingId === check.id || !check.is_resolved}
+                        disabled={archivedReadOnly || checkActionLoadingId === check.id || !check.is_resolved}
                         onClick={() => onCheckResolution(check.id, false)}
                       >
                         Вернуть в работу

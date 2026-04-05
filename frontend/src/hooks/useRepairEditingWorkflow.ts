@@ -1,7 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../shared/api";
-import { createRepairDraft, resolveRepairDocumentId, type EditablePartDraft, type EditableRepairDraft, type EditableWorkDraft, type RepairDetailForDraft } from "../shared/repairUiHelpers";
-import type { WorkspaceTab } from "../shared/appRoute";
+import { createRepairDraft, resolveRepairDocumentId, type EditablePartDraft, type EditableRepairDraft, type EditableWorkDraft } from "../shared/repairUiHelpers";
 import type { RepairDetail } from "../shared/repairDetailTypes";
 
 type RepairEditingRecord = RepairDetail;
@@ -10,10 +9,10 @@ type UseRepairEditingWorkflowParams = {
   token: string;
   userRole: "admin" | "employee" | null | undefined;
   selectedRepair: RepairEditingRecord | null;
-  refreshWorkspace: () => Promise<void>;
+  refreshWorkspace: (scope?: "full" | "documents" | "metrics" | "review") => Promise<void>;
   setSelectedRepair: (repair: RepairEditingRecord | null) => void;
   setSelectedDocumentId: (value: number | null | ((current: number | null) => number | null)) => void;
-  setActiveWorkspaceTab: (tab: WorkspaceTab) => void;
+  navigateToDocuments: () => void;
   setErrorMessage: (message: string) => void;
   setSuccessMessage: (message: string) => void;
 };
@@ -25,7 +24,7 @@ export function useRepairEditingWorkflow({
   refreshWorkspace,
   setSelectedRepair,
   setSelectedDocumentId,
-  setActiveWorkspaceTab,
+  navigateToDocuments,
   setErrorMessage,
   setSuccessMessage,
 }: UseRepairEditingWorkflowParams) {
@@ -34,9 +33,28 @@ export function useRepairEditingWorkflow({
   const [saveRepairLoading, setSaveRepairLoading] = useState(false);
   const [repairArchiveLoading, setRepairArchiveLoading] = useState(false);
   const [repairDeleteLoading, setRepairDeleteLoading] = useState(false);
+  const repairEditingRequestIdRef = useRef(0);
+  const selectedRepairArchived = selectedRepair?.status === "archived";
+
+  useEffect(() => {
+    repairEditingRequestIdRef.current += 1;
+    setRepairDraft(null);
+    setIsEditingRepair(false);
+    setSaveRepairLoading(false);
+    setRepairArchiveLoading(false);
+    setRepairDeleteLoading(false);
+  }, [selectedRepair?.id]);
 
   function startRepairEdit() {
     if (!selectedRepair) {
+      return;
+    }
+    if (userRole !== "admin") {
+      setErrorMessage("Редактирование ремонта доступно только администратору");
+      return;
+    }
+    if (selectedRepairArchived) {
+      setErrorMessage("Архивный ремонт доступен только для просмотра и экспорта");
       return;
     }
     setRepairDraft(createRepairDraft(selectedRepair));
@@ -143,7 +161,17 @@ export function useRepairEditingWorkflow({
     if (!token || !selectedRepair || !repairDraft) {
       return;
     }
+    if (userRole !== "admin") {
+      setErrorMessage("Сохранение ремонта доступно только администратору");
+      return;
+    }
+    if (selectedRepairArchived) {
+      setErrorMessage("Архивный ремонт доступен только для просмотра и экспорта");
+      return;
+    }
 
+    const requestId = repairEditingRequestIdRef.current + 1;
+    repairEditingRequestIdRef.current = requestId;
     setSaveRepairLoading(true);
     setErrorMessage("");
     setSuccessMessage("");
@@ -192,16 +220,24 @@ export function useRepairEditingWorkflow({
         },
         token,
       );
+      if (repairEditingRequestIdRef.current !== requestId) {
+        return;
+      }
 
       setSelectedRepair(savedRepair);
       setRepairDraft(createRepairDraft(savedRepair));
       setIsEditingRepair(false);
       setSuccessMessage("Карточка ремонта обновлена");
-      await refreshWorkspace();
+      await refreshWorkspace("review");
     } catch (error) {
+      if (repairEditingRequestIdRef.current !== requestId) {
+        return;
+      }
       setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить ремонт");
     } finally {
-      setSaveRepairLoading(false);
+      if (repairEditingRequestIdRef.current === requestId) {
+        setSaveRepairLoading(false);
+      }
     }
   }
 
@@ -209,7 +245,13 @@ export function useRepairEditingWorkflow({
     if (!token || !selectedRepair || userRole !== "admin") {
       return;
     }
+    if (selectedRepairArchived) {
+      setErrorMessage("Ремонт уже находится в архиве");
+      return;
+    }
 
+    const requestId = repairEditingRequestIdRef.current + 1;
+    repairEditingRequestIdRef.current = requestId;
     setRepairArchiveLoading(true);
     setErrorMessage("");
     setSuccessMessage("");
@@ -222,16 +264,24 @@ export function useRepairEditingWorkflow({
         },
         token,
       );
+      if (repairEditingRequestIdRef.current !== requestId) {
+        return;
+      }
       setSelectedRepair(savedRepair);
       setRepairDraft(createRepairDraft(savedRepair));
       setIsEditingRepair(false);
       setSelectedDocumentId((current) => resolveRepairDocumentId(savedRepair, current));
       setSuccessMessage(`Ремонт #${savedRepair.id} отправлен в архив`);
-      await refreshWorkspace();
+      await refreshWorkspace("review");
     } catch (error) {
+      if (repairEditingRequestIdRef.current !== requestId) {
+        return;
+      }
       setErrorMessage(error instanceof Error ? error.message : "Не удалось отправить ремонт в архив");
     } finally {
-      setRepairArchiveLoading(false);
+      if (repairEditingRequestIdRef.current === requestId) {
+        setRepairArchiveLoading(false);
+      }
     }
   }
 
@@ -246,6 +296,8 @@ export function useRepairEditingWorkflow({
       return;
     }
 
+    const requestId = repairEditingRequestIdRef.current + 1;
+    repairEditingRequestIdRef.current = requestId;
     setRepairDeleteLoading(true);
     setErrorMessage("");
     setSuccessMessage("");
@@ -256,17 +308,28 @@ export function useRepairEditingWorkflow({
         { method: "POST" },
         token,
       );
+      if (repairEditingRequestIdRef.current !== requestId) {
+        return;
+      }
+      const deletedActiveRepair = selectedRepair?.id === repairId;
       if (selectedRepair?.id === repairId) {
         setSelectedRepair(null);
         setSelectedDocumentId(null);
-        setActiveWorkspaceTab("documents");
+        navigateToDocuments();
       }
       setSuccessMessage("Заказ-наряд и связанные документы отправлены в архив");
-      await refreshWorkspace();
+      if (!deletedActiveRepair) {
+        await refreshWorkspace("documents");
+      }
     } catch (error) {
+      if (repairEditingRequestIdRef.current !== requestId) {
+        return;
+      }
       setErrorMessage(error instanceof Error ? error.message : "Не удалось отправить заказ-наряд в архив");
     } finally {
-      setRepairDeleteLoading(false);
+      if (repairEditingRequestIdRef.current === requestId) {
+        setRepairDeleteLoading(false);
+      }
     }
   }
 
@@ -275,6 +338,7 @@ export function useRepairEditingWorkflow({
   }
 
   function resetRepairEditingState() {
+    repairEditingRequestIdRef.current += 1;
     setRepairDraft(null);
     setIsEditingRepair(false);
     setSaveRepairLoading(false);

@@ -1,4 +1,11 @@
-export type ImportStatus = "draft" | "processing" | "completed" | "completed_with_conflicts" | "failed";
+export type ImportStatus =
+  | "queued"
+  | "retry"
+  | "draft"
+  | "processing"
+  | "completed"
+  | "completed_with_conflicts"
+  | "failed";
 
 export type HistoricalRepairImportResponse = {
   message: string;
@@ -63,11 +70,15 @@ export type HistoricalWorkReferenceResponse = {
 
 export type ImportJobItem = {
   id: number;
+  document_id: number | null;
   import_type: string;
   source_filename: string;
   status: ImportStatus;
   summary: Record<string, unknown> | null;
   error_message: string | null;
+  attempts: number;
+  started_at: string | null;
+  finished_at: string | null;
   created_at: string;
   updated_at: string;
 };

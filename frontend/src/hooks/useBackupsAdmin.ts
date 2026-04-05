@@ -1,38 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiRequest, downloadApiFile } from "../shared/api";
 import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
-
-type BackupItem = {
-  backup_id: string;
-  filename: string;
-  created_at: string;
-  backup_type: string;
-  source: string;
-  status: string;
-  size_bytes: number;
-  storage_files_total: number;
-  tables_total: number;
-  included_sections: Array<"database" | "storage_files">;
-  excluded_sections: Array<"backup_archives">;
-  restore_effects: Array<"replace_database" | "replace_storage_files" | "keep_backup_archives" | "relogin_required">;
-};
-
-type BackupListResponse = {
-  items: BackupItem[];
-  total: number;
-};
-
-type BackupCreateResponse = {
-  message: string;
-  backup: BackupItem;
-};
-
-type BackupRestoreResponse = {
-  message: string;
-  backup: BackupItem;
-  requires_reauthentication: boolean;
-  post_restore_action: "relogin";
-};
+import type {
+  BackupCreateResponse,
+  BackupItem,
+  BackupListResponse,
+  BackupRestoreResponse,
+} from "../shared/backupAdminTypes";
 
 type UseBackupsAdminParams = {
   token: string;
@@ -41,7 +15,7 @@ type UseBackupsAdminParams = {
   activeAdminTab: AdminTab;
   setErrorMessage: (message: string) => void;
   setSuccessMessage: (message: string) => void;
-  invalidateSession: () => void;
+  invalidateSession: (options?: { message?: string; reload?: boolean }) => void;
 };
 
 export function useBackupsAdmin({
@@ -59,17 +33,25 @@ export function useBackupsAdmin({
   const [backupRestoreDialogOpen, setBackupRestoreDialogOpen] = useState(false);
   const [backupRestoreTarget, setBackupRestoreTarget] = useState<BackupItem | null>(null);
   const [backupRestoreConfirmValue, setBackupRestoreConfirmValue] = useState("");
+  const backupsRequestIdRef = useRef(0);
 
   async function loadBackups() {
-    if (!token) {
+    if (!token || userRole !== "admin") {
       return;
     }
+    const requestId = backupsRequestIdRef.current + 1;
+    backupsRequestIdRef.current = requestId;
     setBackupsLoading(true);
     try {
       const payload = await apiRequest<BackupListResponse>("/backups", { method: "GET" }, token);
+      if (backupsRequestIdRef.current !== requestId) {
+        return;
+      }
       setBackups(payload.items);
     } finally {
-      setBackupsLoading(false);
+      if (backupsRequestIdRef.current === requestId) {
+        setBackupsLoading(false);
+      }
     }
   }
 
@@ -134,13 +116,13 @@ export function useBackupsAdmin({
         },
         token,
       );
-      setSuccessMessage(payload.message);
       closeBackupRestoreDialog();
       if (payload.requires_reauthentication && payload.post_restore_action === "relogin") {
         resetBackupsState();
-        invalidateSession();
+        invalidateSession({ message: payload.message, reload: true });
         return;
       }
+      setSuccessMessage(payload.message);
       await loadBackups();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось восстановить резервную копию");
@@ -150,6 +132,7 @@ export function useBackupsAdmin({
   }
 
   function resetBackupsState() {
+    backupsRequestIdRef.current += 1;
     setBackups([]);
     setBackupsLoading(false);
     setBackupActionLoading(false);
@@ -166,6 +149,21 @@ export function useBackupsAdmin({
       setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить резервные копии");
     });
   }, [activeAdminTab, activeWorkspaceTab, setErrorMessage, token, userRole]);
+
+  useEffect(() => {
+    if (!backupRestoreDialogOpen || !backupRestoreTarget) {
+      return;
+    }
+
+    const nextTarget = backups.find((item) => item.backup_id === backupRestoreTarget.backup_id) ?? null;
+    if (nextTarget === null) {
+      closeBackupRestoreDialog();
+      return;
+    }
+    if (nextTarget !== backupRestoreTarget) {
+      setBackupRestoreTarget(nextTarget);
+    }
+  }, [backupRestoreDialogOpen, backupRestoreTarget, backups]);
 
   return {
     backups,

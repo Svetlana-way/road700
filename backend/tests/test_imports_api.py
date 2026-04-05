@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 import unittest
 from unittest.mock import patch
 
@@ -11,9 +12,13 @@ from app.core.security import get_password_hash
 from app.db.base import Base
 from app.main import app
 from app.models.audit import AuditLog
-from app.models.enums import ImportStatus, UserRole
+from app.models.enums import ImportStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
 from app.models.imports import ImportConflict, ImportJob
+from app.models.repair import Repair, RepairWork
+from app.models.service import Service
 from app.models.user import User
+from app.models.vehicle import Vehicle
+from app.services.historical_repairs_import import IMPORT_REASON_PREFIX
 from app.services.historical_repairs_import import HistoricalRepairImportResult
 from tests.sqlite_test_utils import create_sqlite_test_engine, reset_database
 
@@ -360,6 +365,250 @@ class ImportsApiTestCase(unittest.TestCase):
             assert conflict is not None
             self.assertEqual(conflict.status, "pending")
             self.assertEqual(db.query(AuditLog).count(), 0)
+
+    def test_historical_work_reference_excludes_archived_operational_repairs(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            active_vehicle = Vehicle(
+                external_id="truck-ref-active",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="A123BC116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            archived_vehicle = Vehicle(
+                external_id="truck-ref-archived",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="B234CD116",
+                brand="Scania",
+                model="R",
+                status=VehicleStatus.ARCHIVED,
+            )
+            active_service = Service(
+                name="Reference Active Service",
+                city="Kazan",
+                status=ServiceStatus.CONFIRMED,
+                created_by_user_id=1,
+                confirmed_by_user_id=1,
+            )
+            archived_service = Service(
+                name="Reference Archived Service",
+                city="Kazan",
+                status=ServiceStatus.ARCHIVED,
+                created_by_user_id=1,
+                confirmed_by_user_id=1,
+            )
+            db.add_all([active_vehicle, archived_vehicle, active_service, archived_service])
+            db.flush()
+
+            historical_repair = Repair(
+                order_number="REF-HIST-001",
+                repair_date=date(2025, 1, 10),
+                vehicle_id=active_vehicle.id,
+                service_id=active_service.id,
+                created_by_user_id=1,
+                mileage=100000,
+                reason=f"{IMPORT_REASON_PREFIX}ref-group-1",
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+            )
+            active_operational_repair = Repair(
+                order_number="REF-OP-001",
+                repair_date=date(2025, 2, 10),
+                vehicle_id=active_vehicle.id,
+                service_id=active_service.id,
+                created_by_user_id=1,
+                mileage=101000,
+                reason="manual_confirmed",
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+            )
+            archived_operational_repair = Repair(
+                order_number="REF-OP-ARCH-001",
+                repair_date=date(2025, 3, 10),
+                vehicle_id=archived_vehicle.id,
+                service_id=archived_service.id,
+                created_by_user_id=1,
+                mileage=102000,
+                reason="manual_confirmed_archived",
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+            )
+            db.add_all([historical_repair, active_operational_repair, archived_operational_repair])
+            db.flush()
+
+            db.add_all(
+                [
+                    RepairWork(
+                        repair_id=historical_repair.id,
+                        work_code="REF-001",
+                        work_name="Замена масла",
+                        quantity=1,
+                        price=1000,
+                        line_total=1000,
+                    ),
+                    RepairWork(
+                        repair_id=active_operational_repair.id,
+                        work_code="REF-001",
+                        work_name="Замена масла",
+                        quantity=1,
+                        price=1100,
+                        line_total=1100,
+                    ),
+                    RepairWork(
+                        repair_id=archived_operational_repair.id,
+                        work_code="REF-001",
+                        work_name="Замена масла",
+                        quantity=1,
+                        price=1200,
+                        line_total=1200,
+                    ),
+                ]
+            )
+            db.commit()
+
+        response = self.client.get(
+            "/api/imports/historical-work-reference?q=%D0%97%D0%B0%D0%BC%D0%B5%D0%BD%D0%B0&limit=20&min_samples=1",
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        item = payload["items"][0]
+        self.assertEqual(item["work_name"], "Замена масла")
+        self.assertEqual(item["historical_sample_repairs"], 1)
+        self.assertEqual(item["operational_sample_repairs"], 1)
+        self.assertEqual(item["operational_sample_lines"], 1)
+        self.assertEqual(item["sample_repairs"], 2)
+        self.assertEqual(item["sample_lines"], 2)
+
+    def test_historical_work_reference_excludes_archived_historical_sources(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            active_vehicle = Vehicle(
+                external_id="truck-ref-hist-active",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="C345EF116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            archived_vehicle = Vehicle(
+                external_id="truck-ref-hist-archived",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="D456GH116",
+                brand="Scania",
+                model="R",
+                status=VehicleStatus.ARCHIVED,
+            )
+            active_service = Service(
+                name="Historical Reference Active Service",
+                city="Kazan",
+                status=ServiceStatus.CONFIRMED,
+                created_by_user_id=1,
+                confirmed_by_user_id=1,
+            )
+            archived_service = Service(
+                name="Historical Reference Archived Service",
+                city="Kazan",
+                status=ServiceStatus.ARCHIVED,
+                created_by_user_id=1,
+                confirmed_by_user_id=1,
+            )
+            db.add_all([active_vehicle, archived_vehicle, active_service, archived_service])
+            db.flush()
+
+            active_historical_repair = Repair(
+                order_number="REF-HIST-ACTIVE-001",
+                repair_date=date(2025, 1, 11),
+                vehicle_id=active_vehicle.id,
+                service_id=active_service.id,
+                created_by_user_id=1,
+                mileage=100500,
+                reason=f"{IMPORT_REASON_PREFIX}hist-active",
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+            )
+            archived_vehicle_historical_repair = Repair(
+                order_number="REF-HIST-ARCH-VEH-001",
+                repair_date=date(2025, 1, 12),
+                vehicle_id=archived_vehicle.id,
+                service_id=active_service.id,
+                created_by_user_id=1,
+                mileage=100700,
+                reason=f"{IMPORT_REASON_PREFIX}hist-archived-vehicle",
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+            )
+            archived_service_historical_repair = Repair(
+                order_number="REF-HIST-ARCH-SVC-001",
+                repair_date=date(2025, 1, 13),
+                vehicle_id=active_vehicle.id,
+                service_id=archived_service.id,
+                created_by_user_id=1,
+                mileage=100900,
+                reason=f"{IMPORT_REASON_PREFIX}hist-archived-service",
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+            )
+            archived_historical_repair = Repair(
+                order_number="REF-HIST-ARCH-REP-001",
+                repair_date=date(2025, 1, 14),
+                vehicle_id=active_vehicle.id,
+                service_id=active_service.id,
+                created_by_user_id=1,
+                mileage=101100,
+                reason=f"{IMPORT_REASON_PREFIX}hist-archived-repair",
+                status=RepairStatus.ARCHIVED,
+                is_preliminary=False,
+            )
+            db.add_all(
+                [
+                    active_historical_repair,
+                    archived_vehicle_historical_repair,
+                    archived_service_historical_repair,
+                    archived_historical_repair,
+                ]
+            )
+            db.flush()
+
+            for repair in (
+                active_historical_repair,
+                archived_vehicle_historical_repair,
+                archived_service_historical_repair,
+                archived_historical_repair,
+            ):
+                db.add(
+                    RepairWork(
+                        repair_id=repair.id,
+                        work_code="REF-002",
+                        work_name="Замена фильтра",
+                        quantity=1,
+                        price=1000,
+                        line_total=1000,
+                    )
+                )
+            db.commit()
+
+        response = self.client.get(
+            "/api/imports/historical-work-reference?q=%D0%97%D0%B0%D0%BC%D0%B5%D0%BD%D0%B0%20%D1%84%D0%B8%D0%BB%D1%8C%D1%82%D1%80%D0%B0&limit=20&min_samples=1",
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        item = payload["items"][0]
+        self.assertEqual(item["work_name"], "Замена фильтра")
+        self.assertEqual(item["historical_sample_repairs"], 1)
+        self.assertEqual(item["historical_sample_lines"], 1)
+        self.assertEqual(item["operational_sample_repairs"], 0)
+        self.assertEqual(item["sample_repairs"], 1)
+        self.assertEqual(item["sample_lines"], 1)
 
 
 if __name__ == "__main__":

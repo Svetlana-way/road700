@@ -1,6 +1,6 @@
-export function buildLaborNormQueryString(query: string, scope: string, category: string) {
+export function buildLaborNormQueryString(query: string, scope: string, category: string, limit = 12) {
   const params = new URLSearchParams();
-  params.set("limit", "12");
+  params.set("limit", String(limit));
   if (query.trim()) {
     params.set("q", query.trim());
   }

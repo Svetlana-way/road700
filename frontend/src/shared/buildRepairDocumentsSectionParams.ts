@@ -13,7 +13,6 @@ type RepairDocumentsSectionParams = Pick<
   | "attachDocumentLoading"
   | "reprocessLoading"
   | "reprocessLoadingId"
-  | "selectedDocumentId"
   | "documentComparisonLoadingId"
   | "primaryDocumentLoadingId"
   | "documentArchiveLoadingId"
@@ -48,7 +47,6 @@ export function buildRepairDocumentsSectionParams(
     attachDocumentLoading: repairDocumentsWorkflow.attachDocumentLoading,
     reprocessLoading: documentsWorkspace.reprocessLoading,
     reprocessLoadingId: documentsWorkspace.reprocessLoadingId,
-    selectedDocumentId: rootState.selectedDocumentId,
     documentComparisonLoadingId: repairDocumentsWorkflow.documentComparisonLoadingId,
     primaryDocumentLoadingId: repairDocumentsWorkflow.primaryDocumentLoadingId,
     documentArchiveLoadingId: documentsWorkspace.documentArchiveLoadingId,

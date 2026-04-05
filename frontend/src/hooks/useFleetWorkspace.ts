@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { apiRequest, downloadApiFile } from "../shared/api";
+import { ApiError, apiRequest, downloadApiFile } from "../shared/api";
 import type { AppRoute, WorkspaceTab } from "../shared/appRoute";
 import { buildFleetVehiclesQueryString } from "../shared/queryBuilders";
-import type { Vehicle, VehicleDetail, VehicleStatus, VehicleType, VehiclesResponse } from "../shared/workspaceBootstrapTypes";
+import type { UserRole, Vehicle, VehicleDetail, VehicleStatus, VehicleType, VehiclesResponse } from "../shared/workspaceBootstrapTypes";
 
 type VehicleUpdatePayload = {
   status?: VehicleStatus;
@@ -11,6 +11,7 @@ type VehicleUpdatePayload = {
 
 type UseFleetWorkspaceParams = {
   token: string;
+  userRole: UserRole | null | undefined;
   activeWorkspaceTab: WorkspaceTab;
   vehiclesFullListLimit: number;
   setErrorMessage: (message: string) => void;
@@ -21,11 +22,13 @@ type RouteUpdater = (route: AppRoute, mode?: "push" | "replace") => void;
 
 export function useFleetWorkspace({
   token,
+  userRole,
   activeWorkspaceTab,
   vehiclesFullListLimit,
   setErrorMessage,
   setSuccessMessage,
 }: UseFleetWorkspaceParams) {
+  const [vehicleOptions, setVehicleOptions] = useState<Vehicle[]>([]);
   const [fleetVehicles, setFleetVehicles] = useState<Vehicle[]>([]);
   const [fleetVehiclesTotal, setFleetVehiclesTotal] = useState(0);
   const [fleetLoading, setFleetLoading] = useState(false);
@@ -35,11 +38,24 @@ export function useFleetWorkspace({
   const [selectedFleetVehicleId, setSelectedFleetVehicleId] = useState<number | null>(null);
   const [selectedFleetVehicle, setSelectedFleetVehicle] = useState<VehicleDetail | null>(null);
   const [selectedFleetVehicleLoading, setSelectedFleetVehicleLoading] = useState(false);
+  const [selectedFleetVehicleMissing, setSelectedFleetVehicleMissing] = useState(false);
   const [fleetViewMode, setFleetViewMode] = useState<"list" | "detail">("list");
   const [vehicleSaving, setVehicleSaving] = useState(false);
   const [vehicleExportLoading, setVehicleExportLoading] = useState(false);
   const [vehiclePdfExportLoading, setVehiclePdfExportLoading] = useState(false);
   const fleetListScrollPositionRef = useRef(0);
+  const fleetListRequestIdRef = useRef(0);
+  const vehicleOptionsRequestIdRef = useRef(0);
+  const selectedFleetVehicleRequestIdRef = useRef(0);
+  const vehicleOptionsInitializedRef = useRef(false);
+
+  useEffect(() => {
+    setSelectedFleetVehicleLoading(false);
+    setSelectedFleetVehicleMissing(false);
+    setVehicleSaving(false);
+    setVehicleExportLoading(false);
+    setVehiclePdfExportLoading(false);
+  }, [selectedFleetVehicleId]);
 
   async function loadFleetVehicles(
     query: string = fleetQuery,
@@ -49,6 +65,8 @@ export function useFleetWorkspace({
     if (!token) {
       return;
     }
+    const requestId = fleetListRequestIdRef.current + 1;
+    fleetListRequestIdRef.current = requestId;
     setFleetLoading(true);
     try {
       const payload = await apiRequest<VehiclesResponse>(
@@ -56,6 +74,13 @@ export function useFleetWorkspace({
         { method: "GET" },
         token,
       );
+      if (fleetListRequestIdRef.current !== requestId) {
+        return;
+      }
+      if (!query && !vehicleType && !statusFilter) {
+        vehicleOptionsInitializedRef.current = true;
+        setVehicleOptions(payload.items);
+      }
       setFleetVehicles(payload.items);
       setFleetVehiclesTotal(payload.total);
       setSelectedFleetVehicleId((current) => {
@@ -64,28 +89,81 @@ export function useFleetWorkspace({
         }
         return payload.items[0]?.id ?? null;
       });
+    } catch (error) {
+      if (fleetListRequestIdRef.current !== requestId) {
+        return;
+      }
+      throw error;
     } finally {
-      setFleetLoading(false);
+      if (fleetListRequestIdRef.current === requestId) {
+        setFleetLoading(false);
+      }
     }
+  }
+
+  async function loadVehicleOptions() {
+    if (!token) {
+      return;
+    }
+    const requestId = vehicleOptionsRequestIdRef.current + 1;
+    vehicleOptionsRequestIdRef.current = requestId;
+    const payload = await apiRequest<VehiclesResponse>(
+      `/vehicles?${buildFleetVehiclesQueryString(vehiclesFullListLimit, "", "", "")}`,
+      { method: "GET" },
+      token,
+    );
+    if (vehicleOptionsRequestIdRef.current !== requestId) {
+      return;
+    }
+    vehicleOptionsInitializedRef.current = true;
+    setVehicleOptions(payload.items);
   }
 
   async function loadFleetVehicleDetail(vehicleId: number) {
     if (!token) {
       return;
     }
+    const requestId = selectedFleetVehicleRequestIdRef.current + 1;
+    selectedFleetVehicleRequestIdRef.current = requestId;
     setSelectedFleetVehicleLoading(true);
+    setSelectedFleetVehicleMissing(false);
     try {
       const payload = await apiRequest<VehicleDetail>(`/vehicles/${vehicleId}`, { method: "GET" }, token);
+      if (selectedFleetVehicleRequestIdRef.current !== requestId) {
+        return;
+      }
       setSelectedFleetVehicle(payload);
+    } catch (error) {
+      if (selectedFleetVehicleRequestIdRef.current !== requestId) {
+        return;
+      }
+      setSelectedFleetVehicle(null);
+      if (error instanceof ApiError && error.status === 404) {
+        setSelectedFleetVehicleMissing(true);
+        return;
+      }
+      throw error;
     } finally {
-      setSelectedFleetVehicleLoading(false);
+      if (selectedFleetVehicleRequestIdRef.current === requestId) {
+        setSelectedFleetVehicleLoading(false);
+      }
     }
   }
 
-  function applyBootstrapVehicleList(vehicleList: VehiclesResponse) {
+  function applyBootstrapVehicleList(vehicleList: VehiclesResponse | null) {
+    if (vehicleList === null) {
+      return;
+    }
+    vehicleOptionsInitializedRef.current = true;
+    setVehicleOptions(vehicleList.items);
     setFleetVehicles(vehicleList.items);
     setFleetVehiclesTotal(vehicleList.total);
-    setSelectedFleetVehicleId((current) => current ?? vehicleList.items[0]?.id ?? null);
+    setSelectedFleetVehicleId((current) => {
+      if (current !== null && vehicleList.items.some((item) => item.id === current)) {
+        return current;
+      }
+      return vehicleList.items[0]?.id ?? null;
+    });
   }
 
   function openFleetVehicleCard(vehicleId: number, updateBrowserRoute: RouteUpdater) {
@@ -117,6 +195,10 @@ export function useFleetWorkspace({
 
   async function handleUpdateVehicle(payload: VehicleUpdatePayload) {
     if (!token || !selectedFleetVehicle) {
+      return;
+    }
+    if (userRole !== "admin") {
+      setErrorMessage("Изменение статуса техники доступно только администратору");
       return;
     }
     setVehicleSaving(true);
@@ -171,6 +253,11 @@ export function useFleetWorkspace({
   }
 
   function resetFleetState() {
+    fleetListRequestIdRef.current += 1;
+    vehicleOptionsRequestIdRef.current += 1;
+    vehicleOptionsInitializedRef.current = false;
+    selectedFleetVehicleRequestIdRef.current += 1;
+    setVehicleOptions([]);
     setFleetVehicles([]);
     setFleetVehiclesTotal(0);
     setFleetLoading(false);
@@ -180,6 +267,7 @@ export function useFleetWorkspace({
     setSelectedFleetVehicleId(null);
     setSelectedFleetVehicle(null);
     setSelectedFleetVehicleLoading(false);
+    setSelectedFleetVehicleMissing(false);
     setFleetViewMode("list");
     setVehicleSaving(false);
     setVehicleExportLoading(false);
@@ -188,7 +276,22 @@ export function useFleetWorkspace({
   }
 
   useEffect(() => {
+    if (!token || activeWorkspaceTab !== "documents") {
+      vehicleOptionsRequestIdRef.current += 1;
+      return;
+    }
+    if (vehicleOptionsInitializedRef.current) {
+      return;
+    }
+    void loadVehicleOptions().catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить список техники");
+    });
+  }, [activeWorkspaceTab, setErrorMessage, token]);
+
+  useEffect(() => {
     if (!token || activeWorkspaceTab !== "fleet") {
+      fleetListRequestIdRef.current += 1;
+      setFleetLoading(false);
       return;
     }
     void loadFleetVehicles().catch((error) => {
@@ -198,7 +301,10 @@ export function useFleetWorkspace({
 
   useEffect(() => {
     if (!token || activeWorkspaceTab !== "fleet" || selectedFleetVehicleId === null) {
+      selectedFleetVehicleRequestIdRef.current += 1;
       setSelectedFleetVehicle(null);
+      setSelectedFleetVehicleLoading(false);
+      setSelectedFleetVehicleMissing(false);
       return;
     }
     void loadFleetVehicleDetail(selectedFleetVehicleId).catch((error) => {
@@ -207,6 +313,7 @@ export function useFleetWorkspace({
   }, [activeWorkspaceTab, selectedFleetVehicleId, token]);
 
   return {
+    vehicleOptions,
     fleetVehicles,
     fleetVehiclesTotal,
     fleetLoading,
@@ -220,6 +327,7 @@ export function useFleetWorkspace({
     setSelectedFleetVehicleId,
     selectedFleetVehicle,
     selectedFleetVehicleLoading,
+    selectedFleetVehicleMissing,
     fleetViewMode,
     setFleetViewMode,
     vehicleSaving,

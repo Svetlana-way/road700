@@ -244,11 +244,11 @@ export function DocumentsListPanel({
                   >
                     Открыть ремонт
                   </Button>
-                  {userRole === "admin" ? (
+                  {document.status !== "archived" && document.repair.status !== "archived" ? (
                     <Button
                       size="small"
                       variant="text"
-                      disabled={reprocessLoading || document.status === "archived"}
+                      disabled={reprocessLoading}
                       onClick={() => {
                         onReprocessDocument(document);
                       }}
@@ -256,7 +256,7 @@ export function DocumentsListPanel({
                       {reprocessLoading && reprocessLoadingId === document.id ? "Повтор..." : "Повторить OCR"}
                     </Button>
                   ) : null}
-                  {userRole === "admin" && document.is_primary ? (
+                  {userRole === "admin" && document.is_primary && document.repair.status !== "archived" ? (
                     <Button
                       size="small"
                       variant="text"
@@ -268,7 +268,7 @@ export function DocumentsListPanel({
                       {repairDeleteLoading ? "Архивация..." : "В архив заказ-наряд"}
                     </Button>
                   ) : null}
-                  {userRole === "admin" && document.status !== "archived" ? (
+                  {userRole === "admin" && document.status !== "archived" && document.repair.status !== "archived" ? (
                     <Button
                       size="small"
                       variant="text"

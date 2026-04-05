@@ -10,18 +10,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-
-type AuditLogItem = {
-  id: number;
-  created_at: string;
-  user_id: number | null;
-  user_name: string | null;
-  entity_type: string;
-  entity_id: string;
-  action_type: string;
-  old_value: Record<string, unknown> | null;
-  new_value: Record<string, unknown> | null;
-};
+import type { AuditLogItem } from "../shared/auditApiTypes";
 
 type AuditUserOption = {
   id: number;
@@ -174,10 +163,10 @@ export function AuditLogPanel({
         </Grid>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
           <Button variant="outlined" disabled={auditLogLoading} onClick={onRefresh}>
-            {auditLogLoading ? "Загрузка..." : "Обновить журнал"}
+            {auditLogLoading ? "Загрузка..." : "Применить фильтр"}
           </Button>
           <Button variant="text" disabled={auditLogLoading} onClick={onReset}>
-            Сбросить фильтр
+            Сбросить и показать все
           </Button>
         </Stack>
         <Typography className="muted-copy">Показано {auditLogItems.length} из {auditLogTotal}</Typography>

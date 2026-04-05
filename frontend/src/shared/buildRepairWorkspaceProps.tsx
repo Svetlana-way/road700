@@ -149,7 +149,6 @@ export type BuildRepairWorkspacePropsParams = {
   attachDocumentLoading: RepairDocumentsProps["attachDocumentLoading"];
   reprocessLoading: RepairDocumentsProps["reprocessLoading"];
   reprocessLoadingId: RepairDocumentsProps["reprocessLoadingId"];
-  selectedDocumentId: RepairDocumentsProps["selectedDocumentId"];
   documentComparisonLoadingId: RepairDocumentsProps["documentComparisonLoadingId"];
   primaryDocumentLoadingId: RepairDocumentsProps["primaryDocumentLoadingId"];
   documentArchiveLoadingId: RepairDocumentsProps["documentArchiveLoadingId"];
@@ -413,7 +412,6 @@ export function buildRepairWorkspaceProps(params: BuildRepairWorkspacePropsParam
                 documentOpenLoadingId: params.documentOpenLoadingId,
                 reprocessLoading: params.reprocessLoading,
                 reprocessLoadingId: params.reprocessLoadingId,
-                selectedDocumentId: params.selectedDocumentId,
                 documentComparisonLoadingId: params.documentComparisonLoadingId,
                 primaryDocumentLoadingId: params.primaryDocumentLoadingId,
                 documentArchiveLoadingId: params.documentArchiveLoadingId,
@@ -430,8 +428,8 @@ export function buildRepairWorkspaceProps(params: BuildRepairWorkspacePropsParam
                 onOpenDocumentFile: (documentId) => {
                   void params.handleOpenDocumentFile(documentId);
                 },
-                onReprocessDocumentById: (documentId, repairId) => {
-                  void params.handleReprocessDocumentById(documentId, repairId);
+                onReprocessDocumentById: (documentId, repairId, documentStatus, repairStatus) => {
+                  void params.handleReprocessDocumentById(documentId, repairId, documentStatus, repairStatus);
                 },
                 onCompareWithPrimary: (documentId) => {
                   void params.handleCompareWithPrimary(documentId);

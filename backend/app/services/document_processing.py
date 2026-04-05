@@ -21,7 +21,7 @@ except ImportError:  # pragma: no cover - optional dependency during bootstrap
     ImageChops = None
 
 from pypdf import PdfReader, PdfWriter
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.document import Document, DocumentVersion
@@ -32,6 +32,7 @@ from app.models.enums import (
     DocumentStatus,
     ImportStatus,
     RepairStatus,
+    ServiceStatus,
     VehicleStatus,
     VehicleType,
 )
@@ -1108,6 +1109,8 @@ def find_vehicle_by_identifiers(
     for vehicle in vehicles:
         if vehicle.external_id == PLACEHOLDER_VEHICLE_EXTERNAL_ID:
             continue
+        if vehicle.status == VehicleStatus.ARCHIVED:
+            continue
         vehicle_plate = normalize_plate_compare_token(vehicle.plate_number)
         vehicle_vin = normalize_compare_token(vehicle.vin)
         if normalized_vin and vehicle_vin == normalized_vin:
@@ -1428,7 +1431,7 @@ def extract_profile_history_scope(document: Document) -> Optional[str]:
         return None
     candidate_versions = []
     for sibling in repair.documents:
-        if sibling.id == document.id:
+        if sibling.id == document.id or sibling.status == DocumentStatus.ARCHIVED:
             continue
         for version in sibling.versions:
             payload = version.parsed_payload if isinstance(version.parsed_payload, dict) else {}
@@ -1518,6 +1521,21 @@ def select_ocr_profile_scope(db: Session, document: Document, text: str) -> OcrP
         source="default",
         reason="Подходящий профиль не найден, использован default",
     )
+
+
+def get_document_processing_block_reason(document: Document) -> str | None:
+    if document.status == DocumentStatus.ARCHIVED:
+        return "Archived documents cannot be modified"
+    repair = document.repair
+    if repair is None:
+        return "Document repair relation is incomplete"
+    if repair.status == RepairStatus.ARCHIVED:
+        return "Archived repairs cannot be modified"
+    if repair.vehicle is not None and repair.vehicle.status == VehicleStatus.ARCHIVED:
+        return "Archived vehicles cannot be used in operational actions"
+    if repair.service is not None and repair.service.status == ServiceStatus.ARCHIVED:
+        return "Repairs for archived services cannot be modified"
+    return None
 
 
 def build_ocr_rule_sort_key(rule: OcrRule, *, profile_scope: str | None = None) -> tuple[int, int, int, int]:
@@ -6250,10 +6268,12 @@ def build_repeat_repair_checks(
     previous_repairs = db.execute(
         select(Repair, RepairWork)
         .join(RepairWork, RepairWork.repair_id == Repair.id)
+        .outerjoin(Service, Service.id == Repair.service_id)
         .where(
             Repair.vehicle_id == repair.vehicle_id,
             Repair.id != repair.id,
             Repair.status != RepairStatus.ARCHIVED,
+            or_(Repair.service_id.is_(None), Service.status != ServiceStatus.ARCHIVED),
             Repair.repair_date >= window_start,
             Repair.repair_date <= repair.repair_date,
         )
@@ -6468,10 +6488,13 @@ def build_expected_total_checks(
         )
         .join(RepairWork, RepairWork.repair_id == Repair.id)
         .join(Vehicle, Vehicle.id == Repair.vehicle_id)
+        .outerjoin(Service, Service.id == Repair.service_id)
         .where(
             Repair.id != repair.id,
             Repair.status.in_(EXPECTED_TOTAL_REPAIR_STATUSES),
             Repair.grand_total > 0,
+            Vehicle.status != VehicleStatus.ARCHIVED,
+            or_(Repair.service_id.is_(None), Service.status != ServiceStatus.ARCHIVED),
             Vehicle.vehicle_type == repair.vehicle.vehicle_type,
         )
     ).all()
@@ -6626,9 +6649,13 @@ def build_dynamic_work_reference_checks(
         )
         .join(RepairWork, RepairWork.repair_id == Repair.id)
         .join(Vehicle, Vehicle.id == Repair.vehicle_id)
+        .outerjoin(Service, Service.id == Repair.service_id)
         .where(
             Repair.id != repair.id,
             RepairWork.work_name.is_not(None),
+            Repair.status != RepairStatus.ARCHIVED,
+            Vehicle.status != VehicleStatus.ARCHIVED,
+            or_(Repair.service_id.is_(None), Service.status != ServiceStatus.ARCHIVED),
             Vehicle.vehicle_type == repair.vehicle.vehicle_type,
             (
                 Repair.reason.like(f"{HISTORICAL_IMPORT_REASON_PREFIX}%")
@@ -7898,6 +7925,29 @@ def process_document(db: Session, document_id: int, *, job_id: int | None = None
             raise ValueError("Document processing context could not be reloaded")
 
         logger.info("document_processing_started", extra={"document_id": document.id, "job_id": job.id})
+
+        block_reason = get_document_processing_block_reason(document)
+        if block_reason is not None:
+            logger.info(
+                "document_processing_skipped_non_operational",
+                extra={"document_id": document.id, "job_id": job.id, "reason": block_reason},
+            )
+            mark_job_failed(
+                db,
+                job,
+                error_message=block_reason,
+                summary={
+                    "document_id": document.id,
+                    "document_status": document.status.value,
+                    "skipped_reason": block_reason,
+                },
+            )
+            db.commit()
+            refreshed_document = load_document_for_processing(db, document.id)
+            refreshed_job = db.get(ImportJob, job_id)
+            if refreshed_document is None or refreshed_job is None:
+                raise ValueError("Processed document could not be reloaded")
+            return ProcessingResult(document=refreshed_document, job=refreshed_job, message="Document processing skipped")
 
         if not storage_path.exists():
             raise FileNotFoundError(f"Source document file not found: {storage_path}")

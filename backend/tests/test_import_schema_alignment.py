@@ -7,6 +7,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 
@@ -61,6 +62,66 @@ class ImportSchemaAlignmentMigrationTestCase(unittest.TestCase):
             connection.execute(
                 text(
                     """
+                    insert into import_jobs (
+                        import_type,
+                        source_filename,
+                        status,
+                        summary,
+                        error_message,
+                        document_id,
+                        attempts,
+                        started_at,
+                        finished_at
+                    ) values (
+                        'historical_repairs',
+                        'status-normalization.xlsx',
+                        'COMPLETED',
+                        null,
+                        null,
+                        null,
+                        1,
+                        null,
+                        null
+                    )
+                    """
+                )
+            )
+            valid_job_id = connection.execute(
+                text(
+                    """
+                    select id
+                    from import_jobs
+                    where source_filename = 'status-normalization.xlsx'
+                    """
+                )
+            ).scalar_one()
+            connection.execute(
+                text(
+                    """
+                    insert into import_conflicts (
+                        import_job_id,
+                        entity_type,
+                        conflict_key,
+                        incoming_payload,
+                        existing_payload,
+                        resolution_payload,
+                        status
+                    ) values (
+                        :job_id,
+                        'repair',
+                        'legacy-invalid-status-key',
+                        null,
+                        null,
+                        null,
+                        'BROKEN_STATUS'
+                    )
+                    """
+                ),
+                {"job_id": valid_job_id},
+            )
+            connection.execute(
+                text(
+                    """
                     insert into import_conflicts (
                         import_job_id,
                         entity_type,
@@ -89,6 +150,7 @@ class ImportSchemaAlignmentMigrationTestCase(unittest.TestCase):
         inspector = inspect(engine)
         import_jobs_foreign_keys = inspector.get_foreign_keys("import_jobs")
         import_conflicts_foreign_keys = inspector.get_foreign_keys("import_conflicts")
+        import_conflicts_checks = inspector.get_check_constraints("import_conflicts")
 
         self.assertTrue(
             any(fk["referred_table"] == "documents" and fk["constrained_columns"] == ["document_id"] for fk in import_jobs_foreign_keys),
@@ -100,6 +162,10 @@ class ImportSchemaAlignmentMigrationTestCase(unittest.TestCase):
                 for fk in import_conflicts_foreign_keys
             ),
             import_conflicts_foreign_keys,
+        )
+        self.assertTrue(
+            any("ck_import_conflicts_status_valid" in str(item["name"]) for item in import_conflicts_checks),
+            import_conflicts_checks,
         )
 
         with engine.connect() as connection:
@@ -139,6 +205,71 @@ class ImportSchemaAlignmentMigrationTestCase(unittest.TestCase):
             self.assertEqual(placeholder_job["status"], "FAILED")
             self.assertEqual(placeholder_job["source_filename"], f"legacy_orphan_conflict_{healed_conflict['id']}")
             self.assertIn("orphan import_conflict", placeholder_job["error_message"])
+            normalized_status = connection.execute(
+                text(
+                    """
+                    select status
+                    from import_conflicts
+                    where conflict_key = 'legacy-invalid-status-key'
+                    """
+                )
+            ).scalar_one()
+            self.assertEqual(normalized_status, "pending")
+
+        with engine.begin() as connection:
+            job_id = connection.execute(
+                text(
+                    """
+                    insert into import_jobs (
+                        import_type,
+                        source_filename,
+                        status,
+                        summary,
+                        error_message,
+                        document_id,
+                        attempts,
+                        started_at,
+                        finished_at
+                    ) values (
+                        'historical_repairs',
+                        'constraint-check.xlsx',
+                        'COMPLETED',
+                        null,
+                        null,
+                        null,
+                        1,
+                        null,
+                        null
+                    )
+                    """
+                )
+            ).lastrowid
+            self.assertIsNotNone(job_id)
+            with self.assertRaises(IntegrityError):
+                connection.execute(
+                    text(
+                        """
+                        insert into import_conflicts (
+                            import_job_id,
+                            entity_type,
+                            conflict_key,
+                            incoming_payload,
+                            existing_payload,
+                            resolution_payload,
+                            status
+                        ) values (
+                            :job_id,
+                            'repair',
+                            'constraint-violation-key',
+                            null,
+                            null,
+                            null,
+                            'unexpected'
+                        )
+                        """
+                    ),
+                    {"job_id": job_id},
+                )
 
         engine.dispose()
 

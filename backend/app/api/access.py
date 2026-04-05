@@ -2,7 +2,7 @@ from datetime import date
 
 from sqlalchemy import and_, or_, select
 
-from app.models.enums import UserRole
+from app.models.enums import UserRole, VehicleStatus
 from app.models.repair import Repair
 from app.models.user import User
 from app.models.vehicle import Vehicle, VehicleAssignmentHistory
@@ -15,6 +15,7 @@ def get_allowed_vehicle_ids_query(current_user: User):
     today = date.today()
     return (
         select(VehicleAssignmentHistory.vehicle_id)
+        .join(Vehicle, Vehicle.id == VehicleAssignmentHistory.vehicle_id)
         .where(
             VehicleAssignmentHistory.user_id == current_user.id,
             VehicleAssignmentHistory.starts_at <= today,
@@ -22,6 +23,7 @@ def get_allowed_vehicle_ids_query(current_user: User):
                 VehicleAssignmentHistory.ends_at.is_(None),
                 VehicleAssignmentHistory.ends_at >= today,
             ),
+            Vehicle.status != VehicleStatus.ARCHIVED,
         )
         .distinct()
     )

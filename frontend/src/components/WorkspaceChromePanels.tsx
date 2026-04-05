@@ -158,7 +158,7 @@ export function WorkspaceChromePanels({
             <Tab label={`Документы · ${documentsCount}`} value="documents" />
             <Tab label={selectedRepairId ? `Ремонт · #${selectedRepairId}` : "Ремонт"} value="repair" />
             <Tab label="Поиск" value="search" />
-            <Tab label="Журнал" value="audit" />
+            {user?.role === "admin" ? <Tab label="Журнал" value="audit" /> : null}
             {user?.role === "admin" ? <Tab label="Админка" value="admin" /> : null}
             {user?.role === "admin" && showTechAdminTab ? <Tab label="Тех. админка" value="tech_admin" /> : null}
             <Tab label={`Техника · ${summary?.vehicles_total ?? vehiclesCount}`} value="fleet" />

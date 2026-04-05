@@ -2,7 +2,6 @@ import { Alert, Box, Button, Chip, Grid, Paper, Stack, Typography } from "@mui/m
 import type { RepairCheck, RepairDetail } from "../shared/repairDetailTypes";
 import type { CheckSeverity } from "../shared/workspaceViewTypes";
 import type { DocumentStatus } from "../shared/workspaceBootstrapTypes";
-import type { ReviewComparisonStatus } from "../shared/repairUiHelpers";
 import type { ReviewRequiredFieldComparisonItem } from "../shared/workspaceFormTypes";
 
 type RepairOverviewReportPanelProps = {

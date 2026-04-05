@@ -24,6 +24,7 @@ import type { RepairDetail } from "../shared/repairDetailTypes";
 import type {
   DashboardDataQuality,
   DashboardDataQualityDetails,
+  ReviewDecisionItem,
   DashboardSummary,
   ReviewQueueItem,
   UserRole,
@@ -35,7 +36,18 @@ import type {
 
 type RepairDetailLike = Pick<
   RepairDetail,
-  "id" | "source_document_id" | "order_number" | "repair_date" | "mileage" | "grand_total" | "vehicle" | "service" | "documents" | "checks"
+  | "id"
+  | "source_document_id"
+  | "order_number"
+  | "repair_date"
+  | "mileage"
+  | "grand_total"
+  | "status"
+  | "is_partially_recognized"
+  | "vehicle"
+  | "service"
+  | "documents"
+  | "checks"
 >;
 
 type UseRepairDerivedViewModelParams = {
@@ -50,6 +62,92 @@ type UseRepairDerivedViewModelParams = {
   formatMoney: (value: number | null | undefined) => string | null;
 };
 
+function buildFallbackReviewQueueItem(
+  selectedRepair: RepairDetailLike | null,
+  selectedRepairDocument: RepairDetailLike["documents"][number] | null,
+  manualReviewReasons: string[],
+): ReviewDecisionItem | null {
+  if (!selectedRepair || !selectedRepairDocument) {
+    return null;
+  }
+  if (selectedRepairDocument.kind !== "order" && selectedRepairDocument.kind !== "repeat_scan") {
+    return null;
+  }
+  if (selectedRepairDocument.status === "archived" || selectedRepair.status === "archived") {
+    return null;
+  }
+
+  const unresolvedChecks = selectedRepair.checks.filter((item) => !item.is_resolved);
+  const hasReviewWorkflowSignals =
+    selectedRepairDocument.status === "needs_review" ||
+    selectedRepairDocument.status === "ocr_error" ||
+    selectedRepairDocument.status === "partially_recognized" ||
+    selectedRepair.status === "in_review" ||
+    selectedRepair.status === "employee_confirmed" ||
+    selectedRepair.status === "ocr_error" ||
+    selectedRepair.status === "suspicious" ||
+    selectedRepair.is_partially_recognized ||
+    unresolvedChecks.length > 0;
+
+  if (!hasReviewWorkflowSignals) {
+    return null;
+  }
+
+  const issueTitles: string[] = [];
+  const pushIssue = (value: string | null) => {
+    if (!value || issueTitles.includes(value)) {
+      return;
+    }
+    issueTitles.push(value);
+  };
+
+  if (selectedRepairDocument.status === "needs_review") {
+    pushIssue("Требуется ручная проверка");
+  } else if (selectedRepairDocument.status === "ocr_error") {
+    pushIssue("Ошибка OCR");
+  } else if (selectedRepairDocument.status === "partially_recognized") {
+    pushIssue("Частичное распознавание");
+  }
+
+  if (selectedRepair.status === "employee_confirmed") {
+    pushIssue("Ожидает финального подтверждения администратора");
+  } else if (selectedRepair.status === "suspicious") {
+    pushIssue("Подозрительный ремонт");
+  } else if (selectedRepair.status === "ocr_error") {
+    pushIssue("Ошибка распознавания в ремонте");
+  } else if (selectedRepair.status === "in_review") {
+    pushIssue("Ремонт находится на ручной проверке");
+  }
+
+  manualReviewReasons.forEach(pushIssue);
+  unresolvedChecks.forEach((item) => pushIssue(item.title));
+
+  let category: ReviewQueueItem["category"] = "manual_review";
+  if (
+    selectedRepair.status === "suspicious" ||
+    unresolvedChecks.some((item) => item.severity === "suspicious" || item.severity === "error")
+  ) {
+    category = "suspicious";
+  } else if (selectedRepairDocument.status === "ocr_error" || selectedRepair.status === "ocr_error") {
+    category = "ocr_error";
+  } else if (selectedRepair.status === "employee_confirmed") {
+    category = "employee_confirmation";
+  } else if (selectedRepairDocument.status === "partially_recognized" || selectedRepair.is_partially_recognized) {
+    category = "partial_recognition";
+  }
+
+  const priorityBucket: ReviewQueueItem["priority_bucket"] =
+    category === "suspicious" ? "suspicious" : category === "ocr_error" ? "critical" : "review";
+
+  return {
+    priority_bucket: priorityBucket,
+    issue_titles: issueTitles,
+    document: {
+      id: selectedRepairDocument.id,
+    },
+  };
+}
+
 export function useRepairDerivedViewModel({
   selectedDocumentId,
   selectedFiles,
@@ -61,7 +159,7 @@ export function useRepairDerivedViewModel({
   dataQualityDetails,
   formatMoney,
 }: UseRepairDerivedViewModelParams) {
-  const selectedReviewItem = reviewQueue.find((item) => item.document.id === selectedDocumentId) ?? null;
+  const matchedReviewQueueItem = reviewQueue.find((item) => item.document.id === selectedDocumentId) ?? null;
   const selectedRepairDocument = selectedRepair?.documents.find((item) => item.id === selectedDocumentId) ?? null;
   const selectedRepairDocumentPayload = getLatestRepairDocumentPayload(selectedRepair, selectedDocumentId);
   const selectedRepairDocumentConfidenceMap = getLatestRepairDocumentConfidenceMap(selectedRepair, selectedDocumentId);
@@ -100,6 +198,16 @@ export function useRepairDerivedViewModel({
     Array.isArray(selectedRepairDocumentPayload?.manual_review_reasons)
       ? selectedRepairDocumentPayload.manual_review_reasons.filter((item): item is string => typeof item === "string")
       : [];
+  const selectedReviewItem =
+    matchedReviewQueueItem !== null
+      ? {
+          document: {
+            id: matchedReviewQueueItem.document.id,
+          },
+          priority_bucket: matchedReviewQueueItem.priority_bucket,
+          issue_titles: matchedReviewQueueItem.issue_titles,
+        }
+      : buildFallbackReviewQueueItem(selectedRepair, selectedRepairDocument, selectedRepairDocumentManualReviewReasons);
   const repairVisualBars = buildRepairVisualBars(summary, dataQuality);
   const repairVisualMax = Math.max(...repairVisualBars.map((item) => item.value), 0);
   const qualityVisualBars = buildQualityVisualBars(dataQuality);
@@ -312,9 +420,13 @@ export function useRepairDerivedViewModel({
   const canLinkVehicleFromSelectedDocument =
     selectedDocumentId !== null &&
     Boolean(selectedRepair) &&
+    selectedRepair?.status !== "archived" &&
+    selectedRepairDocument?.status !== "archived" &&
     isPlaceholderVehicle(selectedRepair?.vehicle.external_id);
   const canCreateVehicleFromSelectedDocument =
     userRole === "admin" &&
+    selectedRepair?.status !== "archived" &&
+    selectedRepairDocument?.status !== "archived" &&
     isPlaceholderVehicle(selectedRepair?.vehicle.external_id) &&
     selectedDocumentId !== null;
 

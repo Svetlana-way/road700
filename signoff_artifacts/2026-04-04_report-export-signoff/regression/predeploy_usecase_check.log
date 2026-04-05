@@ -1,0 +1,198 @@
+== Pre-deploy use case check ==
+Started: 2026-04-04 14:28:41 +0300
+Command: bash -lc cd '/Users/svetlanasamojlova/курсор/road700' && bash ./scripts/predeploy-usecase-check.sh
+
+[1/6] Компиляция backend
+[2/6] Backend tests
+............................................................................................................................................................................../Users/svetlanasamojlova/курсор/road700/backend/.venv/lib/python3.11/site-packages/alembic/config.py:612: DeprecationWarning: No path_separator found in configuration; falling back to legacy splitting on spaces, commas, and colons for prepend_sys_path.  Consider adding path_separator=os to Alembic config.
+  util.warn_deprecated(
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 20260316_0001, Initial schema
+INFO  [alembic.runtime.migration] Running upgrade  -> 20260316_0001, Initial schema
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0001 -> 20260316_0002, Add document reference to import jobs
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0001 -> 20260316_0002, Add document reference to import jobs
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0002 -> 20260316_0003, Add document kind
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0002 -> 20260316_0003, Add document kind
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0003 -> 20260316_0004, Add labor norms catalog
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0003 -> 20260316_0004, Add labor norms catalog
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0004 -> 20260317_0005, Add labor norm scopes
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0004 -> 20260317_0005, Add labor norm scopes
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0005 -> 20260317_0006, Add labor norm catalogs
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0005 -> 20260317_0006, Add labor norm catalogs
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0006 -> 20260317_0007, Add review rules
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0006 -> 20260317_0007, Add review rules
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0007 -> 20260317_0008, Add OCR extraction rules
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0007 -> 20260317_0008, Add OCR extraction rules
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0008 -> 20260317_0009, Add OCR profile matchers
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0008 -> 20260317_0009, Add OCR profile matchers
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0009 -> 20260317_0010, Add OCR learning signals
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0009 -> 20260317_0010, Add OCR learning signals
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0010 -> 20260317_0011, Add password reset tokens
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0010 -> 20260317_0011, Add password reset tokens
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0011 -> 20260317_0012, Normalize user emails to lowercase
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0011 -> 20260317_0012, Normalize user emails to lowercase
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0012 -> 20260319_0013, Extend import jobs for queued document processing
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0012 -> 20260319_0013, Extend import jobs for queued document processing
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade 20260319_0013 -> 20260329_0014, Add partial unique index for active document OCR jobs
+INFO  [alembic.runtime.migration] Running upgrade 20260319_0013 -> 20260329_0014, Add partial unique index for active document OCR jobs
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0014 -> 20260329_0015, Align import jobs/conflicts foreign keys
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0014 -> 20260329_0015, Align import jobs/conflicts foreign keys
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0015 -> 20260329_0016, Add composite indexes for hot query patterns
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0015 -> 20260329_0016, Add composite indexes for hot query patterns
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0016 -> 20260329_0017, Heal repair source document drift and align SQLite FK
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0016 -> 20260329_0017, Heal repair source document drift and align SQLite FK
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0017 -> 20260331_0018, Normalize import conflict statuses and add DB constraint
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0017 -> 20260331_0018, Normalize import conflict statuses and add DB constraint
+INFO  [alembic.runtime.migration] Running upgrade 20260331_0018 -> 20260331_0019, Add composite index for import job hot paths
+INFO  [alembic.runtime.migration] Running upgrade 20260331_0018 -> 20260331_0019, Add composite index for import job hot paths
+INFO  [alembic.runtime.migration] Running upgrade 20260331_0019 -> 20260331_0020, Add composite indexes for document hot paths
+INFO  [alembic.runtime.migration] Running upgrade 20260331_0019 -> 20260331_0020, Add composite indexes for document hot paths
+......................................./Users/svetlanasamojlova/курсор/road700/backend/.venv/lib/python3.11/site-packages/alembic/config.py:612: DeprecationWarning: No path_separator found in configuration; falling back to legacy splitting on spaces, commas, and colons for prepend_sys_path.  Consider adding path_separator=os to Alembic config.
+  util.warn_deprecated(
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 20260316_0001, Initial schema
+INFO  [alembic.runtime.migration] Running upgrade  -> 20260316_0001, Initial schema
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0001 -> 20260316_0002, Add document reference to import jobs
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0001 -> 20260316_0002, Add document reference to import jobs
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0002 -> 20260316_0003, Add document kind
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0002 -> 20260316_0003, Add document kind
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0003 -> 20260316_0004, Add labor norms catalog
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0003 -> 20260316_0004, Add labor norms catalog
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0004 -> 20260317_0005, Add labor norm scopes
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0004 -> 20260317_0005, Add labor norm scopes
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0005 -> 20260317_0006, Add labor norm catalogs
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0005 -> 20260317_0006, Add labor norm catalogs
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0006 -> 20260317_0007, Add review rules
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0006 -> 20260317_0007, Add review rules
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0007 -> 20260317_0008, Add OCR extraction rules
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0007 -> 20260317_0008, Add OCR extraction rules
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0008 -> 20260317_0009, Add OCR profile matchers
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0008 -> 20260317_0009, Add OCR profile matchers
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0009 -> 20260317_0010, Add OCR learning signals
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0009 -> 20260317_0010, Add OCR learning signals
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0010 -> 20260317_0011, Add password reset tokens
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0010 -> 20260317_0011, Add password reset tokens
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0011 -> 20260317_0012, Normalize user emails to lowercase
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0011 -> 20260317_0012, Normalize user emails to lowercase
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0012 -> 20260319_0013, Extend import jobs for queued document processing
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0012 -> 20260319_0013, Extend import jobs for queued document processing
+INFO  [alembic.runtime.migration] Running upgrade 20260319_0013 -> 20260329_0014, Add partial unique index for active document OCR jobs
+INFO  [alembic.runtime.migration] Running upgrade 20260319_0013 -> 20260329_0014, Add partial unique index for active document OCR jobs
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0014 -> 20260329_0015, Align import jobs/conflicts foreign keys
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0014 -> 20260329_0015, Align import jobs/conflicts foreign keys
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0015 -> 20260329_0016, Add composite indexes for hot query patterns
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0015 -> 20260329_0016, Add composite indexes for hot query patterns
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0016 -> 20260329_0017, Heal repair source document drift and align SQLite FK
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0016 -> 20260329_0017, Heal repair source document drift and align SQLite FK
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0017 -> 20260331_0018, Normalize import conflict statuses and add DB constraint
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0017 -> 20260331_0018, Normalize import conflict statuses and add DB constraint
+INFO  [alembic.runtime.migration] Running upgrade 20260331_0018 -> 20260331_0019, Add composite index for import job hot paths
+INFO  [alembic.runtime.migration] Running upgrade 20260331_0018 -> 20260331_0019, Add composite index for import job hot paths
+INFO  [alembic.runtime.migration] Running upgrade 20260331_0019 -> 20260331_0020, Add composite indexes for document hot paths
+INFO  [alembic.runtime.migration] Running upgrade 20260331_0019 -> 20260331_0020, Add composite indexes for document hot paths
+...............INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 20260316_0001, Initial schema
+INFO  [alembic.runtime.migration] Running upgrade  -> 20260316_0001, Initial schema
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0001 -> 20260316_0002, Add document reference to import jobs
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0001 -> 20260316_0002, Add document reference to import jobs
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0002 -> 20260316_0003, Add document kind
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0002 -> 20260316_0003, Add document kind
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0003 -> 20260316_0004, Add labor norms catalog
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0003 -> 20260316_0004, Add labor norms catalog
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0004 -> 20260317_0005, Add labor norm scopes
+INFO  [alembic.runtime.migration] Running upgrade 20260316_0004 -> 20260317_0005, Add labor norm scopes
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0005 -> 20260317_0006, Add labor norm catalogs
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0005 -> 20260317_0006, Add labor norm catalogs
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0006 -> 20260317_0007, Add review rules
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0006 -> 20260317_0007, Add review rules
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0007 -> 20260317_0008, Add OCR extraction rules
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0007 -> 20260317_0008, Add OCR extraction rules
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0008 -> 20260317_0009, Add OCR profile matchers
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0008 -> 20260317_0009, Add OCR profile matchers
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0009 -> 20260317_0010, Add OCR learning signals
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0009 -> 20260317_0010, Add OCR learning signals
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0010 -> 20260317_0011, Add password reset tokens
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0010 -> 20260317_0011, Add password reset tokens
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0011 -> 20260317_0012, Normalize user emails to lowercase
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0011 -> 20260317_0012, Normalize user emails to lowercase
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0012 -> 20260319_0013, Extend import jobs for queued document processing
+INFO  [alembic.runtime.migration] Running upgrade 20260317_0012 -> 20260319_0013, Extend import jobs for queued document processing
+INFO  [alembic.runtime.migration] Running upgrade 20260319_0013 -> 20260329_0014, Add partial unique index for active document OCR jobs
+INFO  [alembic.runtime.migration] Running upgrade 20260319_0013 -> 20260329_0014, Add partial unique index for active document OCR jobs
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0014 -> 20260329_0015, Align import jobs/conflicts foreign keys
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0014 -> 20260329_0015, Align import jobs/conflicts foreign keys
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0015 -> 20260329_0016, Add composite indexes for hot query patterns
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0015 -> 20260329_0016, Add composite indexes for hot query patterns
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0016 -> 20260329_0017, Heal repair source document drift and align SQLite FK
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0016 -> 20260329_0017, Heal repair source document drift and align SQLite FK
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0017 -> 20260331_0018, Normalize import conflict statuses and add DB constraint
+INFO  [alembic.runtime.migration] Running upgrade 20260329_0017 -> 20260331_0018, Normalize import conflict statuses and add DB constraint
+INFO  [alembic.runtime.migration] Running upgrade 20260331_0018 -> 20260331_0019, Add composite index for import job hot paths
+INFO  [alembic.runtime.migration] Running upgrade 20260331_0018 -> 20260331_0019, Add composite index for import job hot paths
+INFO  [alembic.runtime.migration] Running upgrade 20260331_0019 -> 20260331_0020, Add composite indexes for document hot paths
+INFO  [alembic.runtime.migration] Running upgrade 20260331_0019 -> 20260331_0020, Add composite indexes for document hot paths
+..............................................................................................
+----------------------------------------------------------------------
+Ran 322 tests in 138.030s
+
+OK
+[FAILED] /var/folders/fm/kypc4w2d3q948h6p9vr6vn480000gn/T/tmpp1kzb1zj/source/test-order.pdf: ocr failure
+Updated admin access: admin
+[3/6] Frontend typecheck
+[4/6] Frontend build
+
+> road700-frontend@0.1.0 build
+> tsc -b && vite build
+
+vite v8.0.1 building client environment for production...
+[2Ktransforming...✓ 1007 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                      0.62 kB │ gzip:   0.33 kB
+dist/assets/index-BfoohBxp.css                       3.50 kB │ gzip:   1.26 kB
+dist/assets/rolldown-runtime-DF2fYuay.js             0.55 kB │ gzip:   0.35 kB
+dist/assets/WorkspaceOperationsPanels-WiI3QiE0.js    1.94 kB │ gzip:   0.79 kB
+dist/assets/ImportConflictDialog-BnONzeTz.js         2.00 kB │ gzip:   0.95 kB
+dist/assets/WorkspaceContentPanels-OzEWHCjL.js       2.18 kB │ gzip:   0.87 kB
+dist/assets/AuditLogPanel-DhLlm7eZ.js                3.77 kB │ gzip:   1.41 kB
+dist/assets/FleetPanel-D7FCXQEu.js                   4.48 kB │ gzip:   1.65 kB
+dist/assets/GlobalSearchPanel-DrxKQNgv.js            7.32 kB │ gzip:   1.95 kB
+dist/assets/FleetVehicleDetailPanel-mmUOnn8Z.js     10.89 kB │ gzip:   2.32 kB
+dist/assets/DataQualityOverviewPanel-hqaRS7pO.js    12.10 kB │ gzip:   2.93 kB
+dist/assets/WorkspaceDocumentsPanel-k4wHOkR6.js     19.67 kB │ gzip:   5.16 kB
+dist/assets/RepairWorkspacePanel-CxBDNSZu.js        67.27 kB │ gzip:  13.34 kB
+dist/assets/WorkspaceAdminPanels-C0OYG0zS.js        72.12 kB │ gzip:  13.47 kB
+dist/assets/index-Bp85qvI3.js                      231.63 kB │ gzip:  54.60 kB
+dist/assets/vendor-ekoMPk1W.js                     376.04 kB │ gzip: 116.05 kB
+
+✓ built in 220ms
+[5/6] Статическая проверка покрытия use case
+Static use case markers are present.
+[6/6] Напоминание по ручной проверке
+Перед production deploy дополнительно подтвердите вручную:
+- сотрудник может загрузить заказ-наряд и документ уходит в OCR, а не теряется;
+- предупреждения по машине, сервису, нормо-часам и суммам видны в карточке ремонта;
+- ручное назначение сервиса снимает сервисное warning без дублирования;
+- итоговый отчёт по заказ-наряду содержит executive sections, несоответствия и итоговый статус проверки;
+- PDF/XLSX экспорт ремонта показывает тот же workflow-этап и смысловой итог, что и экран.
+Pre-deploy use case check passed.
+
+Finished: 2026-04-04 14:31:07 +0300
+Exit code: 0

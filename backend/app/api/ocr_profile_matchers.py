@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import distinct, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.api.deps import get_current_admin, get_db
 from app.models.ocr_profile_matcher import OcrProfileMatcher
 from app.models.user import User
 from app.schemas.ocr_profile_matcher import (
@@ -72,9 +72,9 @@ def get_matcher_or_404(db: Session, matcher_id: int) -> OcrProfileMatcher:
 def list_ocr_profile_matchers(
     profile_scope: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_admin: User = Depends(get_current_admin),
 ) -> OcrProfileMatcherListResponse:
-    _ = current_user
+    _ = current_admin
     stmt = select(OcrProfileMatcher).order_by(
         OcrProfileMatcher.profile_scope.asc(),
         OcrProfileMatcher.priority.asc(),

@@ -1,9 +1,11 @@
 import { useRef } from "react";
 import type { ReviewQueueCategory } from "../shared/workspaceBootstrapTypes";
 import type { TechAdminTab } from "../shared/appRoute";
+import type { WorkspaceRefreshScope } from "../shared/loadWorkspaceBootstrap";
 
 type LoadWorkspaceOptions = {
   silent?: boolean;
+  scope?: WorkspaceRefreshScope;
 };
 
 type LoadWorkspaceFn = (
@@ -38,9 +40,9 @@ export function useAppBridgeCallbacks(token: string | null) {
     openLaborNormsAdminRef.current();
   };
 
-  const refreshWorkspace = async () => {
+  const refreshWorkspace = async (scope: WorkspaceRefreshScope = "full") => {
     if (token) {
-      await loadWorkspaceRef.current(token);
+      await loadWorkspaceRef.current(token, undefined, { scope, silent: scope !== "full" });
     }
   };
 

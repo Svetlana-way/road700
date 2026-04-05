@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
 import { buildUserPayload } from "../shared/adminPayloadBuilders";
 import { apiRequest } from "../shared/api";
 import { createEmptyUserAssignmentForm, createEmptyUserForm, createUserFormFromItem } from "../shared/formStateFactories";
@@ -9,6 +10,8 @@ import type { UserAssignmentFormState, UserFormState } from "../shared/workspace
 type UseEmployeesAdminParams = {
   token: string;
   userRole: UserRole | null | undefined;
+  activeWorkspaceTab: WorkspaceTab;
+  activeAdminTab: AdminTab;
   setErrorMessage: (message: string) => void;
   setSuccessMessage: (message: string) => void;
 };
@@ -16,10 +19,13 @@ type UseEmployeesAdminParams = {
 export function useEmployeesAdmin({
   token,
   userRole,
+  activeWorkspaceTab,
+  activeAdminTab,
   setErrorMessage,
   setSuccessMessage,
 }: UseEmployeesAdminParams) {
   const [usersList, setUsersList] = useState<UserItem[]>([]);
+  const [allUsersList, setAllUsersList] = useState<UserItem[]>([]);
   const [usersTotal, setUsersTotal] = useState(0);
   const [userLoading, setUserLoading] = useState(false);
   const [userSaving, setUserSaving] = useState(false);
@@ -30,33 +36,67 @@ export function useEmployeesAdmin({
   const [userVehicleSearch, setUserVehicleSearch] = useState("");
   const [userVehicleSearchLoading, setUserVehicleSearchLoading] = useState(false);
   const [userVehicleSearchResults, setUserVehicleSearchResults] = useState<Vehicle[]>([]);
+  const usersRequestIdRef = useRef(0);
+  const userVehicleSearchRequestIdRef = useRef(0);
   const [userAssignmentForm, setUserAssignmentForm] = useState<UserAssignmentFormState>(createEmptyUserAssignmentForm);
   const [userAssignmentSaving, setUserAssignmentSaving] = useState(false);
   const [adminResetPasswordValue, setAdminResetPasswordValue] = useState("");
+  const usersInitializedRef = useRef(false);
 
-  const selectedManagedUser = usersList.find((item) => item.id === selectedManagedUserId) ?? null;
+  const selectedManagedUser =
+    allUsersList.find((item) => item.id === selectedManagedUserId)
+    ?? usersList.find((item) => item.id === selectedManagedUserId)
+    ?? null;
 
-  function applyBootstrapUsers(payload: UsersResponse | null | undefined) {
+  function applyBootstrapUsers(payload: UsersResponse | null | undefined, options?: { allUsersList?: UserItem[] }) {
+    if (payload !== null && payload !== undefined) {
+      usersInitializedRef.current = true;
+    }
     const items = payload?.items || [];
+    const nextAllUsersList = options?.allUsersList || items;
     setUsersList(items);
+    setAllUsersList(nextAllUsersList);
     setUsersTotal(payload?.total || 0);
-    setSelectedManagedUserId((current) => current ?? items[0]?.id ?? null);
+    setSelectedManagedUserId((current) => {
+      if (current !== null && nextAllUsersList.some((item) => item.id === current)) {
+        return current;
+      }
+      if (current === null) {
+        return items[0]?.id ?? null;
+      }
+      return null;
+    });
+  }
+
+  async function fetchUsers(search: string) {
+    return apiRequest<UsersResponse>(
+      `/users?${buildUsersQueryString(search)}`,
+      { method: "GET" },
+      token,
+    );
   }
 
   async function loadUsers(search: string = userSearch) {
-    if (!token) {
+    if (!token || userRole !== "admin") {
       return;
     }
+    const requestId = usersRequestIdRef.current + 1;
+    usersRequestIdRef.current = requestId;
     setUserLoading(true);
     try {
-      const payload = await apiRequest<UsersResponse>(
-        `/users?${buildUsersQueryString(search)}`,
-        { method: "GET" },
-        token,
-      );
-      applyBootstrapUsers(payload);
+      const [payload, fullPayload] = await Promise.all([
+        fetchUsers(search),
+        search.trim() ? fetchUsers("") : Promise.resolve<UsersResponse | null>(null),
+      ]);
+      if (usersRequestIdRef.current !== requestId) {
+        return;
+      }
+      usersInitializedRef.current = true;
+      applyBootstrapUsers(payload, { allUsersList: fullPayload?.items || payload.items });
     } finally {
-      setUserLoading(false);
+      if (usersRequestIdRef.current === requestId) {
+        setUserLoading(false);
+      }
     }
   }
 
@@ -65,25 +105,36 @@ export function useEmployeesAdmin({
       return;
     }
     if (!search.trim()) {
+      userVehicleSearchRequestIdRef.current += 1;
       setUserVehicleSearchResults([]);
+      setUserVehicleSearchLoading(false);
       return;
     }
+    const requestId = userVehicleSearchRequestIdRef.current + 1;
+    userVehicleSearchRequestIdRef.current = requestId;
     setUserVehicleSearchLoading(true);
     try {
       const params = new URLSearchParams();
       params.set("limit", "50");
       params.set("search", search.trim());
       const payload = await apiRequest<VehiclesResponse>(`/vehicles?${params.toString()}`, { method: "GET" }, token);
+      if (userVehicleSearchRequestIdRef.current !== requestId) {
+        return;
+      }
       setUserVehicleSearchResults(payload.items);
     } finally {
-      setUserVehicleSearchLoading(false);
+      if (userVehicleSearchRequestIdRef.current === requestId) {
+        setUserVehicleSearchLoading(false);
+      }
     }
   }
 
   function resetUserEditor() {
+    userVehicleSearchRequestIdRef.current += 1;
     setUserForm(createEmptyUserForm());
     setUserAssignmentForm(createEmptyUserAssignmentForm());
     setUserVehicleSearch("");
+    setUserVehicleSearchLoading(false);
     setUserVehicleSearchResults([]);
   }
 
@@ -279,7 +330,11 @@ export function useEmployeesAdmin({
   }
 
   function resetUsersState() {
+    usersRequestIdRef.current += 1;
+    usersInitializedRef.current = false;
+    userVehicleSearchRequestIdRef.current += 1;
     setUsersList([]);
+    setAllUsersList([]);
     setUsersTotal(0);
     setUserLoading(false);
     setUserSaving(false);
@@ -296,11 +351,45 @@ export function useEmployeesAdmin({
   }
 
   useEffect(() => {
+    if (!token || userRole !== "admin") {
+      return;
+    }
+    const shouldLoadForEmployees = activeWorkspaceTab === "admin" && activeAdminTab === "employees";
+    const shouldLoadForAudit = activeWorkspaceTab === "audit";
+    if (!shouldLoadForEmployees && !shouldLoadForAudit) {
+      return;
+    }
+    if (usersInitializedRef.current) {
+      return;
+    }
+    void loadUsers("").catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить список сотрудников");
+    });
+  }, [activeAdminTab, activeWorkspaceTab, setErrorMessage, token, userRole]);
+
+  useEffect(() => {
+    userVehicleSearchRequestIdRef.current += 1;
     setAdminResetPasswordValue("");
+    setUserVehicleSearch("");
+    setUserVehicleSearchLoading(false);
+    setUserVehicleSearchResults([]);
+    setUserAssignmentForm(createEmptyUserAssignmentForm());
   }, [selectedManagedUserId]);
+
+  useEffect(() => {
+    if (!showUserEditor || userForm.id === null) {
+      return;
+    }
+    if (allUsersList.some((item) => item.id === userForm.id)) {
+      return;
+    }
+    resetUserEditor();
+    setShowUserEditor(false);
+  }, [allUsersList, showUserEditor, userForm.id]);
 
   return {
     usersList,
+    allUsersList,
     usersTotal,
     userLoading,
     userSaving,

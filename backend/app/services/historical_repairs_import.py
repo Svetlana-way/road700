@@ -6,11 +6,11 @@ from datetime import date, datetime
 from typing import BinaryIO, Optional
 
 from openpyxl import load_workbook
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.audit import AuditLog
-from app.models.enums import CatalogStatus, CheckSeverity, ImportStatus, RepairStatus, ServiceStatus
+from app.models.enums import CatalogStatus, CheckSeverity, ImportStatus, RepairStatus, ServiceStatus, VehicleStatus
 from app.models.imports import ImportConflict, ImportJob
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
@@ -144,6 +144,10 @@ def normalize_optional_text(value: object) -> str | None:
     return normalized or None
 
 
+class ArchivedServiceImportConflict(ValueError):
+    pass
+
+
 def normalize_amount(value: object) -> float:
     if value in (None, ""):
         return 0.0
@@ -273,6 +277,8 @@ def build_vehicle_lookup(db: Session) -> tuple[dict[str, Vehicle | None], list[t
     for vehicle in db.scalars(select(Vehicle)).all():
         if vehicle.external_id == PLACEHOLDER_EXTERNAL_ID:
             continue
+        if vehicle.status == VehicleStatus.ARCHIVED:
+            continue
         normalized_plate = normalize_plate(vehicle.plate_number)
         if not normalized_plate:
             continue
@@ -308,7 +314,18 @@ def find_vehicle(
 
 def load_existing_historical_keys(db: Session) -> set[str]:
     keys: set[str] = set()
-    for reason in db.scalars(select(Repair.reason).where(Repair.reason.is_not(None))).all():
+    reasons = db.scalars(
+        select(Repair.reason)
+        .join(Vehicle, Vehicle.id == Repair.vehicle_id)
+        .outerjoin(Service, Service.id == Repair.service_id)
+        .where(
+            Repair.reason.is_not(None),
+            Repair.status != RepairStatus.ARCHIVED,
+            Vehicle.status != VehicleStatus.ARCHIVED,
+            ((Repair.service_id.is_(None)) | (Service.status != ServiceStatus.ARCHIVED)),
+        )
+    ).all()
+    for reason in reasons:
         if not reason or not reason.startswith(IMPORT_REASON_PREFIX):
             continue
         keys.add(reason[len(IMPORT_REASON_PREFIX):].strip())
@@ -332,6 +349,14 @@ def resolve_or_create_service(
 
     service = resolve_service_by_name(db, normalized_name)
     if service is None:
+        archived_service = db.scalar(
+            select(Service).where(
+                func.lower(Service.name) == normalized_name.lower(),
+                Service.status == ServiceStatus.ARCHIVED,
+            )
+        )
+        if archived_service is not None:
+            raise ArchivedServiceImportConflict(normalized_name)
         service = Service(
             name=normalized_name[:255],
             status=ServiceStatus.PRELIMINARY,
@@ -516,7 +541,29 @@ def import_historical_repairs(
                 )
                 continue
 
-            service = resolve_or_create_service(db, current_admin, service_cache, result, group.raw_service_name)
+            try:
+                service = resolve_or_create_service(db, current_admin, service_cache, result, group.raw_service_name)
+            except ArchivedServiceImportConflict as exc:
+                archived_service_name = str(exc)
+                append_conflict(
+                    db,
+                    result,
+                    job_id=job.id,
+                    entity_type="service",
+                    conflict_key=f"{group.source_key}:service",
+                    message=(
+                        f"Архивный сервис требует явного решения перед импортом: {archived_service_name} · "
+                        f"{group.order_number or group.registrator or group.repair_date.isoformat()}"
+                    ),
+                    incoming_payload={
+                        "repair_date": group.repair_date.isoformat(),
+                        "plate_number": group.raw_plate,
+                        "service_name": archived_service_name,
+                        "order_number": group.order_number,
+                        "registrator": group.registrator,
+                    },
+                )
+                continue
             repair = Repair(
                 order_number=group.order_number,
                 repair_date=group.repair_date,

@@ -3,6 +3,7 @@ import type { UserRole } from "../shared/workspaceBootstrapTypes";
 
 type ReviewActionsPanelProps = {
   userRole: UserRole | undefined;
+  selectedRepairStatus: string;
   reviewActionComment: string;
   reviewActionLoading: boolean;
   reviewServiceAssigning: boolean;
@@ -17,6 +18,7 @@ type ReviewActionsPanelProps = {
 
 export function ReviewActionsPanel({
   userRole,
+  selectedRepairStatus,
   reviewActionComment,
   reviewActionLoading,
   reviewServiceAssigning,
@@ -28,12 +30,14 @@ export function ReviewActionsPanel({
   onConfirm,
   onSendToReview,
 }: ReviewActionsPanelProps) {
+  const employeeConfirmationCompleted = userRole !== "admin" && selectedRepairStatus === "employee_confirmed";
   const confirmDisabled =
     reviewActionLoading ||
     reviewServiceAssigning ||
     reviewServiceSaving ||
     reviewFieldSaving ||
     reviewVehicleLinking ||
+    employeeConfirmationCompleted ||
     !canConfirmSelectedReview;
   const returnDisabled =
     reviewActionLoading || reviewServiceAssigning || reviewServiceSaving || reviewFieldSaving || reviewVehicleLinking;
@@ -50,14 +54,22 @@ export function ReviewActionsPanel({
       />
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
         <Button variant="contained" disabled={confirmDisabled} onClick={onConfirm}>
-          {reviewActionLoading ? "Сохранение..." : userRole === "admin" ? "Подтвердить админом" : "Подтвердить сотрудником"}
+          {reviewActionLoading
+            ? "Сохранение..."
+            : employeeConfirmationCompleted
+              ? "Уже подтверждено сотрудником"
+              : userRole === "admin"
+                ? "Подтвердить админом"
+                : "Подтвердить сотрудником"}
         </Button>
         <Button variant="outlined" disabled={returnDisabled} onClick={onSendToReview}>
           Вернуть в ручную проверку
         </Button>
       </Stack>
       <Typography className="muted-copy">
-        Подтверждение доступно только после заполнения обязательных полей и разбора всех предупреждений по заказ-наряду.
+        {employeeConfirmationCompleted
+          ? "Сотрудник уже завершил своё подтверждение. Дальше ремонт ждёт решения администратора или возврата в ручную проверку."
+          : "Подтверждение доступно только после заполнения обязательных полей и разбора всех предупреждений по заказ-наряду."}
       </Typography>
     </>
   );

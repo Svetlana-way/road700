@@ -6,7 +6,12 @@ from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.security import build_access_token_password_fingerprint, decode_access_token
+from app.core.security import (
+    AUTH_SESSION_EPOCH_CLAIM,
+    build_access_token_password_fingerprint,
+    decode_access_token,
+    read_auth_session_epoch,
+)
 from app.db.session import SessionLocal
 from app.models.enums import UserRole
 from app.models.user import User
@@ -46,6 +51,8 @@ def get_current_user(
     if user is None:
         raise credentials_exception
     if payload.get("pwd") != build_access_token_password_fingerprint(user.password_hash):
+        raise credentials_exception
+    if payload.get(AUTH_SESSION_EPOCH_CLAIM) != read_auth_session_epoch():
         raise credentials_exception
 
     return user

@@ -266,7 +266,15 @@ export function HistoricalImportsAdminPanel({
                       <Typography>{job.source_filename}</Typography>
                       <Chip
                         size="small"
-                        color={job.status === "failed" ? "error" : job.status === "completed_with_conflicts" ? "warning" : "default"}
+                        color={
+                          job.status === "failed"
+                            ? "error"
+                            : job.status === "completed_with_conflicts"
+                              ? "warning"
+                              : job.status === "queued" || job.status === "retry" || job.status === "processing"
+                                ? "info"
+                                : "default"
+                        }
                         label={formatStatus(job.status)}
                       />
                     </Stack>

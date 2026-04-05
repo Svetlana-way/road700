@@ -61,6 +61,38 @@ class SqliteTestUtilsTestCase(unittest.TestCase):
         finally:
             engine.dispose()
 
+    def test_metadata_enforces_import_conflict_status_constraint(self) -> None:
+        engine = create_sqlite_test_engine(enforce_foreign_keys=True)
+        SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        Base.metadata.create_all(bind=engine)
+
+        try:
+            with SessionLocal() as db:
+                job = ImportJob(
+                    document_id=None,
+                    import_type="historical_repairs",
+                    source_filename="history.xlsx",
+                    status=ImportStatus.COMPLETED,
+                    summary={"stage": "completed"},
+                    error_message=None,
+                    attempts=1,
+                )
+                db.add(job)
+                db.flush()
+                db.add(
+                    ImportConflict(
+                        import_job_id=job.id,
+                        entity_type="repair",
+                        conflict_key="invalid-status",
+                        status="unexpected",
+                    )
+                )
+                with self.assertRaises(IntegrityError):
+                    db.commit()
+                db.rollback()
+        finally:
+            engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()

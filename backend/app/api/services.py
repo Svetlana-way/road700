@@ -6,9 +6,12 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.models.audit import AuditLog
-from app.models.enums import ServiceStatus, UserRole
+from app.models.document import Document
+from app.models.enums import DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus
+from app.models.repair import Repair
 from app.models.service import Service
 from app.models.user import User
+from app.models.vehicle import Vehicle
 from app.schemas.service import ServiceCreate, ServiceListResponse, ServiceRead, ServiceUpdate
 from app.services.service_catalog import (
     ensure_service_catalog_synced,
@@ -63,8 +66,54 @@ def ensure_service_is_operational(service_item: Service) -> None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Архивные сервисы доступны только для чтения")
 
 
+def ensure_service_is_not_archived(service_item: Service) -> None:
+    if service_item.status == ServiceStatus.ARCHIVED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Service is already archived")
+
+
+def ensure_service_can_be_archived(db: Session, service_item: Service) -> None:
+    active_repair_id = db.scalar(
+        select(Repair.id)
+        .join(Vehicle, Vehicle.id == Repair.vehicle_id)
+        .where(
+            Repair.service_id == service_item.id,
+            Repair.status != RepairStatus.ARCHIVED,
+            Vehicle.status != VehicleStatus.ARCHIVED,
+        )
+        .limit(1)
+    )
+    if active_repair_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Нельзя архивировать сервис с активными ремонтами",
+        )
+
+    active_document_id = db.scalar(
+        select(Document.id)
+        .join(Repair, Repair.id == Document.repair_id)
+        .join(Vehicle, Vehicle.id == Repair.vehicle_id)
+        .where(
+            Repair.service_id == service_item.id,
+            Repair.status != RepairStatus.ARCHIVED,
+            Vehicle.status != VehicleStatus.ARCHIVED,
+            Document.status != DocumentStatus.ARCHIVED,
+        )
+        .limit(1)
+    )
+    if active_document_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Нельзя архивировать сервис с активными документами",
+        )
+
+
 def resolve_service_restore_status(service_item: Service) -> ServiceStatus:
     return ServiceStatus.CONFIRMED if service_item.confirmed_by_user_id is not None else ServiceStatus.PRELIMINARY
+
+
+def ensure_service_can_be_restored(service_item: Service) -> None:
+    if service_item.status != ServiceStatus.ARCHIVED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Service is not archived")
 
 
 def build_service_audit_snapshot(service_item: Service) -> dict[str, object]:
@@ -89,7 +138,6 @@ def list_services(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> ServiceListResponse:
-    _ = current_user
     ensure_service_catalog_synced(db, commit=False)
     visible_services = get_visible_services_stmt()
     stmt = select(Service).where(visible_services)
@@ -110,10 +158,13 @@ def list_services(
         stmt = stmt.where(Service.city == city)
         count_stmt = count_stmt.where(Service.city == city)
 
+    if current_user.role != UserRole.ADMIN:
+        stmt = stmt.where(Service.status != ServiceStatus.ARCHIVED)
+        count_stmt = count_stmt.where(Service.status != ServiceStatus.ARCHIVED)
     if status_filter is not None:
         stmt = stmt.where(Service.status == status_filter)
         count_stmt = count_stmt.where(Service.status == status_filter)
-    else:
+    elif current_user.role == UserRole.ADMIN:
         stmt = stmt.where(Service.status != ServiceStatus.ARCHIVED)
         count_stmt = count_stmt.where(Service.status != ServiceStatus.ARCHIVED)
 
@@ -125,6 +176,7 @@ def list_services(
         .where(
             visible_services,
             Service.city.is_not(None),
+            Service.status != ServiceStatus.ARCHIVED if current_user.role != UserRole.ADMIN else true(),
             Service.status == status_filter if status_filter is not None else Service.status != ServiceStatus.ARCHIVED,
             Service.city == city if city else true(),
         )
@@ -234,11 +286,9 @@ def update_service(
         service_item.contact = normalize_optional_text(update_data["contact"])
     if "comment" in update_data:
         service_item.comment = normalize_optional_text(update_data["comment"])
-    if service_item.confirmed_by_user_id is None:
-        service_item.confirmed_by_user_id = current_admin.id
     if "status" in update_data:
         service_item.status = update_data["status"]
-        if service_item.status == ServiceStatus.CONFIRMED:
+        if service_item.status == ServiceStatus.CONFIRMED and service_item.confirmed_by_user_id is None:
             service_item.confirmed_by_user_id = current_admin.id
 
     db.add(service_item)
@@ -266,6 +316,8 @@ def archive_service(
 ) -> ServiceRead:
     ensure_service_catalog_synced(db, commit=False)
     service_item = get_service_or_404(db, service_id)
+    ensure_service_is_not_archived(service_item)
+    ensure_service_can_be_archived(db, service_item)
 
     old_snapshot = build_service_audit_snapshot(service_item)
     service_item.status = ServiceStatus.ARCHIVED
@@ -294,6 +346,7 @@ def restore_service(
 ) -> ServiceRead:
     ensure_service_catalog_synced(db, commit=False)
     service_item = get_service_or_404(db, service_id)
+    ensure_service_can_be_restored(service_item)
 
     old_snapshot = build_service_audit_snapshot(service_item)
     service_item.status = resolve_service_restore_status(service_item)

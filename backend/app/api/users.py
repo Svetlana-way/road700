@@ -36,6 +36,13 @@ def normalize_text(value: str | None) -> str | None:
     return normalized or None
 
 
+def normalize_login(value: str | None) -> str | None:
+    normalized = normalize_text(value)
+    if normalized is None:
+        return None
+    return normalized.lower()
+
+
 def normalize_email(value: str | None) -> str | None:
     normalized = normalize_text(value)
     if normalized is None:
@@ -112,7 +119,7 @@ def ensure_unique_user_fields(
     exclude_user_id: int | None = None,
 ) -> None:
     if login:
-        stmt = select(User).where(User.login == login)
+        stmt = select(User).where(func.lower(User.login) == login.lower())
         if exclude_user_id is not None:
             stmt = stmt.where(User.id != exclude_user_id)
         if db.scalar(stmt) is not None:
@@ -234,7 +241,7 @@ def create_user(
     current_admin: User = Depends(get_current_admin),
 ) -> UserRead:
     normalized_full_name = normalize_text(payload.full_name)
-    normalized_login = normalize_text(payload.login)
+    normalized_login = normalize_login(payload.login)
     normalized_email = normalize_email(str(payload.email))
     normalized_password = validate_password(payload.password)
     if not normalized_full_name or not normalized_login or not normalized_email or not normalized_password:
@@ -284,7 +291,7 @@ def update_user(
     if not update_data:
         return UserRead.model_validate(user)
 
-    normalized_login = normalize_text(update_data.get("login"))
+    normalized_login = normalize_login(update_data.get("login"))
     normalized_email = normalize_email(str(update_data["email"])) if "email" in update_data and update_data["email"] else None
     ensure_self_admin_protection(
         user,

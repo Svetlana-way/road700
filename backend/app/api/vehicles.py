@@ -6,15 +6,17 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.access import apply_vehicle_scope
+from app.api.access import PLACEHOLDER_EXTERNAL_ID, apply_vehicle_scope
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.models.audit import AuditLog
-from app.models.enums import RepairStatus, VehicleStatus
+from app.models.document import Document
+from app.models.enums import DocumentStatus, RepairStatus, ServiceStatus, VehicleStatus
 from app.models.repair import Repair
 from app.models.enums import VehicleType
+from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle, VehicleAssignmentHistory, VehicleLinkHistory
 from app.schemas.vehicle import (
@@ -36,6 +38,47 @@ from app.scripts.import_vehicles import (
 
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
+
+
+def build_visible_vehicle_repair_clause():
+    return and_(
+        Repair.status != RepairStatus.ARCHIVED,
+        or_(Repair.service_id.is_(None), Service.status != ServiceStatus.ARCHIVED),
+    )
+
+
+def ensure_vehicle_can_be_archived(db: Session, vehicle: Vehicle) -> None:
+    active_repair_id = db.scalar(
+        select(Repair.id)
+        .outerjoin(Service, Service.id == Repair.service_id)
+        .where(
+            Repair.vehicle_id == vehicle.id,
+            build_visible_vehicle_repair_clause(),
+        )
+        .limit(1)
+    )
+    if active_repair_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Нельзя архивировать технику с активными ремонтами",
+        )
+
+    active_document_id = db.scalar(
+        select(Document.id)
+        .join(Repair, Repair.id == Document.repair_id)
+        .outerjoin(Service, Service.id == Repair.service_id)
+        .where(
+            Repair.vehicle_id == vehicle.id,
+            build_visible_vehicle_repair_clause(),
+            Document.status != DocumentStatus.ARCHIVED,
+        )
+        .limit(1)
+    )
+    if active_document_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Нельзя архивировать технику с активными документами",
+        )
 
 
 def build_vehicle_pdf_sections(payload: dict) -> list[tuple[str, list[str]]]:
@@ -135,8 +178,10 @@ def build_historical_summary_map(db: Session, vehicle_ids: list[int]) -> dict[in
             func.count(Repair.id).label("repairs_total"),
             func.max(Repair.repair_date).label("last_repair_date"),
         )
+        .outerjoin(Service, Service.id == Repair.service_id)
         .where(
             Repair.vehicle_id.in_(vehicle_ids),
+            build_visible_vehicle_repair_clause(),
             Repair.reason.is_not(None),
             Repair.reason.like(f"{IMPORT_REASON_PREFIX}%"),
         )
@@ -153,7 +198,12 @@ def build_historical_summary_map(db: Session, vehicle_ids: list[int]) -> dict[in
 
 
 def build_history_summary(repair_history: list[Repair]) -> dict[str, object]:
-    documents_total = sum(len(repair.documents) for repair in repair_history)
+    documents_total = sum(
+        1
+        for repair in repair_history
+        for document in repair.documents
+        if document.status != DocumentStatus.ARCHIVED
+    )
     confirmed_repairs = sum(1 for repair in repair_history if repair.status == RepairStatus.CONFIRMED)
     suspicious_repairs = sum(1 for repair in repair_history if repair.status == RepairStatus.SUSPICIOUS)
     last_repair = repair_history[0] if repair_history else None
@@ -216,11 +266,15 @@ def build_vehicle_detail_payload(db: Session, vehicle: Vehicle) -> dict:
 
     repair_history = db.scalars(
         select(Repair)
+        .outerjoin(Service, Service.id == Repair.service_id)
         .options(
             joinedload(Repair.service),
             joinedload(Repair.documents),
         )
-        .where(Repair.vehicle_id == vehicle.id)
+        .where(
+            Repair.vehicle_id == vehicle.id,
+            build_visible_vehicle_repair_clause(),
+        )
         .order_by(Repair.repair_date.desc(), Repair.id.desc())
     ).unique().all()
 
@@ -257,7 +311,7 @@ def build_vehicle_detail_payload(db: Session, vehicle: Vehicle) -> dict:
             "status": repair.status,
             "service_name": repair.service.name if repair.service is not None else None,
             "grand_total": float(repair.grand_total),
-            "documents_total": len(repair.documents),
+            "documents_total": sum(1 for document in repair.documents if document.status != DocumentStatus.ARCHIVED),
             "created_at": repair.created_at,
             "updated_at": repair.updated_at,
         }
@@ -374,6 +428,13 @@ def update_vehicle(
 
     update_data = payload.model_dump(exclude_unset=True)
     if "status" in update_data and update_data["status"] is not None:
+        if vehicle.external_id == PLACEHOLDER_EXTERNAL_ID and update_data["status"] == VehicleStatus.ARCHIVED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Нельзя архивировать системную placeholder-технику",
+            )
+        if update_data["status"] == VehicleStatus.ARCHIVED:
+            ensure_vehicle_can_be_archived(db, vehicle)
         vehicle.status = update_data["status"]
         if vehicle.status == VehicleStatus.ARCHIVED:
             vehicle.archived_at = datetime.now(timezone.utc)

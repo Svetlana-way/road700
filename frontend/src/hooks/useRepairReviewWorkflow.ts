@@ -5,10 +5,13 @@ import { isPlaceholderVehicle } from "../shared/fleetDocumentHelpers";
 import { createReviewRepairFieldsDraft, getDocumentPreviewKind } from "../shared/repairUiHelpers";
 import type { RepairDetail } from "../shared/repairDetailTypes";
 import type {
-  DocumentItem,
+  DocumentCreateVehicleResponse,
+  ReviewActionResponse,
+} from "../shared/repairWorkflowApiTypes";
+import type {
+  ReviewDecisionItem,
   ServiceItem,
   UserRole,
-  ReviewQueueItem,
   Vehicle,
   VehiclesResponse,
 } from "../shared/workspaceBootstrapTypes";
@@ -19,22 +22,7 @@ type RepairReviewRecord = RepairDetail;
 type RepairReviewDocument = {
   id: number;
   mime_type: string | null;
-};
-
-type ReviewActionResponse = {
-  message: string;
-  document_id: number;
-  repair_id: number;
-  document_status: string;
-  repair_status: string;
-  queue_item: ReviewQueueItem | null;
-};
-
-type DocumentCreateVehicleResponse = {
-  message: string;
-  repair_id: number;
-  created_new_vehicle: boolean;
-  document: DocumentItem;
+  status: string;
 };
 
 type UseRepairReviewWorkflowParams = {
@@ -42,14 +30,14 @@ type UseRepairReviewWorkflowParams = {
   userRole: UserRole | null | undefined;
   selectedRepair: RepairReviewRecord | null;
   selectedRepairDocument: RepairReviewDocument | null;
-  selectedReviewItem: ReviewQueueItem | null;
+  selectedReviewItem: ReviewDecisionItem | null;
   selectedDocumentId: number | null;
   selectedRepairDocumentOcrServiceName: string;
   selectedRepairDocumentExtractedFields: RepairDocumentExtractedFields;
   defaultReviewServiceStatus: ServiceFormState["status"];
   isEditingRepair: boolean;
-  loadServices: () => Promise<void>;
-  refreshWorkspace: () => Promise<void>;
+  loadServiceOptions: () => Promise<void>;
+  refreshWorkspace: (scope?: "full" | "documents" | "metrics" | "review") => Promise<void>;
   openRepairByIds: (documentId: number | null, repairId: number) => Promise<void>;
   setSelectedRepair: (repair: RepairReviewRecord) => void;
   setRepairDraft: (repair: RepairReviewRecord) => void;
@@ -68,7 +56,7 @@ export function useRepairReviewWorkflow({
   selectedRepairDocumentExtractedFields,
   defaultReviewServiceStatus,
   isEditingRepair,
-  loadServices,
+  loadServiceOptions,
   refreshWorkspace,
   openRepairByIds,
   setSelectedRepair,
@@ -81,6 +69,7 @@ export function useRepairReviewWorkflow({
   const [reviewVehicleSearch, setReviewVehicleSearch] = useState("");
   const [reviewVehicleSearchLoading, setReviewVehicleSearchLoading] = useState(false);
   const [reviewVehicleSearchResults, setReviewVehicleSearchResults] = useState<Vehicle[]>([]);
+  const reviewVehicleSearchRequestIdRef = useRef(0);
   const [reviewVehicleLinkingId, setReviewVehicleLinkingId] = useState<number | null>(null);
   const [reviewServiceAssigning, setReviewServiceAssigning] = useState(false);
   const [reviewServiceSaving, setReviewServiceSaving] = useState(false);
@@ -105,8 +94,11 @@ export function useRepairReviewWorkflow({
 
   const reviewDocumentPreviewKind = getDocumentPreviewKind(selectedRepairDocument?.mime_type);
   const selectedRepairDocumentId = selectedRepairDocument?.id ?? null;
+  const selectedRepairArchived = selectedRepair?.status === "archived";
+  const selectedRepairDocumentArchived = selectedRepairDocument?.status === "archived";
 
   useEffect(() => {
+    reviewVehicleSearchRequestIdRef.current += 1;
     const nextServiceName = selectedRepair?.service?.name || selectedRepairDocumentOcrServiceName || "";
     setReviewVehicleSearch(
       typeof selectedRepairDocumentExtractedFields?.plate_number === "string"
@@ -131,6 +123,7 @@ export function useRepairReviewWorkflow({
   }, [
     defaultReviewServiceStatus,
     selectedRepair?.id,
+    selectedRepairDocumentId,
     selectedRepair?.service?.name,
     selectedRepairDocumentExtractedFields?.plate_number,
     selectedRepairDocumentExtractedFields?.vin,
@@ -190,7 +183,20 @@ export function useRepairReviewWorkflow({
   }, []);
 
   async function handleReviewAction(action: "employee_confirm" | "confirm" | "send_to_review") {
-    if (!token || !selectedReviewItem) {
+    const reviewDocumentId = selectedReviewItem?.document.id ?? selectedRepairDocumentId;
+    if (!token || reviewDocumentId === null) {
+      return;
+    }
+    if (action === "confirm" && userRole !== "admin") {
+      setErrorMessage("Финальное подтверждение доступно только администратору");
+      return;
+    }
+    if (action === "employee_confirm" && userRole === "admin") {
+      setErrorMessage("Подтверждение сотрудником недоступно администратору");
+      return;
+    }
+    if (selectedRepairArchived || selectedRepairDocumentArchived) {
+      setErrorMessage("Архивный ремонт доступен только для просмотра и экспорта");
       return;
     }
 
@@ -199,7 +205,7 @@ export function useRepairReviewWorkflow({
     setSuccessMessage("");
     try {
       const result = await apiRequest<ReviewActionResponse>(
-        `/review/queue/${selectedReviewItem.document.id}/action`,
+        `/review/queue/${reviewDocumentId}/action`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -211,7 +217,7 @@ export function useRepairReviewWorkflow({
       );
       setSuccessMessage(result.message);
       setReviewActionComment("");
-      await refreshWorkspace();
+      await refreshWorkspace("review");
       await openRepairByIds(result.document_id, result.repair_id);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось применить действие по проверке");
@@ -222,6 +228,10 @@ export function useRepairReviewWorkflow({
 
   async function assignReviewService(serviceName: string) {
     if (!token || !selectedRepair) {
+      return;
+    }
+    if (selectedRepairArchived || selectedRepairDocumentArchived) {
+      setErrorMessage("Архивный ремонт доступен только для просмотра и экспорта");
       return;
     }
 
@@ -245,7 +255,7 @@ export function useRepairReviewWorkflow({
       }
       setReviewServiceName(savedRepair.service?.name || "");
       setSuccessMessage(savedRepair.service ? "Сервис назначен ремонту" : "Сервис у ремонта очищен");
-      await refreshWorkspace();
+      await refreshWorkspace("review");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось назначить сервис");
     } finally {
@@ -259,6 +269,10 @@ export function useRepairReviewWorkflow({
 
   async function handleCreateReviewService() {
     if (!token || !selectedRepair) {
+      return;
+    }
+    if (selectedRepairArchived || selectedRepairDocumentArchived) {
+      setErrorMessage("Архивный ремонт доступен только для просмотра и экспорта");
       return;
     }
     if (!reviewServiceForm.name.trim()) {
@@ -283,7 +297,7 @@ export function useRepairReviewWorkflow({
         },
         token,
       );
-      await loadServices();
+      await loadServiceOptions();
       setReviewServiceForm({
         id: null,
         name: selectedRepairDocumentOcrServiceName,
@@ -306,21 +320,30 @@ export function useRepairReviewWorkflow({
       return;
     }
     if (!search.trim()) {
+      reviewVehicleSearchRequestIdRef.current += 1;
       setReviewVehicleSearchResults([]);
+      setReviewVehicleSearchLoading(false);
       return;
     }
 
+    const requestId = reviewVehicleSearchRequestIdRef.current + 1;
+    reviewVehicleSearchRequestIdRef.current = requestId;
     setReviewVehicleSearchLoading(true);
     try {
       const params = new URLSearchParams();
       params.set("limit", "20");
       params.set("search", search.trim());
       const payload = await apiRequest<VehiclesResponse>(`/vehicles?${params.toString()}`, { method: "GET" }, token);
+      if (reviewVehicleSearchRequestIdRef.current !== requestId) {
+        return;
+      }
       setReviewVehicleSearchResults(
         payload.items.filter((item) => !isPlaceholderVehicle(item.external_id)),
       );
     } finally {
-      setReviewVehicleSearchLoading(false);
+      if (reviewVehicleSearchRequestIdRef.current === requestId) {
+        setReviewVehicleSearchLoading(false);
+      }
     }
   }
 
@@ -340,6 +363,10 @@ export function useRepairReviewWorkflow({
     if (!token || !selectedDocumentId || !selectedRepair) {
       return;
     }
+    if (selectedRepairArchived || selectedRepairDocumentArchived) {
+      setErrorMessage("Архивный ремонт доступен только для просмотра и экспорта");
+      return;
+    }
 
     setReviewVehicleLinkingId(vehicleId);
     setErrorMessage("");
@@ -355,7 +382,7 @@ export function useRepairReviewWorkflow({
       );
       setSuccessMessage(result.message);
       setReviewVehicleSearchResults([]);
-      await refreshWorkspace();
+      await refreshWorkspace("review");
       await openRepairByIds(result.document.id, result.repair_id);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось привязать технику");
@@ -416,6 +443,10 @@ export function useRepairReviewWorkflow({
     if (!token || !selectedRepair || !reviewFieldDraft) {
       return;
     }
+    if (selectedRepairArchived || selectedRepairDocumentArchived) {
+      setErrorMessage("Архивный ремонт доступен только для просмотра и экспорта");
+      return;
+    }
 
     setReviewFieldSaving(true);
     setErrorMessage("");
@@ -435,7 +466,7 @@ export function useRepairReviewWorkflow({
       setRepairDraft(savedRepair);
       setReviewFieldDraft(createReviewRepairFieldsDraft(savedRepair));
       setSuccessMessage("Поля проверки сохранены");
-      await refreshWorkspace();
+      await refreshWorkspace("review");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить поля проверки");
     } finally {
@@ -444,6 +475,7 @@ export function useRepairReviewWorkflow({
   }
 
   function resetReviewWorkflowState() {
+    reviewVehicleSearchRequestIdRef.current += 1;
     setReviewActionLoading(false);
     setReviewFieldSaving(false);
     setReviewVehicleSearch("");

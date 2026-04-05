@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -554,6 +554,93 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
             assert matched_vehicle is not None
             self.assertEqual(matched_vehicle.id, vehicle.id)
 
+    def test_find_vehicle_by_identifiers_ignores_archived_vehicle(self) -> None:
+        with self.SessionLocal() as db:
+            vehicle = db.get(Vehicle, 1)
+            self.assertIsNotNone(vehicle)
+            assert vehicle is not None
+            vehicle.plate_number = "К879ВА/716"
+            vehicle.vin = "X9PRG20A4MW137776"
+            vehicle.status = VehicleStatus.ARCHIVED
+            db.add(vehicle)
+            db.commit()
+
+            matched_vehicle = find_vehicle_by_identifiers(
+                db,
+                plate_number="879КВА716",
+                vin="X9PRG20A4MW137776",
+                chassis_number=None,
+            )
+
+        self.assertIsNone(matched_vehicle)
+
+    def test_process_document_does_not_rebind_placeholder_to_archived_vehicle(self) -> None:
+        parsed_payload = {
+            "extracted_fields": {
+                "order_number": "ARCH-VEH-001",
+                "repair_date": "2026-01-19",
+                "plate_number": "879КВА716",
+                "vin": "X9PRG20A4MW137776",
+                "service_name": "ООО «Грузовые резервы»",
+            },
+            "extracted_items": {"works": [], "parts": []},
+            "confidence_map": {
+                "order_number": 0.9,
+                "repair_date": 0.9,
+                "plate_number": 0.9,
+                "vin": 0.9,
+                "service_name": 0.9,
+            },
+            "manual_review_reasons": [],
+            "normalization_notes": [],
+        }
+
+        with self.SessionLocal() as db:
+            vehicle = db.get(Vehicle, 1)
+            repair = db.get(Repair, 1)
+            self.assertIsNotNone(vehicle)
+            self.assertIsNotNone(repair)
+            assert vehicle is not None
+            assert repair is not None
+
+            vehicle.plate_number = "К879ВА/716"
+            vehicle.vin = "X9PRG20A4MW137776"
+            vehicle.status = VehicleStatus.ARCHIVED
+            db.add(vehicle)
+
+            placeholder_vehicle = Vehicle(
+                external_id=document_processing.PLACEHOLDER_VEHICLE_EXTERNAL_ID,
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="IMPORT-QUEUE",
+                brand="System",
+                model="Placeholder",
+                status=VehicleStatus.INACTIVE,
+            )
+            db.add(placeholder_vehicle)
+            db.flush()
+
+            repair.vehicle_id = placeholder_vehicle.id
+            db.add(repair)
+            db.commit()
+            archived_vehicle_id = vehicle.id
+
+            with (
+                patch.object(document_processing, "LOCAL_STORAGE_ROOT", self.storage_root),
+                patch.object(document_processing, "extract_document_text", return_value=("text", "embedded", None)),
+                patch.object(document_processing, "parse_document_text", return_value=parsed_payload),
+                patch.object(document_processing, "select_ocr_profile_scope", return_value=OcrProfileSelection("default", "default", "test")),
+                patch.object(document_processing, "assess_labor_norm_applicability", return_value=LaborNormApplicability(False, None, "catalog_not_found", "No catalog")),
+                patch.object(document_processing, "enrich_work_payloads_with_labor_norms", return_value=([], document_processing.LaborNormEnrichmentSummary())),
+                patch.object(document_processing, "build_dynamic_work_reference_checks", return_value=[]),
+                patch.object(document_processing, "build_repeat_repair_checks", return_value=[]),
+                patch.object(document_processing, "build_expected_total_checks", return_value=(None, [])),
+            ):
+                process_document(db, self.document_id)
+                db.refresh(repair)
+
+            self.assertNotEqual(repair.vehicle_id, archived_vehicle_id)
+            self.assertNotEqual(repair.vehicle_id, placeholder_vehicle.id)
+
     def test_process_document_skips_plate_mismatch_for_shifted_ocr_plate_format(self) -> None:
         parsed_payload = {
             "extracted_fields": {
@@ -831,6 +918,203 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
         self.assertEqual(dynamic_reference["comparison_source"], "not_applicable")
         self.assertEqual(dynamic_reference["reason_code"], "outside_catalog_service")
 
+    def test_build_dynamic_work_reference_checks_ignores_archived_service_and_vehicle_sources(self) -> None:
+        with self.SessionLocal() as db:
+            current_repair = db.get(Repair, 1)
+            vehicle = db.get(Vehicle, 1)
+            admin = db.get(User, 1)
+            service = db.get(Service, 1)
+            self.assertIsNotNone(current_repair)
+            self.assertIsNotNone(vehicle)
+            self.assertIsNotNone(admin)
+            self.assertIsNotNone(service)
+            assert current_repair is not None
+            assert vehicle is not None
+            assert admin is not None
+            assert service is not None
+
+            archived_service = Service(
+                name="Archived OCR Reference Service",
+                city="Kazan",
+                status=ServiceStatus.ARCHIVED,
+                created_by_user_id=admin.id,
+            )
+            archived_vehicle = Vehicle(
+                external_id="truck-archived-reference",
+                vehicle_type=vehicle.vehicle_type,
+                plate_number="ARCH-REF-001",
+                vin="ARCHREFVIN001",
+                brand="Test",
+                model="Archived",
+                status=VehicleStatus.ARCHIVED,
+            )
+            db.add_all([archived_service, archived_vehicle])
+            db.flush()
+
+            archived_service_repair = Repair(
+                order_number="ARCH-SVC-REF-1",
+                repair_date=date(2026, 1, 10),
+                vehicle_id=vehicle.id,
+                service_id=archived_service.id,
+                created_by_user_id=admin.id,
+                mileage=120000,
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+                is_partially_recognized=False,
+            )
+            archived_vehicle_repair = Repair(
+                order_number="ARCH-VEH-REF-1",
+                repair_date=date(2026, 1, 11),
+                vehicle_id=archived_vehicle.id,
+                service_id=service.id,
+                created_by_user_id=admin.id,
+                mileage=121000,
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+                is_partially_recognized=False,
+            )
+            unrelated_visible_repair = Repair(
+                order_number="VISIBLE-REF-1",
+                repair_date=date(2026, 1, 12),
+                vehicle_id=vehicle.id,
+                service_id=service.id,
+                created_by_user_id=admin.id,
+                mileage=122000,
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+                is_partially_recognized=False,
+            )
+            db.add_all([archived_service_repair, archived_vehicle_repair, unrelated_visible_repair])
+            db.flush()
+            db.add_all(
+                [
+                    RepairWork(
+                        repair_id=archived_service_repair.id,
+                        work_code="31",
+                        work_name="Индукция. слесарные работы.",
+                        quantity=1.0,
+                        price=2000.0,
+                        line_total=2000.0,
+                    ),
+                    RepairWork(
+                        repair_id=archived_vehicle_repair.id,
+                        work_code="31",
+                        work_name="Индукция. слесарные работы.",
+                        quantity=1.0,
+                        price=2200.0,
+                        line_total=2200.0,
+                    ),
+                    RepairWork(
+                        repair_id=unrelated_visible_repair.id,
+                        work_code="99",
+                        work_name="Нерелевантная активная работа",
+                        quantity=1.0,
+                        price=1800.0,
+                        line_total=1800.0,
+                    ),
+                ]
+            )
+            db.commit()
+
+            works_payload = [
+                {
+                    "work_code": "31",
+                    "work_name": "Индукция. слесарные работы.",
+                    "quantity": 1.0,
+                    "price": 2100.0,
+                    "line_total": 2100.0,
+                }
+            ]
+
+            checks = document_processing.build_dynamic_work_reference_checks(db, current_repair, works_payload)
+
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0]["check_type"], "ocr_work_reference_missing")
+        dynamic_reference = works_payload[0]["reference_payload"]["dynamic_work_reference"]
+        self.assertEqual(dynamic_reference["comparison_source"], "none")
+        self.assertEqual(dynamic_reference["sample_lines"], 0)
+        self.assertEqual(dynamic_reference["historical_sample_lines"], 0)
+        self.assertEqual(dynamic_reference["operational_sample_lines"], 0)
+
+    def test_build_dynamic_work_reference_checks_ignores_archived_historical_repairs(self) -> None:
+        with self.SessionLocal() as db:
+            current_repair = db.get(Repair, 1)
+            vehicle = db.get(Vehicle, 1)
+            admin = db.get(User, 1)
+            self.assertIsNotNone(current_repair)
+            self.assertIsNotNone(vehicle)
+            self.assertIsNotNone(admin)
+            assert current_repair is not None
+            assert vehicle is not None
+            assert admin is not None
+
+            archived_historical_repair = Repair(
+                order_number="ARCH-HIST-REF-1",
+                repair_date=date(2026, 1, 10),
+                vehicle_id=vehicle.id,
+                service_id=None,
+                created_by_user_id=admin.id,
+                mileage=120000,
+                status=RepairStatus.ARCHIVED,
+                reason="historical_import:archived_dynamic_reference",
+                is_preliminary=False,
+                is_partially_recognized=False,
+            )
+            unrelated_visible_repair = Repair(
+                order_number="VISIBLE-HIST-REF-1",
+                repair_date=date(2026, 1, 11),
+                vehicle_id=vehicle.id,
+                service_id=None,
+                created_by_user_id=admin.id,
+                mileage=121000,
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+                is_partially_recognized=False,
+            )
+            db.add_all([archived_historical_repair, unrelated_visible_repair])
+            db.flush()
+            db.add_all(
+                [
+                    RepairWork(
+                        repair_id=archived_historical_repair.id,
+                        work_code="ARCH-HIST-ONLY",
+                        work_name="Архивная историческая тестовая работа",
+                        quantity=1.0,
+                        price=2000.0,
+                        line_total=2000.0,
+                    ),
+                    RepairWork(
+                        repair_id=unrelated_visible_repair.id,
+                        work_code="VISIBLE-OTHER",
+                        work_name="Другая видимая работа",
+                        quantity=1.0,
+                        price=1800.0,
+                        line_total=1800.0,
+                    ),
+                ]
+            )
+            db.commit()
+
+            works_payload = [
+                {
+                    "work_code": "ARCH-HIST-ONLY",
+                    "work_name": "Архивная историческая тестовая работа",
+                    "quantity": 1.0,
+                    "price": 2100.0,
+                    "line_total": 2100.0,
+                }
+            ]
+
+            checks = document_processing.build_dynamic_work_reference_checks(db, current_repair, works_payload)
+
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0]["check_type"], "ocr_work_reference_missing")
+        dynamic_reference = works_payload[0]["reference_payload"]["dynamic_work_reference"]
+        self.assertEqual(dynamic_reference["comparison_source"], "none")
+        self.assertEqual(dynamic_reference["sample_lines"], 0)
+        self.assertEqual(dynamic_reference["historical_sample_lines"], 0)
+        self.assertEqual(dynamic_reference["operational_sample_lines"], 0)
+
     def test_build_repeat_repair_checks_ignores_archived_repairs(self) -> None:
         with self.SessionLocal() as db:
             current_repair = db.get(Repair, 1)
@@ -862,6 +1146,71 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
             db.add(
                 RepairWork(
                     repair_id=archived_repair.id,
+                    work_code="31",
+                    work_name="Индукция. слесарные работы.",
+                    quantity=1.0,
+                    price=2000.0,
+                    line_total=2000.0,
+                )
+            )
+            db.commit()
+
+            checks = document_processing.build_repeat_repair_checks(
+                db,
+                current_repair,
+                [
+                    {
+                        "work_code": "31",
+                        "work_name": "Индукция. слесарные работы.",
+                        "quantity": 1.0,
+                        "price": 2100.0,
+                        "line_total": 2100.0,
+                    }
+                ],
+            )
+
+        self.assertEqual(checks, [])
+
+    def test_build_repeat_repair_checks_ignores_archived_service_repairs(self) -> None:
+        with self.SessionLocal() as db:
+            current_repair = db.get(Repair, 1)
+            vehicle = db.get(Vehicle, 1)
+            admin = db.get(User, 1)
+            self.assertIsNotNone(current_repair)
+            self.assertIsNotNone(vehicle)
+            self.assertIsNotNone(admin)
+            assert current_repair is not None
+            assert vehicle is not None
+            assert admin is not None
+
+            current_repair.repair_date = date(2026, 1, 19)
+            db.add(current_repair)
+
+            archived_service = Service(
+                name="Archived Repeat Service",
+                city="Kazan",
+                status=ServiceStatus.ARCHIVED,
+                created_by_user_id=admin.id,
+            )
+            db.add(archived_service)
+            db.flush()
+
+            archived_service_repair = Repair(
+                order_number="ARCH-SVC-REP-1",
+                repair_date=date(2026, 1, 10),
+                vehicle_id=vehicle.id,
+                service_id=archived_service.id,
+                created_by_user_id=admin.id,
+                mileage=110000,
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+                is_partially_recognized=False,
+            )
+            db.add(archived_service_repair)
+            db.flush()
+            db.add(
+                RepairWork(
+                    repair_id=archived_service_repair.id,
                     work_code="31",
                     work_name="Индукция. слесарные работы.",
                     quantity=1.0,
@@ -954,6 +1303,188 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
 
         self.assertIsNone(expected_total)
         self.assertEqual(checks, [])
+
+    def test_build_expected_total_checks_ignores_archived_service_and_vehicle_sources(self) -> None:
+        with self.SessionLocal() as db:
+            current_repair = db.get(Repair, 1)
+            vehicle = db.get(Vehicle, 1)
+            admin = db.get(User, 1)
+            service = db.get(Service, 1)
+            self.assertIsNotNone(current_repair)
+            self.assertIsNotNone(vehicle)
+            self.assertIsNotNone(admin)
+            self.assertIsNotNone(service)
+            assert current_repair is not None
+            assert vehicle is not None
+            assert admin is not None
+            assert service is not None
+
+            current_repair.work_total = 5000.0
+            current_repair.parts_total = 1000.0
+            current_repair.vat_total = 0.0
+            current_repair.grand_total = 6000.0
+            db.add(current_repair)
+
+            archived_service = Service(
+                name="Archived Expected Total Service",
+                city="Kazan",
+                status=ServiceStatus.ARCHIVED,
+                created_by_user_id=admin.id,
+            )
+            archived_vehicle = Vehicle(
+                external_id="truck-archived-expected-total",
+                vehicle_type=vehicle.vehicle_type,
+                plate_number="ARCH-TOTAL-001",
+                vin="ARCHTOTALVIN001",
+                brand="Test",
+                model="Archived",
+                status=VehicleStatus.ARCHIVED,
+            )
+            db.add_all([archived_service, archived_vehicle])
+            db.flush()
+
+            archived_service_repair = Repair(
+                order_number="ARCH-SVC-TOTAL-1",
+                repair_date=date(2026, 1, 5),
+                vehicle_id=vehicle.id,
+                service_id=archived_service.id,
+                created_by_user_id=admin.id,
+                mileage=105000,
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+                is_partially_recognized=False,
+                work_total=9000.0,
+                parts_total=0.0,
+                vat_total=0.0,
+                grand_total=9000.0,
+            )
+            archived_vehicle_repair = Repair(
+                order_number="ARCH-VEH-TOTAL-1",
+                repair_date=date(2026, 1, 6),
+                vehicle_id=archived_vehicle.id,
+                service_id=service.id,
+                created_by_user_id=admin.id,
+                mileage=106000,
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+                is_partially_recognized=False,
+                work_total=9500.0,
+                parts_total=0.0,
+                vat_total=0.0,
+                grand_total=9500.0,
+            )
+            db.add_all([archived_service_repair, archived_vehicle_repair])
+            db.flush()
+            db.add_all(
+                [
+                    RepairWork(
+                        repair_id=archived_service_repair.id,
+                        work_code="31",
+                        work_name="Индукция. слесарные работы.",
+                        quantity=1.0,
+                        standard_hours=1.0,
+                        actual_hours=1.0,
+                        price=9000.0,
+                        line_total=9000.0,
+                    ),
+                    RepairWork(
+                        repair_id=archived_vehicle_repair.id,
+                        work_code="31",
+                        work_name="Индукция. слесарные работы.",
+                        quantity=1.0,
+                        standard_hours=1.0,
+                        actual_hours=1.0,
+                        price=9500.0,
+                        line_total=9500.0,
+                    ),
+                ]
+            )
+            db.commit()
+
+            expected_total, checks = document_processing.build_expected_total_checks(
+                db,
+                current_repair,
+                [
+                    {
+                        "work_code": "31",
+                        "work_name": "Индукция. слесарные работы.",
+                        "quantity": 1.0,
+                        "standard_hours": 1.0,
+                        "actual_hours": 1.0,
+                        "price": 5000.0,
+                        "line_total": 5000.0,
+                    }
+                ],
+            )
+
+        self.assertIsNone(expected_total)
+        self.assertEqual(checks, [])
+
+    def test_extract_profile_history_scope_ignores_archived_sibling_documents(self) -> None:
+        with self.SessionLocal() as db:
+            document = db.get(Document, self.document_id)
+            self.assertIsNotNone(document)
+            assert document is not None
+
+            active_sibling = Document(
+                repair_id=document.repair_id,
+                uploaded_by_user_id=document.uploaded_by_user_id,
+                original_filename="active-history.pdf",
+                storage_key="documents/test/active-history.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=False,
+                review_queue_priority=20,
+            )
+            archived_sibling = Document(
+                repair_id=document.repair_id,
+                uploaded_by_user_id=document.uploaded_by_user_id,
+                original_filename="archived-history.pdf",
+                storage_key="documents/test/archived-history.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.ARCHIVED,
+                is_primary=False,
+                review_queue_priority=0,
+            )
+            db.add_all([active_sibling, archived_sibling])
+            db.flush()
+
+            db.add_all(
+                [
+                    DocumentVersion(
+                        document_id=active_sibling.id,
+                        version_number=1,
+                        storage_key=active_sibling.storage_key,
+                        parsed_payload={"ocr_profile_scope": "active_scope"},
+                        field_confidence_map={},
+                        change_summary="active history",
+                        created_at=datetime(2026, 1, 20, 10, 0, 0),
+                    ),
+                    DocumentVersion(
+                        document_id=archived_sibling.id,
+                        version_number=1,
+                        storage_key=archived_sibling.storage_key,
+                        parsed_payload={"ocr_profile_scope": "archived_scope"},
+                        field_confidence_map={},
+                        change_summary="archived history",
+                        created_at=datetime(2026, 1, 20, 11, 0, 0),
+                    ),
+                ]
+            )
+            db.commit()
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, self.document_id)
+            self.assertIsNotNone(document)
+            assert document is not None
+
+            history_scope = document_processing.extract_profile_history_scope(document)
+
+        self.assertEqual(history_scope, "active_scope")
 
 
 if __name__ == "__main__":

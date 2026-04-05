@@ -65,7 +65,7 @@ type BuildImportConflictDialogPropsParams = {
   importConflictSaving: ImportConflictDialogProps["importConflictSaving"];
   selectedImportConflict: ImportConflictDialogProps["selectedImportConflict"];
   importConflictComment: ImportConflictDialogProps["importConflictComment"];
-  setShowImportConflictDialog: Dispatch<SetStateAction<boolean>>;
+  closeImportConflictDialog: ImportConflictDialogProps["onClose"];
   setImportConflictComment: ImportConflictDialogProps["onCommentChange"];
   handleResolveImportConflict: (action: "ignored" | "resolved") => void | Promise<void>;
   formatStatus: ImportConflictDialogProps["formatStatus"];
@@ -156,7 +156,7 @@ export function buildImportConflictDialogProps(params: BuildImportConflictDialog
     importConflictComment: params.importConflictComment,
     onClose: () => {
       if (!params.importConflictSaving) {
-        params.setShowImportConflictDialog(false);
+        params.closeImportConflictDialog();
       }
     },
     onCommentChange: params.setImportConflictComment,

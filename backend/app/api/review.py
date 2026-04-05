@@ -3,17 +3,20 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import case, exists, func, or_, select
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.api.access import get_allowed_vehicle_ids_query, get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.api.documents import ensure_document_is_operational
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
-from app.models.enums import CheckSeverity, DocumentKind, DocumentStatus, RepairStatus, UserRole
+from app.models.enums import CheckSeverity, DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus
 from app.models.repair import Repair, RepairCheck
 from app.models.review_rule import ReviewRule
+from app.models.service import Service
 from app.models.user import User
+from app.models.vehicle import Vehicle
 from app.schemas.review import (
     ReviewActionRequest,
     ReviewActionResponse,
@@ -148,14 +151,58 @@ def latest_document_version(document: Document) -> Optional[DocumentVersion]:
     return max(document.versions, key=lambda version: version.version_number)
 
 
+def build_reviewable_documents_filter() -> object:
+    unresolved_checks_exist = exists(
+        select(1).where(
+            RepairCheck.repair_id == Repair.id,
+            RepairCheck.is_resolved.is_(False),
+        )
+    )
+    return or_(
+        Document.status.in_(REVIEWABLE_DOCUMENT_STATUSES),
+        Repair.status.in_(REVIEWABLE_REPAIR_STATUSES),
+        Repair.is_partially_recognized.is_(True),
+        unresolved_checks_exist,
+    )
+
+
+def build_review_queue_category_expression() -> object:
+    suspicious_checks_exist = exists(
+        select(1).where(
+            RepairCheck.repair_id == Repair.id,
+            RepairCheck.is_resolved.is_(False),
+            RepairCheck.severity.in_((CheckSeverity.SUSPICIOUS, CheckSeverity.ERROR)),
+        )
+    )
+    return case(
+        (
+            or_(Repair.status == RepairStatus.SUSPICIOUS, suspicious_checks_exist),
+            "suspicious",
+        ),
+        (
+            or_(Document.status == DocumentStatus.OCR_ERROR, Repair.status == RepairStatus.OCR_ERROR),
+            "ocr_error",
+        ),
+        (Repair.status == RepairStatus.EMPLOYEE_CONFIRMED, "employee_confirmation"),
+        (
+            or_(
+                Document.status == DocumentStatus.PARTIALLY_RECOGNIZED,
+                Repair.is_partially_recognized.is_(True),
+            ),
+            "partial_recognition",
+        ),
+        else_="manual_review",
+    )
+
+
 def load_document_for_review(db: Session, document_id: int) -> Optional[Document]:
     stmt = (
         select(Document)
         .join(Document.repair)
         .options(
             joinedload(Document.repair).joinedload(Repair.vehicle),
-            joinedload(Document.repair).joinedload(Repair.checks),
-            joinedload(Document.versions),
+            joinedload(Document.repair).selectinload(Repair.checks),
+            selectinload(Document.versions),
         )
         .where(Document.id == document_id)
     )
@@ -210,6 +257,8 @@ def get_visible_document(db: Session, current_user: User, document_id: int) -> D
         )
     )
     if not repair_is_visible:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if document.repair.vehicle is None or document.repair.vehicle.status == VehicleStatus.ARCHIVED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return document
 
@@ -339,6 +388,10 @@ def build_repair_state_snapshot(document: Document) -> dict:
 
 def is_document_in_review_queue(document: Document) -> bool:
     if document.repair is None:
+        return False
+    if document.repair.vehicle is None or document.repair.vehicle.status == VehicleStatus.ARCHIVED:
+        return False
+    if document.repair.service is not None and document.repair.service.status == ServiceStatus.ARCHIVED:
         return False
 
     has_unresolved_checks = any(not item.is_resolved for item in document.repair.checks)
@@ -521,9 +574,9 @@ def serialize_review_item(
 @router.get("/rules", response_model=ReviewRuleListResponse)
 def list_review_rules(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_admin: User = Depends(get_current_admin),
 ) -> ReviewRuleListResponse:
-    _ = current_user
+    _ = current_admin
     stmt = select(ReviewRule).order_by(ReviewRule.sort_order.asc(), ReviewRule.rule_type.asc(), ReviewRule.code.asc())
     items = db.scalars(stmt).all()
     return ReviewRuleListResponse(
@@ -623,55 +676,57 @@ def get_review_queue(
     if category not in REVIEW_QUEUE_CATEGORIES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported review category")
 
-    unresolved_repair_ids = select(RepairCheck.repair_id).where(RepairCheck.is_resolved.is_(False))
-    review_filter = or_(
-        Document.status.in_(REVIEWABLE_DOCUMENT_STATUSES),
-        Repair.status.in_(REVIEWABLE_REPAIR_STATUSES),
-        Repair.is_partially_recognized.is_(True),
-        Repair.id.in_(unresolved_repair_ids),
-    )
+    review_filter = build_reviewable_documents_filter()
+    category_expression = build_review_queue_category_expression()
 
     stmt = (
         select(Document)
         .join(Document.repair)
         .options(
             joinedload(Document.repair).joinedload(Repair.vehicle),
-            joinedload(Document.repair).joinedload(Repair.checks),
-            joinedload(Document.versions),
+            joinedload(Document.repair).selectinload(Repair.checks),
+            selectinload(Document.versions),
         )
         .where(
             Document.kind.in_(REVIEWABLE_DOCUMENT_KINDS),
             review_filter,
             Document.status != DocumentStatus.ARCHIVED,
             Repair.status != RepairStatus.ARCHIVED,
+            Repair.vehicle.has(Vehicle.status != VehicleStatus.ARCHIVED),
+            or_(Repair.service_id.is_(None), Repair.service.has(Service.status != ServiceStatus.ARCHIVED)),
         )
     )
-    count_stmt = (
-        select(func.count(Document.id))
+    counts_stmt = (
+        select(category_expression.label("category"), func.count(Document.id).label("total"))
         .join(Document.repair)
         .where(
             Document.kind.in_(REVIEWABLE_DOCUMENT_KINDS),
             review_filter,
             Document.status != DocumentStatus.ARCHIVED,
             Repair.status != RepairStatus.ARCHIVED,
+            Repair.vehicle.has(Vehicle.status != VehicleStatus.ARCHIVED),
+            or_(Repair.service_id.is_(None), Repair.service.has(Service.status != ServiceStatus.ARCHIVED)),
         )
+        .group_by(category_expression)
     )
 
     if current_user.role != UserRole.ADMIN:
         visibility_clause = get_repair_visibility_clause(current_user)
         stmt = stmt.where(visibility_clause)
-        count_stmt = count_stmt.where(visibility_clause)
+        counts_stmt = counts_stmt.where(visibility_clause)
 
-    total = db.scalar(count_stmt) or 0
+    counts = {name: 0 for name in REVIEW_QUEUE_CATEGORIES}
+    for row in db.execute(counts_stmt):
+        counts[str(row.category)] = int(row.total)
+    counts["all"] = sum(value for key, value in counts.items() if key != "all")
+
+    if category != "all":
+        stmt = stmt.where(category_expression == category)
+
     documents = db.execute(stmt).unique().scalars().all()
     rule_map = build_review_rule_map(db)
     serialized_items = [serialize_review_item(document, rule_map) for document in documents]
-    counts = {name: 0 for name in REVIEW_QUEUE_CATEGORIES}
-    counts["all"] = len(serialized_items)
-    for item in serialized_items:
-        counts[item["category"]] += 1
-
-    items = serialized_items if category == "all" else [item for item in serialized_items if item["category"] == category]
+    items = serialized_items
     items.sort(
         key=lambda item: (
             item["priority_score"],
@@ -686,7 +741,7 @@ def get_review_queue(
     return ReviewQueueResponse(
         items=paged_items,
         counts=counts,
-        total=len(items) if category != "all" else total,
+        total=counts[category] if category != "all" else counts["all"],
         limit=limit,
         offset=offset,
     )
@@ -710,8 +765,15 @@ def execute_review_action(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
     document = get_visible_document(db, current_user, document_id)
+    ensure_document_is_operational(document)
     if not is_document_in_review_queue(document):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Document is not in review queue")
+
+    if action == "employee_confirm" and document.repair.status == RepairStatus.EMPLOYEE_CONFIRMED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Repair is already confirmed by employee and is waiting for admin review",
+        )
 
     if action in {"employee_confirm", "confirm"}:
         missing_fields = collect_missing_confirmation_fields(document)

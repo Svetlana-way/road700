@@ -14,6 +14,7 @@ from app.core.security import (
     generate_secure_token,
     get_password_hash,
     hash_token,
+    read_auth_session_epoch,
     verify_password,
 )
 from app.models.audit import AuditLog
@@ -87,12 +88,10 @@ def build_external_base_url(request: Request) -> str:
 
     forwarded_proto = _first_forwarded_header_value(request.headers.get("x-forwarded-proto"))
     forwarded_host = _first_forwarded_header_value(request.headers.get("x-forwarded-host"))
-    if forwarded_proto and forwarded_host:
-        return f"{forwarded_proto}://{forwarded_host}"
-
-    host = request.headers.get("host")
+    host = forwarded_host or request.headers.get("host")
+    scheme = forwarded_proto or request.url.scheme
     if host:
-        return f"{request.url.scheme}://{host}"
+        return f"{scheme}://{host}"
 
     return str(request.base_url).rstrip("/")
 
@@ -111,7 +110,7 @@ def login(
         detail="Too many login attempts. Please try again later.",
     )
 
-    user = db.scalar(select(User).where(User.login == form_data.username))
+    user = db.scalar(select(User).where(func.lower(User.login) == normalized_login))
 
     if user is None or not verify_password(form_data.password, user.password_hash):
         raise HTTPException(
@@ -127,6 +126,7 @@ def login(
         subject=str(user.id),
         expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
         password_fingerprint=build_access_token_password_fingerprint(user.password_hash),
+        auth_session_epoch=read_auth_session_epoch(),
     )
     clear_rate_limit_scope(request, scope="auth_login_user", identifier=normalized_login)
     return TokenResponse(access_token=access_token)

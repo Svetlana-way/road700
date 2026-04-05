@@ -6,7 +6,6 @@ import type {
   ReviewPriorityBucket,
   ReviewQueueCategory,
   ReviewQueueItem,
-  UserRole,
 } from "../shared/workspaceBootstrapTypes";
 
 type ReviewQueueFilter = {
@@ -19,13 +18,11 @@ type ReviewQueuePanelProps = {
   reviewQueueCounts: Record<ReviewQueueCategory, number>;
   selectedReviewCategory: ReviewQueueCategory;
   reviewQueue: ReviewQueueItem[];
-  userRole: UserRole | null | undefined;
   reprocessLoading: boolean;
   reprocessLoadingId: number | null;
-  selectedDocumentId: number | null;
   onSelectCategory: (category: ReviewQueueCategory) => void;
   onOpenReviewQueueItem: (item: ReviewQueueItem) => void;
-  onReprocessDocumentById: (documentId: number, repairId: number) => void;
+  onReprocessDocumentById: (documentId: number, repairId: number, documentStatus?: string, repairStatus?: string) => void;
   formatDocumentKind: (kind: DocumentKind) => string;
   reviewPriorityColor: (bucket: ReviewPriorityBucket) => ChipProps["color"];
   formatReviewPriority: (bucket: ReviewPriorityBucket) => string;
@@ -41,10 +38,8 @@ export function ReviewQueuePanel({
   reviewQueueCounts,
   selectedReviewCategory,
   reviewQueue,
-  userRole,
   reprocessLoading,
   reprocessLoadingId,
-  selectedDocumentId,
   onSelectCategory,
   onOpenReviewQueueItem,
   onReprocessDocumentById,
@@ -141,13 +136,13 @@ export function ReviewQueuePanel({
                   >
                     Открыть ремонт
                   </Button>
-                  {userRole === "admin" ? (
+                  {item.document.status !== "archived" && item.repair.status !== "archived" ? (
                     <Button
                       size="small"
                       variant="text"
                       disabled={reprocessLoading}
                       onClick={() => {
-                        onReprocessDocumentById(item.document.id, item.repair.id);
+                        onReprocessDocumentById(item.document.id, item.repair.id, item.document.status, item.repair.status);
                       }}
                     >
                       {reprocessLoading && reprocessLoadingId === item.document.id ? "Повтор..." : "Повторить OCR"}

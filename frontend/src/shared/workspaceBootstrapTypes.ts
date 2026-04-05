@@ -598,6 +598,14 @@ export type ReviewQueueItem = {
   };
 };
 
+export type ReviewDecisionItem = {
+  document: {
+    id: number;
+  };
+  priority_bucket: ReviewPriorityBucket;
+  issue_titles: string[];
+};
+
 export type ReviewQueueResponse = {
   items: ReviewQueueItem[];
   counts: Record<ReviewQueueCategory, number>;
@@ -636,23 +644,4 @@ export type SystemStatus = {
   tesseract_available: boolean;
   pdftoppm_available: boolean;
   sips_available: boolean;
-};
-
-export type LoadedWorkspaceData = {
-  me: User;
-  dashboard: DashboardSummary;
-  dataQualityPayload: DashboardDataQuality;
-  dataQualityDetailsPayload: DashboardDataQualityDetails;
-  vehicleList: VehiclesResponse;
-  recentDocuments: DocumentsResponse;
-  reviewQueueData: ReviewQueueResponse;
-  laborNormCatalog: LaborNormCatalogResponse | null;
-  laborNormCatalogConfigs: LaborNormCatalogConfigResponse | null;
-  servicesPayload: ServicesResponse;
-  reviewRulesPayload: ReviewRuleResponse | null;
-  ocrRulesPayload: OcrRuleResponse | null;
-  ocrProfileMatchersPayload: OcrProfileMatcherResponse | null;
-  ocrLearningPayload: OcrLearningResponse | null;
-  usersPayload: UsersResponse | null;
-  systemStatusPayload: SystemStatus | null;
 };

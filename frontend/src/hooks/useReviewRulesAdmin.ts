@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
 import { buildReviewRulePayload } from "../shared/adminPayloadBuilders";
 import { apiRequest } from "../shared/api";
 import { createEmptyReviewRuleForm, createReviewRuleFormFromItem } from "../shared/formStateFactories";
@@ -8,6 +9,8 @@ import type { ReviewRuleFormState } from "../shared/workspaceFormTypes";
 type UseReviewRulesAdminParams = {
   token: string | null;
   userRole: UserRole | null | undefined;
+  activeWorkspaceTab: WorkspaceTab;
+  activeAdminTab: AdminTab;
   setErrorMessage: (message: string) => void;
   setSuccessMessage: (message: string) => void;
   openReviewRulesAdmin: () => void;
@@ -16,6 +19,8 @@ type UseReviewRulesAdminParams = {
 export function useReviewRulesAdmin({
   token,
   userRole,
+  activeWorkspaceTab,
+  activeAdminTab,
   setErrorMessage,
   setSuccessMessage,
   openReviewRulesAdmin,
@@ -26,17 +31,29 @@ export function useReviewRulesAdmin({
   const [reviewRuleTypes, setReviewRuleTypes] = useState<string[]>([]);
   const [reviewRuleSaving, setReviewRuleSaving] = useState(false);
   const [reviewRuleForm, setReviewRuleForm] = useState<ReviewRuleFormState>(createEmptyReviewRuleForm);
+  const reviewRulesRequestIdRef = useRef(0);
+  const reviewRulesInitializedRef = useRef(false);
 
   function applyBootstrapReviewRules(payload: ReviewRuleResponse | null) {
+    reviewRulesRequestIdRef.current += 1;
+    if (payload !== null) {
+      reviewRulesInitializedRef.current = true;
+    }
     setReviewRules(payload?.items || []);
     setReviewRuleTypes(payload?.rule_types || []);
   }
 
   async function loadReviewRules() {
-    if (!token) {
+    if (!token || userRole !== "admin") {
       return;
     }
+    const requestId = reviewRulesRequestIdRef.current + 1;
+    reviewRulesRequestIdRef.current = requestId;
     const payload = await apiRequest<ReviewRuleResponse>("/review/rules", { method: "GET" }, token);
+    if (reviewRulesRequestIdRef.current !== requestId) {
+      return;
+    }
+    reviewRulesInitializedRef.current = true;
     setReviewRules(payload.items);
     setReviewRuleTypes(payload.rule_types);
   }
@@ -112,6 +129,8 @@ export function useReviewRulesAdmin({
   }
 
   function resetReviewRulesState() {
+    reviewRulesRequestIdRef.current += 1;
+    reviewRulesInitializedRef.current = false;
     setShowReviewRuleEditor(false);
     setShowReviewRuleListDialog(false);
     setReviewRules([]);
@@ -119,6 +138,29 @@ export function useReviewRulesAdmin({
     setReviewRuleSaving(false);
     setReviewRuleForm(createEmptyReviewRuleForm());
   }
+
+  useEffect(() => {
+    if (!token || userRole !== "admin" || activeWorkspaceTab !== "admin" || activeAdminTab !== "control") {
+      return;
+    }
+    if (reviewRulesInitializedRef.current) {
+      return;
+    }
+    void loadReviewRules().catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить правила проверки");
+    });
+  }, [activeAdminTab, activeWorkspaceTab, setErrorMessage, token, userRole]);
+
+  useEffect(() => {
+    if (!showReviewRuleEditor || reviewRuleForm.id === null) {
+      return;
+    }
+    if (reviewRules.some((item) => item.id === reviewRuleForm.id)) {
+      return;
+    }
+    setShowReviewRuleEditor(false);
+    resetReviewRuleEditor();
+  }, [reviewRuleForm.id, reviewRules, showReviewRuleEditor]);
 
   return {
     showReviewRuleEditor,

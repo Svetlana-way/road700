@@ -68,11 +68,15 @@ def get_repair_source_document(
     chosen = choose_primary_document_candidate(repair)
     if chosen is not None:
         return chosen
-    non_archived = next((item for item in repair.documents if item.status != DocumentStatus.ARCHIVED), None)
-    if non_archived is not None:
-        return non_archived
     if include_archived_fallback:
-        return repair.documents[0] if repair.documents else None
+        non_archived_documents = sorted(
+            (item for item in repair.documents if item.status != DocumentStatus.ARCHIVED),
+            key=lambda item: (item.created_at, item.id),
+        )
+        if non_archived_documents:
+            return non_archived_documents[0]
+        archived_documents = sorted(repair.documents, key=lambda item: (item.created_at, item.id))
+        return archived_documents[0] if archived_documents else None
     return None
 
 
@@ -105,29 +109,21 @@ def build_canonical_source_document_id_expr():
         .correlate(Repair)
         .scalar_subquery()
     )
-    fallback_document_id = (
-        select(Document.id)
-        .where(
-            Document.repair_id == Repair.id,
-            Document.status != DocumentStatus.ARCHIVED,
-        )
-        .order_by(Document.created_at.asc(), Document.id.asc())
-        .limit(1)
-        .correlate(Repair)
-        .scalar_subquery()
-    )
-    return func.coalesce(source_document_match_id, preferred_document_id, fallback_document_id)
+    return func.coalesce(source_document_match_id, preferred_document_id)
 
 
 def order_repair_documents_by_source_priority(repair: Repair) -> list[Document]:
-    source_document = get_repair_source_document(repair, include_archived_fallback=True)
-    if source_document is None:
+    active_documents = [document for document in repair.documents if document.status != DocumentStatus.ARCHIVED]
+    if not active_documents:
         return []
+    source_document = get_repair_source_document(repair)
+    if source_document is None:
+        source_document = min(active_documents, key=lambda item: (item.created_at, item.id))
 
     ordered = [source_document]
     ordered.extend(
         document
-        for document in sorted(repair.documents, key=lambda item: (item.is_primary, item.id), reverse=True)
+        for document in sorted(active_documents, key=lambda item: (item.is_primary, item.id), reverse=True)
         if document.id != source_document.id
     )
     return ordered

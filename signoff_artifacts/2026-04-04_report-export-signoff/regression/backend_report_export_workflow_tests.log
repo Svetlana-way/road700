@@ -1,0 +1,12 @@
+== Backend targeted regression for report/export and employee workflow ==
+Started: 2026-04-04 14:28:32 +0300
+Command: bash -lc cd '/Users/svetlanasamojlova/курсор/road700/backend' && ./.venv/bin/python -m unittest tests.test_review_and_services.ReviewAndServicesApiTestCase.test_repair_export_includes_workflow_stage_and_final_report_sections tests.test_review_and_services.ReviewAndServicesApiTestCase.test_employee_workflow_runs_end_to_end_between_employee_and_admin tests.test_review_and_services.ReviewAndServicesApiTestCase.test_upload_to_repair_reopens_employee_confirmed_repair_for_review tests.test_review_and_services.ReviewAndServicesApiTestCase.test_reprocess_reopens_employee_confirmed_repair_for_review tests.test_review_and_services.ReviewAndServicesApiTestCase.test_review_field_update_resets_employee_confirmed_repair_back_to_in_review
+
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 4.134s
+
+OK
+
+Finished: 2026-04-04 14:28:38 +0300
+Exit code: 0

@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
 import {
   buildLaborNormCatalogCreatePayload,
   buildLaborNormCatalogPayload,
   buildLaborNormEntryPayload,
 } from "../shared/adminPayloadBuilders";
+import type { LaborNormImportResponse } from "../shared/adminApiTypes";
 import { apiRequest } from "../shared/api";
 import {
   createCatalogFormFromItem,
@@ -21,18 +23,11 @@ import type {
 } from "../shared/workspaceBootstrapTypes";
 import type { LaborNormCatalogFormState, LaborNormEntryFormState } from "../shared/workspaceFormTypes";
 
-type LaborNormImportResponse = {
-  message: string;
-  filename: string;
-  imported_at: string;
-  created: number;
-  updated: number;
-  skipped: number;
-};
-
 type UseLaborNormsAdminParams = {
   token: string | null;
   userRole: UserRole | null | undefined;
+  activeWorkspaceTab: WorkspaceTab;
+  activeAdminTab: AdminTab;
   setErrorMessage: (message: string) => void;
   setSuccessMessage: (message: string) => void;
   openLaborNormsAdmin: () => void;
@@ -41,6 +36,8 @@ type UseLaborNormsAdminParams = {
 export function useLaborNormsAdmin({
   token,
   userRole,
+  activeWorkspaceTab,
+  activeAdminTab,
   setErrorMessage,
   setSuccessMessage,
   openLaborNormsAdmin,
@@ -50,6 +47,7 @@ export function useLaborNormsAdmin({
   const [showLaborNormEntryEditor, setShowLaborNormEntryEditor] = useState(false);
   const [showLaborNormListDialog, setShowLaborNormListDialog] = useState(false);
   const [laborNorms, setLaborNorms] = useState<LaborNormCatalogItem[]>([]);
+  const [allLaborNorms, setAllLaborNorms] = useState<LaborNormCatalogItem[]>([]);
   const [laborNormCatalogs, setLaborNormCatalogs] = useState<LaborNormCatalogConfigItem[]>([]);
   const [laborNormTotal, setLaborNormTotal] = useState(0);
   const [laborNormScopes, setLaborNormScopes] = useState<string[]>([]);
@@ -69,16 +67,38 @@ export function useLaborNormsAdmin({
   const [editingLaborNormCatalogId, setEditingLaborNormCatalogId] = useState<number | null>(null);
   const [laborNormCatalogForm, setLaborNormCatalogForm] = useState<LaborNormCatalogFormState>(createEmptyCatalogForm);
   const [laborNormEntryForm, setLaborNormEntryForm] = useState<LaborNormEntryFormState>(createEmptyLaborNormEntryForm);
+  const laborNormCatalogRequestIdRef = useRef(0);
+  const laborNormCatalogConfigsRequestIdRef = useRef(0);
+  const laborNormAdminDataInitializedRef = useRef(false);
 
   function getOperationalCatalogs(catalogs: LaborNormCatalogConfigItem[] = laborNormCatalogs) {
     return catalogs.filter((item) => item.status !== "archived");
+  }
+
+  function getDefaultOperationalScope(catalogs: LaborNormCatalogConfigItem[] = laborNormCatalogs) {
+    return getOperationalCatalogs(catalogs)[0]?.scope || "";
+  }
+
+  function applyCatalogScopeSelection(
+    scope: string,
+    catalogs: LaborNormCatalogConfigItem[] = laborNormCatalogs,
+  ) {
+    const normalizedScope = scope.trim();
+    setLaborNormImportScope(normalizedScope);
+    const selectedCatalog = catalogs.find((item) => item.scope === normalizedScope);
+    setLaborNormImportBrandFamily(selectedCatalog?.brand_family || "");
+    setLaborNormImportCatalogName(selectedCatalog?.catalog_name || "");
   }
 
   function applyBootstrapLaborNorms(payload: {
     laborNormCatalog: LaborNormCatalogResponse | null;
     laborNormCatalogConfigs: LaborNormCatalogConfigResponse | null;
   }) {
+    if (payload.laborNormCatalog !== null || payload.laborNormCatalogConfigs !== null) {
+      laborNormAdminDataInitializedRef.current = true;
+    }
     setLaborNorms(payload.laborNormCatalog?.items || []);
+    setAllLaborNorms(payload.laborNormCatalog?.items || []);
     setLaborNormTotal(payload.laborNormCatalog?.total || 0);
     setLaborNormScopes(payload.laborNormCatalog?.scopes || []);
     setLaborNormCategories(payload.laborNormCatalog?.categories || []);
@@ -86,40 +106,62 @@ export function useLaborNormsAdmin({
     setLaborNormCatalogs(payload.laborNormCatalogConfigs?.items || []);
   }
 
+  async function fetchLaborNormCatalog(query: string, scope: string, category: string, limit = 12) {
+    return apiRequest<LaborNormCatalogResponse>(
+      `/labor-norms?${buildLaborNormQueryString(query, scope, category, limit)}`,
+      { method: "GET" },
+      token || undefined,
+    );
+  }
+
   async function loadLaborNormCatalog(
     query: string = laborNormQuery,
     scope: string = laborNormScope,
     category: string = laborNormCategory,
   ) {
-    if (!token) {
+    if (!token || userRole !== "admin") {
       return;
     }
+    const requestId = laborNormCatalogRequestIdRef.current + 1;
+    laborNormCatalogRequestIdRef.current = requestId;
     setLaborNormLoading(true);
     try {
-      const payload = await apiRequest<LaborNormCatalogResponse>(
-        `/labor-norms?${buildLaborNormQueryString(query, scope, category)}`,
-        { method: "GET" },
-        token,
-      );
+      const [payload, fullPayload] = await Promise.all([
+        fetchLaborNormCatalog(query, scope, category),
+        fetchLaborNormCatalog("", "", "", 200),
+      ]);
+      if (laborNormCatalogRequestIdRef.current !== requestId) {
+        return;
+      }
       setLaborNorms(payload.items);
+      setAllLaborNorms(fullPayload.items);
       setLaborNormTotal(payload.total);
       setLaborNormScopes(payload.scopes);
       setLaborNormCategories(payload.categories);
       setLaborNormSourceFiles(payload.source_files);
+      laborNormAdminDataInitializedRef.current = true;
     } finally {
-      setLaborNormLoading(false);
+      if (laborNormCatalogRequestIdRef.current === requestId) {
+        setLaborNormLoading(false);
+      }
     }
   }
 
   async function loadLaborNormCatalogConfigs() {
-    if (!token) {
-      return;
+    if (!token || userRole !== "admin") {
+      return null;
     }
+    const requestId = laborNormCatalogConfigsRequestIdRef.current + 1;
+    laborNormCatalogConfigsRequestIdRef.current = requestId;
     const payload = await apiRequest<LaborNormCatalogConfigResponse>(
       "/labor-norms/catalogs",
       { method: "GET" },
       token,
     );
+    if (laborNormCatalogConfigsRequestIdRef.current !== requestId) {
+      return null;
+    }
+    laborNormAdminDataInitializedRef.current = true;
     setLaborNormCatalogs(payload.items);
     if (!editingLaborNormCatalogId) {
       setLaborNormCatalogForm((current) => {
@@ -129,6 +171,7 @@ export function useLaborNormsAdmin({
         return createEmptyCatalogForm();
       });
     }
+    return payload;
   }
 
   function updateLaborNormCatalogFormField(field: keyof LaborNormCatalogFormState, value: string) {
@@ -151,7 +194,7 @@ export function useLaborNormsAdmin({
   }
 
   async function resetLaborNormFilters() {
-    if (!token) {
+    if (!token || userRole !== "admin") {
       return;
     }
     setLaborNormQuery("");
@@ -214,14 +257,9 @@ export function useLaborNormsAdmin({
   function selectCatalogScope(scope: string) {
     openLaborNormsAdmin();
     setShowLaborNormImport(true);
-    setLaborNormImportScope(scope);
-    const selectedCatalog = laborNormCatalogs.find((item) => item.scope === scope);
-    if (selectedCatalog) {
-      setLaborNormImportBrandFamily(selectedCatalog.brand_family || "");
-      setLaborNormImportCatalogName(selectedCatalog.catalog_name);
-      if (!laborNormEntryForm.scope) {
-        setLaborNormEntryForm((current) => ({ ...current, scope }));
-      }
+    applyCatalogScopeSelection(scope);
+    if (scope.trim()) {
+      setLaborNormEntryForm((current) => (current.scope ? current : { ...current, scope: scope.trim() }));
     }
   }
 
@@ -240,6 +278,8 @@ export function useLaborNormsAdmin({
     setSuccessMessage("");
     try {
       const payload = buildLaborNormCatalogPayload(laborNormCatalogForm);
+      const savedScope = laborNormCatalogForm.scope.trim();
+      const isArchivedCatalog = payload.status === "archived";
 
       if (editingLaborNormCatalogId) {
         await apiRequest<LaborNormCatalogConfigItem>(
@@ -263,10 +303,13 @@ export function useLaborNormsAdmin({
         setSuccessMessage("Каталог нормо-часов создан");
       }
 
-      await loadLaborNormCatalogConfigs();
-      selectCatalogScope(laborNormCatalogForm.scope.trim());
-      if (laborNormScope === laborNormCatalogForm.scope.trim()) {
-        await loadLaborNormCatalog();
+      const configsPayload = await loadLaborNormCatalogConfigs();
+      const nextOperationalScope = getDefaultOperationalScope(configsPayload?.items || []);
+      const nextSelectedScope = isArchivedCatalog ? nextOperationalScope : savedScope;
+      applyCatalogScopeSelection(nextSelectedScope, configsPayload?.items || []);
+      if (laborNormScope === savedScope) {
+        setLaborNormScope(nextSelectedScope);
+        await loadLaborNormCatalog(laborNormQuery, nextSelectedScope, laborNormCategory);
       }
       resetLaborNormCatalogEditor();
     } catch (error) {
@@ -371,11 +414,15 @@ export function useLaborNormsAdmin({
   }
 
   function resetLaborNormsState() {
+    laborNormCatalogRequestIdRef.current += 1;
+    laborNormCatalogConfigsRequestIdRef.current += 1;
+    laborNormAdminDataInitializedRef.current = false;
     setShowLaborNormCatalogEditor(false);
     setShowLaborNormImport(false);
     setShowLaborNormEntryEditor(false);
     setShowLaborNormListDialog(false);
     setLaborNorms([]);
+    setAllLaborNorms([]);
     setLaborNormCatalogs([]);
     setLaborNormTotal(0);
     setLaborNormScopes([]);
@@ -398,17 +445,91 @@ export function useLaborNormsAdmin({
   }
 
   useEffect(() => {
-    const operationalCatalogs = getOperationalCatalogs();
-    if (operationalCatalogs.length === 0) {
+    if (!token || userRole !== "admin" || activeWorkspaceTab !== "admin" || activeAdminTab !== "labor_norms") {
       return;
     }
-    if (!laborNormEntryForm.scope) {
+    if (laborNormAdminDataInitializedRef.current) {
+      return;
+    }
+    void Promise.all([loadLaborNormCatalogConfigs(), loadLaborNormCatalog()]).catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить справочник нормо-часов");
+    });
+  }, [activeAdminTab, activeWorkspaceTab, setErrorMessage, token, userRole]);
+
+  useEffect(() => {
+    const operationalCatalogs = getOperationalCatalogs();
+    const operationalScopeSet = new Set(operationalCatalogs.map((item) => item.scope));
+    const fallbackScope = operationalCatalogs[0]?.scope || "";
+
+    if (!fallbackScope) {
+      if (laborNormScope) {
+        setLaborNormScope("");
+      }
+      if (laborNormImportScope || laborNormImportBrandFamily || laborNormImportCatalogName) {
+        applyCatalogScopeSelection("", laborNormCatalogs);
+      }
+      if (laborNormEntryForm.scope) {
+        setLaborNormEntryForm(createEmptyLaborNormEntryForm());
+      }
+      return;
+    }
+
+    if (laborNormScope && !operationalScopeSet.has(laborNormScope)) {
+      setLaborNormScope("");
+    }
+
+    if (laborNormEntryForm.scope && !operationalScopeSet.has(laborNormEntryForm.scope)) {
+      setLaborNormEntryForm(createEmptyLaborNormEntryForm(fallbackScope));
+    } else if (!laborNormEntryForm.scope) {
       setLaborNormEntryForm((current) => ({ ...current, scope: operationalCatalogs[0].scope }));
     }
-    if (!laborNormImportScope) {
-      selectCatalogScope(operationalCatalogs[0].scope);
+
+    if (laborNormImportScope && !operationalScopeSet.has(laborNormImportScope)) {
+      applyCatalogScopeSelection(fallbackScope, laborNormCatalogs);
+    } else if (!laborNormImportScope) {
+      applyCatalogScopeSelection(fallbackScope, laborNormCatalogs);
     }
-  }, [laborNormCatalogs, laborNormEntryForm.scope, laborNormImportScope]);
+  }, [
+    laborNormCatalogs,
+    laborNormEntryForm.scope,
+    laborNormImportBrandFamily,
+    laborNormImportCatalogName,
+    laborNormImportScope,
+    laborNormScope,
+  ]);
+
+  useEffect(() => {
+    if (!laborNormCategory || laborNormCategories.includes(laborNormCategory)) {
+      return;
+    }
+    setLaborNormCategory("");
+    if (!token || userRole !== "admin") {
+      return;
+    }
+    void loadLaborNormCatalog(laborNormQuery, laborNormScope, "");
+  }, [laborNormCategories, laborNormCategory, laborNormQuery, laborNormScope, token, userRole]);
+
+  useEffect(() => {
+    if (!showLaborNormCatalogEditor || editingLaborNormCatalogId === null) {
+      return;
+    }
+    if (laborNormCatalogs.some((item) => item.id === editingLaborNormCatalogId)) {
+      return;
+    }
+    setShowLaborNormCatalogEditor(false);
+    resetLaborNormCatalogEditor();
+  }, [editingLaborNormCatalogId, laborNormCatalogs, showLaborNormCatalogEditor]);
+
+  useEffect(() => {
+    if (!showLaborNormEntryEditor || laborNormEntryForm.id === null) {
+      return;
+    }
+    if (allLaborNorms.some((item) => item.id === laborNormEntryForm.id)) {
+      return;
+    }
+    setShowLaborNormEntryEditor(false);
+    resetLaborNormEntryEditor();
+  }, [allLaborNorms, laborNormEntryForm.id, showLaborNormEntryEditor]);
 
   return {
     showLaborNormCatalogEditor,
@@ -420,6 +541,7 @@ export function useLaborNormsAdmin({
     showLaborNormListDialog,
     setShowLaborNormListDialog,
     laborNorms,
+    allLaborNorms,
     laborNormCatalogs,
     laborNormTotal,
     laborNormScopes,

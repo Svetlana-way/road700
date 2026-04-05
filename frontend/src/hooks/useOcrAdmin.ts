@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { buildOcrProfileMatcherPayload, buildOcrRulePayload } from "../shared/adminPayloadBuilders";
-import { type TechAdminTab } from "../shared/appRoute";
+import type { OcrLearningDraftsResponse } from "../shared/adminApiTypes";
+import { type TechAdminTab, type WorkspaceTab } from "../shared/appRoute";
 import { apiRequest } from "../shared/api";
 import {
   createEmptyOcrProfileMatcherForm,
@@ -25,32 +26,11 @@ import type {
 } from "../shared/workspaceBootstrapTypes";
 import type { OcrProfileMatcherFormState, OcrRuleFormState } from "../shared/workspaceFormTypes";
 
-type OcrLearningDraftsResponse = {
-  signal: OcrLearningSignalItem;
-  ocr_rule_draft: {
-    profile_scope: string;
-    target_field: string;
-    pattern: string;
-    value_parser: string;
-    confidence: number;
-    priority: number;
-    notes: string | null;
-  };
-  matcher_draft: {
-    profile_scope: string;
-    title: string;
-    source_type: string | null;
-    filename_pattern: string | null;
-    text_pattern: string | null;
-    service_name_pattern: string | null;
-    priority: number;
-    notes: string | null;
-  };
-};
-
 type UseOcrAdminParams = {
   token: string | null;
   userRole: UserRole | null | undefined;
+  activeWorkspaceTab: WorkspaceTab;
+  activeTechAdminTab: TechAdminTab;
   setErrorMessage: (message: string) => void;
   setSuccessMessage: (message: string) => void;
   openTechAdmin: (tab?: TechAdminTab) => void;
@@ -59,17 +39,21 @@ type UseOcrAdminParams = {
 export function useOcrAdmin({
   token,
   userRole,
+  activeWorkspaceTab,
+  activeTechAdminTab,
   setErrorMessage,
   setSuccessMessage,
   openTechAdmin,
 }: UseOcrAdminParams) {
   const [ocrRules, setOcrRules] = useState<OcrRuleItem[]>([]);
+  const [allOcrRules, setAllOcrRules] = useState<OcrRuleItem[]>([]);
   const [ocrRuleProfiles, setOcrRuleProfiles] = useState<string[]>([]);
   const [ocrRuleTargetFields, setOcrRuleTargetFields] = useState<string[]>([]);
   const [ocrRuleProfileFilter, setOcrRuleProfileFilter] = useState("");
   const [ocrRuleSaving, setOcrRuleSaving] = useState(false);
   const [ocrRuleForm, setOcrRuleForm] = useState<OcrRuleFormState>(createEmptyOcrRuleForm);
   const [ocrProfileMatchers, setOcrProfileMatchers] = useState<OcrProfileMatcherItem[]>([]);
+  const [allOcrProfileMatchers, setAllOcrProfileMatchers] = useState<OcrProfileMatcherItem[]>([]);
   const [ocrProfileMatcherProfiles, setOcrProfileMatcherProfiles] = useState<string[]>([]);
   const [ocrProfileMatcherProfileFilter, setOcrProfileMatcherProfileFilter] = useState("");
   const [ocrProfileMatcherSaving, setOcrProfileMatcherSaving] = useState(false);
@@ -89,6 +73,14 @@ export function useOcrAdmin({
   const [ocrLearningLoading, setOcrLearningLoading] = useState(false);
   const [ocrLearningUpdateId, setOcrLearningUpdateId] = useState<number | null>(null);
   const [ocrLearningDraftId, setOcrLearningDraftId] = useState<number | null>(null);
+  const ocrRulesRequestIdRef = useRef(0);
+  const ocrProfileMatchersRequestIdRef = useRef(0);
+  const ocrLearningRequestIdRef = useRef(0);
+  const systemStatusRequestIdRef = useRef(0);
+  const ocrRulesInitializedRef = useRef(false);
+  const ocrProfileMatchersInitializedRef = useRef(false);
+  const ocrLearningInitializedRef = useRef(false);
+  const systemStatusInitializedRef = useRef(false);
 
   function applyBootstrapOcrAdmin(payload: {
     ocrRulesPayload: OcrRuleResponse | null;
@@ -96,10 +88,24 @@ export function useOcrAdmin({
     ocrLearningPayload: OcrLearningResponse | null;
     systemStatusPayload: SystemStatus | null;
   }) {
+    if (payload.ocrRulesPayload !== null) {
+      ocrRulesInitializedRef.current = true;
+    }
+    if (payload.ocrProfileMatchersPayload !== null) {
+      ocrProfileMatchersInitializedRef.current = true;
+    }
+    if (payload.ocrLearningPayload !== null) {
+      ocrLearningInitializedRef.current = true;
+    }
+    if (payload.systemStatusPayload !== null) {
+      systemStatusInitializedRef.current = true;
+    }
     setOcrRules(payload.ocrRulesPayload?.items || []);
+    setAllOcrRules(payload.ocrRulesPayload?.items || []);
     setOcrRuleProfiles(payload.ocrRulesPayload?.profile_scopes || []);
     setOcrRuleTargetFields(payload.ocrRulesPayload?.target_fields || []);
     setOcrProfileMatchers(payload.ocrProfileMatchersPayload?.items || []);
+    setAllOcrProfileMatchers(payload.ocrProfileMatchersPayload?.items || []);
     setOcrProfileMatcherProfiles(payload.ocrProfileMatchersPayload?.profile_scopes || []);
     setOcrLearningSignals(payload.ocrLearningPayload?.items || []);
     setOcrLearningSummaries(payload.ocrLearningPayload?.summaries || []);
@@ -109,33 +115,67 @@ export function useOcrAdmin({
     setSystemStatus(payload.systemStatusPayload);
   }
 
-  async function loadOcrRules(profileScope: string = ocrRuleProfileFilter) {
-    if (!token) {
+  async function loadSystemStatus() {
+    if (!token || userRole !== "admin") {
       return;
     }
+    const requestId = systemStatusRequestIdRef.current + 1;
+    systemStatusRequestIdRef.current = requestId;
+    const payload = await apiRequest<SystemStatus>("/system/status", { method: "GET" }, token);
+    if (systemStatusRequestIdRef.current !== requestId) {
+      return;
+    }
+    systemStatusInitializedRef.current = true;
+    setSystemStatus(payload);
+  }
+
+  async function loadOcrRules(profileScope: string = ocrRuleProfileFilter) {
+    if (!token || userRole !== "admin") {
+      return;
+    }
+    const requestId = ocrRulesRequestIdRef.current + 1;
+    ocrRulesRequestIdRef.current = requestId;
     const queryString = buildOcrRulesQueryString(profileScope);
-    const payload = await apiRequest<OcrRuleResponse>(
-      `/ocr-rules${queryString ? `?${queryString}` : ""}`,
-      { method: "GET" },
-      token,
-    );
+    const [payload, fullPayload] = await Promise.all([
+      apiRequest<OcrRuleResponse>(`/ocr-rules${queryString ? `?${queryString}` : ""}`, { method: "GET" }, token),
+      profileScope
+        ? apiRequest<OcrRuleResponse>("/ocr-rules", { method: "GET" }, token)
+        : Promise.resolve<OcrRuleResponse | null>(null),
+    ]);
+    if (ocrRulesRequestIdRef.current !== requestId) {
+      return;
+    }
+    ocrRulesInitializedRef.current = true;
     setOcrRules(payload.items);
     setOcrRuleProfiles(payload.profile_scopes);
     setOcrRuleTargetFields(payload.target_fields);
+    setAllOcrRules(fullPayload?.items || payload.items);
   }
 
   async function loadOcrProfileMatchers(profileScope: string = ocrProfileMatcherProfileFilter) {
-    if (!token) {
+    if (!token || userRole !== "admin") {
       return;
     }
+    const requestId = ocrProfileMatchersRequestIdRef.current + 1;
+    ocrProfileMatchersRequestIdRef.current = requestId;
     const queryString = buildOcrProfileMatchersQueryString(profileScope);
-    const payload = await apiRequest<OcrProfileMatcherResponse>(
-      `/ocr-profile-matchers${queryString ? `?${queryString}` : ""}`,
-      { method: "GET" },
-      token,
-    );
+    const [payload, fullPayload] = await Promise.all([
+      apiRequest<OcrProfileMatcherResponse>(
+        `/ocr-profile-matchers${queryString ? `?${queryString}` : ""}`,
+        { method: "GET" },
+        token,
+      ),
+      profileScope
+        ? apiRequest<OcrProfileMatcherResponse>("/ocr-profile-matchers", { method: "GET" }, token)
+        : Promise.resolve<OcrProfileMatcherResponse | null>(null),
+    ]);
+    if (ocrProfileMatchersRequestIdRef.current !== requestId) {
+      return;
+    }
+    ocrProfileMatchersInitializedRef.current = true;
     setOcrProfileMatchers(payload.items);
     setOcrProfileMatcherProfiles(payload.profile_scopes);
+    setAllOcrProfileMatchers(fullPayload?.items || payload.items);
   }
 
   async function loadOcrLearningSignals(
@@ -143,9 +183,11 @@ export function useOcrAdmin({
     targetFieldFilter: string = ocrLearningTargetFieldFilter,
     profileScopeFilter: string = ocrLearningProfileScopeFilter,
   ) {
-    if (!token) {
+    if (!token || userRole !== "admin") {
       return;
     }
+    const requestId = ocrLearningRequestIdRef.current + 1;
+    ocrLearningRequestIdRef.current = requestId;
     setOcrLearningLoading(true);
     try {
       const payload = await apiRequest<OcrLearningResponse>(
@@ -153,13 +195,19 @@ export function useOcrAdmin({
         { method: "GET" },
         token,
       );
+      if (ocrLearningRequestIdRef.current !== requestId) {
+        return;
+      }
+      ocrLearningInitializedRef.current = true;
       setOcrLearningSignals(payload.items);
       setOcrLearningSummaries(payload.summaries);
       setOcrLearningStatuses(payload.statuses);
       setOcrLearningTargetFields(payload.target_fields);
       setOcrLearningProfileScopes(payload.profile_scopes);
     } finally {
-      setOcrLearningLoading(false);
+      if (ocrLearningRequestIdRef.current === requestId) {
+        setOcrLearningLoading(false);
+      }
     }
   }
 
@@ -366,13 +414,23 @@ export function useOcrAdmin({
   }
 
   function resetOcrAdminState() {
+    ocrRulesRequestIdRef.current += 1;
+    ocrProfileMatchersRequestIdRef.current += 1;
+    ocrLearningRequestIdRef.current += 1;
+    systemStatusRequestIdRef.current += 1;
+    ocrRulesInitializedRef.current = false;
+    ocrProfileMatchersInitializedRef.current = false;
+    ocrLearningInitializedRef.current = false;
+    systemStatusInitializedRef.current = false;
     setOcrRules([]);
+    setAllOcrRules([]);
     setOcrRuleProfiles([]);
     setOcrRuleTargetFields([]);
     setOcrRuleProfileFilter("");
     setOcrRuleSaving(false);
     setOcrRuleForm(createEmptyOcrRuleForm());
     setOcrProfileMatchers([]);
+    setAllOcrProfileMatchers([]);
     setOcrProfileMatcherProfiles([]);
     setOcrProfileMatcherProfileFilter("");
     setOcrProfileMatcherSaving(false);
@@ -391,6 +449,114 @@ export function useOcrAdmin({
     setOcrLearningUpdateId(null);
     setOcrLearningDraftId(null);
   }
+
+  useEffect(() => {
+    if (!token || userRole !== "admin") {
+      return;
+    }
+    if ((activeWorkspaceTab === "admin" || activeWorkspaceTab === "tech_admin") && !systemStatusInitializedRef.current) {
+      void loadSystemStatus().catch((error) => {
+        setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить статус системы");
+      });
+    }
+    if (activeWorkspaceTab !== "tech_admin") {
+      return;
+    }
+    if (activeTechAdminTab === "rules" && !ocrRulesInitializedRef.current) {
+      void loadOcrRules().catch((error) => {
+        setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить OCR-правила");
+      });
+    } else if (activeTechAdminTab === "matchers" && !ocrProfileMatchersInitializedRef.current) {
+      void loadOcrProfileMatchers().catch((error) => {
+        setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить правила выбора шаблона");
+      });
+    } else if (activeTechAdminTab === "learning" && !ocrLearningInitializedRef.current) {
+      void loadOcrLearningSignals().catch((error) => {
+        setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить OCR-сигналы");
+      });
+    }
+  }, [activeTechAdminTab, activeWorkspaceTab, setErrorMessage, token, userRole]);
+
+  useEffect(() => {
+    if (ocrRuleForm.id === null) {
+      return;
+    }
+    if (allOcrRules.some((item) => item.id === ocrRuleForm.id)) {
+      return;
+    }
+    resetOcrRuleEditor();
+  }, [allOcrRules, ocrRuleForm.id]);
+
+  useEffect(() => {
+    if (ocrProfileMatcherForm.id === null) {
+      return;
+    }
+    if (allOcrProfileMatchers.some((item) => item.id === ocrProfileMatcherForm.id)) {
+      return;
+    }
+    resetOcrProfileMatcherEditor();
+  }, [allOcrProfileMatchers, ocrProfileMatcherForm.id]);
+
+  useEffect(() => {
+    if (!ocrRuleProfileFilter || ocrRuleProfiles.includes(ocrRuleProfileFilter)) {
+      return;
+    }
+    setOcrRuleProfileFilter("");
+    if (!token || userRole !== "admin") {
+      return;
+    }
+    void loadOcrRules("");
+  }, [ocrRuleProfiles, ocrRuleProfileFilter, token, userRole]);
+
+  useEffect(() => {
+    if (!ocrProfileMatcherProfileFilter || ocrProfileMatcherProfiles.includes(ocrProfileMatcherProfileFilter)) {
+      return;
+    }
+    setOcrProfileMatcherProfileFilter("");
+    if (!token || userRole !== "admin") {
+      return;
+    }
+    void loadOcrProfileMatchers("");
+  }, [ocrProfileMatcherProfiles, ocrProfileMatcherProfileFilter, token, userRole]);
+
+  useEffect(() => {
+    const nextStatusFilter =
+      ocrLearningStatusFilter && !ocrLearningStatuses.includes(ocrLearningStatusFilter) ? "" : ocrLearningStatusFilter;
+    const nextTargetFieldFilter =
+      ocrLearningTargetFieldFilter && !ocrLearningTargetFields.includes(ocrLearningTargetFieldFilter)
+        ? ""
+        : ocrLearningTargetFieldFilter;
+    const nextProfileScopeFilter =
+      ocrLearningProfileScopeFilter && !ocrLearningProfileScopes.includes(ocrLearningProfileScopeFilter)
+        ? ""
+        : ocrLearningProfileScopeFilter;
+
+    if (
+      nextStatusFilter === ocrLearningStatusFilter &&
+      nextTargetFieldFilter === ocrLearningTargetFieldFilter &&
+      nextProfileScopeFilter === ocrLearningProfileScopeFilter
+    ) {
+      return;
+    }
+
+    setOcrLearningStatusFilter(nextStatusFilter);
+    setOcrLearningTargetFieldFilter(nextTargetFieldFilter);
+    setOcrLearningProfileScopeFilter(nextProfileScopeFilter);
+
+    if (!token || userRole !== "admin") {
+      return;
+    }
+    void loadOcrLearningSignals(nextStatusFilter, nextTargetFieldFilter, nextProfileScopeFilter);
+  }, [
+    ocrLearningProfileScopeFilter,
+    ocrLearningProfileScopes,
+    ocrLearningStatusFilter,
+    ocrLearningStatuses,
+    ocrLearningTargetFieldFilter,
+    ocrLearningTargetFields,
+    token,
+    userRole,
+  ]);
 
   return {
     ocrRules,

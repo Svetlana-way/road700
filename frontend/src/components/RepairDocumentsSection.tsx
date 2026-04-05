@@ -20,7 +20,6 @@ type RepairDocumentsSectionProps = {
   documentOpenLoadingId: number | null;
   reprocessLoading: boolean;
   reprocessLoadingId: number | null;
-  selectedDocumentId: number | null;
   documentComparisonLoadingId: number | null;
   primaryDocumentLoadingId: number | null;
   documentArchiveLoadingId: number | null;
@@ -33,7 +32,7 @@ type RepairDocumentsSectionProps = {
   onOpenAttachedFilePicker: () => void;
   onAttachDocument: () => void;
   onOpenDocumentFile: (documentId: number) => void;
-  onReprocessDocumentById: (documentId: number, repairId: number) => void;
+  onReprocessDocumentById: (documentId: number, repairId: number, documentStatus?: string, repairStatus?: string) => void;
   onCompareWithPrimary: (documentId: number) => void;
   onSetPrimaryDocument: (documentId: number) => void;
   onArchiveDocument: (documentId: number, repairId: number) => void;
@@ -65,7 +64,6 @@ export function RepairDocumentsSection({
   documentOpenLoadingId,
   reprocessLoading,
   reprocessLoadingId,
-  selectedDocumentId,
   documentComparisonLoadingId,
   primaryDocumentLoadingId,
   documentArchiveLoadingId,
@@ -212,18 +210,17 @@ export function RepairDocumentsSection({
                   >
                     {documentOpenLoadingId === document.id ? "Открытие..." : "Открыть файл"}
                   </Button>
-                  {userRole === "admin" ? (
+                  {document.status !== "archived" && selectedRepair.status !== "archived" ? (
                     <Button
                       size="small"
                       variant="text"
-                      disabled={reprocessLoading || document.status === "archived" || selectedRepair.status === "archived"}
-                      onClick={() => onReprocessDocumentById(document.id, selectedRepair.id)}
+                      disabled={reprocessLoading}
+                      onClick={() => onReprocessDocumentById(document.id, selectedRepair.id, document.status, selectedRepair.status)}
                     >
                       {reprocessLoading && reprocessLoadingId === document.id ? "Повтор..." : "Повторить OCR"}
                     </Button>
                   ) : null}
-                  {userRole === "admin" &&
-                  (document.kind === "order" || document.kind === "repeat_scan") &&
+                  {(document.kind === "order" || document.kind === "repeat_scan") &&
                   !document.is_primary &&
                   document.status !== "archived" &&
                   selectedRepair.status !== "archived" ? (
@@ -236,14 +233,16 @@ export function RepairDocumentsSection({
                       >
                         {documentComparisonLoadingId === document.id ? "Сравнение..." : "Сравнить с основным"}
                       </Button>
-                      <Button
-                        size="small"
-                        variant="text"
-                        disabled={primaryDocumentLoadingId === document.id}
-                        onClick={() => onSetPrimaryDocument(document.id)}
-                      >
-                        {primaryDocumentLoadingId === document.id ? "Смена..." : "Сделать основным"}
-                      </Button>
+                      {userRole === "admin" ? (
+                        <Button
+                          size="small"
+                          variant="text"
+                          disabled={primaryDocumentLoadingId === document.id}
+                          onClick={() => onSetPrimaryDocument(document.id)}
+                        >
+                          {primaryDocumentLoadingId === document.id ? "Смена..." : "Сделать основным"}
+                        </Button>
+                      ) : null}
                     </>
                   ) : null}
                   {userRole === "admin" && document.status !== "archived" && selectedRepair.status !== "archived" ? (
@@ -319,37 +318,45 @@ export function RepairDocumentsSection({
                   </Typography>
                 </Box>
               ))}
-              <TextField
-                label="Комментарий по сверке"
-                value={documentComparisonComment}
-                onChange={(event) => onDocumentComparisonCommentChange(event.target.value)}
-                fullWidth
-                multiline
-                minRows={2}
-              />
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                <Button
-                  variant="outlined"
-                  disabled={documentComparisonReviewLoading}
-                  onClick={() => onReviewDocumentComparison("keep_current_primary")}
-                >
-                  {documentComparisonReviewLoading ? "Сохранение..." : "Оставить текущий основной"}
-                </Button>
-                <Button
-                  variant="contained"
-                  disabled={documentComparisonReviewLoading}
-                  onClick={() => onReviewDocumentComparison("make_document_primary")}
-                >
-                  Сделать сравниваемый основным
-                </Button>
-                <Button
-                  variant="text"
-                  disabled={documentComparisonReviewLoading}
-                  onClick={() => onReviewDocumentComparison("mark_reviewed")}
-                >
-                  Отметить как проверенное
-                </Button>
-              </Stack>
+              {userRole === "admin" ? (
+                <>
+                  <TextField
+                    label="Комментарий по сверке"
+                    value={documentComparisonComment}
+                    onChange={(event) => onDocumentComparisonCommentChange(event.target.value)}
+                    fullWidth
+                    multiline
+                    minRows={2}
+                  />
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                    <Button
+                      variant="outlined"
+                      disabled={documentComparisonReviewLoading}
+                      onClick={() => onReviewDocumentComparison("keep_current_primary")}
+                    >
+                      {documentComparisonReviewLoading ? "Сохранение..." : "Оставить текущий основной"}
+                    </Button>
+                    <Button
+                      variant="contained"
+                      disabled={documentComparisonReviewLoading}
+                      onClick={() => onReviewDocumentComparison("make_document_primary")}
+                    >
+                      Сделать сравниваемый основным
+                    </Button>
+                    <Button
+                      variant="text"
+                      disabled={documentComparisonReviewLoading}
+                      onClick={() => onReviewDocumentComparison("mark_reviewed")}
+                    >
+                      Отметить как проверенное
+                    </Button>
+                  </Stack>
+                </>
+              ) : (
+                <Alert severity="info">
+                  Сравнение доступно для просмотра. Изменение основного документа выполняет администратор.
+                </Alert>
+              )}
             </Stack>
           </Paper>
         </Stack>

@@ -9,20 +9,14 @@ type BuildWorkspaceLifecycleAdaptersParams = {
   setSummary: WorkspaceStateAppliers["setSummary"];
   setDataQuality: WorkspaceStateAppliers["setDataQuality"];
   setDataQualityDetails: WorkspaceStateAppliers["setDataQualityDetails"];
-  setVehicles: WorkspaceStateAppliers["setVehicles"];
   setDocuments: WorkspaceStateAppliers["setDocuments"];
   setReviewQueue: WorkspaceStateAppliers["setReviewQueue"];
   setReviewQueueCounts: WorkspaceStateAppliers["setReviewQueueCounts"];
   setSelectedDocumentId: WorkspaceStateAppliers["setSelectedDocumentId"];
   setSelectedRepair: Dispatch<SetStateAction<RepairDetail | null>>;
+  invalidateRepairDetailLoaderState: () => void;
   setLastUploadedDocument: Dispatch<SetStateAction<DocumentItem | null>>;
   setErrorMessage: WorkspaceStateAppliers["setErrorMessage"];
-  applyBootstrapVehicleList: WorkspaceStateAppliers["applyBootstrapVehicleList"];
-  applyBootstrapUsers: WorkspaceStateAppliers["applyBootstrapUsers"];
-  applyBootstrapLaborNorms: WorkspaceStateAppliers["applyBootstrapLaborNorms"];
-  applyBootstrapServices: WorkspaceStateAppliers["applyBootstrapServices"];
-  applyBootstrapReviewRules: WorkspaceStateAppliers["applyBootstrapReviewRules"];
-  applyBootstrapOcrAdmin: WorkspaceStateAppliers["applyBootstrapOcrAdmin"];
   setShowTechAdminTab: WorkspaceResetters["setShowTechAdminTab"];
   setShowPasswordChange: WorkspaceResetters["setShowPasswordChange"];
   setActiveTechAdminTab: WorkspaceResetters["setActiveTechAdminTab"];
@@ -49,20 +43,14 @@ export function buildWorkspaceLifecycleAdapters({
   setSummary,
   setDataQuality,
   setDataQualityDetails,
-  setVehicles,
   setDocuments,
   setReviewQueue,
   setReviewQueueCounts,
   setSelectedDocumentId,
   setSelectedRepair,
+  invalidateRepairDetailLoaderState,
   setLastUploadedDocument,
   setErrorMessage,
-  applyBootstrapVehicleList,
-  applyBootstrapUsers,
-  applyBootstrapLaborNorms,
-  applyBootstrapServices,
-  applyBootstrapReviewRules,
-  applyBootstrapOcrAdmin,
   setShowTechAdminTab,
   setShowPasswordChange,
   setActiveTechAdminTab,
@@ -92,22 +80,16 @@ export function buildWorkspaceLifecycleAdapters({
       setSummary,
       setDataQuality,
       setDataQualityDetails,
-      setVehicles,
       setDocuments,
       setReviewQueue,
       setReviewQueueCounts,
       setSelectedDocumentId,
       clearSelectedRepair: () => {
+        invalidateRepairDetailLoaderState();
         setSelectedRepair(null);
       },
       setLastUploadedDocument,
       setErrorMessage,
-      applyBootstrapVehicleList,
-      applyBootstrapUsers,
-      applyBootstrapLaborNorms,
-      applyBootstrapServices,
-      applyBootstrapReviewRules,
-      applyBootstrapOcrAdmin,
     },
     resetters: {
       setShowTechAdminTab,

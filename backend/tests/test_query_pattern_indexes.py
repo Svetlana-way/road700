@@ -33,6 +33,7 @@ class QueryPatternIndexesMigrationTestCase(unittest.TestCase):
         inspector = inspect(engine)
 
         audit_indexes = {item["name"]: item["column_names"] for item in inspector.get_indexes("audit_log")}
+        document_indexes = {item["name"]: item["column_names"] for item in inspector.get_indexes("documents")}
         import_job_indexes = {item["name"]: item["column_names"] for item in inspector.get_indexes("import_jobs")}
         import_conflict_indexes = {
             item["name"]: item["column_names"] for item in inspector.get_indexes("import_conflicts")
@@ -40,7 +41,16 @@ class QueryPatternIndexesMigrationTestCase(unittest.TestCase):
         repair_check_indexes = {item["name"]: item["column_names"] for item in inspector.get_indexes("repair_checks")}
 
         self.assertEqual(audit_indexes.get("ix_audit_log_created_at_id"), ["created_at", "id"])
+        self.assertEqual(document_indexes.get("ix_documents_status_created_at_id"), ["status", "created_at", "id"])
+        self.assertEqual(
+            document_indexes.get("ix_documents_review_queue_priority_updated_at_id"),
+            ["review_queue_priority", "updated_at", "id"],
+        )
         self.assertEqual(import_job_indexes.get("ix_import_jobs_created_at_id"), ["created_at", "id"])
+        self.assertEqual(
+            import_job_indexes.get("ix_import_jobs_import_type_status_created_at_id"),
+            ["import_type", "status", "created_at", "id"],
+        )
         self.assertEqual(
             import_conflict_indexes.get("ix_import_conflicts_status_created_at_id"),
             ["status", "created_at", "id"],

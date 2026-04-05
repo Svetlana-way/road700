@@ -108,6 +108,7 @@ def find_vehicle(
     return db.scalar(
         select(Vehicle).where(
             Vehicle.vehicle_type == vehicle_type,
+            Vehicle.status != VehicleStatus.ARCHIVED,
             or_(*clauses),
         )
     )
@@ -182,7 +183,9 @@ def create_links(
 ) -> None:
     by_plate = {
         vehicle.plate_number: vehicle
-        for vehicle in db.scalars(select(Vehicle)).all()
+        for vehicle in db.scalars(
+            select(Vehicle).where(Vehicle.status != VehicleStatus.ARCHIVED)
+        ).all()
         if vehicle.plate_number
     }
 

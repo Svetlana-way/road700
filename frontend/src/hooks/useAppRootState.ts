@@ -10,7 +10,6 @@ import type {
   ReviewQueueCategory,
   ReviewQueueItem,
   User,
-  Vehicle,
 } from "../shared/workspaceBootstrapTypes";
 import type { DocumentVehicleFormState } from "../shared/workspaceFormTypes";
 
@@ -30,7 +29,6 @@ export function useAppRootState({ createEmptyDocumentVehicleForm }: UseAppRootSt
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [dataQuality, setDataQuality] = useState<DashboardDataQuality | null>(null);
   const [dataQualityDetails, setDataQualityDetails] = useState<DashboardDataQualityDetails | null>(null);
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
   const [reviewQueueCounts, setReviewQueueCounts] = useState<Record<ReviewQueueCategory, number>>({
@@ -79,8 +77,6 @@ export function useAppRootState({ createEmptyDocumentVehicleForm }: UseAppRootSt
     setDataQuality,
     dataQualityDetails,
     setDataQualityDetails,
-    vehicles,
-    setVehicles,
     documents,
     setDocuments,
     reviewQueue,

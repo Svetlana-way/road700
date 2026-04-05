@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin, get_db
 from app.api.upload_validation import validate_historical_import_upload
-from app.models.enums import RepairStatus
+from app.models.enums import RepairStatus, ServiceStatus, VehicleStatus
 from app.models.repair import Repair, RepairWork
 from app.models.service import Service
 from app.models.vehicle import Vehicle
@@ -61,12 +61,17 @@ def build_historical_work_reference(
             RepairWork.actual_hours,
             Service.id.label("service_id"),
             Service.name.label("service_name"),
+            Service.status.label("service_status"),
             Vehicle.vehicle_type,
+            Vehicle.status.label("vehicle_status"),
         )
         .join(Repair, Repair.id == RepairWork.repair_id)
         .join(Vehicle, Vehicle.id == Repair.vehicle_id)
         .join(Service, Service.id == Repair.service_id, isouter=True)
         .where(
+            Repair.status != RepairStatus.ARCHIVED,
+            Vehicle.status != VehicleStatus.ARCHIVED,
+            or_(Repair.service_id.is_(None), Service.status != ServiceStatus.ARCHIVED),
             or_(
                 Repair.reason.like(f"{IMPORT_REASON_PREFIX}%"),
                 Repair.status.in_(REFERENCE_OPERATIONAL_STATUSES),
@@ -82,8 +87,14 @@ def build_historical_work_reference(
         work_name = str(row.work_name or "").strip()
         if not work_name:
             continue
-        is_historical = bool(row.reason) and str(row.reason).startswith(IMPORT_REASON_PREFIX)
-        is_operational = not is_historical and row.status in REFERENCE_OPERATIONAL_STATUSES
+        is_historical = (
+            bool(row.reason)
+            and str(row.reason).startswith(IMPORT_REASON_PREFIX)
+        )
+        is_operational = (
+            not is_historical
+            and row.status in REFERENCE_OPERATIONAL_STATUSES
+        )
         if not is_historical and not is_operational:
             continue
         work_code = str(row.work_code).strip() if row.work_code else None

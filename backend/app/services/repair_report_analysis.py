@@ -777,7 +777,7 @@ def _build_document_quality_findings(
     manual_review_reason_labels: dict[str, str],
 ) -> list[dict[str, object]]:
     findings: list[dict[str, object]] = []
-    document = get_repair_source_document(repair, include_archived_fallback=True)
+    document = get_repair_source_document(repair)
     manual_review_reasons = source_payload.get("manual_review_reasons")
     reason_codes = [str(item) for item in manual_review_reasons] if isinstance(manual_review_reasons, list) else []
     labeled_reasons = [manual_review_reason_labels.get(item, item) for item in reason_codes]

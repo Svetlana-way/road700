@@ -35,10 +35,10 @@ export type BuildDocumentsWorkspacePropsParams = {
   reviewQueueCounts: ReviewQueueProps["reviewQueueCounts"];
   selectedReviewCategory: ReviewQueueProps["selectedReviewCategory"];
   reviewQueue: ReviewQueueProps["reviewQueue"];
-  userRole: ReviewQueueProps["userRole"];
+  userRole: DocumentsListProps["userRole"];
   reprocessLoading: ReviewQueueProps["reprocessLoading"];
   reprocessLoadingId: ReviewQueueProps["reprocessLoadingId"];
-  selectedDocumentId: ReviewQueueProps["selectedDocumentId"];
+  selectedDocumentId: DocumentsListProps["selectedDocumentId"];
   setSelectedReviewCategory: ReviewQueueProps["onSelectCategory"];
   handleOpenRepair: (documentId: number, repairId: number) => void | Promise<void>;
   handleReprocessDocumentById: ReviewQueueProps["onReprocessDocumentById"];
@@ -102,16 +102,14 @@ export function buildDocumentsWorkspaceProps(params: BuildDocumentsWorkspaceProp
       reviewQueueCounts: params.reviewQueueCounts,
       selectedReviewCategory: params.selectedReviewCategory,
       reviewQueue: params.reviewQueue,
-      userRole: params.userRole,
       reprocessLoading: params.reprocessLoading,
       reprocessLoadingId: params.reprocessLoadingId,
-      selectedDocumentId: params.selectedDocumentId,
       onSelectCategory: params.setSelectedReviewCategory,
       onOpenReviewQueueItem: (item) => {
         void params.handleOpenRepair(item.document.id, item.repair.id);
       },
-      onReprocessDocumentById: (documentId, repairId) => {
-        void params.handleReprocessDocumentById(documentId, repairId);
+      onReprocessDocumentById: (documentId, repairId, documentStatus, repairStatus) => {
+        void params.handleReprocessDocumentById(documentId, repairId, documentStatus, repairStatus);
       },
       formatDocumentKind: params.formatDocumentKind,
       reviewPriorityColor: params.reviewPriorityColor,

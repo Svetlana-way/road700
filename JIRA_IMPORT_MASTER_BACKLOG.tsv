@@ -1,0 +1,49 @@
+External ID	Issue Type	Summary	Priority	Epic / Parent	Estimate	Labels	Description	Dependencies
+E1	Epic	[E1] Domain Invariants	P0		road700,master-plan,epic,domain-invariants	Стабилизировать архив, review и состояния repair/document.	
+E2	Epic	[E2] Archive/Restore Model	P0		road700,master-plan,epic,archive-restore	Выделить явный lifecycle archive/restore.	
+E3	Epic	[E3] OCR Import Async Stability	P0		road700,master-plan,epic,ocr,import,async	Убрать гонки и неатомарные workflow OCR/import.	
+E4	Epic	[E4] Operational Scope and Dictionaries	P1		road700,master-plan,epic,operational-scope,dictionaries	Исключить архивные сущности из operational flows.	
+E5	Epic	[E5] Audit and Observability	P1		road700,master-plan,epic,audit,observability	Сделать аудит полным и корректно ограниченным по видимости.	
+E6	Epic	[E6] Backup and Security	P0		road700,master-plan,epic,backup,security	Стабилизировать backup/restore и auth contour.	
+E7	Epic	[E7] Schema and Data Integrity	P1		road700,master-plan,epic,schema,data-integrity	Выровнять ORM, миграции и relation graph.	
+E8	Epic	[E8] Frontend Contracts and Performance	P2		road700,master-plan,epic,frontend,performance	Убрать frontend debt и снизить нагрузку на тяжелых экранах.	
+E9	Epic	[E9] Use Case Closure and Documentation	P1		road700,master-plan,epic,use-case,documentation	Закрыть финальные gap по ТЗ и синхронизировать документы.	
+T00	Task	[T00] Собрать regression-набор по найденным багам	P0	E1	2d	road700,master-plan,p0,testing,regression	Собрать минимальный надежный regression-набор по подтвержденным багам и доменным инвариантам.	
+T01	Task	[T01] Добавить backend guards для архивных repair/document/vehicle	P0	E1	2d	road700,master-plan,p0,backend,archive	Закрыть рабочие backend-операции для архивных repair, document и vehicle.	T00
+T02	Task	[T02] Закрыть review action для не-queue документов	P0	E1	1d	road700,master-plan,p0,review,backend	Разрешить review action только для реальных элементов review queue.	T00
+T03	Task	[T03] Исправить PATCH repairs/{id} чтобы не стирал checks	P0	E1	1d	road700,master-plan,p0,backend,repair	Исправить partial update ремонта, чтобы patch не затирал checks без явного запроса.	T00
+T04	Task	[T04] Запретить upload/process/link/set-primary/compare на архивных сущностях	P0	E1	2d	road700,master-plan,p0,archive,backend,documents,repairs	Полностью закрыть document/repair operational actions для архивных сущностей.	T00 T01
+T05	Task	[T05] Исправить state machine ремонта при check updates	P0	E1	1.5d	road700,master-plan,p0,repair,state-machine	Зафиксировать корректные status transitions ремонта при обновлении checks.	T03
+T06	Task	[T06] Выделить явные archive/restore endpoints для repair	P0	E2	2d	road700,master-plan,p0,archive,backend,repair	Вынести archive и restore ремонта в отдельные backend endpoints с явным контрактом.	T01 T04
+T07	Task	[T07] Выделить явные archive/restore endpoints для document	P0	E2	2d	road700,master-plan,p0,archive,backend,document	Вынести archive и restore документа в отдельные backend endpoints с явным контрактом.	T01 T04
+T08	Task	[T08] Починить инварианты primary/source document	P0	E2	2.5d	road700,master-plan,p0,document,relations	Зафиксировать и восстановить инварианты primary/source document без противоречивых состояний.	T06 T07
+T09	Task	[T09] Перевести frontend archive flows на новые endpoints	P0	E2	2d	road700,master-plan,p0,frontend,archive	Перевести frontend repair/document archive flows на новые backend endpoints.	T06 T07 T08
+T10	Task	[T10] Привести UI ремонта/документов к read-only архиву	P1	E2	1.5d	road700,master-plan,p1,frontend,archive,ux	Сделать архивные repair и document доступными только в режиме просмотра.	T06 T07 T08 T09
+T11	Task	[T11] Ввести идемпотентность OCR jobs	P0	E3	3d	road700,master-plan,p0,ocr,async,backend	Исключить дубли OCR jobs и гонки при повторных запросах.	
+T12	Task	[T12] Сделать транзакционные workflow upload/process/import	P0	E3	4d	road700,master-plan,p0,import,transactions,backend	Сделать upload/process/import атомарными и не оставляющими полусостояния.	T11
+T13	Task	[T13] Подключить общую upload-validation к labor-norms/import	P1	E3	1d	road700,master-plan,p1,import,validation,labor-norms	Перевести импорт нормо-часов на общий validation pipeline.	T12
+T14	Task	[T14] Исключить архивную технику из operational lists/search	P1	E4	1.5d	road700,master-plan,p1,vehicle,archive,search	Убрать архивную технику из рабочих списков и поиска по умолчанию.	T01
+T15	Task	[T15] Убрать архивную технику из назначения сотруднику	P1	E4	1d	road700,master-plan,p1,vehicle,employee,archive	Запретить назначение архивной техники сотруднику на backend и frontend.	T14
+T16	Task	[T16] Запретить рабочие операции с архивным каталогом нормо-часов	P1	E4	2d	road700,master-plan,p1,labor-norms,archive,backend	Сделать архивный каталог нормо-часов полностью read-only для рабочих операций.	
+T17	Task	[T17] Убрать архивный каталог нормо-часов из operational matching	P1	E4	2d	road700,master-plan,p1,labor-norms,matching,archive	Исключить архивные каталоги нормо-часов из OCR и repair matching.	T16
+T18	Task	[T18] Скрыть архивные каталоги из рабочих UI-форм нормо-часов	P1	E4	1.5d	road700,master-plan,p1,frontend,labor-norms,archive	Убрать архивные каталоги из рабочих форм и селекторов нормо-часов.	T16 T17
+T19	Task	[T19] Формализовать жизненный цикл сервисов и архивного сервиса	P1	E4	2d	road700,master-plan,p1,services,lifecycle,archive	Ввести явную lifecycle-модель сервиса с допустимыми переходами и ограничениями.	
+T20	Task	[T20] Добавить аудит на services	P1	E5	1d	road700,master-plan,p1,audit,services	Добавить полное audit-покрытие для операций с сервисами.	T19
+T21	Task	[T21] Добавить аудит на labor-norm catalogs/items/import	P1	E5	2d	road700,master-plan,p1,audit,labor-norms,import	Покрыть аудитом каталоги нормо-часов, элементы каталога и импорт нормо-часов.	T16 T17 T18
+T22	Task	[T22] Пересмотреть audit-visibility для сотрудника	P1	E5	2d	road700,master-plan,p1,audit,permissions,employee	Ограничить employee audit visibility до разрешенного уровня доступа.	T20 T21
+T23	Task	[T23] Зафиксировать честный backup contract	P1	E6	1d	road700,master-plan,p1,backup,contract	Привести backup/restore contract к реальному поведению системы.	
+T24	Task	[T24] Исправить post-restore поведение frontend	P1	E6	1.5d	road700,master-plan,p1,frontend,backup,restore	Сделать post-restore поведение frontend предсказуемым и консистентным.	T23
+T25	Task	[T25] Усилить auth: revoke active JWT	P0	E6	2.5d	road700,master-plan,p0,security,auth,jwt	Отзывать активные JWT после password change, reset или recovery.	
+T26	Task	[T26] Добавить rate limit на login/reset	P1	E6	1.5d	road700,master-plan,p1,security,auth,rate-limit	Ввести rate limiting для login и password reset endpoints.	T25
+T27	Task	[T27] Исправить reset-link generation	P1	E6	1d	road700,master-plan,p1,auth,email,password-reset	Сделать генерацию reset links корректной и стабильной во всех окружениях.	T25 T26
+T28	Task	[T28] Выровнять ORM и миграции для imports/jobs/conflicts	P1	E7	3d	road700,master-plan,p1,backend,orm,migrations,imports	Устранить schema drift между ORM, миграциями и фактической схемой imports/jobs/conflicts.	T12
+T29	Task	[T29] Разобрать цикл document-repair связей	P1	E7	4d	road700,master-plan,p1,backend,relations,documents,repairs	Нормализовать relation model между document, repair и source/primary связями.	T08 T28
+T30	Task	[T30] Добавить недостающие индексы под реальные query-patterns	P2	E7	2d	road700,master-plan,p2,backend,db,performance,indexes	Добавить недостающие индексы под реальные query patterns критичных запросов.	T28
+T31	Task	[T31] Свести frontend API types в единый слой	P2	E8	2d	road700,master-plan,p2,frontend,types,api-contract	Вынести frontend API types и DTO mappings в единый shared contract layer.	T09 T18
+T32	Task	[T32] Разгрузить App.tsx и orchestration hooks	P2	E8	3d	road700,master-plan,p2,frontend,app-shell,architecture	Декомпозировать App.tsx и перегруженные orchestration hooks.	T31
+T33	Task	[T33] Погасить tsc --noUnusedLocals --noUnusedParameters	P2	E8	2d	road700,master-plan,p2,frontend,typescript,cleanup	Очистить frontend-код до чистого TypeScript-прохода без unused locals и parameters.	T31 T32
+T34	Task	[T34] Оптимизировать review queue	P2	E8	2d	road700,master-plan,p2,review,performance,frontend,backend	Снизить latency и нагрузку review queue без изменения бизнес-правил.	T02 T30
+T35	Task	[T35] Оптимизировать audit/search/dashboard/services	P2	E8	3d	road700,master-plan,p2,performance,audit,search,dashboard,services	Оптимизировать тяжелые экраны и API audit, search, dashboard и services.	T20 T21 T22 T30
+T36	Task	[T36] Сократить frontend full bootstrap reloads	P2	E8	2d	road700,master-plan,p2,frontend,bootstrap,performance	Заменить лишние full bootstrap reloads на targeted refetch и корректную invalidation-логику.	T31 T32
+T37	Task	[T37] Закрыть gap по финальному employee workflow	P1	E9	4d	road700,master-plan,p1,employee,workflow,uat	Довести employee workflow до целевого end-to-end сценария без логических разрывов.	T22 T29
+T38	Task	[T38] Обновить README, UAT checklist и техдокументацию	P2	E9	2d	road700,master-plan,p2,documentation,uat,readme	Синхронизировать README, UAT checklist, roadmap и техдокументацию с фактическим состоянием проекта.	T37

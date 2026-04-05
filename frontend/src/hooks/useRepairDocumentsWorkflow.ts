@@ -1,42 +1,38 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiRequest, downloadDocumentFile } from "../shared/api";
+import type { DocumentComparisonReviewResponse } from "../shared/repairWorkflowApiTypes";
 import type {
   DocumentComparisonResponse,
   DocumentKind,
+  UserRole,
 } from "../shared/workspaceBootstrapTypes";
 
 type RepairDocumentLike = {
   id: number;
   is_primary: boolean;
+  status: string;
 };
 
 type RepairLike = {
   id: number;
+  status: string;
   documents: RepairDocumentLike[];
 } | null;
 
 type UseRepairDocumentsWorkflowParams = {
   token: string;
+  userRole: UserRole | null | undefined;
   selectedRepair: RepairLike;
-  selectedDocumentId: number | null;
-  refreshWorkspace: () => Promise<void>;
+  refreshWorkspace: (scope?: "full" | "documents" | "metrics" | "review") => Promise<void>;
   openRepairByIds: (documentId: number | null, repairId: number) => Promise<void>;
   setErrorMessage: (message: string) => void;
   setSuccessMessage: (message: string) => void;
 };
 
-type DocumentComparisonReviewResponse = {
-  message: string;
-  action: string;
-  document_id: number;
-  repair_id: number;
-  source_document_id: number | null;
-};
-
 export function useRepairDocumentsWorkflow({
   token,
+  userRole,
   selectedRepair,
-  selectedDocumentId,
   refreshWorkspace,
   openRepairByIds,
   setErrorMessage,
@@ -52,6 +48,38 @@ export function useRepairDocumentsWorkflow({
   const [attachedDocumentFiles, setAttachedDocumentFiles] = useState<File[]>([]);
   const [documentComparison, setDocumentComparison] = useState<DocumentComparisonResponse | null>(null);
   const [documentComparisonComment, setDocumentComparisonComment] = useState("");
+  const repairDocumentActionRequestIdRef = useRef(0);
+  const documentComparisonRequestIdRef = useRef(0);
+  const selectedRepairArchived = selectedRepair?.status === "archived";
+
+  useEffect(() => {
+    repairDocumentActionRequestIdRef.current += 1;
+    documentComparisonRequestIdRef.current += 1;
+    setAttachDocumentLoading(false);
+    setDocumentOpenLoadingId(null);
+    setPrimaryDocumentLoadingId(null);
+    setDocumentComparisonLoadingId(null);
+    setDocumentComparisonReviewLoading(false);
+    setAttachedDocumentKind("repeat_scan");
+    setAttachedDocumentNotes("");
+    setAttachedDocumentFiles([]);
+    setDocumentComparison(null);
+    setDocumentComparisonComment("");
+  }, [selectedRepair?.id]);
+
+  useEffect(() => {
+    if (!documentComparison || !selectedRepair) {
+      return;
+    }
+    const leftDocumentExists = selectedRepair.documents.some((item) => item.id === documentComparison.left_document.id);
+    const rightDocumentExists = selectedRepair.documents.some((item) => item.id === documentComparison.right_document.id);
+    if (leftDocumentExists && rightDocumentExists) {
+      return;
+    }
+    setDocumentComparison(null);
+    setDocumentComparisonComment("");
+    setDocumentComparisonReviewLoading(false);
+  }, [documentComparison, selectedRepair]);
 
   async function handleOpenDocumentFile(documentId: number) {
     if (!token) {
@@ -76,7 +104,13 @@ export function useRepairDocumentsWorkflow({
       setErrorMessage("Сначала выберите файл");
       return;
     }
+    if (selectedRepairArchived) {
+      setErrorMessage("Архивный ремонт доступен только для просмотра и экспорта");
+      return;
+    }
 
+    const requestId = repairDocumentActionRequestIdRef.current + 1;
+    repairDocumentActionRequestIdRef.current = requestId;
     setAttachDocumentLoading(true);
     setErrorMessage("");
     setSuccessMessage("");
@@ -97,16 +131,27 @@ export function useRepairDocumentsWorkflow({
         },
         token,
       );
+      if (repairDocumentActionRequestIdRef.current !== requestId) {
+        return;
+      }
 
       setSuccessMessage(result.message);
       setAttachedDocumentNotes("");
       setAttachedDocumentFiles([]);
-      await refreshWorkspace();
+      await refreshWorkspace("review");
+      if (repairDocumentActionRequestIdRef.current !== requestId) {
+        return;
+      }
       await openRepairByIds(result.document.id, selectedRepair.id);
     } catch (error) {
+      if (repairDocumentActionRequestIdRef.current !== requestId) {
+        return;
+      }
       setErrorMessage(error instanceof Error ? error.message : "Не удалось прикрепить документ к ремонту");
     } finally {
-      setAttachDocumentLoading(false);
+      if (repairDocumentActionRequestIdRef.current === requestId) {
+        setAttachDocumentLoading(false);
+      }
     }
   }
 
@@ -114,7 +159,18 @@ export function useRepairDocumentsWorkflow({
     if (!token || !selectedRepair) {
       return;
     }
+    if (userRole !== "admin") {
+      setErrorMessage("Только администратор может назначить основной документ");
+      return;
+    }
+    const targetDocument = selectedRepair.documents.find((item) => item.id === documentId) ?? null;
+    if (selectedRepairArchived || targetDocument?.status === "archived") {
+      setErrorMessage("Архивный ремонт доступен только для просмотра и экспорта");
+      return;
+    }
 
+    const requestId = repairDocumentActionRequestIdRef.current + 1;
+    repairDocumentActionRequestIdRef.current = requestId;
     setPrimaryDocumentLoadingId(documentId);
     setErrorMessage("");
     setSuccessMessage("");
@@ -126,13 +182,24 @@ export function useRepairDocumentsWorkflow({
         },
         token,
       );
+      if (repairDocumentActionRequestIdRef.current !== requestId) {
+        return;
+      }
       setSuccessMessage("Основной документ обновлён");
-      await refreshWorkspace();
+      await refreshWorkspace("review");
+      if (repairDocumentActionRequestIdRef.current !== requestId) {
+        return;
+      }
       await openRepairByIds(result.id, selectedRepair.id);
     } catch (error) {
+      if (repairDocumentActionRequestIdRef.current !== requestId) {
+        return;
+      }
       setErrorMessage(error instanceof Error ? error.message : "Не удалось назначить основной документ");
     } finally {
-      setPrimaryDocumentLoadingId(null);
+      if (repairDocumentActionRequestIdRef.current === requestId) {
+        setPrimaryDocumentLoadingId(null);
+      }
     }
   }
 
@@ -141,11 +208,22 @@ export function useRepairDocumentsWorkflow({
       return;
     }
 
+    const targetDocument = selectedRepair.documents.find((item) => item.id === documentId) ?? null;
     const primaryDocument = selectedRepair.documents.find((item) => item.is_primary);
     if (!primaryDocument || primaryDocument.id === documentId) {
       return;
     }
+    if (
+      selectedRepairArchived ||
+      targetDocument?.status === "archived" ||
+      primaryDocument.status === "archived"
+    ) {
+      setErrorMessage("Архивный ремонт доступен только для просмотра и экспорта");
+      return;
+    }
 
+    const requestId = documentComparisonRequestIdRef.current + 1;
+    documentComparisonRequestIdRef.current = requestId;
     setDocumentComparisonLoadingId(documentId);
     setErrorMessage("");
     try {
@@ -156,12 +234,20 @@ export function useRepairDocumentsWorkflow({
         },
         token,
       );
+      if (documentComparisonRequestIdRef.current !== requestId) {
+        return;
+      }
       setDocumentComparison(result);
       setDocumentComparisonComment("");
     } catch (error) {
+      if (documentComparisonRequestIdRef.current !== requestId) {
+        return;
+      }
       setErrorMessage(error instanceof Error ? error.message : "Не удалось сравнить документы");
     } finally {
-      setDocumentComparisonLoadingId(null);
+      if (documentComparisonRequestIdRef.current === requestId) {
+        setDocumentComparisonLoadingId(null);
+      }
     }
   }
 
@@ -171,7 +257,21 @@ export function useRepairDocumentsWorkflow({
     if (!token || !selectedRepair || !documentComparison) {
       return;
     }
+    if (userRole !== "admin") {
+      setErrorMessage("Только администратор может сохранить решение по сравнению документов");
+      return;
+    }
+    if (
+      selectedRepairArchived ||
+      documentComparison.left_document.status === "archived" ||
+      documentComparison.right_document.status === "archived"
+    ) {
+      setErrorMessage("Архивный ремонт доступен только для просмотра и экспорта");
+      return;
+    }
 
+    const requestId = repairDocumentActionRequestIdRef.current + 1;
+    repairDocumentActionRequestIdRef.current = requestId;
     setDocumentComparisonReviewLoading(true);
     setErrorMessage("");
     setSuccessMessage("");
@@ -188,19 +288,32 @@ export function useRepairDocumentsWorkflow({
         },
         token,
       );
+      if (repairDocumentActionRequestIdRef.current !== requestId) {
+        return;
+      }
       setSuccessMessage(result.message);
       setDocumentComparison(null);
       setDocumentComparisonComment("");
-      await refreshWorkspace();
+      await refreshWorkspace("review");
+      if (repairDocumentActionRequestIdRef.current !== requestId) {
+        return;
+      }
       await openRepairByIds(result.document_id, result.repair_id);
     } catch (error) {
+      if (repairDocumentActionRequestIdRef.current !== requestId) {
+        return;
+      }
       setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить решение по сверке документов");
     } finally {
-      setDocumentComparisonReviewLoading(false);
+      if (repairDocumentActionRequestIdRef.current === requestId) {
+        setDocumentComparisonReviewLoading(false);
+      }
     }
   }
 
   function resetRepairDocumentsWorkflowState() {
+    repairDocumentActionRequestIdRef.current += 1;
+    documentComparisonRequestIdRef.current += 1;
     setAttachDocumentLoading(false);
     setDocumentOpenLoadingId(null);
     setPrimaryDocumentLoadingId(null);

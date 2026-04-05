@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Float, Integer, JSON, String, Text
+from sqlalchemy import Boolean, Enum, ForeignKey, Float, Index, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -11,6 +11,10 @@ from app.models.enums import DocumentKind, DocumentStatus
 
 class Document(Base, TimestampMixin):
     __tablename__ = "documents"
+    __table_args__ = (
+        Index("ix_documents_status_created_at_id", "status", "created_at", "id"),
+        Index("ix_documents_review_queue_priority_updated_at_id", "review_queue_priority", "updated_at", "id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     repair_id: Mapped[Optional[int]] = mapped_column(ForeignKey("repairs.id"), nullable=True, index=True)

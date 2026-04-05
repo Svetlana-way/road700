@@ -32,6 +32,7 @@ export function useRepairPresentationState({
   useEffect(() => {
     setShowRepairOverviewDetails(false);
   }, [
+    selectedDocumentId,
     selectedRepairId,
     selectedRepairServiceName,
     selectedRepairDocumentPlateNumber,

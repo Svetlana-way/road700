@@ -7,7 +7,7 @@ import { ReviewRequiredFieldsPanel } from "./ReviewRequiredFieldsPanel";
 import { ReviewServicePanel } from "./ReviewServicePanel";
 import { ReviewVehicleLinkPanel } from "./ReviewVehicleLinkPanel";
 import type { ReviewComparisonStatus } from "../shared/repairUiHelpers";
-import type { DocumentKind, DocumentStatus, UserRole, VehicleType } from "../shared/workspaceBootstrapTypes";
+import type { DocumentKind, DocumentStatus, ReviewDecisionItem, UserRole, VehicleType } from "../shared/workspaceBootstrapTypes";
 import type {
   DocumentVehicleFormState,
   ReviewExtractedFieldSnapshot,
@@ -19,10 +19,7 @@ import type {
 type ReviewDecisionPanelProps = {
   userRole: UserRole | undefined;
   selectedRepairStatus: string;
-  selectedReviewItem: {
-    priority_bucket: "review" | "critical" | "suspicious";
-    issue_titles: string[];
-  } | null;
+  selectedReviewItem: ReviewDecisionItem | null;
   selectedRepair: {
     service: {
       name: string;
@@ -228,7 +225,9 @@ export function ReviewDecisionPanel({
                 ? selectedRepairStatus === "employee_confirmed"
                   ? "Сотрудник уже подготовил ремонт. Здесь выполняется финальное подтверждение администратора."
                   : "Администратор может сразу финально подтвердить ремонт или вернуть его в ручную проверку."
-                : "Сотрудник подтверждает ремонт по своей технике. После этого запись остаётся предварительной и ждёт финального подтверждения администратора."}
+                : selectedRepairStatus === "employee_confirmed"
+                  ? "Ремонт уже подтверждён сотрудником и ждёт финального решения администратора. При необходимости его можно вернуть в ручную проверку."
+                  : "Сотрудник подтверждает ремонт по своей технике. После этого запись остаётся предварительной и ждёт финального подтверждения администратора."}
             </Typography>
           </Box>
           <Typography className="muted-copy">
@@ -238,6 +237,11 @@ export function ReviewDecisionPanel({
           <Typography className="muted-copy">
             Финальное подтверждение доступно только после заполнения обязательных полей и разбора всех открытых предупреждений.
           </Typography>
+          {selectedRepairStatus === "employee_confirmed" ? (
+            <Typography className="muted-copy">
+              Любое изменение полей проверки, техники или состава документов вернёт ремонт в ручную проверку.
+            </Typography>
+          ) : null}
           {selectedRepairDocument ? (
             <Grid container spacing={2}>
               <Grid item xs={12} lg={6}>
@@ -342,6 +346,7 @@ export function ReviewDecisionPanel({
           ) : null}
           <ReviewActionsPanel
             userRole={userRole}
+            selectedRepairStatus={selectedRepairStatus}
             reviewActionComment={reviewActionComment}
             reviewActionLoading={reviewActionLoading}
             reviewServiceAssigning={reviewServiceAssigning}

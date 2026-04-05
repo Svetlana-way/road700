@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { ApiError, apiRequest } from "../shared/api";
 import type { RepairDocumentItem } from "../shared/repairDetailTypes";
 import { resolveRepairDocumentId, type RepairDetailForDraft } from "../shared/repairUiHelpers";
@@ -69,11 +69,12 @@ export function useRepairDetailLoader<
   resetRepairDocumentsWorkflowStateRef,
 }: UseRepairDetailLoaderParams<TRepair, TLastUploadedDocument>) {
   const [repairLoading, setRepairLoading] = useState(false);
+  const repairDetailRequestIdRef = useRef(0);
 
   async function loadRepairDetail(
     activeToken: string,
     repairId: number,
-    preferredDocumentId: number | null,
+    preferredDocumentId: number | null | undefined,
     options?: { silent?: boolean; resetTransientState?: boolean },
   ): Promise<LoadRepairDetailResult> {
     const silent = options?.silent ?? false;
@@ -83,8 +84,13 @@ export function useRepairDetailLoader<
       setRepairLoading(true);
       setErrorMessage("");
     }
+    const requestId = repairDetailRequestIdRef.current + 1;
+    repairDetailRequestIdRef.current = requestId;
     try {
       const payload = await apiRequest<TRepair>(`/repairs/${repairId}`, { method: "GET" }, activeToken);
+      if (repairDetailRequestIdRef.current !== requestId) {
+        return "error";
+      }
       setSelectedRepair(payload);
       if (resetTransientState) {
         setCheckComments({});
@@ -92,7 +98,9 @@ export function useRepairDetailLoader<
         setHistoryFilter("all");
         setHistorySearch("");
       }
-      setSelectedDocumentId((current) => resolveRepairDocumentId(payload, preferredDocumentId ?? current));
+      setSelectedDocumentId((current) =>
+        resolveRepairDocumentId(payload, preferredDocumentId !== undefined ? preferredDocumentId : current),
+      );
       if (!isEditingRepairRef.current) {
         syncRepairDraftFromRepairRef.current(payload);
       }
@@ -126,6 +134,9 @@ export function useRepairDetailLoader<
       });
       return "loaded";
     } catch (error) {
+      if (repairDetailRequestIdRef.current !== requestId) {
+        return "error";
+      }
       if (error instanceof ApiError && error.status === 404) {
         setSelectedRepair(null);
         setSelectedDocumentId(null);
@@ -139,14 +150,20 @@ export function useRepairDetailLoader<
       }
       return "error";
     } finally {
-      if (!silent) {
+      if (!silent && repairDetailRequestIdRef.current === requestId) {
         setRepairLoading(false);
       }
     }
   }
 
+  function invalidateRepairDetailLoaderState() {
+    repairDetailRequestIdRef.current += 1;
+    setRepairLoading(false);
+  }
+
   return {
     repairLoading,
     loadRepairDetail,
+    invalidateRepairDetailLoaderState,
   };
 }

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.api.access import apply_vehicle_scope, get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_db
 from app.models.document import Document
-from app.models.enums import VehicleStatus
+from app.models.enums import DocumentStatus, RepairStatus, ServiceStatus, VehicleStatus
 from app.models.repair import Repair, RepairPart, RepairWork
 from app.models.service import Service
 from app.models.user import User
@@ -129,12 +129,22 @@ def global_search(
     repair_visibility_clause = get_repair_visibility_clause(current_user)
 
     documents_stmt = (
-        select(Document, Repair, Vehicle, Service)
+        select(
+            Document,
+            Repair,
+            Vehicle,
+            Service,
+            func.count(Document.id).over().label("documents_total"),
+        )
         .join(Repair, Document.repair_id == Repair.id)
         .join(Vehicle, Repair.vehicle_id == Vehicle.id)
         .outerjoin(Service, Repair.service_id == Service.id)
         .where(
             repair_visibility_clause,
+            Document.status != DocumentStatus.ARCHIVED,
+            Repair.status != RepairStatus.ARCHIVED,
+            Vehicle.status != VehicleStatus.ARCHIVED,
+            or_(Repair.service_id.is_(None), Service.status != ServiceStatus.ARCHIVED),
             or_(
                 Document.original_filename.ilike(pattern),
                 repair_search_clause,
@@ -143,35 +153,25 @@ def global_search(
         .order_by(Document.created_at.desc(), Document.id.desc())
         .limit(limit_per_section)
     )
-    documents_total_stmt = (
-        select(func.count(func.distinct(Document.id)))
-        .select_from(Document)
-        .join(Repair, Document.repair_id == Repair.id)
+
+    repairs_stmt = (
+        select(
+            Repair,
+            Vehicle,
+            Service,
+            func.count(Repair.id).over().label("repairs_total"),
+        )
         .join(Vehicle, Repair.vehicle_id == Vehicle.id)
         .outerjoin(Service, Repair.service_id == Service.id)
         .where(
             repair_visibility_clause,
-            or_(
-                Document.original_filename.ilike(pattern),
-                repair_search_clause,
-            ),
+            Repair.status != RepairStatus.ARCHIVED,
+            Vehicle.status != VehicleStatus.ARCHIVED,
+            or_(Repair.service_id.is_(None), Service.status != ServiceStatus.ARCHIVED),
+            repair_search_clause,
         )
-    )
-
-    repairs_stmt = (
-        select(Repair, Vehicle, Service)
-        .join(Vehicle, Repair.vehicle_id == Vehicle.id)
-        .outerjoin(Service, Repair.service_id == Service.id)
-        .where(repair_visibility_clause, repair_search_clause)
         .order_by(Repair.repair_date.desc(), Repair.id.desc())
         .limit(limit_per_section)
-    )
-    repairs_total_stmt = (
-        select(func.count(func.distinct(Repair.id)))
-        .select_from(Repair)
-        .join(Vehicle, Repair.vehicle_id == Vehicle.id)
-        .outerjoin(Service, Repair.service_id == Service.id)
-        .where(repair_visibility_clause, repair_search_clause)
     )
 
     vehicle_search_clause = or_(
@@ -183,26 +183,28 @@ def global_search(
     )
     vehicles_stmt = (
         apply_vehicle_scope(
-            select(Vehicle).where(vehicle_search_clause, Vehicle.status != VehicleStatus.ARCHIVED),
+            select(
+                Vehicle,
+                func.count(Vehicle.id).over().label("vehicles_total"),
+            ).where(vehicle_search_clause, Vehicle.status != VehicleStatus.ARCHIVED),
             current_user,
         )
         .order_by(Vehicle.updated_at.desc(), Vehicle.id.desc())
         .limit(limit_per_section)
     )
-    vehicles_total_stmt = apply_vehicle_scope(
-        select(func.count(func.distinct(Vehicle.id))).where(vehicle_search_clause, Vehicle.status != VehicleStatus.ARCHIVED),
-        current_user,
-    )
 
     document_rows = db.execute(documents_stmt).all()
     repair_rows = db.execute(repairs_stmt).all()
-    vehicle_rows = db.scalars(vehicles_stmt).all()
+    vehicle_rows = db.execute(vehicles_stmt).all()
+    documents_total = int(document_rows[0].documents_total) if document_rows else 0
+    repairs_total = int(repair_rows[0].repairs_total) if repair_rows else 0
+    vehicles_total = int(vehicle_rows[0].vehicles_total) if vehicle_rows else 0
 
     return GlobalSearchResponse(
         query=normalized_query,
-        documents_total=db.scalar(documents_total_stmt) or 0,
-        repairs_total=db.scalar(repairs_total_stmt) or 0,
-        vehicles_total=db.scalar(vehicles_total_stmt) or 0,
+        documents_total=documents_total,
+        repairs_total=repairs_total,
+        vehicles_total=vehicles_total,
         documents=[
             GlobalSearchDocumentItem(
                 document_id=document.id,
@@ -219,7 +221,7 @@ def global_search(
                 matched_by=_build_document_matched_by(query_lower, document, repair, vehicle, service),
                 created_at=document.created_at,
             )
-            for document, repair, vehicle, service in document_rows
+            for document, repair, vehicle, service, _documents_total in document_rows
         ],
         repairs=[
             GlobalSearchRepairItem(
@@ -235,7 +237,7 @@ def global_search(
                 matched_by=_build_repair_matched_by(query_lower, repair, vehicle, service),
                 created_at=repair.created_at,
             )
-            for repair, vehicle, service in repair_rows
+            for repair, vehicle, service, _repairs_total in repair_rows
         ],
         vehicles=[
             GlobalSearchVehicleItem(
@@ -250,6 +252,6 @@ def global_search(
                 matched_by=_build_vehicle_matched_by(query_lower, vehicle),
                 updated_at=vehicle.updated_at,
             )
-            for vehicle in vehicle_rows
+            for vehicle, _vehicles_total in vehicle_rows
         ],
     )

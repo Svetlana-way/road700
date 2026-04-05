@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api.deps import get_db
 from app.api import documents as documents_api
 from app.api import jobs as jobs_api
+from app.api import upload_validation as upload_validation_api
 from app.api.repairs import build_export_warning_rows, build_report_status_summary
 from app.core.paths import set_storage_root
 from app.core.security import get_password_hash
@@ -910,6 +911,26 @@ class DocumentJobsApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(response.json()["detail"], "Один из выбранных файлов не удалось прочитать как изображение")
+
+    def test_single_file_upload_validates_size_before_reading_content(self) -> None:
+        headers = self._get_auth_headers()
+
+        with (
+            patch.object(upload_validation_api.settings, "max_document_upload_size_bytes", 1),
+            patch.object(
+                documents_api,
+                "read_uploaded_file_bytes",
+                side_effect=AssertionError("upload content must not be read before validation"),
+            ),
+        ):
+            response = self.client.post(
+                "/api/documents/upload",
+                headers=headers,
+                files={"file": ("too-large.pdf", b"%PDF-1.4\n%too-large\n", "application/pdf")},
+                data={"kind": "order"},
+            )
+
+        self.assertEqual(response.status_code, 413, response.text)
 
     def test_worker_processing_uses_overridden_storage_root(self) -> None:
         headers = self._get_auth_headers()

@@ -193,11 +193,12 @@ def build_document_upload_artifact(
     uploads = collect_document_uploads(file, files)
     if len(uploads) == 1:
         upload = uploads[0]
+        source_type = validate_document_upload(upload)
         return {
             "content": read_uploaded_file_bytes(upload),
             "original_filename": upload.filename or "document",
             "mime_type": upload.content_type,
-            "source_type": validate_document_upload(upload),
+            "source_type": source_type,
             "uploaded_files": [upload.filename or "document"],
             "upload_mode": "single_file",
         }
@@ -213,7 +214,7 @@ def build_document_upload_artifact(
     if total_upload_size > settings.max_document_upload_size_bytes:
         max_size_mb = round(settings.max_document_upload_size_bytes / (1024 * 1024), 1)
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=f"Совокупный размер набора фотографий превышает лимит {max_size_mb} MB",
         )
 

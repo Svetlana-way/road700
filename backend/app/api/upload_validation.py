@@ -70,7 +70,7 @@ def ensure_upload_within_size_limit(upload: UploadFile, *, max_size_bytes: int, 
     if upload_size > max_size_bytes:
         max_size_mb = round(max_size_bytes / (1024 * 1024), 1)
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=f"{label} exceeds the maximum allowed size of {max_size_mb} MB",
         )
     return upload_size

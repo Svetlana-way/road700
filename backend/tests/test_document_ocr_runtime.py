@@ -170,6 +170,32 @@ class DocumentOcrRuntimeTestCase(unittest.TestCase):
         self.assertEqual(first_command[-1], "6")
         self.assertEqual(second_command[-1], "4")
 
+    def test_run_vision_ocr_raises_clear_runtime_error_for_invalid_json(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as image_file, patch.object(
+            document_processing,
+            "is_vision_ocr_available",
+            return_value=True,
+        ), patch("app.services.document_processing.subprocess.run") as subprocess_run:
+            subprocess_run.return_value = unittest.mock.Mock(returncode=0, stdout="not-json", stderr="")
+
+            with self.assertRaisesRegex(RuntimeError, "Vision OCR returned an invalid response payload"):
+                document_processing.run_vision_ocr([Path(image_file.name)])
+
+    def test_run_vision_ocr_raises_clear_runtime_error_for_invalid_result_shape(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as image_file, patch.object(
+            document_processing,
+            "is_vision_ocr_available",
+            return_value=True,
+        ), patch("app.services.document_processing.subprocess.run") as subprocess_run:
+            subprocess_run.return_value = unittest.mock.Mock(
+                returncode=0,
+                stdout='{"results":[{"path":"/tmp/page.jpg"}]}',
+                stderr="",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "Vision OCR returned an invalid response payload"):
+                document_processing.run_vision_ocr([Path(image_file.name)])
+
     def test_extract_axb_compact_work_items_accepts_no_marker_variant(self) -> None:
         text = """
 Выполненные работы no заказ-наряду № 0000021658 от 02.07.2025

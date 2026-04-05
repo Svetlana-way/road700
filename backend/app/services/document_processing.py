@@ -6932,8 +6932,23 @@ def run_vision_ocr(image_paths: list[Path]) -> dict[str, str]:
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "Vision OCR command failed")
 
-    payload = json.loads(result.stdout)
-    return {item["path"]: item["text"] for item in payload.get("results", [])}
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("Vision OCR returned an invalid response payload") from error
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        raise RuntimeError("Vision OCR returned an invalid response payload")
+
+    normalized_results: dict[str, str] = {}
+    for item in payload["results"]:
+        if not isinstance(item, dict):
+            raise RuntimeError("Vision OCR returned an invalid response payload")
+        path_value = item.get("path")
+        text_value = item.get("text")
+        if not isinstance(path_value, str) or not isinstance(text_value, str):
+            raise RuntimeError("Vision OCR returned an invalid response payload")
+        normalized_results[path_value] = text_value
+    return normalized_results
 
 
 def run_tesseract_ocr_with_modes(

@@ -304,3 +304,41 @@ class BackupsApiTestCase(unittest.TestCase):
             archive_path.unlink(missing_ok=True)
             manifest_path.unlink(missing_ok=True)
             outside_target.unlink(missing_ok=True)
+
+    def test_list_backups_marks_corrupt_manifest_without_failing_entire_response(self) -> None:
+        headers = self._get_auth_headers()
+        backup_id = "20260405T130000Z_deadbeef"
+        backup_dir = backups_service.get_backup_dir()
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = backup_dir / f"{backup_id}.zip"
+        manifest_path = backup_dir / f"{backup_id}{backups_service.BACKUP_MANIFEST_SUFFIX}"
+        archive_path.write_bytes(b"PK\x03\x04")
+        manifest_path.write_text("{broken", encoding="utf-8")
+
+        response = self.client.get("/api/backups", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["items"][0]["backup_id"], backup_id)
+        self.assertEqual(payload["items"][0]["status"], "corrupt")
+        self.assertEqual(payload["items"][0]["filename"], archive_path.name)
+
+    def test_restore_backup_returns_conflict_for_corrupt_manifest(self) -> None:
+        headers = self._get_auth_headers()
+        backup_id = "20260405T140000Z_deadbeef"
+        backup_dir = backups_service.get_backup_dir()
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = backup_dir / f"{backup_id}.zip"
+        manifest_path = backup_dir / f"{backup_id}{backups_service.BACKUP_MANIFEST_SUFFIX}"
+        archive_path.write_bytes(b"PK\x03\x04")
+        manifest_path.write_text("{broken", encoding="utf-8")
+
+        response = self.client.post(
+            f"/api/backups/{backup_id}/restore",
+            headers=headers,
+            json={"confirm_backup_id": backup_id},
+        )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"], "Backup metadata is corrupt")

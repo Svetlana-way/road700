@@ -13,6 +13,7 @@ from app.schemas.backup import (
     BackupRestoreResponse,
 )
 from app.services.backups import (
+    CorruptBackupError,
     InvalidBackupIdError,
     archive_path_for,
     create_backup_archive,
@@ -65,6 +66,8 @@ def download_backup(
     _ = current_admin
     try:
         backup = load_backup_item_or_raise(backup_id)
+    except CorruptBackupError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Backup metadata is corrupt") from error
     except InvalidBackupIdError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup not found") from error
     except FileNotFoundError as error:
@@ -103,6 +106,8 @@ def restore_backup(
             requested_by_login=current_admin.login,
             requested_by_user_id=current_admin.id,
         )
+    except CorruptBackupError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Backup metadata is corrupt") from error
     except InvalidBackupIdError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup not found") from error
     except FileNotFoundError as error:

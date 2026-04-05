@@ -370,8 +370,12 @@ def load_database_snapshot(backup_id: str) -> dict[str, Any]:
             payload = json.loads(archive.read(DATABASE_SNAPSHOT_ENTRY).decode("utf-8"))
     except (OSError, zipfile.BadZipFile, KeyError, json.JSONDecodeError, UnicodeDecodeError) as error:
         raise CorruptBackupError("Backup archive is corrupt") from error
+    if not isinstance(payload, dict):
+        raise CorruptBackupError("Backup archive is corrupt")
     if payload.get("format") != BACKUP_FORMAT:
         raise CorruptBackupError("Unsupported backup format")
+    if not isinstance(payload.get("tables"), list):
+        raise CorruptBackupError("Backup archive is corrupt")
     return payload
 
 

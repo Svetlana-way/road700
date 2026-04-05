@@ -343,16 +343,17 @@ def import_documents_with_session(
         files = files[:limit]
 
     for path in files:
-        file_hash = compute_sha1(path)
-        storage_key = build_storage_key_from_hash(file_hash, path.suffix)
-        existing = db.scalar(select(Document).where(Document.storage_key == storage_key))
-        if existing is not None:
-            stats.skipped_existing += 1
-            continue
-
         created_document_id: Optional[int] = None
-        destination = resolve_storage_path(storage_key)
+        destination: Path | None = None
         try:
+            file_hash = compute_sha1(path)
+            storage_key = build_storage_key_from_hash(file_hash, path.suffix)
+            existing = db.scalar(select(Document).where(Document.storage_key == storage_key))
+            if existing is not None:
+                stats.skipped_existing += 1
+                continue
+
+            destination = resolve_storage_path(storage_key)
             if destination is None:
                 raise ValueError("Invalid document storage path")
             created_document_id = create_document_record(
@@ -408,7 +409,7 @@ def retry_unmatched_documents_with_session(
     by_vin, by_plate = build_vehicle_lookup(db)
 
     stmt = (
-        select(Document)
+        select(Document.id)
         .join(Repair, Repair.id == Document.repair_id)
         .outerjoin(Service, Service.id == Repair.service_id)
         .where(Repair.vehicle_id == placeholder_vehicle.id)
@@ -419,15 +420,24 @@ def retry_unmatched_documents_with_session(
         )
         .order_by(Document.id.asc())
     )
-    documents = db.scalars(stmt).all()
+    document_ids = db.scalars(stmt).all()
     if limit is not None:
-        documents = documents[:limit]
+        document_ids = document_ids[:limit]
 
-    for document in documents:
-        if rebind_document_vehicle(db, document, by_vin=by_vin, by_plate=by_plate):
-            stats.matched_vehicle += 1
-        else:
-            stats.unmatched_vehicle += 1
+    for document_id in document_ids:
+        try:
+            document = db.get(Document, document_id)
+            if document is None:
+                stats.failed += 1
+                continue
+            if rebind_document_vehicle(db, document, by_vin=by_vin, by_plate=by_plate):
+                db.commit()
+                stats.matched_vehicle += 1
+            else:
+                stats.unmatched_vehicle += 1
+        except Exception:
+            db.rollback()
+            stats.failed += 1
 
     return stats
 

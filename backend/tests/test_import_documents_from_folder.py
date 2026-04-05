@@ -164,6 +164,43 @@ class ImportDocumentsFromFolderTestCase(unittest.TestCase):
             self.assertEqual(db.query(Document).count(), 0)
             self.assertEqual(db.query(Repair).count(), 0)
 
+    def test_import_documents_with_session_skips_unreadable_source_file_and_continues(self) -> None:
+        unreadable_file = self.source_root / "broken-order.pdf"
+        unreadable_file.write_bytes(b"%PDF-1.4\n%broken\n")
+        healthy_file = self.source_root / "healthy-order.pdf"
+        healthy_file.write_bytes(b"%PDF-1.4\n%healthy\n")
+
+        original_compute_sha1 = import_documents_from_folder.compute_sha1
+        reported_errors: list[tuple[str, str]] = []
+
+        def compute_sha1_side_effect(path: Path) -> str:
+            if path.name == "broken-order.pdf":
+                raise OSError("cannot read source file")
+            return original_compute_sha1(path)
+
+        with self.SessionLocal() as db, patch.object(
+            import_documents_from_folder,
+            "compute_sha1",
+            side_effect=compute_sha1_side_effect,
+        ), patch.object(
+            import_documents_from_folder,
+            "process_document",
+            side_effect=lambda current_db, document_id: None,
+        ):
+            stats = import_documents_from_folder.import_documents_with_session(
+                db,
+                source_dir=self.source_root,
+                on_error=lambda path, exc: reported_errors.append((path.name, str(exc))),
+            )
+
+            documents = db.scalars(select(Document).order_by(Document.id.asc())).all()
+
+        self.assertEqual(stats.created, 1)
+        self.assertEqual(stats.failed, 1)
+        self.assertEqual(reported_errors, [("broken-order.pdf", "cannot read source file")])
+        self.assertEqual(len(documents), 1)
+        self.assertEqual(documents[0].original_filename, "healthy-order.pdf")
+
     def test_get_admin_user_prefers_configured_login_ignoring_case(self) -> None:
         with self.SessionLocal() as db:
             db.add(
@@ -627,6 +664,141 @@ class ImportDocumentsFromFolderTestCase(unittest.TestCase):
             self.assertIsNotNone(repair)
             assert repair is not None
             self.assertEqual(repair.vehicle_id, placeholder_vehicle_id)
+
+    def test_retry_unmatched_documents_continues_after_processing_failure(self) -> None:
+        with self.SessionLocal() as db:
+            placeholder_vehicle = Vehicle(
+                external_id=import_documents_from_folder.PLACEHOLDER_EXTERNAL_ID,
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="IMPORT-QUEUE",
+                brand="System",
+                model="Placeholder",
+                status=VehicleStatus.INACTIVE,
+            )
+            first_target = Vehicle(
+                external_id="truck-retry-fail-first",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="F111BC116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            second_target = Vehicle(
+                external_id="truck-retry-pass-second",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="F222BC116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, first_target, second_target])
+            db.flush()
+
+            first_repair = Repair(
+                order_number="BATCH-RETRY-FAIL-001",
+                repair_date=date(2025, 1, 16),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=1,
+                mileage=5100,
+                reason="historical_import:retry_failure_first",
+                status=RepairStatus.DRAFT,
+                is_preliminary=True,
+            )
+            second_repair = Repair(
+                order_number="BATCH-RETRY-FAIL-002",
+                repair_date=date(2025, 1, 17),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=1,
+                mileage=5200,
+                reason="historical_import:retry_failure_second",
+                status=RepairStatus.DRAFT,
+                is_preliminary=True,
+            )
+            db.add_all([first_repair, second_repair])
+            db.flush()
+
+            first_document = Document(
+                repair_id=first_repair.id,
+                uploaded_by_user_id=1,
+                original_filename="F111BC116_retry_first.pdf",
+                storage_key="documents/test/batch-retry-fail-first.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=20,
+            )
+            second_document = Document(
+                repair_id=second_repair.id,
+                uploaded_by_user_id=1,
+                original_filename="F222BC116_retry_second.pdf",
+                storage_key="documents/test/batch-retry-fail-second.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=20,
+            )
+            db.add_all([first_document, second_document])
+            db.flush()
+            first_repair.source_document_id = first_document.id
+            second_repair.source_document_id = second_document.id
+            db.add_all(
+                [
+                    DocumentVersion(
+                        document_id=first_document.id,
+                        version_number=1,
+                        storage_key=first_document.storage_key,
+                        parsed_payload={"extracted_fields": {"plate_number": "F111BC116"}},
+                        field_confidence_map={},
+                        change_summary="Retry unmatched first",
+                    ),
+                    DocumentVersion(
+                        document_id=second_document.id,
+                        version_number=1,
+                        storage_key=second_document.storage_key,
+                        parsed_payload={"extracted_fields": {"plate_number": "F222BC116"}},
+                        field_confidence_map={},
+                        change_summary="Retry unmatched second",
+                    ),
+                ]
+            )
+            db.commit()
+            first_repair_id = first_repair.id
+            second_repair_id = second_repair.id
+            placeholder_vehicle_id = placeholder_vehicle.id
+            second_target_id = second_target.id
+
+        call_count = 0
+
+        def process_side_effect(current_db, document_id: int) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("ocr retry failure")
+
+        with self.SessionLocal() as db, patch.object(
+            import_documents_from_folder,
+            "process_document",
+            side_effect=process_side_effect,
+        ):
+            stats = import_documents_from_folder.retry_unmatched_documents_with_session(db)
+
+        self.assertEqual(stats.failed, 1)
+        self.assertEqual(stats.matched_vehicle, 1)
+        self.assertEqual(stats.unmatched_vehicle, 0)
+
+        with self.SessionLocal() as db:
+            first_repair = db.get(Repair, first_repair_id)
+            second_repair = db.get(Repair, second_repair_id)
+            self.assertIsNotNone(first_repair)
+            self.assertIsNotNone(second_repair)
+            assert first_repair is not None
+            assert second_repair is not None
+            self.assertEqual(first_repair.vehicle_id, placeholder_vehicle_id)
+            self.assertEqual(second_repair.vehicle_id, second_target_id)
 
 
 if __name__ == "__main__":

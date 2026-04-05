@@ -132,6 +132,22 @@ class DocumentOcrRuntimeTestCase(unittest.TestCase):
         self.assertEqual(extracted_from, "xlsx_text")
         self.assertIsNone(failure_reason)
 
+    def test_extract_document_text_raises_clear_value_error_for_unreadable_pdf(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as pdf_file:
+            pdf_file.write(b"not-a-real-pdf")
+            pdf_file.flush()
+
+            with self.assertRaisesRegex(ValueError, "Не удалось прочитать PDF документ"):
+                document_processing.extract_document_text(Path(pdf_file.name), "pdf")
+
+    def test_extract_document_text_raises_clear_value_error_for_unreadable_xlsx(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".xlsx") as spreadsheet_file:
+            spreadsheet_file.write(b"not-a-real-workbook")
+            spreadsheet_file.flush()
+
+            with self.assertRaisesRegex(ValueError, "Не удалось прочитать Excel документ"):
+                document_processing.extract_document_text(Path(spreadsheet_file.name), "xlsx")
+
     def test_run_tesseract_ocr_invokes_tesseract_cli(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".jpg") as image_file, patch.object(
             document_processing,

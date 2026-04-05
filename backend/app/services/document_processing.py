@@ -12,8 +12,10 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
+from zipfile import BadZipFile
 
 from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 try:
     from PIL import Image, ImageChops
 except ImportError:  # pragma: no cover - optional dependency during bootstrap
@@ -21,6 +23,7 @@ except ImportError:  # pragma: no cover - optional dependency during bootstrap
     ImageChops = None
 
 from pypdf import PdfReader, PdfWriter
+from pypdf.errors import PdfReadError
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
@@ -6898,7 +6901,10 @@ def extract_pdf_stream_text(page) -> str:
 
 
 def extract_pdf_text(path: Path) -> str:
-    reader = PdfReader(path.as_posix())
+    try:
+        reader = PdfReader(path.as_posix())
+    except (OSError, PdfReadError, ValueError) as error:
+        raise ValueError("Не удалось прочитать PDF документ") from error
     chunks = []
     for page in reader.pages:
         page_text = (page.extract_text() or "").strip()
@@ -7157,7 +7163,11 @@ def render_single_page_pdf_for_ocr(source_path: Path, output_path: Path) -> None
 def render_pdf_pages_for_ocr(path: Path, max_pages: int = 5) -> tuple[tempfile.TemporaryDirectory, list[Path]]:
     temp_dir = tempfile.TemporaryDirectory()
     image_paths: list[Path] = []
-    reader = PdfReader(path.as_posix())
+    try:
+        reader = PdfReader(path.as_posix())
+    except (OSError, PdfReadError, ValueError) as error:
+        temp_dir.cleanup()
+        raise ValueError("Не удалось прочитать PDF документ") from error
     page_count = max(1, min(len(reader.pages), max_pages))
     for page_index in range(page_count):
         single_page_pdf_path = Path(temp_dir.name) / f"ocr_page_{page_index + 1}.pdf"
@@ -7181,7 +7191,11 @@ def render_pdf_pages_for_raw_pdftoppm_ocr(path: Path, max_pages: int = 5) -> tup
         raise RuntimeError("Failed to render PDF page for AXB OCR fallback: pdftoppm is not available")
 
     temp_dir = tempfile.TemporaryDirectory()
-    page_count = max(1, min(len(PdfReader(path.as_posix()).pages), max_pages))
+    try:
+        page_count = max(1, min(len(PdfReader(path.as_posix()).pages), max_pages))
+    except (OSError, PdfReadError, ValueError) as error:
+        temp_dir.cleanup()
+        raise ValueError("Не удалось прочитать PDF документ") from error
     output_prefix = Path(temp_dir.name) / "ocr_raw_page"
     command = [
         PDFTOPPM_BINARY,
@@ -7258,7 +7272,10 @@ def format_spreadsheet_cell_value(value: object) -> str:
 
 
 def extract_spreadsheet_text(path: Path) -> str:
-    workbook = load_workbook(path, data_only=True, read_only=True)
+    try:
+        workbook = load_workbook(path, data_only=True, read_only=True)
+    except (OSError, BadZipFile, InvalidFileException, ValueError) as error:
+        raise ValueError("Не удалось прочитать Excel документ") from error
     try:
         chunks: list[str] = []
         multiple_sheets = len(workbook.worksheets) > 1

@@ -8,8 +8,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import BinaryIO
+from zipfile import BadZipFile
 
 from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 
 from app.core.paths import resolve_user_path
 from app.services.historical_repairs_import import (
@@ -162,157 +164,164 @@ def update_date_range(current_first: date | None, current_last: date | None, cur
 
 def parse_workbook(file_obj: BinaryIO) -> tuple[dict[str, ServiceCatalogRow], dict[str, VehicleCatalogRow], dict[str, ModelCatalogRow], dict[str, NomenclatureCatalogRow], Counter[str], int]:
     file_obj.seek(0)
-    workbook = load_workbook(file_obj, read_only=True, data_only=True)
-    worksheet = workbook[workbook.sheetnames[0]]
-    iterator = worksheet.iter_rows(min_row=1, values_only=True)
-    header_row = next(iterator, None)
-    if header_row is None:
-        raise ValueError("Файл пуст")
-    validate_headers(header_row)
+    try:
+        workbook = load_workbook(file_obj, read_only=True, data_only=True)
+    except (OSError, BadZipFile, InvalidFileException, ValueError) as error:
+        raise ValueError("Не удалось прочитать файл исторических справочников") from error
 
-    services: dict[str, ServiceCatalogRow] = {}
-    vehicles: dict[str, VehicleCatalogRow] = {}
-    models: dict[str, ModelCatalogRow] = {}
-    nomenclature_catalog: dict[str, NomenclatureCatalogRow] = {}
-    expense_items = Counter[str]()
-    rows_total = 0
+    try:
+        worksheet = workbook[workbook.sheetnames[0]]
+        iterator = worksheet.iter_rows(min_row=1, values_only=True)
+        header_row = next(iterator, None)
+        if header_row is None:
+            raise ValueError("Файл пуст")
+        validate_headers(header_row)
 
-    for row in iterator:
-        rows_total += 1
-        (
-            raw_plate,
-            vehicle_type_label,
-            period_value,
-            mileage_value,
-            supplier_name,
-            _column_name,
-            registrator,
-            auto_group,
-            article,
-            expense_item,
-            vehicle_model,
-            nomenclature,
-            quantity,
-            amount,
-        ) = row
+        services: dict[str, ServiceCatalogRow] = {}
+        vehicles: dict[str, VehicleCatalogRow] = {}
+        models: dict[str, ModelCatalogRow] = {}
+        nomenclature_catalog: dict[str, NomenclatureCatalogRow] = {}
+        expense_items = Counter[str]()
+        rows_total = 0
 
-        plate = normalize_text(raw_plate)
-        vehicle_type = normalize_text(vehicle_type_label)
-        repair_date = normalize_date(period_value)
-        mileage = normalize_mileage(mileage_value)
-        supplier = normalize_text(supplier_name) or "Без поставщика"
-        registrator_text = normalize_text(registrator)
-        auto_group_text = normalize_text(auto_group)
-        article_text = normalize_text(article)
-        expense_item_text = normalize_text(expense_item)
-        model_name = normalize_text(vehicle_model)
-        nomenclature_name = normalize_text(nomenclature) or "Без названия"
-        quantity_value = normalize_quantity(quantity)
-        amount_value = normalize_amount(amount)
-        repair_key = build_repair_key(registrator_text, repair_date, plate)
+        for row in iterator:
+            rows_total += 1
+            (
+                raw_plate,
+                vehicle_type_label,
+                period_value,
+                mileage_value,
+                supplier_name,
+                _column_name,
+                registrator,
+                auto_group,
+                article,
+                expense_item,
+                vehicle_model,
+                nomenclature,
+                quantity,
+                amount,
+            ) = row
 
-        line_kind = classify_line_kind(
-            HistoricalRepairLine(
-                source_row=rows_total + 1,
-                nomenclature=nomenclature_name,
-                article=article_text,
-                quantity=quantity_value,
-                amount=amount_value,
-                expense_item=expense_item_text,
-                auto_group=auto_group_text,
+            plate = normalize_text(raw_plate)
+            vehicle_type = normalize_text(vehicle_type_label)
+            repair_date = normalize_date(period_value)
+            mileage = normalize_mileage(mileage_value)
+            supplier = normalize_text(supplier_name) or "Без поставщика"
+            registrator_text = normalize_text(registrator)
+            auto_group_text = normalize_text(auto_group)
+            article_text = normalize_text(article)
+            expense_item_text = normalize_text(expense_item)
+            model_name = normalize_text(vehicle_model)
+            nomenclature_name = normalize_text(nomenclature) or "Без названия"
+            quantity_value = normalize_quantity(quantity)
+            amount_value = normalize_amount(amount)
+            repair_key = build_repair_key(registrator_text, repair_date, plate)
+
+            line_kind = classify_line_kind(
+                HistoricalRepairLine(
+                    source_row=rows_total + 1,
+                    nomenclature=nomenclature_name,
+                    article=article_text,
+                    quantity=quantity_value,
+                    amount=amount_value,
+                    expense_item=expense_item_text,
+                    auto_group=auto_group_text,
+                )
             )
-        )
 
-        service_entry = services.setdefault(supplier, ServiceCatalogRow(supplier_name=supplier))
-        service_entry.lines_count += 1
-        service_entry.repairs.add(repair_key)
-        if plate:
-            service_entry.plates.add(plate)
-        if model_name:
-            service_entry.models.add(model_name)
-        if vehicle_type:
-            service_entry.vehicle_types[vehicle_type] += 1
-        if auto_group_text:
-            service_entry.auto_groups[auto_group_text] += 1
-        if expense_item_text:
-            service_entry.expense_items[expense_item_text] += 1
-            expense_items[expense_item_text] += 1
-        service_entry.total_amount += amount_value
-        service_entry.first_date, service_entry.last_date = update_date_range(
-            service_entry.first_date,
-            service_entry.last_date,
-            repair_date,
-        )
-
-        if plate:
-            vehicle_entry = vehicles.setdefault(
-                plate,
-                VehicleCatalogRow(plate=plate, vehicle_type=vehicle_type, model_name=model_name),
-            )
-            vehicle_entry.lines_count += 1
-            vehicle_entry.repairs.add(repair_key)
-            vehicle_entry.suppliers[supplier] += 1
-            if auto_group_text:
-                vehicle_entry.auto_groups[auto_group_text] += 1
-            if expense_item_text:
-                vehicle_entry.expense_items[expense_item_text] += 1
-            vehicle_entry.max_mileage = max(vehicle_entry.max_mileage, mileage)
-            vehicle_entry.total_amount += amount_value
-            vehicle_entry.first_date, vehicle_entry.last_date = update_date_range(
-                vehicle_entry.first_date,
-                vehicle_entry.last_date,
-                repair_date,
-            )
-            if vehicle_entry.vehicle_type is None and vehicle_type:
-                vehicle_entry.vehicle_type = vehicle_type
-            if vehicle_entry.model_name is None and model_name:
-                vehicle_entry.model_name = model_name
-
-        if model_name:
-            model_entry = models.setdefault(model_name, ModelCatalogRow(model_name=model_name))
-            model_entry.lines_count += 1
-            model_entry.repairs.add(repair_key)
+            service_entry = services.setdefault(supplier, ServiceCatalogRow(supplier_name=supplier))
+            service_entry.lines_count += 1
+            service_entry.repairs.add(repair_key)
             if plate:
-                model_entry.plates.add(plate)
+                service_entry.plates.add(plate)
+            if model_name:
+                service_entry.models.add(model_name)
             if vehicle_type:
-                model_entry.vehicle_types[vehicle_type] += 1
-            model_entry.suppliers[supplier] += 1
-            model_entry.max_mileage = max(model_entry.max_mileage, mileage)
-            model_entry.total_amount += amount_value
-            model_entry.first_date, model_entry.last_date = update_date_range(
-                model_entry.first_date,
-                model_entry.last_date,
+                service_entry.vehicle_types[vehicle_type] += 1
+            if auto_group_text:
+                service_entry.auto_groups[auto_group_text] += 1
+            if expense_item_text:
+                service_entry.expense_items[expense_item_text] += 1
+                expense_items[expense_item_text] += 1
+            service_entry.total_amount += amount_value
+            service_entry.first_date, service_entry.last_date = update_date_range(
+                service_entry.first_date,
+                service_entry.last_date,
                 repair_date,
             )
 
-        nomenclature_key = f"{line_kind}|{article_text or '-'}|{nomenclature_name.casefold()}"
-        nomenclature_entry = nomenclature_catalog.setdefault(
-            nomenclature_key,
-            NomenclatureCatalogRow(
-                key=nomenclature_key,
-                line_kind=line_kind,
-                nomenclature=nomenclature_name,
-                article=article_text,
-                auto_group=auto_group_text,
-                expense_item=expense_item_text,
-            ),
-        )
-        nomenclature_entry.lines_count += 1
-        nomenclature_entry.repairs.add(repair_key)
-        nomenclature_entry.suppliers[supplier] += 1
-        if model_name:
-            nomenclature_entry.models[model_name] += 1
-        if vehicle_type:
-            nomenclature_entry.vehicle_types[vehicle_type] += 1
-        nomenclature_entry.quantities.append(quantity_value)
-        nomenclature_entry.amounts.append(amount_value)
-        nomenclature_entry.first_date, nomenclature_entry.last_date = update_date_range(
-            nomenclature_entry.first_date,
-            nomenclature_entry.last_date,
-            repair_date,
-        )
+            if plate:
+                vehicle_entry = vehicles.setdefault(
+                    plate,
+                    VehicleCatalogRow(plate=plate, vehicle_type=vehicle_type, model_name=model_name),
+                )
+                vehicle_entry.lines_count += 1
+                vehicle_entry.repairs.add(repair_key)
+                vehicle_entry.suppliers[supplier] += 1
+                if auto_group_text:
+                    vehicle_entry.auto_groups[auto_group_text] += 1
+                if expense_item_text:
+                    vehicle_entry.expense_items[expense_item_text] += 1
+                vehicle_entry.max_mileage = max(vehicle_entry.max_mileage, mileage)
+                vehicle_entry.total_amount += amount_value
+                vehicle_entry.first_date, vehicle_entry.last_date = update_date_range(
+                    vehicle_entry.first_date,
+                    vehicle_entry.last_date,
+                    repair_date,
+                )
+                if vehicle_entry.vehicle_type is None and vehicle_type:
+                    vehicle_entry.vehicle_type = vehicle_type
+                if vehicle_entry.model_name is None and model_name:
+                    vehicle_entry.model_name = model_name
 
-    return services, vehicles, models, nomenclature_catalog, expense_items, rows_total
+            if model_name:
+                model_entry = models.setdefault(model_name, ModelCatalogRow(model_name=model_name))
+                model_entry.lines_count += 1
+                model_entry.repairs.add(repair_key)
+                if plate:
+                    model_entry.plates.add(plate)
+                if vehicle_type:
+                    model_entry.vehicle_types[vehicle_type] += 1
+                model_entry.suppliers[supplier] += 1
+                model_entry.max_mileage = max(model_entry.max_mileage, mileage)
+                model_entry.total_amount += amount_value
+                model_entry.first_date, model_entry.last_date = update_date_range(
+                    model_entry.first_date,
+                    model_entry.last_date,
+                    repair_date,
+                )
+
+            nomenclature_key = f"{line_kind}|{article_text or '-'}|{nomenclature_name.casefold()}"
+            nomenclature_entry = nomenclature_catalog.setdefault(
+                nomenclature_key,
+                NomenclatureCatalogRow(
+                    key=nomenclature_key,
+                    line_kind=line_kind,
+                    nomenclature=nomenclature_name,
+                    article=article_text,
+                    auto_group=auto_group_text,
+                    expense_item=expense_item_text,
+                ),
+            )
+            nomenclature_entry.lines_count += 1
+            nomenclature_entry.repairs.add(repair_key)
+            nomenclature_entry.suppliers[supplier] += 1
+            if model_name:
+                nomenclature_entry.models[model_name] += 1
+            if vehicle_type:
+                nomenclature_entry.vehicle_types[vehicle_type] += 1
+            nomenclature_entry.quantities.append(quantity_value)
+            nomenclature_entry.amounts.append(amount_value)
+            nomenclature_entry.first_date, nomenclature_entry.last_date = update_date_range(
+                nomenclature_entry.first_date,
+                nomenclature_entry.last_date,
+                repair_date,
+            )
+
+        return services, vehicles, models, nomenclature_catalog, expense_items, rows_total
+    finally:
+        workbook.close()
 
 
 def write_services_catalog(path: Path, services: dict[str, ServiceCatalogRow]) -> None:

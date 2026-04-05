@@ -1,35 +1,35 @@
 {
-  auto_https disable_redirects
-  key_type rsa2048
+	auto_https disable_redirects
+	key_type rsa2048
 }
 
 https://{$DOMAIN} {
-  encode gzip zstd
+	encode gzip zstd
 
-  request_body {
-    max_size 100MB
-  }
+	request_body {
+		max_size 100MB
+	}
 
-  reverse_proxy app:8000
+	reverse_proxy app:8000
 }
 
 http://{$DOMAIN} {
-  redir https://{$DOMAIN}{uri} 308
+	redir https://{$DOMAIN}{uri} 308
 }
 
 :80 {
-  @domain host {$DOMAIN}
-  handle @domain {
-    redir https://{$DOMAIN}{uri} 308
-  }
+	@domain host {$DOMAIN}
+	handle @domain {
+		redir https://{$DOMAIN}{uri} 308
+	}
 
-  handle {
-    encode gzip zstd
+	handle {
+		encode gzip zstd
 
-    request_body {
-      max_size 100MB
-    }
+		request_body {
+			max_size 100MB
+		}
 
-    reverse_proxy app:8000
-  }
+		reverse_proxy app:8000
+	}
 }

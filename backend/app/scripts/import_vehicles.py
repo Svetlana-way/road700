@@ -79,7 +79,10 @@ def split_registry_values(value: object) -> list[str]:
 
 
 def open_sheet(path: Path) -> tuple[list[str], list[dict[str, object]]]:
-    book = xlrd.open_workbook(path.as_posix())
+    try:
+        book = xlrd.open_workbook(path.as_posix())
+    except (OSError, xlrd.XLRDError) as error:
+        raise ValueError(f"Unable to read vehicle registry workbook: {path.name}") from error
     sheet = book.sheet_by_index(0)
     headers = [str(sheet.cell_value(0, col)).strip() for col in range(sheet.ncols)]
     rows: list[dict[str, object]] = []

@@ -4,8 +4,10 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import BinaryIO, Optional
+from zipfile import BadZipFile
 
 from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -372,79 +374,85 @@ def resolve_or_create_service(
 
 def parse_groups(file_obj: BinaryIO) -> tuple[dict[str, HistoricalRepairGroup], int]:
     file_obj.seek(0)
-    workbook = load_workbook(file_obj, read_only=True, data_only=True)
-    worksheet = workbook[workbook.sheetnames[0]]
+    try:
+        workbook = load_workbook(file_obj, read_only=True, data_only=True)
+    except (OSError, BadZipFile, InvalidFileException, ValueError) as error:
+        raise ValueError("Не удалось прочитать файл истории ремонтов") from error
 
-    iterator = worksheet.iter_rows(min_row=1, values_only=True)
-    header_row = next(iterator, None)
-    if header_row is None:
-        raise ValueError("Файл истории ремонтов пуст")
-    validate_headers(header_row)
+    try:
+        worksheet = workbook[workbook.sheetnames[0]]
 
-    groups: dict[str, HistoricalRepairGroup] = {}
-    rows_total = 0
+        iterator = worksheet.iter_rows(min_row=1, values_only=True)
+        header_row = next(iterator, None)
+        if header_row is None:
+            raise ValueError("Файл истории ремонтов пуст")
+        validate_headers(header_row)
 
-    for row_index, row in enumerate(iterator, start=2):
-        rows_total += 1
-        (
-            raw_plate,
-            vehicle_type_label,
-            period_value,
-            mileage_value,
-            raw_service_name,
-            column_name,
-            registrator,
-            auto_group,
-            article,
-            expense_item,
-            vehicle_model,
-            nomenclature,
-            quantity,
-            amount,
-        ) = row
+        groups: dict[str, HistoricalRepairGroup] = {}
+        rows_total = 0
 
-        repair_date = normalize_repair_date(period_value)
-        if repair_date is None:
-            continue
+        for row_index, row in enumerate(iterator, start=2):
+            rows_total += 1
+            (
+                raw_plate,
+                vehicle_type_label,
+                period_value,
+                mileage_value,
+                raw_service_name,
+                column_name,
+                registrator,
+                auto_group,
+                article,
+                expense_item,
+                vehicle_model,
+                nomenclature,
+                quantity,
+                amount,
+            ) = row
 
-        raw_registrator = normalize_optional_text(registrator)
-        source_key = build_source_key(
-            raw_plate=normalize_optional_text(raw_plate),
-            raw_service_name=normalize_optional_text(raw_service_name),
-            registrator=raw_registrator,
-            repair_date=repair_date,
-        )
-        group = groups.get(source_key)
-        if group is None:
-            group = HistoricalRepairGroup(
-                source_key=source_key,
+            repair_date = normalize_repair_date(period_value)
+            if repair_date is None:
+                continue
+
+            raw_registrator = normalize_optional_text(registrator)
+            source_key = build_source_key(
                 raw_plate=normalize_optional_text(raw_plate),
-                normalized_plate=normalize_plate(normalize_optional_text(raw_plate)),
-                repair_date=repair_date,
                 raw_service_name=normalize_optional_text(raw_service_name),
                 registrator=raw_registrator,
-                order_number=extract_order_number(raw_registrator),
-                column_name=normalize_optional_text(column_name),
-                vehicle_type_label=normalize_optional_text(vehicle_type_label),
-                vehicle_model=normalize_optional_text(vehicle_model),
+                repair_date=repair_date,
             )
-            groups[source_key] = group
+            group = groups.get(source_key)
+            if group is None:
+                group = HistoricalRepairGroup(
+                    source_key=source_key,
+                    raw_plate=normalize_optional_text(raw_plate),
+                    normalized_plate=normalize_plate(normalize_optional_text(raw_plate)),
+                    repair_date=repair_date,
+                    raw_service_name=normalize_optional_text(raw_service_name),
+                    registrator=raw_registrator,
+                    order_number=extract_order_number(raw_registrator),
+                    column_name=normalize_optional_text(column_name),
+                    vehicle_type_label=normalize_optional_text(vehicle_type_label),
+                    vehicle_model=normalize_optional_text(vehicle_model),
+                )
+                groups[source_key] = group
 
-        group.mileage = max(group.mileage, normalize_mileage(mileage_value))
-        group.lines.append(
-            HistoricalRepairLine(
-                source_row=row_index,
-                nomenclature=normalize_optional_text(nomenclature) or "Без названия",
-                article=normalize_optional_text(article),
-                quantity=normalize_quantity(quantity),
-                amount=normalize_amount(amount),
-                expense_item=normalize_optional_text(expense_item),
-                auto_group=normalize_optional_text(auto_group),
+            group.mileage = max(group.mileage, normalize_mileage(mileage_value))
+            group.lines.append(
+                HistoricalRepairLine(
+                    source_row=row_index,
+                    nomenclature=normalize_optional_text(nomenclature) or "Без названия",
+                    article=normalize_optional_text(article),
+                    quantity=normalize_quantity(quantity),
+                    amount=normalize_amount(amount),
+                    expense_item=normalize_optional_text(expense_item),
+                    auto_group=normalize_optional_text(auto_group),
+                )
             )
-        )
 
-    workbook.close()
-    return groups, rows_total
+        return groups, rows_total
+    finally:
+        workbook.close()
 
 
 def import_historical_repairs(

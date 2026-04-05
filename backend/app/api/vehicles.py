@@ -651,7 +651,10 @@ def import_vehicle_registry(
             detail=f"Trailers file not found: {trailers_path}",
         )
 
-    stats = import_vehicles_with_session(db, trucks_path=trucks_path, trailers_path=trailers_path)
+    try:
+        stats = import_vehicles_with_session(db, trucks_path=trucks_path, trailers_path=trailers_path)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
     return VehicleImportResponse(
         **stats.as_dict(),
         trucks_path=str(trucks_path),

@@ -101,6 +101,10 @@ class HistoricalRepairsImportTestCase(unittest.TestCase):
             self.assertEqual(db.query(Repair).count(), 0)
             self.assertEqual(db.query(ImportConflict).count(), 0)
 
+    def test_parse_groups_returns_value_error_for_unreadable_workbook(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Не удалось прочитать файл истории ремонтов"):
+            historical_repairs_import.parse_groups(io.BytesIO(b"not-a-workbook"))
+
     def test_import_marks_job_completed_with_timestamps_and_summary(self) -> None:
         group = historical_repairs_import.HistoricalRepairGroup(
             source_key="A123BC116|service|reg|2025-01-10",

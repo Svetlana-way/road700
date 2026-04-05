@@ -5,8 +5,10 @@ import csv
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from zipfile import BadZipFile
 
 from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -71,47 +73,56 @@ def normalize_hours(value: object) -> Optional[float]:
 
 
 def read_xlsx_rows(path: Path) -> list[dict[str, object]]:
-    workbook = load_workbook(path, data_only=True, read_only=True)
-    rows: list[dict[str, object]] = []
+    try:
+        workbook = load_workbook(path, data_only=True, read_only=True)
+    except (OSError, BadZipFile, InvalidFileException, ValueError) as error:
+        raise ValueError(f"Unable to read labor norms workbook: {path.name}") from error
 
-    for sheet_name in workbook.sheetnames:
-        if sheet_name in SKIPPED_SHEETS:
-            continue
-        worksheet = workbook[sheet_name]
-        for row in worksheet.iter_rows(values_only=True):
-            rows.append(
-                {
-                    "category": sheet_name,
-                    "source_sheet": sheet_name,
-                    "code": row[0] if len(row) > 0 else None,
-                    "name_ru": row[1] if len(row) > 1 else None,
-                    "name_cn": row[2] if len(row) > 2 else None,
-                    "name_en": row[3] if len(row) > 3 else None,
-                    "standard_hours": row[4] if len(row) > 4 else None,
-                    "name_ru_alt": row[5] if len(row) > 5 else None,
-                }
-            )
+    rows: list[dict[str, object]] = []
+    try:
+        for sheet_name in workbook.sheetnames:
+            if sheet_name in SKIPPED_SHEETS:
+                continue
+            worksheet = workbook[sheet_name]
+            for row in worksheet.iter_rows(values_only=True):
+                rows.append(
+                    {
+                        "category": sheet_name,
+                        "source_sheet": sheet_name,
+                        "code": row[0] if len(row) > 0 else None,
+                        "name_ru": row[1] if len(row) > 1 else None,
+                        "name_cn": row[2] if len(row) > 2 else None,
+                        "name_en": row[3] if len(row) > 3 else None,
+                        "standard_hours": row[4] if len(row) > 4 else None,
+                        "name_ru_alt": row[5] if len(row) > 5 else None,
+                    }
+                )
+    finally:
+        workbook.close()
     return rows
 
 
 def read_csv_rows(path: Path) -> list[dict[str, object]]:
-    with path.open("r", encoding="utf-8-sig", newline="") as source:
-        reader = csv.DictReader(source)
-        rows: list[dict[str, object]] = []
-        for row in reader:
-            rows.append(
-                {
-                    "category": row.get("category"),
-                    "source_sheet": row.get("source_sheet") or row.get("category"),
-                    "code": row.get("code"),
-                    "name_ru": row.get("name_ru"),
-                    "name_cn": row.get("name_cn"),
-                    "name_en": row.get("name_en"),
-                    "standard_hours": row.get("standard_hours"),
-                    "name_ru_alt": row.get("name_ru_alt"),
-                }
-            )
-    return rows
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as source:
+            reader = csv.DictReader(source)
+            rows: list[dict[str, object]] = []
+            for row in reader:
+                rows.append(
+                    {
+                        "category": row.get("category"),
+                        "source_sheet": row.get("source_sheet") or row.get("category"),
+                        "code": row.get("code"),
+                        "name_ru": row.get("name_ru"),
+                        "name_cn": row.get("name_cn"),
+                        "name_en": row.get("name_en"),
+                        "standard_hours": row.get("standard_hours"),
+                        "name_ru_alt": row.get("name_ru_alt"),
+                    }
+                )
+        return rows
+    except (OSError, UnicodeDecodeError, csv.Error) as error:
+        raise ValueError(f"Unable to read labor norms CSV: {path.name}") from error
 
 
 def overlay_paths_for_scope(scope: str) -> list[Path]:

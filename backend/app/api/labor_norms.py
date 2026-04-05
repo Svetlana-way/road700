@@ -605,6 +605,8 @@ def import_labor_norms(
             },
         )
         db.commit()
+        if isinstance(error, ValueError):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
         raise
 
     refreshed_catalog = db.scalar(select(LaborNormCatalog).where(LaborNormCatalog.scope == normalized_scope))

@@ -594,3 +594,40 @@ class LaborNormsApiTestCase(unittest.TestCase):
 
             stored_files = [path for path in storage_root.rglob("*") if path.is_file()]
             self.assertEqual(stored_files, [])
+
+    def test_import_labor_norms_returns_bad_request_for_parse_error(self) -> None:
+        headers = self._get_auth_headers()
+
+        with patch(
+            "app.api.labor_norms.import_labor_norms_with_session",
+            side_effect=ValueError("Unable to read labor norms workbook: catalog.xlsx"),
+        ):
+            response = self.client.post(
+                "/api/labor-norms/import",
+                headers=headers,
+                files={
+                    "file": (
+                        "catalog.xlsx",
+                        b"PK\x03\x04fake-xlsx-content",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+                data={"scope": "active_catalog"},
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"], "Unable to read labor norms workbook: catalog.xlsx")
+
+        with self.SessionLocal() as db:
+            audit_entry = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "labor_norm_import",
+                    AuditLog.entity_id == "active_catalog",
+                    AuditLog.action_type == "labor_norm_import_failed",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            self.assertIsNotNone(audit_entry)
+            assert audit_entry is not None
+            self.assertIn("Unable to read labor norms workbook", audit_entry.new_value["error"])

@@ -15,7 +15,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.paths import PROJECT_ROOT, get_storage_root
+from app.core.paths import PROJECT_ROOT, resolve_storage_path
 from app.db.session import SessionLocal
 from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
@@ -263,8 +263,8 @@ def create_document_record(
     source_path: Path,
     source_root: Path,
     storage_key: str,
+    destination: Path,
 ) -> int:
-    destination = get_storage_root() / storage_key
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, destination)
 
@@ -351,8 +351,10 @@ def import_documents_with_session(
             continue
 
         created_document_id: Optional[int] = None
-        destination = get_storage_root() / storage_key
+        destination = resolve_storage_path(storage_key)
         try:
+            if destination is None:
+                raise ValueError("Invalid document storage path")
             created_document_id = create_document_record(
                 db,
                 admin_user=admin_user,
@@ -360,6 +362,7 @@ def import_documents_with_session(
                 source_path=path,
                 source_root=source_dir,
                 storage_key=storage_key,
+                destination=destination,
             )
             process_document(db, created_document_id)
             document = db.scalar(
@@ -385,7 +388,7 @@ def import_documents_with_session(
         except Exception as exc:
             db.rollback()
             persisted_document = created_document_id is not None and db.get(Document, created_document_id) is not None
-            if destination.exists() and not persisted_document:
+            if destination is not None and destination.exists() and not persisted_document:
                 destination.unlink()
             stats.failed += 1
             if on_error is not None:

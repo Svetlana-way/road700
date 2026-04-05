@@ -12,7 +12,7 @@ from app.api.access import get_allowed_vehicle_ids_query, get_repair_visibility_
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.api.upload_validation import validate_document_upload
 from app.core.config import settings
-from app.core.paths import get_storage_root
+from app.core.paths import resolve_storage_path
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
@@ -146,16 +146,6 @@ def build_storage_key(filename: str) -> str:
     suffix = Path(filename).suffix.lower()
     today = date.today()
     return f"documents/{today.year}/{today.month:02d}/{uuid4().hex}{suffix}"
-
-
-def resolve_document_storage_path(storage_key: str) -> Path | None:
-    storage_root = get_storage_root().resolve()
-    candidate = (storage_root / storage_key).resolve()
-    try:
-        candidate.relative_to(storage_root)
-    except ValueError:
-        return None
-    return candidate
 
 
 def read_uploaded_file_bytes(upload: UploadFile) -> bytes:
@@ -1015,7 +1005,7 @@ def upload_document(
     uploads = collect_document_uploads(file, files)
     upload_artifact = build_document_upload_artifact(file, files)
     storage_key = build_storage_key(str(upload_artifact["original_filename"]))
-    destination = resolve_document_storage_path(storage_key)
+    destination = resolve_storage_path(storage_key)
     if destination is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid document storage path")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1211,7 +1201,7 @@ def upload_document_to_repair(
     uploads = collect_document_uploads(file, files)
     upload_artifact = build_document_upload_artifact(file, files)
     storage_key = build_storage_key(str(upload_artifact["original_filename"]))
-    destination = resolve_document_storage_path(storage_key)
+    destination = resolve_storage_path(storage_key)
     if destination is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid document storage path")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1318,7 +1308,7 @@ def download_document(
     current_user: User = Depends(get_current_active_user),
 ) -> FileResponse:
     document = get_visible_document(db, current_user, document_id)
-    storage_path = resolve_document_storage_path(document.storage_key)
+    storage_path = resolve_storage_path(document.storage_key)
     if storage_path is None or not storage_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
 

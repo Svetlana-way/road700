@@ -52,6 +52,17 @@ def resolve_user_path(path: str | Path) -> Path:
     return Path(path).expanduser().resolve()
 
 
+def resolve_storage_path(storage_key: str | Path, *, storage_root: str | Path | None = None) -> Path | None:
+    root = Path(storage_root) if storage_root is not None else get_storage_root()
+    resolved_root = root.resolve()
+    candidate = (resolved_root / storage_key).resolve()
+    try:
+        candidate.relative_to(resolved_root)
+    except ValueError:
+        return None
+    return candidate
+
+
 def get_storage_root() -> Path:
     return STORAGE_ROOT
 

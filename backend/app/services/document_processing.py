@@ -53,7 +53,7 @@ from app.services.labor_norms import (
     find_best_labor_norm_match,
     normalize_labor_norm_code,
 )
-from app.core.paths import get_storage_root
+from app.core.paths import get_storage_root, resolve_storage_path
 
 
 LOCAL_STORAGE_ROOT: Path | None = None
@@ -659,9 +659,9 @@ DEFAULT_OCR_RULE_DEFINITIONS: list[dict[str, object]] = [
 ] + PROFILE_SPECIFIC_OCR_RULE_DEFINITIONS
 
 
-def get_storage_path(storage_key: str) -> Path:
+def get_storage_path(storage_key: str) -> Path | None:
     storage_root = LOCAL_STORAGE_ROOT if LOCAL_STORAGE_ROOT is not None else get_storage_root()
-    return storage_root / storage_key
+    return resolve_storage_path(storage_key, storage_root=storage_root)
 
 
 def normalize_text(text: str) -> str:
@@ -7910,6 +7910,8 @@ def process_document(db: Session, document_id: int, *, job_id: int | None = None
         raise ValueError("Document not found or repair relation is incomplete")
 
     storage_path = get_storage_path(initial_document.storage_key)
+    if storage_path is None:
+        raise ValueError("Invalid document storage path")
     if job_id is None:
         job, _ = start_document_processing_job(db, initial_document, retry_failed=True, commit=True)
         job_id = job.id

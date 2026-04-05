@@ -140,6 +140,30 @@ class ImportDocumentsFromFolderTestCase(unittest.TestCase):
         self.assertFalse((self.storage_root / document.storage_key).exists())
         self.assertEqual(get_storage_root(), override_root.resolve())
 
+    def test_import_documents_with_session_rejects_storage_key_traversal(self) -> None:
+        source_file = self.source_root / "traversal-order.pdf"
+        source_file.write_bytes(b"%PDF-1.4\n%runtime-storage-test\n")
+        outside_file = self.storage_root.parent / "outside-import.pdf"
+        outside_file.unlink(missing_ok=True)
+
+        with self.SessionLocal() as db, patch.object(
+            import_documents_from_folder,
+            "build_storage_key_from_hash",
+            return_value="../outside-import.pdf",
+        ):
+            stats = import_documents_from_folder.import_documents_with_session(
+                db,
+                source_dir=self.source_root,
+            )
+
+        self.assertEqual(stats.created, 0)
+        self.assertEqual(stats.failed, 1)
+        self.assertFalse(outside_file.exists())
+
+        with self.SessionLocal() as db:
+            self.assertEqual(db.query(Document).count(), 0)
+            self.assertEqual(db.query(Repair).count(), 0)
+
     def test_get_admin_user_prefers_configured_login_ignoring_case(self) -> None:
         with self.SessionLocal() as db:
             db.add(

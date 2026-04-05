@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.access import get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_current_admin, get_db
-from app.core.paths import get_storage_root
+from app.core.paths import get_storage_root, resolve_storage_path
 from app.models.audit import AuditLog
 from app.models.document import Document
 from app.models.enums import CheckSeverity, DocumentStatus, ImportStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus
@@ -410,8 +410,8 @@ def cleanup_storage_files(storage_keys: set[str]) -> None:
     for storage_key in storage_keys:
         if not storage_key:
             continue
-        path = storage_root / storage_key
-        if path.exists():
+        path = resolve_storage_path(storage_key, storage_root=storage_root)
+        if path is not None and path.is_file():
             path.unlink()
 
 

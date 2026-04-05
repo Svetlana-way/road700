@@ -199,6 +199,23 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
                 self.assertIsNotNone(repair)
                 return checks, repair
 
+    def test_process_document_rejects_storage_key_traversal(self) -> None:
+        outside_file = self.storage_root.parent / "outside-processing.pdf"
+        outside_file.write_bytes(b"%PDF-1.4\n%outside-processing\n")
+        try:
+            with self.SessionLocal() as db:
+                document = db.get(Document, self.document_id)
+                self.assertIsNotNone(document)
+                assert document is not None
+                document.storage_key = "../outside-processing.pdf"
+                db.commit()
+
+            with self.SessionLocal() as db, patch.object(document_processing, "LOCAL_STORAGE_ROOT", self.storage_root):
+                with self.assertRaisesRegex(ValueError, "Invalid document storage path"):
+                    process_document(db, self.document_id)
+        finally:
+            outside_file.unlink(missing_ok=True)
+
     @staticmethod
     def _make_axb_payload(
         *,

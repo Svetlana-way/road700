@@ -7,6 +7,7 @@
 frontend/node_modules
 frontend/dist
 frontend/.tsbuild
+*.tsbuildinfo
 backend/.venv
 backend/local.db
 *.db

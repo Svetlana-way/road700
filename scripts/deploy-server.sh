@@ -92,6 +92,7 @@ run_rsync \
   --exclude 'frontend/node_modules' \
   --exclude 'frontend/dist' \
   --exclude 'frontend/.tsbuild' \
+  --exclude '*.tsbuildinfo' \
   --exclude 'backend/.venv' \
   --exclude 'backend/local.db' \
   --exclude '*.db' \

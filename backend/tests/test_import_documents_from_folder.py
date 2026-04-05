@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -67,19 +69,22 @@ class ImportDocumentsFromFolderTestCase(unittest.TestCase):
         source_file = self.source_root / "test-order.pdf"
         source_file.write_bytes(b"%PDF-1.4\n%batch-test\n")
 
-        with self.SessionLocal() as db, patch.object(
-            import_documents_from_folder,
-            "process_document",
-            side_effect=RuntimeError("ocr failure"),
-        ):
-            stats = import_documents_from_folder.import_documents_with_session(
-                db,
-                source_dir=self.source_root,
-            )
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            with self.SessionLocal() as db, patch.object(
+                import_documents_from_folder,
+                "process_document",
+                side_effect=RuntimeError("ocr failure"),
+            ):
+                stats = import_documents_from_folder.import_documents_with_session(
+                    db,
+                    source_dir=self.source_root,
+                )
 
         self.assertEqual(stats.created, 0)
         self.assertEqual(stats.failed, 1)
         self.assertFalse(any(path.is_file() for path in self.storage_root.rglob("*")))
+        self.assertEqual(stdout.getvalue(), "")
 
         with self.SessionLocal() as db:
             self.assertEqual(db.query(Document).count(), 0)

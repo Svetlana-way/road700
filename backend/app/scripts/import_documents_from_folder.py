@@ -5,10 +5,11 @@ import hashlib
 import mimetypes
 import re
 import shutil
+import sys
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -326,6 +327,7 @@ def import_documents_with_session(
     *,
     source_dir: Path,
     limit: int | None = None,
+    on_error: Callable[[Path, Exception], None] | None = None,
 ) -> ImportStats:
     if not source_dir.exists():
         raise FileNotFoundError(f"Source folder not found: {source_dir}")
@@ -386,7 +388,8 @@ def import_documents_with_session(
             if destination.exists() and not persisted_document:
                 destination.unlink()
             stats.failed += 1
-            print(f"[FAILED] {path}: {exc}")
+            if on_error is not None:
+                on_error(path, exc)
 
     return stats
 
@@ -435,7 +438,12 @@ def main() -> None:
         if args.retry_unmatched_only:
             stats = retry_unmatched_documents_with_session(db, limit=args.limit)
         else:
-            stats = import_documents_with_session(db, source_dir=source_dir, limit=args.limit)
+            stats = import_documents_with_session(
+                db,
+                source_dir=source_dir,
+                limit=args.limit,
+                on_error=lambda path, exc: print(f"[FAILED] {path}: {exc}", file=sys.stderr),
+            )
 
     print(stats.as_dict())
 

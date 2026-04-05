@@ -894,6 +894,23 @@ class DocumentJobsApiTestCase(unittest.TestCase):
             self.assertTrue(stored_path.exists())
             self.assertTrue(stored_path.read_bytes().startswith(b"%PDF"))
 
+    def test_upload_multiple_images_returns_400_when_image_merge_reader_fails(self) -> None:
+        headers = self._get_auth_headers()
+
+        with patch("app.services.pdf_tools.Image.open", side_effect=OSError("broken image stream")):
+            response = self.client.post(
+                "/api/documents/upload",
+                headers=headers,
+                files=[
+                    ("files", ("page-1.png", b"\x89PNG\r\n\x1a\nbroken-1", "image/png")),
+                    ("files", ("page-2.png", b"\x89PNG\r\n\x1a\nbroken-2", "image/png")),
+                ],
+                data={"kind": "order"},
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"], "Один из выбранных файлов не удалось прочитать как изображение")
+
     def test_worker_processing_uses_overridden_storage_root(self) -> None:
         headers = self._get_auth_headers()
         payload = self._upload_order_document(headers)

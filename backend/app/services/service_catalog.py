@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import zipfile
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from app.models.service import Service
 
 
 DOCX_TEXT_NAMESPACE = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+logger = logging.getLogger(__name__)
 LEGAL_FORM_PATTERN = re.compile(r"\b(?:ооо|ао|пао|зао|ип)\b", re.IGNORECASE)
 LONG_LEGAL_FORM_PATTERN = re.compile(
     r"\bобщество\s*с\s*ограниченной\s*ответственностью\b",
@@ -102,9 +104,12 @@ def normalize_service_key(value: str | None) -> str:
 
 
 def read_docx_text(path: Path) -> str:
-    with zipfile.ZipFile(path) as archive:
-        document_xml = archive.read("word/document.xml")
-    root = ElementTree.fromstring(document_xml)
+    try:
+        with zipfile.ZipFile(path) as archive:
+            document_xml = archive.read("word/document.xml")
+        root = ElementTree.fromstring(document_xml)
+    except (OSError, zipfile.BadZipFile, KeyError, ElementTree.ParseError, UnicodeDecodeError, ValueError) as error:
+        raise ValueError(f"Service card is unreadable: {path}") from error
     paragraphs: list[str] = []
     for paragraph in root.findall(".//w:p", DOCX_TEXT_NAMESPACE):
         text_parts = [
@@ -249,7 +254,11 @@ def get_service_catalog_entries() -> tuple[ServiceCatalogEntry, ...]:
     }
     if service_dir.exists():
         for path in sorted(service_dir.glob("*.docx")):
-            entry = build_entry(path)
+            try:
+                entry = build_entry(path)
+            except ValueError as error:
+                logger.warning("service_catalog_entry_skipped: %s", error)
+                continue
             entries_by_name[entry.name] = entry
     return tuple(sorted(entries_by_name.values(), key=lambda item: item.name.lower()))
 

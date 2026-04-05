@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from sqlalchemy import select
@@ -15,6 +17,7 @@ from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.scripts import sync_service_catalog
+from app.services import service_catalog
 from tests.sqlite_test_utils import create_sqlite_test_engine, reset_database
 
 
@@ -228,6 +231,23 @@ class SyncServiceCatalogTestCase(unittest.TestCase):
             assert repair is not None
             self.assertIsNone(repair.service_id)
             self.assertEqual(repair.status, RepairStatus.ARCHIVED)
+
+    def test_ensure_service_catalog_synced_skips_unreadable_docx_cards(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            Path(temp_dir, "broken-card.docx").write_bytes(b"not-a-docx")
+            service_catalog.get_service_catalog_entries.cache_clear()
+            try:
+                with self.SessionLocal() as db, patch.object(
+                    service_catalog,
+                    "get_service_catalog_dir",
+                    return_value=Path(temp_dir),
+                ), patch.object(service_catalog.logger, "warning") as warning_mock:
+                    synced = service_catalog.ensure_service_catalog_synced(db)
+
+                self.assertTrue(any(item.name == "ООО «АХВ Трак Сервис»" for item in synced))
+                warning_mock.assert_called_once()
+            finally:
+                service_catalog.get_service_catalog_entries.cache_clear()
 
 
 if __name__ == "__main__":

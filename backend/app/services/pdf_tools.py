@@ -38,7 +38,7 @@ def merge_images_to_pdf(uploaded_images: Sequence[tuple[str, bytes]]) -> bytes:
             try:
                 with Image.open(BytesIO(payload)) as image:
                     normalized_pages.append(_normalize_pdf_page(image))
-            except UnidentifiedImageError as error:
+            except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as error:
                 raise ValueError("Один из выбранных файлов не удалось прочитать как изображение") from error
 
         output = BytesIO()

@@ -8,6 +8,8 @@ REMOTE_HOST="${DEPLOY_HOST:-}"
 REMOTE_DIR="${DEPLOY_PATH:-/opt/road700}"
 REMOTE_ENV_FILE="${DEPLOY_ENV_FILE:-.env.server}"
 SSH_PASSWORD="${DEPLOY_PASSWORD:-${SSH_PASSWORD:-}}"
+SSH_CONTROL_DIR=""
+SSH_CONTROL_PATH=""
 
 usage() {
   cat <<'EOF'
@@ -35,6 +37,24 @@ if [[ "${SKIP_USE_CASE_CHECK:-0}" != "1" ]]; then
 fi
 
 SSH_BASE_ARGS=(-o StrictHostKeyChecking=no)
+SSH_CONTROL_DIR="$(mktemp -d "${TMPDIR:-/tmp}/r7d.XXXXXX")"
+SSH_CONTROL_PATH="$SSH_CONTROL_DIR/sock"
+SSH_BASE_ARGS+=(
+  -o ControlMaster=auto
+  -o ControlPersist=300
+  -o ControlPath="$SSH_CONTROL_PATH"
+)
+
+cleanup() {
+  if [[ -n "$SSH_CONTROL_PATH" && -S "$SSH_CONTROL_PATH" ]]; then
+    ssh "${SSH_BASE_ARGS[@]}" -O exit "$REMOTE_USER@$REMOTE_HOST" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$SSH_CONTROL_DIR" ]]; then
+    rm -rf "$SSH_CONTROL_DIR"
+  fi
+}
+
+trap cleanup EXIT
 
 if [[ -n "$SSH_PASSWORD" ]]; then
   if ! command -v sshpass >/dev/null 2>&1; then

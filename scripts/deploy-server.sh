@@ -41,6 +41,10 @@ if [[ -n "$SSH_PASSWORD" ]]; then
     echo "sshpass is required when DEPLOY_PASSWORD or SSH_PASSWORD is set" >&2
     exit 1
   fi
+  SSH_BASE_ARGS+=(
+    -o PreferredAuthentications=password,keyboard-interactive
+    -o PubkeyAuthentication=no
+  )
   REMOTE_SHELL="ssh ${SSH_BASE_ARGS[*]}"
 else
   REMOTE_SHELL="ssh ${SSH_BASE_ARGS[*]}"

@@ -72,6 +72,17 @@ class FrontendServingTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 404, response.text)
         self.assertEqual(response.json()["detail"], "Not Found")
 
+    def test_path_traversal_outside_frontend_dist_returns_404(self) -> None:
+        index_file = self.frontend_dist_dir / "index.html"
+        secret_file = self.frontend_dist_dir.parent / "secret.txt"
+        index_file.write_text("<html><body>spa shell</body></html>", encoding="utf-8")
+        secret_file.write_text("top-secret", encoding="utf-8")
+
+        response = self.client.get("/%2e%2e/secret.txt")
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"], "Not Found")
+
     def test_missing_frontend_build_returns_503(self) -> None:
         response = self.client.get("/")
 

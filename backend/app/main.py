@@ -27,6 +27,15 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api")
 
 
+def resolve_frontend_asset_path(frontend_dist_dir: Path, full_path: str) -> Path | None:
+    candidate = (frontend_dist_dir / full_path).resolve()
+    try:
+        candidate.relative_to(frontend_dist_dir.resolve())
+    except ValueError:
+        return None
+    return candidate
+
+
 @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def serve_frontend_index():
     frontend_index_file = get_frontend_dist_dir() / "index.html"
@@ -46,7 +55,9 @@ async def serve_frontend_app(full_path: str):
     if not frontend_dist_dir.exists():
         raise HTTPException(status_code=503, detail="Frontend build not found")
 
-    candidate = frontend_dist_dir / full_path
+    candidate = resolve_frontend_asset_path(frontend_dist_dir, full_path)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Not Found")
     if candidate.is_file():
         return FileResponse(candidate)
 

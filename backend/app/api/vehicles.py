@@ -40,6 +40,12 @@ from app.scripts.import_vehicles import (
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
 
 
+def resolve_registry_import_path(raw_path: str | None, *, default_path: Path) -> Path:
+    if not raw_path:
+        return default_path
+    return Path(raw_path).expanduser().resolve()
+
+
 def build_visible_vehicle_repair_clause():
     return and_(
         Repair.status != RepairStatus.ARCHIVED,
@@ -634,8 +640,8 @@ def import_vehicle_registry(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_admin),
 ) -> VehicleImportResponse:
-    trucks_path = Path(payload.trucks_path) if payload.trucks_path else DEFAULT_TRUCKS_PATH
-    trailers_path = Path(payload.trailers_path) if payload.trailers_path else DEFAULT_TRAILERS_PATH
+    trucks_path = resolve_registry_import_path(payload.trucks_path, default_path=DEFAULT_TRUCKS_PATH)
+    trailers_path = resolve_registry_import_path(payload.trailers_path, default_path=DEFAULT_TRAILERS_PATH)
 
     if not trucks_path.exists():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Trucks file not found: {trucks_path}")

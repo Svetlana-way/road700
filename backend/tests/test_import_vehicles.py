@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+from app.api.vehicles import resolve_registry_import_path
 from app.db.base import Base
 from app.models.enums import VehicleStatus, VehicleType
 from app.models.vehicle import Vehicle, VehicleLinkHistory
@@ -107,3 +112,14 @@ class ImportVehiclesScriptTestCase(unittest.TestCase):
 
         self.assertEqual(stats.links_created, 0)
         self.assertEqual(len(links), 0)
+
+    def test_resolve_registry_import_path_expands_user_home(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home_dir = Path(temp_dir)
+            source_path = home_dir / "registry.xls"
+            source_path.write_text("stub", encoding="utf-8")
+
+            with patch.dict(os.environ, {"HOME": str(home_dir)}):
+                resolved = resolve_registry_import_path("~/registry.xls", default_path=Path("/ignored/default.xls"))
+
+        self.assertEqual(resolved, source_path.resolve())

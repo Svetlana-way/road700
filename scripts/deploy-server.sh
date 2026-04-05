@@ -87,7 +87,8 @@ run_ssh "cd '$REMOTE_DIR' && rm -rf \
   frontend/.tsbuild \
   backend/.venv \
   backend/local.db"
-run_ssh "find '$REMOTE_DIR' -maxdepth 2 \\( -name '*.tsbuildinfo' -o -name '*.db' \\) -delete"
+run_ssh "find '$REMOTE_DIR' -maxdepth 1 -name '*.db' -delete"
+run_ssh "find '$REMOTE_DIR/frontend' -maxdepth 1 -name '*.tsbuildinfo' -delete 2>/dev/null || true"
 
 echo "Syncing project files"
 run_rsync \

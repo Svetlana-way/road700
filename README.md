@@ -140,6 +140,7 @@ Typical update deploy from the local workstation:
 7. The deploy script:
    - runs `scripts/predeploy-usecase-check.sh` automatically unless `SKIP_USE_CASE_CHECK=1`
    - syncs the repository
+   - removes stale workstation-only artifacts already present on the server, such as `.codespaces/`, `.devcontainer/`, `.private/`, `.qoder/`, local `frontend/dist`, and local TypeScript build artifacts
    - does not upload, overwrite, or delete `.env.server`
    - does not upload local workstation dot-env files such as `.env` or `.env.local`
    - does not upload workstation-private folders such as `.private/` or `.qoder/`

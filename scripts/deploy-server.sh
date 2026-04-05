@@ -74,6 +74,21 @@ looks_like_ip_address() {
 echo "Creating remote directory $REMOTE_DIR"
 run_ssh "mkdir -p '$REMOTE_DIR'"
 
+echo "Cleaning stale workstation-only artifacts on remote"
+run_ssh "cd '$REMOTE_DIR' && rm -rf \
+  .codespaces \
+  .devcontainer \
+  .github \
+  .private \
+  .qoder \
+  tmp \
+  frontend/node_modules \
+  frontend/dist \
+  frontend/.tsbuild \
+  backend/.venv \
+  backend/local.db"
+run_ssh "find '$REMOTE_DIR' -maxdepth 2 \\( -name '*.tsbuildinfo' -o -name '*.db' \\) -delete"
+
 echo "Syncing project files"
 run_rsync \
   -az \

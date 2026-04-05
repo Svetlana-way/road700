@@ -13,6 +13,7 @@ from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.schemas.imports import ImportJobRead, ImportJobRetryResponse
+from app.api.imports import serialize_import_job
 from app.services.import_jobs import enqueue_document_processing_job
 
 
@@ -47,7 +48,7 @@ def get_job(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> ImportJobRead:
-    return ImportJobRead.model_validate(get_visible_job(db, current_user, job_id))
+    return serialize_import_job(get_visible_job(db, current_user, job_id))
 
 
 @router.post("/{job_id}/retry", response_model=ImportJobRetryResponse)
@@ -82,5 +83,5 @@ def retry_job(
     db.refresh(retried_job)
     return ImportJobRetryResponse(
         message="Задача поставлена в очередь повторно",
-        job=ImportJobRead.model_validate(retried_job),
+        job=serialize_import_job(retried_job),
     )

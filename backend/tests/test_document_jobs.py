@@ -141,6 +141,25 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         self.assertEqual(retried_job_response.status_code, 200, retried_job_response.text)
         self.assertEqual(retried_job_response.json()["status"], "retry")
 
+    def test_get_job_tolerates_non_object_summary(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        job_id = payload["job_id"]
+        self.assertIsNotNone(job_id)
+        assert job_id is not None
+
+        with self.SessionLocal() as db:
+            job = db.get(ImportJob, job_id)
+            self.assertIsNotNone(job)
+            assert job is not None
+            job.summary = ["legacy-broken-summary"]
+            db.commit()
+
+        response = self.client.get(f"/api/jobs/{job_id}", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["summary"], {})
+
     def test_retry_endpoint_reuses_existing_active_job_for_same_document(self) -> None:
         headers = self._get_auth_headers()
         payload = self._upload_order_document(headers)

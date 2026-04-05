@@ -42,6 +42,23 @@ def coerce_json_object(value: object) -> dict:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def serialize_import_job(job: ImportJob) -> ImportJobRead:
+    return ImportJobRead(
+        id=job.id,
+        document_id=job.document_id,
+        import_type=job.import_type,
+        source_filename=job.source_filename,
+        status=job.status,
+        summary=coerce_json_object(job.summary) if job.summary is not None else None,
+        error_message=job.error_message,
+        attempts=job.attempts,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
+
+
 def build_historical_work_reference(
     db: Session,
     *,
@@ -282,9 +299,9 @@ def serialize_import_conflict(conflict: ImportConflict, *, source_filename: str 
         import_job_id=conflict.import_job_id,
         entity_type=conflict.entity_type,
         conflict_key=conflict.conflict_key,
-        incoming_payload=conflict.incoming_payload,
-        existing_payload=conflict.existing_payload,
-        resolution_payload=conflict.resolution_payload,
+        incoming_payload=coerce_json_object(conflict.incoming_payload) if conflict.incoming_payload is not None else None,
+        existing_payload=coerce_json_object(conflict.existing_payload) if conflict.existing_payload is not None else None,
+        resolution_payload=coerce_json_object(conflict.resolution_payload) if conflict.resolution_payload is not None else None,
         status=conflict.status,
         source_filename=source_filename,
         created_at=conflict.created_at,
@@ -310,7 +327,7 @@ def list_import_jobs(
     if import_type:
         stmt = stmt.where(ImportJob.import_type == import_type)
     items = db.execute(stmt).scalars().all()
-    return ImportJobListResponse(items=[ImportJobRead.model_validate(item) for item in items])
+    return ImportJobListResponse(items=[serialize_import_job(item) for item in items])
 
 
 @router.get("/conflicts", response_model=ImportConflictListResponse)

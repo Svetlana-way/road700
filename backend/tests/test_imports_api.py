@@ -249,6 +249,63 @@ class ImportsApiTestCase(unittest.TestCase):
         self.assertEqual(payload["conflict"]["status"], "ignored")
         self.assertEqual(payload["conflict"]["resolution_payload"]["comment"], "Оставили для ручной проверки")
 
+    def test_list_import_jobs_tolerates_non_object_summary(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            db.add(
+                ImportJob(
+                    import_type="historical_repairs",
+                    source_filename="history.xlsx",
+                    status=ImportStatus.QUEUED,
+                    summary=["legacy-broken-summary"],
+                    error_message=None,
+                    attempts=0,
+                )
+            )
+            db.commit()
+
+        response = self.client.get("/api/imports/jobs", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["items"][0]["summary"], {})
+
+    def test_list_import_conflicts_tolerates_non_object_payloads(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            job = ImportJob(
+                import_type="historical_repairs",
+                source_filename="history.xlsx",
+                status=ImportStatus.COMPLETED_WITH_CONFLICTS,
+                summary={"stage": "completed"},
+                error_message=None,
+                attempts=1,
+            )
+            db.add(job)
+            db.flush()
+            db.add(
+                ImportConflict(
+                    import_job_id=job.id,
+                    entity_type="repair",
+                    conflict_key="C123BC116|service|reg|2025-01-10",
+                    incoming_payload=["legacy-incoming"],
+                    existing_payload=["legacy-existing"],
+                    resolution_payload=["legacy-resolution"],
+                    status="pending",
+                )
+            )
+            db.commit()
+
+        response = self.client.get("/api/imports/conflicts?status=pending", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["items"][0]["incoming_payload"], {})
+        self.assertEqual(payload["items"][0]["existing_payload"], {})
+        self.assertEqual(payload["items"][0]["resolution_payload"], {})
+
     def test_list_import_jobs_filters_by_import_type(self) -> None:
         headers = self._get_auth_headers()
 

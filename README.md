@@ -142,6 +142,7 @@ Typical update deploy from the local workstation:
    - syncs the repository
    - does not upload, overwrite, or delete `.env.server`
    - does not upload local workstation dot-env files such as `.env` or `.env.local`
+   - does not upload workstation-private folders such as `.private/` or `.qoder/`
    - protects `storage/` from deletion during `rsync --delete`
    - skips local SQLite artifacts such as `*.db`
    - skips local `signoff_artifacts/` and `tmp/` during sync so deploy/build context stays clean

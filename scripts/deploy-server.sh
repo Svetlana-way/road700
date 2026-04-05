@@ -85,6 +85,8 @@ run_rsync \
   --exclude '.github' \
   --exclude '.codespaces' \
   --exclude '.devcontainer' \
+  --exclude '.private' \
+  --exclude '.qoder' \
   --exclude '.env' \
   --exclude '.env.*' \
   --exclude 'signoff_artifacts' \

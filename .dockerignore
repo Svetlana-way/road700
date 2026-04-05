@@ -2,6 +2,8 @@
 .github
 .codespaces
 .devcontainer
+.private
+.qoder
 .env
 .env.*
 frontend/node_modules

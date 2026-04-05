@@ -19,3 +19,5 @@ backend/*.egg-info/
 backend/local.db
 storage/
 .codespaces/
+.private/
+.qoder/

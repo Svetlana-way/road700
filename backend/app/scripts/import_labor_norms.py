@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.paths import PROJECT_ROOT, get_backend_data_root
+from app.core.paths import PROJECT_ROOT, get_backend_data_root, resolve_user_path
 from app.db.session import SessionLocal
 from app.models.enums import CatalogStatus
 from app.models.labor_norm import LaborNorm
@@ -262,17 +262,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    resolved_path = resolve_user_path(args.path)
     with SessionLocal() as db:
         stats = import_labor_norms_with_session(
             db,
-            path=args.path.resolve(),
+            path=resolved_path,
             scope=args.scope,
             brand_family=args.brand_family,
             catalog_name=args.catalog_name,
         )
     print(
         {
-            "path": str(args.path.resolve()),
+            "path": str(resolved_path),
             "scope": args.scope,
             "brand_family": args.brand_family,
             "catalog_name": args.catalog_name,

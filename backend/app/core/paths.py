@@ -48,6 +48,10 @@ def get_backend_data_root() -> Path:
     return (BACKEND_ROOT / "data").resolve()
 
 
+def resolve_user_path(path: str | Path) -> Path:
+    return Path(path).expanduser().resolve()
+
+
 def get_storage_root() -> Path:
     return STORAGE_ROOT
 

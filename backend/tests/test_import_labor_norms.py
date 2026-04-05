@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db.base import Base
 from app.models.labor_norm_catalog import LaborNormCatalog
 from app.models.labor_norm import LaborNorm
+from app.core.paths import resolve_user_path
 from app.scripts.import_labor_norms import import_labor_norms_with_session
 from app.services.labor_norms import upsert_labor_norm_catalog
 from tests.sqlite_test_utils import create_sqlite_test_engine, reset_database
@@ -118,6 +120,17 @@ class ImportLaborNormsTestCase(unittest.TestCase):
 
         self.assertIsNotNone(norm)
         self.assertIn("тонкой очистки", norm.name_ru_alt or "")
+
+    def test_resolve_user_path_expands_home_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home_dir = Path(temp_dir)
+            catalog_path = home_dir / "catalog.csv"
+            catalog_path.write_text("code,name_ru,standard_hours\nA,Test,1\n", encoding="utf-8")
+
+            with patch.dict(os.environ, {"HOME": str(home_dir)}):
+                resolved = resolve_user_path("~/catalog.csv")
+
+        self.assertEqual(resolved, catalog_path.resolve())
 
 
 if __name__ == "__main__":

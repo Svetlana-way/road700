@@ -11,6 +11,7 @@ from typing import BinaryIO
 
 from openpyxl import load_workbook
 
+from app.core.paths import resolve_user_path
 from app.services.historical_repairs_import import (
     EXPECTED_HEADERS,
     HistoricalRepairLine,
@@ -603,8 +604,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    build_catalogs(args.source.resolve(), args.output_dir.resolve())
-    print(f"Catalogs written to: {args.output_dir.resolve()}")
+    source_path = resolve_user_path(args.source)
+    output_dir = resolve_user_path(args.output_dir)
+    build_catalogs(source_path, output_dir)
+    print(f"Catalogs written to: {output_dir}")
 
 
 if __name__ == "__main__":

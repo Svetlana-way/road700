@@ -68,7 +68,7 @@ Initial project scaffold for the fleet repairs platform.
 5. `POSTGRES_PORT` in `.env` changes only the host-side port mapping; backend and worker still connect to the database over the internal Docker network on port `5432`.
 6. Backend and worker share the same Docker volume for `storage/`, so uploaded files remain available to OCR jobs across container restarts.
 7. The local frontend container now proxies `/api` to the backend container over the internal Docker network instead of hardcoding `http://localhost:<BACKEND_PORT>/api` in the browser.
-8. Local Docker builds now ignore `backend/.venv`, local SQLite files, `frontend/node_modules`, `dist/`, and other workstation-only artifacts inside the backend/frontend build contexts.
+8. Local Docker builds now ignore `backend/.venv`, local SQLite files, `frontend/node_modules`, `frontend/.tsbuild/`, `dist/`, and other workstation-only artifacts inside the backend/frontend build contexts.
 
 ## GitHub launch
 

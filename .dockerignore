@@ -6,6 +6,7 @@
 .env.*
 frontend/node_modules
 frontend/dist
+frontend/.tsbuild
 backend/.venv
 backend/local.db
 *.db

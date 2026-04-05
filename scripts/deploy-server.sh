@@ -132,14 +132,21 @@ echo "Running OCR runtime smoke test"
 run_ssh "cd '$REMOTE_DIR' && chmod +x ./scripts/smoke-test-ocr-runtime.sh && ENV_FILE='$REMOTE_ENV_FILE' COMPOSE_FILE='docker-compose.server.yml' ./scripts/smoke-test-ocr-runtime.sh"
 
 if command -v curl >/dev/null 2>&1; then
-  REMOTE_DOMAIN="$(run_ssh "cd '$REMOTE_DIR' && awk -F= '/^[[:space:]]*#/ || !/=/{next} {key=\$1; sub(/^[[:space:]]+/, \"\", key); sub(/[[:space:]]+$/, \"\", key); if (key != \"DOMAIN\") next; value=substr(\$0, index(\$0, \"=\")+1); sub(/^[[:space:]]+/, \"\", value); sub(/[[:space:]]+$/, \"\", value); if ((value ~ /^\".*\"$/) || (value ~ /^'\"'\"'.*'\"'\"'$/)) value=substr(value, 2, length(value)-2); print value }' '$REMOTE_ENV_FILE' | tail -n 1")"
+  REMOTE_DOMAIN=""
+  if ! REMOTE_DOMAIN="$(run_ssh "cd '$REMOTE_DIR' && awk -F= '/^[[:space:]]*#/ || !/=/{next} {key=\$1; sub(/^[[:space:]]+/, \"\", key); sub(/[[:space:]]+$/, \"\", key); if (key != \"DOMAIN\") next; value=substr(\$0, index(\$0, \"=\")+1); sub(/^[[:space:]]+/, \"\", value); sub(/[[:space:]]+$/, \"\", value); if ((value ~ /^\".*\"$/) || (value ~ /^'\"'\"'.*'\"'\"'$/)) value=substr(value, 2, length(value)-2); print value }' '$REMOTE_ENV_FILE' | tail -n 1" 2>/dev/null)"; then
+    echo "Warning: failed to read DOMAIN from remote env; continuing with direct host smoke only." >&2
+  fi
+
+  if looks_like_ip_address "$REMOTE_HOST"; then
+    echo "Running direct host smoke test"
+    curl --fail --silent --show-error --max-time 20 "http://$REMOTE_HOST/api/health" >/dev/null
+    echo "Direct host smoke test passed."
+  fi
+
   if [[ -n "$REMOTE_DOMAIN" ]]; then
     echo "Running external access smoke test"
     curl --fail --silent --show-error --max-time 20 "https://$REMOTE_DOMAIN/api/health" >/dev/null
     curl --fail --silent --show-error --location --max-time 20 "http://$REMOTE_DOMAIN/api/health" >/dev/null
-    if looks_like_ip_address "$REMOTE_HOST"; then
-      curl --fail --silent --show-error --max-time 20 "http://$REMOTE_HOST/api/health" >/dev/null
-    fi
     echo "External access smoke test passed."
   fi
 fi

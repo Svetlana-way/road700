@@ -1889,6 +1889,60 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         )
         self.assertEqual(archived_response.status_code, 404, archived_response.text)
 
+    def test_document_download_blocks_storage_path_traversal_from_persisted_storage_key(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            vehicle = db.scalar(select(Vehicle).where(Vehicle.external_id == "truck-1"))
+            self.assertIsNotNone(admin)
+            self.assertIsNotNone(vehicle)
+            assert admin is not None
+            assert vehicle is not None
+
+            repair = Repair(
+                order_number="ZN-UPL-DOWNLOAD-TRAVERSAL-001",
+                repair_date=date(2025, 1, 23),
+                vehicle_id=vehicle.id,
+                created_by_user_id=admin.id,
+                mileage=7200,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=False,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="outside-secret.txt",
+                storage_key="../outside-secret.txt",
+                mime_type="text/plain",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            db.commit()
+            document_id = document.id
+
+        outside_file = self.storage_root.parent / "outside-secret.txt"
+        outside_file.write_text("should-not-leak", encoding="utf-8")
+        try:
+            response = self.client.get(
+                f"/api/documents/{document_id}/download",
+                headers=headers,
+            )
+            self.assertEqual(response.status_code, 404, response.text)
+            self.assertEqual(response.json()["detail"], "Document file not found")
+        finally:
+            outside_file.unlink(missing_ok=True)
+
     def test_employee_can_export_own_preliminary_repair_after_vehicle_relink(self) -> None:
         headers = self._get_auth_headers("employee")
 

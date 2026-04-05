@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import unittest
+import zipfile
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -261,3 +262,45 @@ class BackupsApiTestCase(unittest.TestCase):
                     requested_by_user_id=1,
                 )
         self.assertEqual(file_path.read_text(encoding="utf-8"), "mutated after backup")
+
+    def test_backup_paths_reject_traversal_backup_ids(self) -> None:
+        with self.assertRaises(backups_service.InvalidBackupIdError):
+            backups_service.archive_path_for("../../outside")
+
+        with self.assertRaises(backups_service.InvalidBackupIdError):
+            backups_service.load_backup_item_or_raise("../../outside")
+
+    def test_restore_backup_skips_absolute_storage_members(self) -> None:
+        backup_id = "20260405T120000Z_deadbeef"
+        backup_dir = backups_service.get_backup_dir()
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = backup_dir / f"{backup_id}.zip"
+        manifest_path = backup_dir / f"{backup_id}{backups_service.BACKUP_MANIFEST_SUFFIX}"
+        outside_target = Path(tempfile.gettempdir()) / "road700-backup-absolute-member.txt"
+        if outside_target.exists():
+            outside_target.unlink()
+
+        manifest_path.write_text(
+            (
+                "{\n"
+                f'  "backup_id": "{backup_id}",\n'
+                f'  "filename": "{archive_path.name}",\n'
+                '  "created_at": "2026-04-05T12:00:00+00:00"\n'
+                "}\n"
+            ),
+            encoding="utf-8",
+        )
+        with zipfile.ZipFile(archive_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("database.json", '{"format":"road700_backup_v1","created_at":"2026-04-05T12:00:00+00:00","tables":[]}')
+            archive.writestr("storage/documents/inside.txt", "safe")
+            archive.writestr(f"storage/{outside_target.as_posix()}", "outside")
+
+        extracted_dir = backups_service.extract_storage_snapshot_to_temp(backup_id)
+        try:
+            self.assertEqual((extracted_dir / "documents" / "inside.txt").read_text(encoding="utf-8"), "safe")
+            self.assertFalse(outside_target.exists())
+        finally:
+            shutil.rmtree(extracted_dir, ignore_errors=True)
+            archive_path.unlink(missing_ok=True)
+            manifest_path.unlink(missing_ok=True)
+            outside_target.unlink(missing_ok=True)

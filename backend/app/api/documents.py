@@ -148,6 +148,16 @@ def build_storage_key(filename: str) -> str:
     return f"documents/{today.year}/{today.month:02d}/{uuid4().hex}{suffix}"
 
 
+def resolve_document_storage_path(storage_key: str) -> Path | None:
+    storage_root = get_storage_root().resolve()
+    candidate = (storage_root / storage_key).resolve()
+    try:
+        candidate.relative_to(storage_root)
+    except ValueError:
+        return None
+    return candidate
+
+
 def read_uploaded_file_bytes(upload: UploadFile) -> bytes:
     upload.file.seek(0)
     return upload.file.read()
@@ -1005,7 +1015,9 @@ def upload_document(
     uploads = collect_document_uploads(file, files)
     upload_artifact = build_document_upload_artifact(file, files)
     storage_key = build_storage_key(str(upload_artifact["original_filename"]))
-    destination = get_storage_root() / storage_key
+    destination = resolve_document_storage_path(storage_key)
+    if destination is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid document storage path")
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     created_document_id = None
@@ -1199,7 +1211,9 @@ def upload_document_to_repair(
     uploads = collect_document_uploads(file, files)
     upload_artifact = build_document_upload_artifact(file, files)
     storage_key = build_storage_key(str(upload_artifact["original_filename"]))
-    destination = get_storage_root() / storage_key
+    destination = resolve_document_storage_path(storage_key)
+    if destination is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid document storage path")
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     created_document_id = None
@@ -1304,8 +1318,8 @@ def download_document(
     current_user: User = Depends(get_current_active_user),
 ) -> FileResponse:
     document = get_visible_document(db, current_user, document_id)
-    storage_path = get_storage_root() / document.storage_key
-    if not storage_path.exists():
+    storage_path = resolve_document_storage_path(document.storage_key)
+    if storage_path is None or not storage_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
 
     return FileResponse(

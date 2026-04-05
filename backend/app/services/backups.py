@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tempfile
 import uuid
@@ -32,6 +33,11 @@ REPAIR_DOCUMENT_CYCLE_DEPENDENCIES = ("users", "vehicles", "services")
 BACKUP_INCLUDED_SECTIONS = ("database", "storage_files")
 BACKUP_EXCLUDED_SECTIONS = ("backup_archives",)
 BACKUP_RESTORE_EFFECTS = ("replace_database", "replace_storage_files", "keep_backup_archives", "relogin_required")
+BACKUP_ID_PATTERN = re.compile(r"^\d{8}T\d{6}Z_[0-9a-f]{8}$")
+
+
+class InvalidBackupIdError(ValueError):
+    pass
 
 
 def utc_now() -> datetime:
@@ -50,12 +56,46 @@ def build_backup_id() -> str:
     return f"{utc_now().strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:8]}"
 
 
+def validate_backup_id(backup_id: str) -> str:
+    normalized_backup_id = str(backup_id).strip()
+    if not BACKUP_ID_PATTERN.fullmatch(normalized_backup_id):
+        raise InvalidBackupIdError("Invalid backup id")
+    return normalized_backup_id
+
+
+def resolve_backup_path(backup_id: str, suffix: str) -> Path:
+    normalized_backup_id = validate_backup_id(backup_id)
+    backup_dir = get_backup_dir().resolve()
+    candidate = (backup_dir / f"{normalized_backup_id}{suffix}").resolve()
+    try:
+        candidate.relative_to(backup_dir)
+    except ValueError as error:
+        raise InvalidBackupIdError("Invalid backup id") from error
+    return candidate
+
+
 def archive_path_for(backup_id: str) -> Path:
-    return get_backup_dir() / f"{backup_id}.zip"
+    return resolve_backup_path(backup_id, ".zip")
 
 
 def manifest_path_for(backup_id: str) -> Path:
-    return get_backup_dir() / f"{backup_id}{BACKUP_MANIFEST_SUFFIX}"
+    return resolve_backup_path(backup_id, BACKUP_MANIFEST_SUFFIX)
+
+
+def resolve_snapshot_member_path(base_dir: Path, relative_name: str) -> Path | None:
+    if not relative_name:
+        return None
+    relative_path = Path(relative_name)
+    if relative_path.is_absolute():
+        return None
+
+    base_dir = base_dir.resolve()
+    candidate = (base_dir / relative_path).resolve()
+    try:
+        candidate.relative_to(base_dir)
+    except ValueError:
+        return None
+    return candidate
 
 
 def serialize_value(value: Any) -> Any:
@@ -351,10 +391,9 @@ def extract_storage_snapshot_to_temp(backup_id: str) -> Path:
             if not member.startswith("storage/") or member.endswith("/"):
                 continue
             relative_name = member.removeprefix("storage/")
-            relative_path = Path(relative_name)
-            if ".." in relative_path.parts:
+            destination = resolve_snapshot_member_path(temp_dir, relative_name)
+            if destination is None:
                 continue
-            destination = temp_dir / relative_path
             destination.parent.mkdir(parents=True, exist_ok=True)
             with archive.open(member, mode="r") as source, destination.open("wb") as target:
                 shutil.copyfileobj(source, target)

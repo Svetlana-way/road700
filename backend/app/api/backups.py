@@ -13,6 +13,7 @@ from app.schemas.backup import (
     BackupRestoreResponse,
 )
 from app.services.backups import (
+    InvalidBackupIdError,
     archive_path_for,
     create_backup_archive,
     list_backup_items,
@@ -64,10 +65,15 @@ def download_backup(
     _ = current_admin
     try:
         backup = load_backup_item_or_raise(backup_id)
+    except InvalidBackupIdError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup not found") from error
     except FileNotFoundError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup not found") from error
 
-    archive_path = archive_path_for(backup_id)
+    try:
+        archive_path = archive_path_for(backup_id)
+    except InvalidBackupIdError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup not found") from error
     if not archive_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup file not found")
     return FileResponse(
@@ -97,6 +103,8 @@ def restore_backup(
             requested_by_login=current_admin.login,
             requested_by_user_id=current_admin.id,
         )
+    except InvalidBackupIdError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup not found") from error
     except FileNotFoundError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backup not found") from error
     except ValueError as error:

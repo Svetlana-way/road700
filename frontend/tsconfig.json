@@ -18,8 +18,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    "tsBuildInfoFile": "./.tsbuild/app/tsconfig.tsbuildinfo",
     "jsx": "react-jsx"
   },
   "include": ["src"]
 }
-

@@ -374,8 +374,20 @@ def load_database_snapshot(backup_id: str) -> dict[str, Any]:
         raise CorruptBackupError("Backup archive is corrupt")
     if payload.get("format") != BACKUP_FORMAT:
         raise CorruptBackupError("Unsupported backup format")
-    if not isinstance(payload.get("tables"), list):
+    tables = payload.get("tables")
+    if not isinstance(tables, list):
         raise CorruptBackupError("Backup archive is corrupt")
+    for table_payload in tables:
+        if not isinstance(table_payload, dict):
+            raise CorruptBackupError("Backup archive is corrupt")
+        if not isinstance(table_payload.get("table"), str):
+            raise CorruptBackupError("Backup archive is corrupt")
+        rows = table_payload.get("rows")
+        if not isinstance(rows, list):
+            raise CorruptBackupError("Backup archive is corrupt")
+        for row in rows:
+            if not isinstance(row, dict):
+                raise CorruptBackupError("Backup archive is corrupt")
     return payload
 
 

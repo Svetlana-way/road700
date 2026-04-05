@@ -399,3 +399,35 @@ class BackupsApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 409, response.text)
         self.assertEqual(response.json()["detail"], "Backup metadata is corrupt")
+
+    def test_restore_backup_returns_conflict_for_invalid_snapshot_table_shape(self) -> None:
+        headers = self._get_auth_headers()
+        backup_id = "20260405T170000Z_deadbeef"
+        backup_dir = backups_service.get_backup_dir()
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = backup_dir / f"{backup_id}.zip"
+        manifest_path = backup_dir / f"{backup_id}{backups_service.BACKUP_MANIFEST_SUFFIX}"
+        manifest_path.write_text(
+            (
+                "{\n"
+                f'  "backup_id": "{backup_id}",\n'
+                f'  "filename": "{archive_path.name}",\n'
+                '  "created_at": "2026-04-05T17:00:00+00:00"\n'
+                "}\n"
+            ),
+            encoding="utf-8",
+        )
+        with zipfile.ZipFile(archive_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                backups_service.DATABASE_SNAPSHOT_ENTRY,
+                '{"format":"road700_backup_v1","created_at":"2026-04-05T17:00:00+00:00","tables":[{"table":"users","rows":[123]}]}',
+            )
+
+        response = self.client.post(
+            f"/api/backups/{backup_id}/restore",
+            headers=headers,
+            json={"confirm_backup_id": backup_id},
+        )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"], "Backup metadata is corrupt")

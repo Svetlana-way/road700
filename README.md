@@ -122,6 +122,7 @@ Production OCR runtime:
 - `/api/health` reports `ocr_backend`, `pdf_renderer`, `image_ocr`, and `pdf_scan_ocr`
 - the technical admin screen shows whether the current environment is ready for image OCR and scanned PDF OCR
 - `scripts/smoke-test-ocr-runtime.sh` checks OCR runtime in both `app` and `worker` and verifies `/api/health` and `/api/system/status`
+- `docker-compose.server.yml` publishes both TCP and UDP `443`, otherwise Caddy cannot serve HTTP/3/QUIC through Docker even if the host sysctl is tuned correctly
 
 Typical update deploy from the local workstation:
 

@@ -26,11 +26,6 @@
 - `scripts/predeploy-usecase-check.sh` печатает `Pre-deploy use case check passed.`
 - backend regression suite завершается строкой `Ran 322 tests ... OK` или актуальным эквивалентом после расширения набора тестов
 
-Текущее известное исключение:
-
-- локальный `scripts/predeploy-usecase-check.sh` может печатать строку вида `[FAILED] ... test-order.pdf: ocr failure`
-- это не считается release blocker само по себе, если скрипт завершился успешно и не появилось новых неожиданных падений
-
 ## 2. Обязательная ручная проверка
 
 Перед production deploy подтвердить вручную:
@@ -57,7 +52,14 @@
 - `scripts/smoke-test-ocr-runtime.sh` завершается успешно
 - `/api/health` показывает рабочие `database`, `storage`, `ocr_backend` и `pdf_renderer`
 
-## 4. Артефакты приемки
+## 4. Edge / Transport Gate
+
+Для production deploy дополнительно подтвердить:
+
+- `docker-compose.server.yml` публикует `443:443/udp` вместе с TCP `443:443`, иначе Caddy внутри Docker не сможет обслуживать HTTP/3/QUIC
+- если в окружении ожидается HTTP/3/QUIC, на хосте применены UDP buffer/sysctl настройки до релиза
+
+## 5. Артефакты приемки
 
 Перед релизом сохранить:
 
@@ -72,17 +74,18 @@
 - при наличии report/export sign-off папка артефактов проходит `./scripts/check-signoff-run.sh <run-folder-name>`
 - список известных остаточных рисков, если релиз идет не с полностью чистым backlog
 
-## 5. Что считается blocker
+## 6. Что считается blocker
 
 Релиз блокируется, если:
 
 - падает backend test suite, frontend typecheck или frontend build
 - `scripts/predeploy-usecase-check.sh` не проходит
 - OCR runtime smoke не проходит на сервере
+- transport gate по UDP `443` / QUIC не выполнен для production stack
 - employee flow имеет тупик между `in_review`, `employee_confirmed` и admin decision
 - PDF/XLSX экспорт ремонта расходится по workflow-этапу или итоговому смыслу с экраном
 
-## 6. Связанные документы
+## 7. Связанные документы
 
 - [README.md](/Users/svetlanasamojlova/курсор/road700/README.md)
 - [UAT_CHECKLIST_ЗАКАЗЧИК.md](/Users/svetlanasamojlova/курсор/road700/UAT_CHECKLIST_%D0%97%D0%90%D0%9A%D0%90%D0%97%D0%A7%D0%98%D0%9A.md)

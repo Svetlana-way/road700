@@ -365,10 +365,13 @@ def load_database_snapshot(backup_id: str) -> dict[str, Any]:
     archive_path = archive_path_for(backup_id)
     if not archive_path.exists():
         raise FileNotFoundError("Backup archive not found")
-    with zipfile.ZipFile(archive_path, mode="r") as archive:
-        payload = json.loads(archive.read(DATABASE_SNAPSHOT_ENTRY).decode("utf-8"))
+    try:
+        with zipfile.ZipFile(archive_path, mode="r") as archive:
+            payload = json.loads(archive.read(DATABASE_SNAPSHOT_ENTRY).decode("utf-8"))
+    except (OSError, zipfile.BadZipFile, KeyError, json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise CorruptBackupError("Backup archive is corrupt") from error
     if payload.get("format") != BACKUP_FORMAT:
-        raise ValueError("Unsupported backup format")
+        raise CorruptBackupError("Unsupported backup format")
     return payload
 
 
@@ -463,18 +466,22 @@ def extract_storage_snapshot_to_temp(backup_id: str) -> Path:
         raise FileNotFoundError("Backup archive not found")
 
     temp_dir = Path(tempfile.mkdtemp(prefix="road700-backup-", dir=get_backup_dir()))
-    with zipfile.ZipFile(archive_path, mode="r") as archive:
-        for member in archive.namelist():
-            if not member.startswith("storage/") or member.endswith("/"):
-                continue
-            relative_name = member.removeprefix("storage/")
-            destination = resolve_snapshot_member_path(temp_dir, relative_name)
-            if destination is None:
-                continue
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            with archive.open(member, mode="r") as source, destination.open("wb") as target:
-                shutil.copyfileobj(source, target)
-    return temp_dir
+    try:
+        with zipfile.ZipFile(archive_path, mode="r") as archive:
+            for member in archive.namelist():
+                if not member.startswith("storage/") or member.endswith("/"):
+                    continue
+                relative_name = member.removeprefix("storage/")
+                destination = resolve_snapshot_member_path(temp_dir, relative_name)
+                if destination is None:
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member, mode="r") as source, destination.open("wb") as target:
+                    shutil.copyfileobj(source, target)
+        return temp_dir
+    except (OSError, zipfile.BadZipFile, KeyError) as error:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise CorruptBackupError("Backup archive is corrupt") from error
 
 
 def move_storage_children(source_dir: Path, destination_dir: Path) -> None:

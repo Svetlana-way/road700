@@ -342,3 +342,31 @@ class BackupsApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 409, response.text)
         self.assertEqual(response.json()["detail"], "Backup metadata is corrupt")
+
+    def test_restore_backup_returns_conflict_for_corrupt_archive(self) -> None:
+        headers = self._get_auth_headers()
+        backup_id = "20260405T150000Z_deadbeef"
+        backup_dir = backups_service.get_backup_dir()
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = backup_dir / f"{backup_id}.zip"
+        manifest_path = backup_dir / f"{backup_id}{backups_service.BACKUP_MANIFEST_SUFFIX}"
+        archive_path.write_bytes(b"not-a-zip")
+        manifest_path.write_text(
+            (
+                "{\n"
+                f'  "backup_id": "{backup_id}",\n'
+                f'  "filename": "{archive_path.name}",\n'
+                '  "created_at": "2026-04-05T15:00:00+00:00"\n'
+                "}\n"
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.post(
+            f"/api/backups/{backup_id}/restore",
+            headers=headers,
+            json={"confirm_backup_id": backup_id},
+        )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"], "Backup metadata is corrupt")

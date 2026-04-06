@@ -161,9 +161,10 @@ def load_repair_for_user(db: Session, repair_id: int, current_user: User) -> Rep
 
 def load_operational_repair_for_user(db: Session, repair_id: int, current_user: User) -> Repair:
     repair = load_repair_for_user(db, repair_id, current_user)
+    if repair.vehicle is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
     if current_user.role != UserRole.ADMIN and (
         repair.status == RepairStatus.ARCHIVED
-        or repair.vehicle is None
         or repair.vehicle.status == VehicleStatus.ARCHIVED
         or (repair.service is not None and repair.service.status == ServiceStatus.ARCHIVED)
     ):

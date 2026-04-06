@@ -520,6 +520,47 @@ class DocumentJobsApiTestCase(unittest.TestCase):
             self.assertTrue((archived_job.summary or {}).get("failed_during_claim"))
             self.assertEqual(active_job.status, ImportStatus.PROCESSING)
 
+    def test_worker_claim_skips_job_with_missing_vehicle_relation_and_returns_next_operational_job(self) -> None:
+        headers = self._get_auth_headers()
+        broken_payload = self._upload_order_document(headers)
+        broken_document_id = broken_payload["document"]["id"]
+        broken_job_id = broken_payload["job_id"]
+        broken_repair_id = broken_payload["document"]["repair"]["id"]
+
+        active_payload = self._upload_order_document(headers)
+        active_job_id = active_payload["job_id"]
+
+        with self.SessionLocal() as db:
+            db.execute(text("PRAGMA foreign_keys = OFF"))
+            db.execute(text("UPDATE repairs SET vehicle_id = 999999 WHERE id = :repair_id"), {"repair_id": broken_repair_id})
+            db.commit()
+            db.execute(text("PRAGMA foreign_keys = ON"))
+
+        with self.SessionLocal() as db:
+            from app.services.import_jobs import claim_next_document_processing_job
+
+            claimed_job = claim_next_document_processing_job(db)
+            self.assertIsNotNone(claimed_job)
+            assert claimed_job is not None
+            self.assertEqual(claimed_job.id, active_job_id)
+
+        with self.SessionLocal() as db:
+            broken_document = db.get(Document, broken_document_id)
+            broken_job = db.get(ImportJob, broken_job_id)
+            active_job = db.get(ImportJob, active_job_id)
+            self.assertIsNotNone(broken_document)
+            self.assertIsNotNone(broken_job)
+            self.assertIsNotNone(active_job)
+            assert broken_document is not None
+            assert broken_job is not None
+            assert active_job is not None
+
+            self.assertEqual(broken_document.status, DocumentStatus.UPLOADED)
+            self.assertEqual(broken_job.status, ImportStatus.FAILED)
+            self.assertEqual(broken_job.error_message, "Document vehicle relation is incomplete")
+            self.assertTrue((broken_job.summary or {}).get("failed_during_claim"))
+            self.assertEqual(active_job.status, ImportStatus.PROCESSING)
+
     def test_reprocess_existing_only_primary_uses_canonical_source_document_when_primary_flag_drifted(self) -> None:
         headers = self._get_auth_headers()
         payload = self._upload_order_document(headers)
@@ -846,6 +887,22 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         self.assertEqual(repair_payload["source_document_id"], local_document_id)
         self.assertEqual([item["id"] for item in repair_payload["documents"]], [local_document_id])
 
+    def test_repair_detail_returns_not_found_for_legacy_missing_vehicle_relation(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        repair_id = payload["document"]["repair"]["id"]
+
+        with self.SessionLocal() as db:
+            db.execute(text("PRAGMA foreign_keys = OFF"))
+            db.execute(text("UPDATE repairs SET vehicle_id = 999999 WHERE id = :repair_id"), {"repair_id": repair_id})
+            db.commit()
+            db.execute(text("PRAGMA foreign_keys = ON"))
+
+        response = self.client.get(f"/api/repairs/{repair_id}", headers=headers)
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"], "Repair not found")
+
     def test_document_and_repair_detail_tolerate_non_object_metadata_payloads(self) -> None:
         headers = self._get_auth_headers()
         payload = self._upload_order_document(headers)
@@ -948,6 +1005,23 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         audit_item = next(item for item in payload["items"] if item["action_type"] == "legacy_audit_metadata")
         self.assertEqual(audit_item["old_value"], {})
         self.assertEqual(audit_item["new_value"], {})
+
+    def test_noop_document_patch_returns_not_found_for_legacy_missing_vehicle_relation(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        repair_id = payload["document"]["repair"]["id"]
+
+        with self.SessionLocal() as db:
+            db.execute(text("PRAGMA foreign_keys = OFF"))
+            db.execute(text("UPDATE repairs SET vehicle_id = 999999 WHERE id = :repair_id"), {"repair_id": repair_id})
+            db.commit()
+            db.execute(text("PRAGMA foreign_keys = ON"))
+
+        response = self.client.patch(f"/api/documents/{document_id}", headers=headers, json={})
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"], "Document not found")
 
     def test_archived_document_cannot_become_primary(self) -> None:
         headers = self._get_auth_headers()

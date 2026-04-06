@@ -118,7 +118,7 @@ def get_visible_repair(
 
 def serialize_document(document: Document) -> DocumentRead:
     if document.repair is None or document.repair.vehicle is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document relation is incomplete")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
     latest_version = None
     if document.versions:

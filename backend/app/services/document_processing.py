@@ -1532,6 +1532,8 @@ def get_document_processing_block_reason(document: Document) -> str | None:
     repair = document.repair
     if repair is None:
         return "Document repair relation is incomplete"
+    if repair.vehicle is None:
+        return "Document vehicle relation is incomplete"
     if repair.status == RepairStatus.ARCHIVED:
         return "Archived repairs cannot be modified"
     if repair.vehicle is not None and repair.vehicle.status == VehicleStatus.ARCHIVED:

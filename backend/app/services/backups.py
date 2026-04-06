@@ -244,25 +244,51 @@ def read_manifest(manifest_path: Path) -> dict[str, Any]:
 
 
 def manifest_to_item(manifest: dict[str, Any]) -> dict[str, Any]:
+    def coerce_manifest_literal_list(value: Any, *, allowed: tuple[str, ...]) -> list[str]:
+        if not isinstance(value, list):
+            return list(allowed)
+        items = [item for item in value if isinstance(item, str) and item in allowed]
+        return list(dict.fromkeys(items)) or list(allowed)
+
     try:
         backup_id = validate_backup_id(str(manifest["backup_id"]))
     except (KeyError, InvalidBackupIdError, TypeError) as error:
         raise CorruptBackupError("Backup manifest is corrupt") from error
 
+    raw_created_at = manifest.get("created_at")
+    if isinstance(raw_created_at, datetime):
+        created_at = raw_created_at.isoformat()
+    elif isinstance(raw_created_at, str):
+        try:
+            created_at = datetime.fromisoformat(raw_created_at).isoformat()
+        except ValueError as error:
+            raise CorruptBackupError("Backup manifest is corrupt") from error
+    else:
+        raise CorruptBackupError("Backup manifest is corrupt")
+
     try:
         return {
             "backup_id": backup_id,
             "filename": str(manifest["filename"]),
-            "created_at": manifest["created_at"],
+            "created_at": created_at,
             "backup_type": str(manifest.get("backup_type") or "full"),
             "source": str(manifest.get("source") or "manual"),
             "status": str(manifest.get("status") or "ready"),
             "size_bytes": int(manifest.get("size_bytes") or 0),
             "storage_files_total": int(manifest.get("storage_files_total") or 0),
             "tables_total": int(manifest.get("tables_total") or 0),
-            "included_sections": list(manifest.get("included_sections") or BACKUP_INCLUDED_SECTIONS),
-            "excluded_sections": list(manifest.get("excluded_sections") or BACKUP_EXCLUDED_SECTIONS),
-            "restore_effects": list(manifest.get("restore_effects") or BACKUP_RESTORE_EFFECTS),
+            "included_sections": coerce_manifest_literal_list(
+                manifest.get("included_sections"),
+                allowed=BACKUP_INCLUDED_SECTIONS,
+            ),
+            "excluded_sections": coerce_manifest_literal_list(
+                manifest.get("excluded_sections"),
+                allowed=BACKUP_EXCLUDED_SECTIONS,
+            ),
+            "restore_effects": coerce_manifest_literal_list(
+                manifest.get("restore_effects"),
+                allowed=BACKUP_RESTORE_EFFECTS,
+            ),
         }
     except (KeyError, TypeError, ValueError) as error:
         raise CorruptBackupError("Backup manifest is corrupt") from error

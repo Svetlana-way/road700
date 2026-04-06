@@ -317,6 +317,22 @@ class LaborNormsApiTestCase(unittest.TestCase):
         self.assertEqual(patched_payload["model_keywords"], [])
         self.assertEqual(patched_payload["vin_prefixes"], [])
 
+        with self.SessionLocal() as db:
+            audit_entry = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "labor_norm_catalog",
+                    AuditLog.entity_id == "2",
+                    AuditLog.action_type == "labor_norm_catalog_updated",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            self.assertIsNotNone(audit_entry)
+            assert audit_entry is not None
+            self.assertEqual(audit_entry.old_value["brand_keywords"], [])
+            self.assertEqual(audit_entry.old_value["model_keywords"], [])
+            self.assertEqual(audit_entry.old_value["vin_prefixes"], [])
+
     def test_update_catalog_writes_audit_log_with_old_and_new_values(self) -> None:
         headers = self._get_auth_headers()
 

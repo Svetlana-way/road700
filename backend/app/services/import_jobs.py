@@ -245,6 +245,8 @@ def get_non_operational_job_error(document: Document | None) -> str | None:
         return "Archived documents cannot be modified"
     if document.repair is None:
         return "Document repair relation is incomplete"
+    if document.repair.vehicle is None:
+        return "Document vehicle relation is incomplete"
     if document.repair.status.value == "archived":
         return "Archived repairs cannot be modified"
     if document.repair.vehicle is not None and document.repair.vehicle.status.value == "archived":

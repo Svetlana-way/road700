@@ -324,6 +324,64 @@ class BackupsApiTestCase(unittest.TestCase):
         self.assertEqual(payload["items"][0]["status"], "corrupt")
         self.assertEqual(payload["items"][0]["filename"], archive_path.name)
 
+    def test_list_backups_tolerates_malformed_manifest_section_metadata(self) -> None:
+        headers = self._get_auth_headers()
+        backup_id = "20260406T090000Z_deadbeef"
+        backup_dir = backups_service.get_backup_dir()
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = backup_dir / f"{backup_id}.zip"
+        manifest_path = backup_dir / f"{backup_id}{backups_service.BACKUP_MANIFEST_SUFFIX}"
+        archive_path.write_bytes(b"PK\x03\x04")
+        manifest_path.write_text(
+            (
+                "{\n"
+                f'  "backup_id": "{backup_id}",\n'
+                f'  "filename": "{archive_path.name}",\n'
+                '  "created_at": "2026-04-06T09:00:00+00:00",\n'
+                '  "included_sections": "database",\n'
+                '  "excluded_sections": {"legacy": "backup_archives"},\n'
+                '  "restore_effects": ["replace_database", "invalid"]\n'
+                "}\n"
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/backups", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        backup_payload = next(item for item in payload["items"] if item["backup_id"] == backup_id)
+        self.assertEqual(backup_payload["included_sections"], ["database", "storage_files"])
+        self.assertEqual(backup_payload["excluded_sections"], ["backup_archives"])
+        self.assertEqual(backup_payload["restore_effects"], ["replace_database"])
+
+    def test_list_backups_marks_manifest_with_invalid_created_at_as_corrupt(self) -> None:
+        headers = self._get_auth_headers()
+        backup_id = "20260406T100000Z_deadbeef"
+        backup_dir = backups_service.get_backup_dir()
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = backup_dir / f"{backup_id}.zip"
+        manifest_path = backup_dir / f"{backup_id}{backups_service.BACKUP_MANIFEST_SUFFIX}"
+        archive_path.write_bytes(b"PK\x03\x04")
+        manifest_path.write_text(
+            (
+                "{\n"
+                f'  "backup_id": "{backup_id}",\n'
+                f'  "filename": "{archive_path.name}",\n'
+                '  "created_at": "not-a-datetime"\n'
+                "}\n"
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.get("/api/backups", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        backup_payload = next(item for item in payload["items"] if item["backup_id"] == backup_id)
+        self.assertEqual(backup_payload["status"], "corrupt")
+        self.assertEqual(backup_payload["filename"], archive_path.name)
+
     def test_restore_backup_returns_conflict_for_corrupt_manifest(self) -> None:
         headers = self._get_auth_headers()
         backup_id = "20260405T140000Z_deadbeef"

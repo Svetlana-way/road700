@@ -284,6 +284,39 @@ class LaborNormsApiTestCase(unittest.TestCase):
             self.assertEqual(audit_entry.new_value["catalog_name"], "New Catalog")
             self.assertEqual(audit_entry.new_value["status"], "confirmed")
 
+    def test_catalog_endpoints_tolerate_non_list_keyword_payloads(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            catalog = db.get(LaborNormCatalog, 2)
+            self.assertIsNotNone(catalog)
+            assert catalog is not None
+            catalog.brand_keywords = "legacy-brand-keywords"
+            catalog.model_keywords = {"legacy": "model-keywords"}
+            catalog.vin_prefixes = "legacy-vin-prefixes"
+            db.commit()
+
+        list_response = self.client.get("/api/labor-norms/catalogs", headers=headers)
+
+        self.assertEqual(list_response.status_code, 200, list_response.text)
+        list_payload = list_response.json()
+        catalog_payload = next(item for item in list_payload["items"] if item["id"] == 2)
+        self.assertEqual(catalog_payload["brand_keywords"], [])
+        self.assertEqual(catalog_payload["model_keywords"], [])
+        self.assertEqual(catalog_payload["vin_prefixes"], [])
+
+        patch_response = self.client.patch(
+            "/api/labor-norms/catalogs/2",
+            headers=headers,
+            json={"notes": "updated despite legacy metadata"},
+        )
+
+        self.assertEqual(patch_response.status_code, 200, patch_response.text)
+        patched_payload = patch_response.json()
+        self.assertEqual(patched_payload["brand_keywords"], [])
+        self.assertEqual(patched_payload["model_keywords"], [])
+        self.assertEqual(patched_payload["vin_prefixes"], [])
+
     def test_update_catalog_writes_audit_log_with_old_and_new_values(self) -> None:
         headers = self._get_auth_headers()
 

@@ -16,6 +16,10 @@ from app.schemas.audit import AuditLogItemRead, AuditLogListResponse
 router = APIRouter(prefix="/audit", tags=["audit"])
 
 
+def coerce_json_object(value: object) -> dict:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def build_audit_filters(
     *,
     entity_type: Optional[str],
@@ -106,8 +110,8 @@ def list_audit_log(
                 entity_type=item.entity_type,
                 entity_id=item.entity_id,
                 action_type=item.action_type,
-                old_value=item.old_value,
-                new_value=item.new_value,
+                old_value=coerce_json_object(item.old_value) if item.old_value is not None else None,
+                new_value=coerce_json_object(item.new_value) if item.new_value is not None else None,
             )
             for item in items
         ],

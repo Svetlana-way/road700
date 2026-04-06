@@ -293,6 +293,58 @@ def serialize_document_history_entry(entry: AuditLog, documents_by_id: dict[str,
     }
 
 
+def serialize_repair_work(item: RepairWork) -> dict:
+    return {
+        "id": item.id,
+        "work_code": item.work_code,
+        "work_name": item.work_name,
+        "quantity": item.quantity,
+        "standard_hours": item.standard_hours,
+        "actual_hours": item.actual_hours,
+        "price": float(item.price),
+        "line_total": float(item.line_total),
+        "status": item.status,
+        "reference_payload": coerce_json_object(item.reference_payload) if item.reference_payload is not None else None,
+    }
+
+
+def serialize_repair_check(item: RepairCheck) -> dict:
+    return {
+        "id": item.id,
+        "check_type": item.check_type,
+        "severity": item.severity,
+        "title": item.title,
+        "details": item.details,
+        "calculation_payload": coerce_json_object(item.calculation_payload) if item.calculation_payload is not None else None,
+        "is_resolved": item.is_resolved,
+        "created_at": item.created_at,
+    }
+
+
+def serialize_repair_document_version(version) -> dict:
+    return {
+        "id": version.id,
+        "version_number": version.version_number,
+        "created_at": version.created_at,
+        "change_summary": version.change_summary,
+        "parsed_payload": coerce_json_object(version.parsed_payload) if version.parsed_payload is not None else None,
+        "field_confidence_map": (
+            coerce_json_object(version.field_confidence_map) if version.field_confidence_map is not None else None
+        ),
+    }
+
+
+def serialize_repair_history_entry(entry: AuditLog) -> dict:
+    return {
+        "id": entry.id,
+        "action_type": entry.action_type,
+        "created_at": entry.created_at,
+        "user_name": entry.user.full_name if entry.user is not None else None,
+        "old_value": coerce_json_object(entry.old_value) if entry.old_value is not None else None,
+        "new_value": coerce_json_object(entry.new_value) if entry.new_value is not None else None,
+    }
+
+
 def serialize_repair(
     repair: Repair,
     history_entries: list[AuditLog],
@@ -345,9 +397,9 @@ def serialize_repair(
             if repair.service is not None
             else None
         ),
-        works=sorted(repair.works, key=lambda item: item.id),
+        works=[serialize_repair_work(item) for item in sorted(repair.works, key=lambda item: item.id)],
         parts=sorted(repair.parts, key=lambda item: item.id),
-        checks=sorted(repair.checks, key=lambda item: item.id),
+        checks=[serialize_repair_check(item) for item in sorted(repair.checks, key=lambda item: item.id)],
         documents=[
             {
                 "latest_import_job": (
@@ -377,14 +429,7 @@ def serialize_repair(
                 "created_at": document.created_at,
                 "updated_at": document.updated_at,
                 "versions": [
-                    {
-                        "id": version.id,
-                        "version_number": version.version_number,
-                        "created_at": version.created_at,
-                        "change_summary": version.change_summary,
-                        "parsed_payload": version.parsed_payload,
-                        "field_confidence_map": version.field_confidence_map,
-                    }
+                    serialize_repair_document_version(version)
                     for version in sorted(document.versions, key=lambda item: item.version_number, reverse=True)
                 ],
             }
@@ -394,17 +439,7 @@ def serialize_repair(
             serialize_document_history_entry(entry, documents_by_id)
             for entry in document_history_entries
         ],
-        history=[
-            {
-                "id": entry.id,
-                "action_type": entry.action_type,
-                "created_at": entry.created_at,
-                "user_name": entry.user.full_name if entry.user is not None else None,
-                "old_value": entry.old_value,
-                "new_value": entry.new_value,
-            }
-            for entry in history_entries
-        ],
+        history=[serialize_repair_history_entry(entry) for entry in history_entries],
         executive_report=executive_report,
     )
 

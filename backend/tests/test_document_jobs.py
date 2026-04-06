@@ -22,10 +22,12 @@ from app.core.paths import set_storage_root
 from app.core.security import get_password_hash
 from app.db.base import Base
 from app.main import app
+from app.models.audit import AuditLog
 from app.models.document import Document
-from app.models.enums import DocumentKind, DocumentStatus, ImportStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
+from app.models.document import DocumentVersion
+from app.models.enums import CatalogStatus, CheckSeverity, DocumentKind, DocumentStatus, ImportStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
 from app.models.imports import ImportJob
-from app.models.repair import Repair
+from app.models.repair import Repair, RepairCheck, RepairWork
 from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle
@@ -843,6 +845,109 @@ class DocumentJobsApiTestCase(unittest.TestCase):
 
         self.assertEqual(repair_payload["source_document_id"], local_document_id)
         self.assertEqual([item["id"] for item in repair_payload["documents"]], [local_document_id])
+
+    def test_document_and_repair_detail_tolerate_non_object_metadata_payloads(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        repair_id = payload["document"]["repair"]["id"]
+        document_id = payload["document"]["id"]
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, document_id)
+            repair = db.get(Repair, repair_id)
+            self.assertIsNotNone(document)
+            self.assertIsNotNone(repair)
+            assert document is not None
+            assert repair is not None
+            next_version_number = max((item.version_number for item in document.versions), default=0) + 1
+
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=next_version_number,
+                    storage_key=document.storage_key,
+                    parsed_payload=["legacy-broken-parsed-payload"],
+                    field_confidence_map=["legacy-broken-confidence-map"],
+                    change_summary="legacy broken metadata",
+                )
+            )
+            db.add(
+                RepairWork(
+                    repair_id=repair.id,
+                    work_code="A-1",
+                    work_name="Legacy work",
+                    quantity=1,
+                    standard_hours=None,
+                    actual_hours=None,
+                    price=100,
+                    line_total=100,
+                    status=CatalogStatus.PRELIMINARY,
+                    reference_payload=["legacy-broken-reference-payload"],
+                )
+            )
+            db.add(
+                RepairCheck(
+                    repair_id=repair.id,
+                    check_type="legacy_metadata_check",
+                    severity=CheckSeverity.WARNING,
+                    title="Legacy payload",
+                    details=None,
+                    calculation_payload=["legacy-broken-calculation-payload"],
+                    is_resolved=False,
+                )
+            )
+            db.add(
+                AuditLog(
+                    user_id=1,
+                    entity_type="repair",
+                    entity_id=str(repair.id),
+                    action_type="legacy_metadata",
+                    old_value=["legacy-broken-old-value"],
+                    new_value=["legacy-broken-new-value"],
+                )
+            )
+            db.commit()
+
+        documents_response = self.client.get("/api/documents?limit=20", headers=headers)
+        self.assertEqual(documents_response.status_code, 200, documents_response.text)
+        document_payload = next(item for item in documents_response.json()["items"] if item["id"] == document_id)
+        self.assertEqual(document_payload["parsed_payload"], {})
+
+        repair_response = self.client.get(f"/api/repairs/{repair_id}", headers=headers)
+        self.assertEqual(repair_response.status_code, 200, repair_response.text)
+        repair_payload = repair_response.json()
+
+        repair_document_payload = next(item for item in repair_payload["documents"] if item["id"] == document_id)
+        self.assertEqual(repair_document_payload["versions"][0]["parsed_payload"], {})
+        self.assertEqual(repair_document_payload["versions"][0]["field_confidence_map"], {})
+        self.assertEqual(repair_payload["works"][0]["reference_payload"], {})
+        self.assertEqual(repair_payload["checks"][0]["calculation_payload"], {})
+        self.assertEqual(repair_payload["history"][0]["old_value"], {})
+        self.assertEqual(repair_payload["history"][0]["new_value"], {})
+
+    def test_audit_log_tolerates_non_object_payloads(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            db.add(
+                AuditLog(
+                    user_id=1,
+                    entity_type="repair",
+                    entity_id="1",
+                    action_type="legacy_audit_metadata",
+                    old_value=["legacy-broken-old-value"],
+                    new_value=["legacy-broken-new-value"],
+                )
+            )
+            db.commit()
+
+        response = self.client.get("/api/audit?limit=50", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        audit_item = next(item for item in payload["items"] if item["action_type"] == "legacy_audit_metadata")
+        self.assertEqual(audit_item["old_value"], {})
+        self.assertEqual(audit_item["new_value"], {})
 
     def test_archived_document_cannot_become_primary(self) -> None:
         headers = self._get_auth_headers()

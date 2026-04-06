@@ -90,6 +90,10 @@ IDENTIFIER_CHAR_TRANSLATION = str.maketrans(
 )
 
 
+def coerce_json_object(value: object) -> dict:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def get_visible_vehicle(
     db: Session,
     current_user: User,
@@ -135,7 +139,7 @@ def serialize_document(document: Document) -> DocumentRead:
         review_queue_priority=document.review_queue_priority,
         notes=document.notes,
         created_at=document.created_at,
-        parsed_payload=latest_version.parsed_payload if latest_version is not None else None,
+        parsed_payload=coerce_json_object(latest_version.parsed_payload) if latest_version and latest_version.parsed_payload is not None else None,
         repair=DocumentRepairRead.model_validate(document.repair),
         vehicle=DocumentVehicleRead.model_validate(document.repair.vehicle),
         latest_import_job=DocumentImportJobRead.model_validate(latest_import_job) if latest_import_job is not None else None,

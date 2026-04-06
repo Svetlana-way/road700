@@ -45,6 +45,33 @@ from app.services.labor_norms import (
 router = APIRouter(prefix="/labor-norms", tags=["labor-norms"])
 
 
+def coerce_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def serialize_labor_norm_catalog(catalog: LaborNormCatalog) -> LaborNormCatalogRead:
+    return LaborNormCatalogRead(
+        id=catalog.id,
+        scope=catalog.scope,
+        catalog_name=catalog.catalog_name,
+        brand_family=catalog.brand_family,
+        vehicle_type=catalog.vehicle_type,
+        year_from=catalog.year_from,
+        year_to=catalog.year_to,
+        brand_keywords=coerce_string_list(catalog.brand_keywords) if catalog.brand_keywords is not None else None,
+        model_keywords=coerce_string_list(catalog.model_keywords) if catalog.model_keywords is not None else None,
+        vin_prefixes=coerce_string_list(catalog.vin_prefixes) if catalog.vin_prefixes is not None else None,
+        priority=catalog.priority,
+        auto_match_enabled=catalog.auto_match_enabled,
+        status=catalog.status,
+        notes=catalog.notes,
+        created_at=catalog.created_at,
+        updated_at=catalog.updated_at,
+    )
+
+
 def normalize_catalog_filename(filename: str) -> str:
     safe_name = Path(filename).name.strip()
     if not safe_name:
@@ -204,7 +231,7 @@ def list_labor_norm_catalogs(
     _ = current_admin
     items = load_labor_norm_catalogs(db, include_archived=True)
     return LaborNormCatalogListResponse(
-        items=[LaborNormCatalogRead.model_validate(item) for item in items],
+        items=[serialize_labor_norm_catalog(item) for item in items],
         scopes=[item.scope for item in items],
     )
 
@@ -254,7 +281,7 @@ def create_labor_norm_catalog(
     )
     db.commit()
     db.refresh(catalog)
-    return LaborNormCatalogRead.model_validate(catalog)
+    return serialize_labor_norm_catalog(catalog)
 
 
 @router.patch("/catalogs/{catalog_id}", response_model=LaborNormCatalogRead)
@@ -272,7 +299,7 @@ def update_labor_norm_catalog(
     old_snapshot = build_catalog_audit_snapshot(catalog)
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
-        return LaborNormCatalogRead.model_validate(catalog)
+        return serialize_labor_norm_catalog(catalog)
 
     catalog = upsert_labor_norm_catalog(db, scope=catalog.scope, **update_data)
     db.flush()
@@ -291,7 +318,7 @@ def update_labor_norm_catalog(
     )
     db.commit()
     db.refresh(catalog)
-    return LaborNormCatalogRead.model_validate(catalog)
+    return serialize_labor_norm_catalog(catalog)
 
 
 @router.get("", response_model=LaborNormListResponse)

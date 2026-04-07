@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from fastapi import HTTPException, status
 from sqlalchemy import func, select
 
 from app.models.document import Document
@@ -8,10 +9,20 @@ from app.models.repair import Repair
 
 
 PRIMARY_DOCUMENT_KINDS = {DocumentKind.ORDER, DocumentKind.REPEAT_SCAN}
+PRIMARY_DOCUMENT_KIND_VALUES = tuple(PRIMARY_DOCUMENT_KINDS)
 
 
 def is_document_primary_eligible(document: Document) -> bool:
     return document.kind in PRIMARY_DOCUMENT_KINDS and document.status != DocumentStatus.ARCHIVED
+
+
+def get_document_recency_key(document: Document) -> tuple[object, int]:
+    return (document.created_at, document.id)
+
+
+def ensure_repair_vehicle_relation(repair: Repair) -> None:
+    if repair.vehicle is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repair not found")
 
 
 def assign_primary_document(repair: Repair, target_document: Document | None) -> None:
@@ -45,9 +56,9 @@ def choose_primary_document_candidate(
 
     current_primary_documents = [item for item in eligible_documents if item.is_primary]
     if current_primary_documents:
-        return max(current_primary_documents, key=lambda item: (item.created_at, item.id))
+        return max(current_primary_documents, key=get_document_recency_key)
 
-    return max(eligible_documents, key=lambda item: (item.created_at, item.id))
+    return max(eligible_documents, key=get_document_recency_key)
 
 
 def normalize_repair_primary_document(
@@ -69,14 +80,15 @@ def get_repair_source_document(
     if chosen is not None:
         return chosen
     if include_archived_fallback:
-        non_archived_documents = sorted(
-            (item for item in repair.documents if item.status != DocumentStatus.ARCHIVED),
-            key=lambda item: (item.created_at, item.id),
+        archived_primary_documents = sorted(
+            (
+                item
+                for item in repair.documents
+                if item.kind in PRIMARY_DOCUMENT_KINDS and item.status == DocumentStatus.ARCHIVED
+            ),
+            key=get_document_recency_key,
         )
-        if non_archived_documents:
-            return non_archived_documents[0]
-        archived_documents = sorted(repair.documents, key=lambda item: (item.created_at, item.id))
-        return archived_documents[0] if archived_documents else None
+        return archived_primary_documents[-1] if archived_primary_documents else None
     return None
 
 
@@ -86,7 +98,7 @@ def build_canonical_source_document_id_expr():
         .where(
             Document.id == Repair.source_document_id,
             Document.repair_id == Repair.id,
-            Document.kind.in_(tuple(PRIMARY_DOCUMENT_KINDS)),
+            Document.kind.in_(PRIMARY_DOCUMENT_KIND_VALUES),
             Document.status != DocumentStatus.ARCHIVED,
         )
         .limit(1)
@@ -97,7 +109,7 @@ def build_canonical_source_document_id_expr():
         select(Document.id)
         .where(
             Document.repair_id == Repair.id,
-            Document.kind.in_(tuple(PRIMARY_DOCUMENT_KINDS)),
+            Document.kind.in_(PRIMARY_DOCUMENT_KIND_VALUES),
             Document.status != DocumentStatus.ARCHIVED,
         )
         .order_by(
@@ -118,12 +130,14 @@ def order_repair_documents_by_source_priority(repair: Repair) -> list[Document]:
         return []
     source_document = get_repair_source_document(repair)
     if source_document is None:
-        source_document = min(active_documents, key=lambda item: (item.created_at, item.id))
+        source_document = max(active_documents, key=get_document_recency_key)
 
     ordered = [source_document]
     ordered.extend(
-        document
-        for document in sorted(active_documents, key=lambda item: (item.is_primary, item.id), reverse=True)
-        if document.id != source_document.id
+        sorted(
+            (document for document in active_documents if document.id != source_document.id),
+            key=get_document_recency_key,
+            reverse=True,
+        )
     )
     return ordered

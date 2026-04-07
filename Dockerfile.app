@@ -1,17 +1,3 @@
-FROM node:20-alpine AS frontend-build
-
-WORKDIR /build/frontend
-ENV NODE_OPTIONS=--dns-result-order=ipv4first
-
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm install --include=dev
-
-COPY frontend/index.html frontend/tsconfig.json frontend/tsconfig.node.json frontend/vite.config.ts ./
-COPY frontend/src ./src
-
-RUN npm run build
-
-
 FROM python:3.11-slim AS app
 
 WORKDIR /app
@@ -37,7 +23,7 @@ COPY deploy/server/app-entrypoint.sh /app/app-entrypoint.sh
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir .
 
-COPY --from=frontend-build /build/frontend/dist /app/frontend/dist
+COPY frontend/dist /app/frontend/dist
 
 RUN chmod +x /app/app-entrypoint.sh \
     && mkdir -p /app/storage

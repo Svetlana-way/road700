@@ -22,7 +22,6 @@ import { buildWorkspaceMainViewProps } from "./shared/buildWorkspaceMainViewProp
 import { resolveRepairDocumentId } from "./shared/repairUiHelpers";
 import {
   formatDocumentKind,
-  formatDocumentStatusLabel,
   formatStatus,
   formatMoney,
 } from "./shared/displayFormatters";
@@ -150,7 +149,6 @@ export default function App() {
     selectedDocumentId,
     selectedRepairId: selectedRepair?.id ?? null,
     formatStatus,
-    formatDocumentStatusLabel,
   });
   const {
     selectedFiles,

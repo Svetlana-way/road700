@@ -21,7 +21,7 @@ type UseDocumentsWorkspaceParams = {
   openRepairByIds: (documentId: number | null, repairId: number) => Promise<void>;
   selectedDocumentId: number | null;
   selectedRepairId: number | null;
-  formatDocumentStatusLabel: (status: string | null | undefined) => string;
+  formatStatus: (status: string) => string;
 };
 
 export function useDocumentsWorkspace({
@@ -35,7 +35,7 @@ export function useDocumentsWorkspace({
   openRepairByIds,
   selectedDocumentId,
   selectedRepairId,
-  formatDocumentStatusLabel,
+  formatStatus,
 }: UseDocumentsWorkspaceParams) {
   const [uploadForm, setUploadForm] = useState<UploadFormState>(emptyUploadForm);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -242,7 +242,7 @@ export function useDocumentsWorkspace({
       }
 
       const statusSummary = Object.entries(result.status_counts)
-        .map(([status, count]) => `${formatDocumentStatusLabel(status)}: ${count}`)
+        .map(([status, count]) => `${formatStatus(status)}: ${count}`)
         .join(", ");
 
       setSuccessMessage(

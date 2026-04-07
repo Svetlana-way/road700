@@ -2,13 +2,15 @@ from datetime import date
 
 from sqlalchemy import and_, or_, select
 
+from app.constants.vehicles import PLACEHOLDER_EXTERNAL_ID
 from app.models.enums import UserRole, VehicleStatus
 from app.models.repair import Repair
 from app.models.user import User
 from app.models.vehicle import Vehicle, VehicleAssignmentHistory
 
 
-PLACEHOLDER_EXTERNAL_ID = "__batch_import_placeholder__"
+def get_non_placeholder_vehicle_clause():
+    return or_(Vehicle.external_id.is_(None), Vehicle.external_id != PLACEHOLDER_EXTERNAL_ID)
 
 
 def get_allowed_vehicle_ids_query(current_user: User):
@@ -24,6 +26,7 @@ def get_allowed_vehicle_ids_query(current_user: User):
                 VehicleAssignmentHistory.ends_at >= today,
             ),
             Vehicle.status != VehicleStatus.ARCHIVED,
+            get_non_placeholder_vehicle_clause(),
         )
         .distinct()
     )

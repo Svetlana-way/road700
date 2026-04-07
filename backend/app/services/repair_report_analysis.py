@@ -4,6 +4,7 @@ from collections import defaultdict
 import re
 from typing import Iterable, Optional
 
+from app.models.document import Document
 from app.models.enums import CheckSeverity
 from app.models.repair import Repair, RepairCheck
 from app.services.document_repair_relations import get_repair_source_document
@@ -127,6 +128,7 @@ def build_repair_executive_report(
     *,
     source_payload: dict,
     manual_review_reason_labels: dict[str, str],
+    source_document: Document | None = None,
 ) -> dict[str, object]:
     findings: list[dict[str, object]] = []
     seen_findings: set[tuple[object, ...]] = set()
@@ -167,7 +169,12 @@ def build_repair_executive_report(
     for finding in _build_non_original_part_findings(repair):
         _append_finding(findings, seen_findings, finding)
 
-    for finding in _build_document_quality_findings(repair, source_payload, manual_review_reason_labels):
+    for finding in _build_document_quality_findings(
+        repair,
+        source_payload,
+        manual_review_reason_labels,
+        source_document=source_document,
+    ):
         _append_finding(findings, seen_findings, finding)
 
     for finding in _build_document_program_findings(source_payload):
@@ -775,9 +782,11 @@ def _build_document_quality_findings(
     repair: Repair,
     source_payload: dict,
     manual_review_reason_labels: dict[str, str],
+    *,
+    source_document: Document | None = None,
 ) -> list[dict[str, object]]:
     findings: list[dict[str, object]] = []
-    document = get_repair_source_document(repair)
+    document = source_document if source_document is not None else get_repair_source_document(repair)
     manual_review_reasons = source_payload.get("manual_review_reasons")
     reason_codes = [str(item) for item in manual_review_reasons] if isinstance(manual_review_reasons, list) else []
     labeled_reasons = [manual_review_reason_labels.get(item, item) for item in reason_codes]

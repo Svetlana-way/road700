@@ -1,6 +1,7 @@
 FROM node:20-alpine AS frontend-build
 
 WORKDIR /build/frontend
+ENV NODE_OPTIONS=--dns-result-order=ipv4first
 
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --include=dev

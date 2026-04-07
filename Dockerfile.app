@@ -4,7 +4,7 @@ WORKDIR /build/frontend
 ENV NODE_OPTIONS=--dns-result-order=ipv4first
 
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --include=dev
+RUN npm install --include=dev
 
 COPY frontend/index.html frontend/tsconfig.json frontend/tsconfig.node.json frontend/vite.config.ts ./
 COPY frontend/src ./src

@@ -86,6 +86,23 @@ export type RepairDetailForDraft = {
   }>;
 };
 
+type RepairDocumentSelectionLike = {
+  id: number;
+  is_primary: boolean;
+};
+
+type RepairDocumentOcrStateLike = {
+  status: string;
+  latest_import_job?: {
+    status?: string | null;
+  } | null;
+};
+
+type RepairDocumentSourceLike<TDocument extends RepairDocumentSelectionLike = RepairDocumentSelectionLike> = {
+  source_document_id: number | null;
+  documents: TDocument[];
+};
+
 export function createRepairDraft(repair: RepairDetailForDraft): EditableRepairDraft {
   return {
     order_number: repair.order_number || "",
@@ -242,22 +259,43 @@ export function resolveRepairDocumentId(repair: RepairDetailForDraft, preferredD
   if (preferredDocumentId !== null && repair.documents.some((document) => document.id === preferredDocumentId)) {
     return preferredDocumentId;
   }
-  if (repair.source_document_id !== null && repair.documents.some((document) => document.id === repair.source_document_id)) {
-    return repair.source_document_id;
-  }
-  return repair.documents.find((document) => document.is_primary)?.id ?? repair.documents[0]?.id ?? null;
+  return resolveSourceRepairDocument(repair)?.id ?? null;
 }
 
-export function repairHasDocumentsAwaitingOcr(repair: RepairDetailForDraft | null) {
+export function resolveSourceRepairDocument<TDocument extends RepairDocumentSelectionLike>(
+  repair: RepairDocumentSourceLike<TDocument> | null,
+) {
+  if (!repair || repair.documents.length === 0) {
+    return null;
+  }
+  if (repair.source_document_id === null) {
+    return null;
+  }
+  return repair.documents.find((document) => document.id === repair.source_document_id) ?? null;
+}
+
+export function repairHasDocumentsAwaitingOcr<TDocument extends RepairDocumentOcrStateLike>(
+  repair: { documents: TDocument[] } | null,
+) {
   if (!repair || repair.documents.length === 0) {
     return false;
   }
-  const sourceDocument =
-    (repair.source_document_id !== null
-      ? repair.documents.find((document) => document.id === repair.source_document_id)
-      : null) ??
-    repair.documents.find((document) => document.is_primary) ??
-    repair.documents[0];
+  return repair.documents.some(
+    (document) =>
+      document.status !== "archived" &&
+      (isDocumentAwaitingOcr(document.status) || documentHasActiveImportJob(document)),
+  );
+}
+
+export function repairSourceDocumentAwaitingOcr<
+  TDocument extends RepairDocumentSelectionLike & RepairDocumentOcrStateLike,
+>(
+  repair: RepairDocumentSourceLike<TDocument> | null,
+) {
+  const sourceDocument = resolveSourceRepairDocument(repair);
+  if (!sourceDocument || sourceDocument.status === "archived") {
+    return false;
+  }
   return isDocumentAwaitingOcr(sourceDocument.status) || documentHasActiveImportJob(sourceDocument);
 }
 

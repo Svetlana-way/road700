@@ -100,30 +100,38 @@ export function useRepairWorkspaceActions({
   }
 
   async function handleExportRepair() {
-    if (!token || !selectedRepairId) {
+    if (!token || (!selectedRepairId && selectedDocumentId === null)) {
       return;
     }
     setRepairExportLoading(true);
     setErrorMessage("");
     try {
-      await downloadApiFile(`/repairs/${selectedRepairId}/export`, token, `repair_${selectedRepairId}.xlsx`);
+      if (selectedDocumentId !== null) {
+        await downloadApiFile(`/documents/${selectedDocumentId}/export`, token, `document_${selectedDocumentId}.xlsx`);
+      } else if (selectedRepairId) {
+        await downloadApiFile(`/repairs/${selectedRepairId}/export`, token, `repair_${selectedRepairId}.xlsx`);
+      }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось выгрузить карточку ремонта");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось выгрузить отчет");
     } finally {
       setRepairExportLoading(false);
     }
   }
 
   async function handleExportRepairPdf() {
-    if (!token || !selectedRepairId) {
+    if (!token || (!selectedRepairId && selectedDocumentId === null)) {
       return;
     }
     setRepairPdfExportLoading(true);
     setErrorMessage("");
     try {
-      await downloadApiFile(`/repairs/${selectedRepairId}/export.pdf`, token, `repair_${selectedRepairId}.pdf`);
+      if (selectedDocumentId !== null) {
+        await downloadApiFile(`/documents/${selectedDocumentId}/export.pdf`, token, `document_${selectedDocumentId}.pdf`);
+      } else if (selectedRepairId) {
+        await downloadApiFile(`/repairs/${selectedRepairId}/export.pdf`, token, `repair_${selectedRepairId}.pdf`);
+      }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось выгрузить карточку ремонта в PDF");
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось выгрузить отчет в PDF");
     } finally {
       setRepairPdfExportLoading(false);
     }
@@ -165,7 +173,7 @@ export function useRepairWorkspaceActions({
       setSelectedRepairFromApi(updatedRepair);
       setCheckComments((current) => ({ ...current, [checkId]: "" }));
       setSuccessMessage(isResolved ? "Проверка закрыта" : "Проверка возвращена в работу");
-      await refreshWorkspace("review");
+      await refreshWorkspace("documents");
     } catch (error) {
       if (repairWorkspaceActionRequestIdRef.current !== requestId) {
         return;
@@ -220,7 +228,7 @@ export function useRepairWorkspaceActions({
         return;
       }
       setSuccessMessage(result.message);
-      await refreshWorkspace("review");
+      await refreshWorkspace("documents");
       if (repairWorkspaceActionRequestIdRef.current !== requestId) {
         return;
       }

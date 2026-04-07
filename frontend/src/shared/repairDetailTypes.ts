@@ -134,6 +134,21 @@ export type RepairExecutiveReport = {
   }>;
 };
 
+export type DocumentReport = {
+  document_id: number;
+  repair_id: number;
+  source_document_id: number | null;
+  report_document_id: number | null;
+  source_document_filename: string | null;
+  report_document_filename: string | null;
+  is_primary_document: boolean;
+  workflow_status: string;
+  workflow_comment: string;
+  report_status: string;
+  report_status_comment: string;
+  executive_report: RepairExecutiveReport;
+};
+
 export type RepairDetail = {
   id: number;
   source_document_id: number | null;

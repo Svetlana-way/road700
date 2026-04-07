@@ -12,11 +12,17 @@ import type { WorkspaceContentSectionBuilderContext } from "./workspaceContentSe
 
 type RepairOverviewSectionParams = Pick<
   BuildRepairWorkspacePropsParams,
+  | "overviewRepairDocument"
+  | "selectedDocumentReport"
+  | "selectedDocumentReportLoading"
   | "selectedRepairAwaitingOcr"
   | "selectedRepairUnresolvedChecks"
   | "selectedRepairHasBlockingFindings"
+  | "overviewReviewRequiredFieldComparisons"
   | "selectedRepairComparisonAttentionCount"
-  | "selectedRepairDocumentManualReviewReasons"
+  | "overviewRepairDocumentWorksCount"
+  | "overviewRepairDocumentPartsCount"
+  | "overviewRepairDocumentManualReviewReasons"
   | "selectedRepairReportSections"
   | "showRepairOverviewDetails"
   | "setShowRepairOverviewDetails"
@@ -37,11 +43,17 @@ export function buildRepairOverviewSectionParams(
   const { rootState, navigation, repairDerivedViewModel } = context;
 
   return {
+    overviewRepairDocument: repairDerivedViewModel.overviewRepairDocument,
+    selectedDocumentReport: repairDerivedViewModel.selectedDocumentReport,
+    selectedDocumentReportLoading: repairDerivedViewModel.selectedDocumentReportLoading,
     selectedRepairAwaitingOcr: repairDerivedViewModel.selectedRepairAwaitingOcr,
     selectedRepairUnresolvedChecks: repairDerivedViewModel.selectedRepairUnresolvedChecks,
     selectedRepairHasBlockingFindings: repairDerivedViewModel.selectedRepairHasBlockingFindings,
+    overviewReviewRequiredFieldComparisons: repairDerivedViewModel.overviewReviewRequiredFieldComparisons,
     selectedRepairComparisonAttentionCount: repairDerivedViewModel.selectedRepairComparisonAttentionCount,
-    selectedRepairDocumentManualReviewReasons: repairDerivedViewModel.selectedRepairDocumentManualReviewReasons,
+    overviewRepairDocumentWorksCount: repairDerivedViewModel.overviewRepairDocumentWorksCount,
+    overviewRepairDocumentPartsCount: repairDerivedViewModel.overviewRepairDocumentPartsCount,
+    overviewRepairDocumentManualReviewReasons: repairDerivedViewModel.overviewRepairDocumentManualReviewReasons,
     selectedRepairReportSections: repairDerivedViewModel.selectedRepairReportSections,
     showRepairOverviewDetails: rootState.showRepairOverviewDetails,
     setShowRepairOverviewDetails: rootState.setShowRepairOverviewDetails,

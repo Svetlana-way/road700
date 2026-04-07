@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 from PIL import Image
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
@@ -204,6 +205,55 @@ class DocumentJobsApiTestCase(unittest.TestCase):
             assert failed_job is not None
             self.assertEqual(failed_job.status, ImportStatus.FAILED)
 
+    def test_retry_endpoint_replaces_stale_ocr_payload_with_queued_reprocessing_version(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        retry_job_id = payload["job_id"]
+
+        with self.SessionLocal() as db:
+            job = db.get(ImportJob, retry_job_id)
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(job)
+            self.assertIsNotNone(document)
+            assert job is not None
+            assert document is not None
+
+            job.status = ImportStatus.COMPLETED
+            job.summary = {"document_id": document_id, "stage": "completed"}
+            document.status = DocumentStatus.RECOGNIZED
+            document.ocr_confidence = 0.88
+            next_version_number = max((item.version_number for item in document.versions), default=0) + 1
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=next_version_number,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "processor": "legacy-ocr",
+                        "ocr_status": "completed",
+                        "extracted_fields": {"order_number": "ZN-RETRY-STALE-001"},
+                        "manual_review_reasons": ["service_name_missing"],
+                    },
+                    field_confidence_map={"order_number": 0.88},
+                    change_summary="Stale OCR payload before retry",
+                )
+            )
+            db.commit()
+
+        retry_response = self.client.post(f"/api/jobs/{retry_job_id}/retry", headers=headers)
+
+        self.assertEqual(retry_response.status_code, 200, retry_response.text)
+
+        documents_response = self.client.get("/api/documents?limit=20", headers=headers)
+        self.assertEqual(documents_response.status_code, 200, documents_response.text)
+        document_payload = next(item for item in documents_response.json()["items"] if item["id"] == document_id)
+        self.assertEqual(document_payload["status"], DocumentStatus.UPLOADED.value)
+        self.assertEqual(document_payload["ocr_confidence"], None)
+        self.assertEqual(document_payload["parsed_payload"]["ocr_status"], "queued")
+        self.assertEqual(document_payload["parsed_payload"]["pipeline"], "reprocessing")
+        self.assertNotIn("extracted_fields", document_payload["parsed_payload"])
+
     def test_retry_endpoint_rolls_back_when_enqueue_fails(self) -> None:
         headers = self._get_auth_headers()
         payload = self._upload_order_document(headers)
@@ -213,7 +263,7 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         with self.SessionLocal() as db:
             self._mark_job_failed(db, failed_job_id, document_id)
 
-        with patch.object(jobs_api, "enqueue_document_processing_job", side_effect=RuntimeError("retry queue unavailable")):
+        with patch.object(jobs_api, "queue_document_processing", side_effect=RuntimeError("retry queue unavailable")):
             with self.assertRaises(RuntimeError):
                 self.client.post(f"/api/jobs/{failed_job_id}/retry", headers=headers)
 
@@ -301,9 +351,65 @@ class DocumentJobsApiTestCase(unittest.TestCase):
 
         with self.SessionLocal() as db:
             jobs = db.query(ImportJob).filter(ImportJob.document_id == document_id).order_by(ImportJob.id.asc()).all()
+            document = db.get(Document, document_id)
             self.assertEqual(len(jobs), 1)
             self.assertEqual(jobs[0].id, initial_job_id)
             self.assertEqual(jobs[0].status, ImportStatus.QUEUED)
+            self.assertIsNotNone(document)
+            assert document is not None
+            self.assertEqual(len(document.versions), 1)
+            latest_version = max(document.versions, key=lambda item: item.version_number)
+            self.assertEqual(latest_version.change_summary, "Initial upload")
+
+    def test_process_endpoint_replaces_stale_ocr_payload_with_queued_reprocessing_version(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        job_id = payload["job_id"]
+
+        with self.SessionLocal() as db:
+            self._mark_job_completed(db, job_id, document_id)
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(document)
+            assert document is not None
+            document.status = DocumentStatus.RECOGNIZED
+            document.ocr_confidence = 0.91
+            next_version_number = max((item.version_number for item in document.versions), default=0) + 1
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=next_version_number,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "processor": "legacy-ocr",
+                        "ocr_status": "completed",
+                        "extracted_fields": {"order_number": "ZN-STALE-001"},
+                        "manual_review_reasons": ["vehicle_not_found"],
+                    },
+                    field_confidence_map={"order_number": 0.91},
+                    change_summary="Stale OCR payload",
+                )
+            )
+            db.commit()
+
+        response = self.client.post(f"/api/documents/{document_id}/process", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        response_payload = response.json()
+        self.assertEqual(response_payload["document"]["status"], DocumentStatus.UPLOADED.value)
+        self.assertEqual(response_payload["document"]["parsed_payload"]["ocr_status"], "queued")
+        self.assertEqual(response_payload["document"]["parsed_payload"]["pipeline"], "reprocessing")
+        self.assertNotIn("extracted_fields", response_payload["document"]["parsed_payload"])
+        self.assertEqual(response_payload["document"]["ocr_confidence"], None)
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(document)
+            assert document is not None
+            latest_version = max(document.versions, key=lambda item: item.version_number)
+            self.assertEqual(latest_version.change_summary, "Queued for reprocessing")
+            self.assertEqual(latest_version.parsed_payload["ocr_status"], "queued")
+            self.assertEqual(latest_version.parsed_payload["pipeline"], "reprocessing")
 
     def test_database_rejects_second_active_ocr_job_for_same_document(self) -> None:
         headers = self._get_auth_headers()
@@ -376,6 +482,102 @@ class DocumentJobsApiTestCase(unittest.TestCase):
             jobs = db.query(ImportJob).filter(ImportJob.document_id == document_id).order_by(ImportJob.id.asc()).all()
             self.assertEqual(len(jobs), 2)
             self.assertEqual(sum(1 for job in jobs if job.status == ImportStatus.PROCESSING), 1)
+
+    def test_process_endpoint_reuses_active_job_and_replaces_stale_ocr_payload(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        initial_job_id = payload["job_id"]
+
+        with self.SessionLocal() as db:
+            initial_job = db.get(ImportJob, initial_job_id)
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(initial_job)
+            self.assertIsNotNone(document)
+            assert initial_job is not None
+            assert document is not None
+
+            initial_job.status = ImportStatus.PROCESSING
+            initial_job.started_at = datetime(2025, 1, 1, 9, 0, 0)
+            document.status = DocumentStatus.RECOGNIZED
+            document.ocr_confidence = 0.93
+            next_version_number = max((item.version_number for item in document.versions), default=0) + 1
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=next_version_number,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "processor": "legacy-ocr",
+                        "ocr_status": "completed",
+                        "extracted_fields": {"order_number": "ZN-ACTIVE-STALE-001"},
+                    },
+                    field_confidence_map={"order_number": 0.93},
+                    change_summary="Stale OCR payload during active processing",
+                )
+            )
+            db.commit()
+
+        response = self.client.post(f"/api/documents/{document_id}/process", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        response_payload = response.json()
+        self.assertEqual(response_payload["job_id"], initial_job_id)
+        self.assertEqual(response_payload["import_status"], ImportStatus.PROCESSING.value)
+        self.assertEqual(response_payload["document"]["status"], DocumentStatus.UPLOADED.value)
+        self.assertEqual(response_payload["document"]["ocr_confidence"], None)
+        self.assertEqual(response_payload["document"]["parsed_payload"]["ocr_status"], "queued")
+        self.assertEqual(response_payload["document"]["parsed_payload"]["pipeline"], "reprocessing")
+        self.assertNotIn("extracted_fields", response_payload["document"]["parsed_payload"])
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, document_id)
+            jobs = db.query(ImportJob).filter(ImportJob.document_id == document_id).order_by(ImportJob.id.asc()).all()
+            self.assertIsNotNone(document)
+            assert document is not None
+            self.assertEqual(len(jobs), 1)
+            latest_version = max(document.versions, key=lambda item: item.version_number)
+            self.assertEqual(latest_version.change_summary, "Queued for reprocessing")
+            self.assertEqual(latest_version.parsed_payload["ocr_status"], "queued")
+            self.assertEqual(latest_version.parsed_payload["pipeline"], "reprocessing")
+
+    def test_document_list_uses_canonical_active_import_job_when_newer_completed_job_exists(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        initial_job_id = payload["job_id"]
+
+        with self.SessionLocal() as db:
+            initial_job = db.get(ImportJob, initial_job_id)
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(initial_job)
+            self.assertIsNotNone(document)
+            assert initial_job is not None
+            assert document is not None
+
+            initial_job.status = ImportStatus.PROCESSING
+            initial_job.started_at = datetime(2025, 1, 1, 9, 0, 0)
+            db.add(
+                ImportJob(
+                    document_id=document_id,
+                    import_type="document_ocr",
+                    source_filename=document.original_filename,
+                    status=ImportStatus.COMPLETED,
+                    summary={"document_id": document_id, "stage": "completed_after_active"},
+                    error_message=None,
+                    attempts=1,
+                    started_at=None,
+                    finished_at=None,
+                )
+            )
+            db.commit()
+
+        response = self.client.get("/api/documents?limit=20", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        listed_document = next(item for item in response.json()["items"] if item["id"] == document_id)
+        self.assertEqual(listed_document["latest_import_job"]["id"], initial_job_id)
+        self.assertEqual(listed_document["latest_import_job"]["status"], ImportStatus.PROCESSING.value)
 
     def test_process_endpoint_rejects_document_from_archived_service(self) -> None:
         headers = self._get_auth_headers()
@@ -566,8 +768,10 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         payload = self._upload_order_document(headers)
         repair_id = payload["document"]["repair"]["id"]
         canonical_document_id = payload["document"]["id"]
+        job_id = payload["job_id"]
 
         with self.SessionLocal() as db:
+            self._mark_job_completed(db, job_id, canonical_document_id)
             repair = db.get(Repair, repair_id)
             canonical_document = db.get(Document, canonical_document_id)
             self.assertIsNotNone(repair)
@@ -583,6 +787,88 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["processed_count"], 1)
         self.assertEqual(payload["document_ids"], [canonical_document_id])
+
+    def test_process_pending_replaces_stale_ocr_payload_with_queued_reprocessing_version(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        job_id = payload["job_id"]
+
+        with self.SessionLocal() as db:
+            self._mark_job_completed(db, job_id, document_id)
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(document)
+            assert document is not None
+            document.status = DocumentStatus.NEEDS_REVIEW
+            document.ocr_confidence = 0.77
+            next_version_number = max((item.version_number for item in document.versions), default=0) + 1
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=next_version_number,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "processor": "legacy-ocr",
+                        "ocr_status": "completed",
+                        "extracted_fields": {"order_number": "ZN-PENDING-STALE-001"},
+                    },
+                    field_confidence_map={"order_number": 0.77},
+                    change_summary="Stale OCR payload before process-pending",
+                )
+            )
+            db.commit()
+
+        response = self.client.post("/api/documents/process-pending?limit=10", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        batch_payload = response.json()
+        self.assertEqual(batch_payload["processed_count"], 1)
+        self.assertEqual(batch_payload["document_ids"], [document_id])
+
+        documents_response = self.client.get("/api/documents?limit=20", headers=headers)
+        self.assertEqual(documents_response.status_code, 200, documents_response.text)
+        document_payload = next(item for item in documents_response.json()["items"] if item["id"] == document_id)
+        self.assertEqual(document_payload["status"], DocumentStatus.UPLOADED.value)
+        self.assertEqual(document_payload["ocr_confidence"], None)
+        self.assertEqual(document_payload["parsed_payload"]["ocr_status"], "queued")
+        self.assertEqual(document_payload["parsed_payload"]["pipeline"], "reprocessing")
+        self.assertNotIn("extracted_fields", document_payload["parsed_payload"])
+
+    def test_process_pending_does_not_count_document_when_active_job_and_queued_state_already_exist(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        job_id = payload["job_id"]
+
+        response = self.client.post("/api/documents/process-pending?limit=10", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        batch_payload = response.json()
+        self.assertEqual(batch_payload["processed_count"], 0)
+        self.assertEqual(batch_payload["document_ids"], [])
+        self.assertEqual(batch_payload["job_ids"], [])
+
+        with self.SessionLocal() as db:
+            jobs = db.query(ImportJob).filter(ImportJob.document_id == document_id).order_by(ImportJob.id.asc()).all()
+            self.assertEqual([job.id for job in jobs], [job_id])
+            self.assertEqual(jobs[0].status, ImportStatus.QUEUED)
+
+    def test_document_list_returns_canonical_primary_flag_when_primary_marker_drifted(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(document)
+            assert document is not None
+            document.is_primary = False
+            db.commit()
+
+        response = self.client.get("/api/documents?limit=20", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        listed_document = next(item for item in response.json()["items"] if item["id"] == document_id)
+        self.assertTrue(listed_document["is_primary"])
 
     def test_process_pending_rolls_back_batch_when_later_queueing_fails(self) -> None:
         headers = self._get_auth_headers()
@@ -608,17 +894,17 @@ class DocumentJobsApiTestCase(unittest.TestCase):
             second_document.status = DocumentStatus.UPLOADED
             db.commit()
 
-        original_queue_document_processing = documents_api.queue_document_processing
+        original_queue_document_processing = documents_api.queue_document_processing_result
         call_count = 0
 
-        def queue_side_effect(db: Session, document_id: int, *, retry_failed: bool = False):
+        def queue_side_effect(db: Session, document_id: int, *, retry_failed: bool = False, recheck: bool = False):
             nonlocal call_count
             call_count += 1
             if call_count == 2:
                 raise RuntimeError("batch queue failed")
-            return original_queue_document_processing(db, document_id, retry_failed=retry_failed)
+            return original_queue_document_processing(db, document_id, retry_failed=retry_failed, recheck=recheck)
 
-        with patch.object(documents_api, "queue_document_processing", side_effect=queue_side_effect):
+        with patch.object(documents_api, "queue_document_processing_result", side_effect=queue_side_effect):
             with self.assertRaises(RuntimeError):
                 self.client.post("/api/documents/process-pending?limit=10", headers=headers)
 
@@ -775,6 +1061,72 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         self.assertEqual(payload["processed_count"], 1)
         self.assertEqual(payload["document_ids"], [active_payload["document"]["id"]])
 
+    def test_reprocess_existing_replaces_stale_ocr_payload_with_queued_reprocessing_version(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        job_id = payload["job_id"]
+
+        with self.SessionLocal() as db:
+            self._mark_job_completed(db, job_id, document_id)
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(document)
+            assert document is not None
+            document.status = DocumentStatus.CONFIRMED
+            document.ocr_confidence = 0.93
+            next_version_number = max((item.version_number for item in document.versions), default=0) + 1
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=next_version_number,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "processor": "legacy-ocr",
+                        "ocr_status": "completed",
+                        "extracted_fields": {"order_number": "ZN-REPROCESS-STALE-001"},
+                    },
+                    field_confidence_map={"order_number": 0.93},
+                    change_summary="Stale OCR payload before reprocess-existing",
+                )
+            )
+            db.commit()
+
+        response = self.client.post("/api/documents/reprocess-existing?limit=10", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        batch_payload = response.json()
+        self.assertEqual(batch_payload["processed_count"], 1)
+        self.assertEqual(batch_payload["document_ids"], [document_id])
+
+        documents_response = self.client.get("/api/documents?limit=20", headers=headers)
+        self.assertEqual(documents_response.status_code, 200, documents_response.text)
+        document_payload = next(item for item in documents_response.json()["items"] if item["id"] == document_id)
+        self.assertEqual(document_payload["status"], DocumentStatus.UPLOADED.value)
+        self.assertEqual(document_payload["ocr_confidence"], None)
+        self.assertEqual(document_payload["parsed_payload"]["ocr_status"], "queued")
+        self.assertEqual(document_payload["parsed_payload"]["pipeline"], "reprocessing")
+        self.assertNotIn("extracted_fields", document_payload["parsed_payload"])
+
+    def test_reprocess_existing_does_not_count_document_when_active_job_and_queued_state_already_exist(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        job_id = payload["job_id"]
+
+        response = self.client.post("/api/documents/reprocess-existing?limit=10", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        batch_payload = response.json()
+        self.assertEqual(batch_payload["processed_count"], 0)
+        self.assertEqual(batch_payload["document_ids"], [])
+        self.assertEqual(batch_payload["job_ids"], [])
+        self.assertEqual(batch_payload["status_counts"], {})
+
+        with self.SessionLocal() as db:
+            jobs = db.query(ImportJob).filter(ImportJob.document_id == document_id).order_by(ImportJob.id.asc()).all()
+            self.assertEqual([job.id for job in jobs], [job_id])
+            self.assertEqual(jobs[0].status, ImportStatus.QUEUED)
+
     def test_reprocess_existing_rolls_back_batch_when_later_queueing_fails(self) -> None:
         headers = self._get_auth_headers()
         first_payload = self._upload_order_document(headers)
@@ -784,17 +1136,17 @@ class DocumentJobsApiTestCase(unittest.TestCase):
             self._mark_job_completed(db, first_payload["job_id"], first_payload["document"]["id"])
             self._mark_job_completed(db, second_payload["job_id"], second_payload["document"]["id"])
 
-        original_queue_document_processing = documents_api.queue_document_processing
+        original_queue_document_processing = documents_api.queue_document_processing_result
         call_count = 0
 
-        def queue_side_effect(db: Session, document_id: int, *, retry_failed: bool = False):
+        def queue_side_effect(db: Session, document_id: int, *, retry_failed: bool = False, recheck: bool = False):
             nonlocal call_count
             call_count += 1
             if call_count == 2:
                 raise RuntimeError("batch reprocess failed")
-            return original_queue_document_processing(db, document_id, retry_failed=retry_failed)
+            return original_queue_document_processing(db, document_id, retry_failed=retry_failed, recheck=recheck)
 
-        with patch.object(documents_api, "queue_document_processing", side_effect=queue_side_effect):
+        with patch.object(documents_api, "queue_document_processing_result", side_effect=queue_side_effect):
             with self.assertRaises(RuntimeError):
                 self.client.post("/api/documents/reprocess-existing?limit=10", headers=headers)
 
@@ -826,6 +1178,46 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         document_payload = next(item for item in repair_payload["documents"] if item["id"] == document_id)
         self.assertEqual(document_payload["latest_import_job"]["id"], job_id)
         self.assertEqual(document_payload["latest_import_job"]["status"], "queued")
+
+    def test_repair_detail_uses_canonical_active_import_job_when_newer_completed_job_exists(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        repair_id = payload["document"]["repair"]["id"]
+        document_id = payload["document"]["id"]
+        initial_job_id = payload["job_id"]
+
+        with self.SessionLocal() as db:
+            initial_job = db.get(ImportJob, initial_job_id)
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(initial_job)
+            self.assertIsNotNone(document)
+            assert initial_job is not None
+            assert document is not None
+
+            initial_job.status = ImportStatus.PROCESSING
+            initial_job.started_at = datetime(2025, 1, 2, 10, 0, 0)
+            db.add(
+                ImportJob(
+                    document_id=document_id,
+                    import_type="document_ocr",
+                    source_filename=document.original_filename,
+                    status=ImportStatus.COMPLETED,
+                    summary={"document_id": document_id, "stage": "completed_after_active"},
+                    error_message=None,
+                    attempts=1,
+                    started_at=None,
+                    finished_at=None,
+                )
+            )
+            db.commit()
+
+        response = self.client.get(f"/api/repairs/{repair_id}", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        repair_payload = response.json()
+        document_payload = next(item for item in repair_payload["documents"] if item["id"] == document_id)
+        self.assertEqual(document_payload["latest_import_job"]["id"], initial_job_id)
+        self.assertEqual(document_payload["latest_import_job"]["status"], ImportStatus.PROCESSING.value)
 
     def test_repair_detail_does_not_expose_foreign_source_document_id_from_legacy_relation_drift(self) -> None:
         headers = self._get_auth_headers()
@@ -877,6 +1269,10 @@ class DocumentJobsApiTestCase(unittest.TestCase):
             db.add(foreign_document)
             db.flush()
 
+            local_document = db.get(Document, local_document_id)
+            self.assertIsNotNone(local_document)
+            assert local_document is not None
+            local_document.is_primary = False
             local_repair.source_document_id = foreign_document.id
             db.commit()
 
@@ -886,6 +1282,7 @@ class DocumentJobsApiTestCase(unittest.TestCase):
 
         self.assertEqual(repair_payload["source_document_id"], local_document_id)
         self.assertEqual([item["id"] for item in repair_payload["documents"]], [local_document_id])
+        self.assertTrue(repair_payload["documents"][0]["is_primary"])
 
     def test_repair_detail_returns_not_found_for_legacy_missing_vehicle_relation(self) -> None:
         headers = self._get_auth_headers()
@@ -1023,6 +1420,79 @@ class DocumentJobsApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 404, response.text)
         self.assertEqual(response.json()["detail"], "Document not found")
 
+    def test_status_document_patch_returns_not_found_without_mutation_for_legacy_missing_vehicle_relation(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        repair_id = payload["document"]["repair"]["id"]
+
+        with self.SessionLocal() as db:
+            db.execute(text("PRAGMA foreign_keys = OFF"))
+            db.execute(text("UPDATE repairs SET vehicle_id = 999999 WHERE id = :repair_id"), {"repair_id": repair_id})
+            db.commit()
+            db.execute(text("PRAGMA foreign_keys = ON"))
+
+        response = self.client.patch(
+            f"/api/documents/{document_id}",
+            headers=headers,
+            json={"status": DocumentStatus.CONFIRMED.value},
+        )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"], "Document not found")
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(document)
+            assert document is not None
+            self.assertEqual(document.status, DocumentStatus.UPLOADED)
+
+    def test_process_document_returns_not_found_for_legacy_missing_vehicle_relation(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        repair_id = payload["document"]["repair"]["id"]
+
+        with self.SessionLocal() as db:
+            db.execute(text("PRAGMA foreign_keys = OFF"))
+            db.execute(text("UPDATE repairs SET vehicle_id = 999999 WHERE id = :repair_id"), {"repair_id": repair_id})
+            db.commit()
+            db.execute(text("PRAGMA foreign_keys = ON"))
+
+        response = self.client.post(f"/api/documents/{document_id}/process", headers=headers)
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"], "Document not found")
+
+    def test_restore_document_returns_not_found_without_mutation_for_legacy_missing_vehicle_relation(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        repair_id = payload["document"]["repair"]["id"]
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(document)
+            assert document is not None
+            document.status = DocumentStatus.ARCHIVED
+            db.commit()
+
+            db.execute(text("PRAGMA foreign_keys = OFF"))
+            db.execute(text("UPDATE repairs SET vehicle_id = 999999 WHERE id = :repair_id"), {"repair_id": repair_id})
+            db.commit()
+            db.execute(text("PRAGMA foreign_keys = ON"))
+
+        response = self.client.post(f"/api/documents/{document_id}/restore", headers=headers)
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"], "Document not found")
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(document)
+            assert document is not None
+            self.assertEqual(document.status, DocumentStatus.ARCHIVED)
+
     def test_archived_document_cannot_become_primary(self) -> None:
         headers = self._get_auth_headers()
         payload = self._upload_order_document(headers)
@@ -1049,6 +1519,79 @@ class DocumentJobsApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(response.json()["detail"], "Archived documents cannot be primary")
+
+    def test_set_primary_returns_not_found_for_legacy_missing_vehicle_relation(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        repair_id = payload["document"]["repair"]["id"]
+
+        with self.SessionLocal() as db:
+            db.execute(text("PRAGMA foreign_keys = OFF"))
+            db.execute(text("UPDATE repairs SET vehicle_id = 999999 WHERE id = :repair_id"), {"repair_id": repair_id})
+            db.commit()
+            db.execute(text("PRAGMA foreign_keys = ON"))
+
+        response = self.client.post(f"/api/documents/{document_id}/set-primary", headers=headers)
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"], "Document not found")
+
+    def test_comparison_review_returns_not_found_without_mutation_for_legacy_missing_vehicle_relation(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        repair_id = payload["document"]["repair"]["id"]
+        primary_document_id = payload["document"]["id"]
+
+        with self.SessionLocal() as db:
+            candidate_document = Document(
+                repair_id=repair_id,
+                uploaded_by_user_id=1,
+                original_filename="candidate-repeat.pdf",
+                storage_key="documents/test/candidate-repeat.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.REPEAT_SCAN,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=False,
+                review_queue_priority=20,
+            )
+            db.add(candidate_document)
+            db.commit()
+            candidate_document_id = candidate_document.id
+
+            db.execute(text("PRAGMA foreign_keys = OFF"))
+            db.execute(text("UPDATE repairs SET vehicle_id = 999999 WHERE id = :repair_id"), {"repair_id": repair_id})
+            db.commit()
+            db.execute(text("PRAGMA foreign_keys = ON"))
+
+        response = self.client.post(
+            f"/api/documents/{candidate_document_id}/compare/review",
+            headers=headers,
+            json={
+                "with_document_id": primary_document_id,
+                "action": "keep_current_primary",
+                "comment": "Should fail before mutation",
+            },
+        )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"], "Document not found")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            primary_document = db.get(Document, primary_document_id)
+            candidate_document = db.get(Document, candidate_document_id)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(primary_document)
+            self.assertIsNotNone(candidate_document)
+            assert repair is not None
+            assert primary_document is not None
+            assert candidate_document is not None
+            self.assertEqual(repair.source_document_id, primary_document_id)
+            self.assertTrue(primary_document.is_primary)
+            self.assertFalse(candidate_document.is_primary)
+            self.assertIsNone(candidate_document.notes)
 
     def test_document_cannot_be_compared_with_itself(self) -> None:
         headers = self._get_auth_headers()
@@ -1467,6 +2010,272 @@ FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пр�
             self.assertEqual(refreshed_repair.vehicle_id, placeholder_vehicle_id)
             self.assertEqual(db.query(ImportJob).filter(ImportJob.document_id == document_id).count(), 0)
 
+    def test_link_vehicle_response_includes_latest_import_job(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-LINK-SUCCESS",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            target_vehicle = Vehicle(
+                external_id="truck-target-success",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="T700TT116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, target_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-LINK-SUCCESS-001",
+                repair_date=date(2025, 1, 25),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=1,
+                mileage=154000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=1,
+                original_filename="link-success-order.pdf",
+                storage_key="documents/test/link-success-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            db.commit()
+
+            document_id = document.id
+            repair_id = repair.id
+            target_vehicle_id = target_vehicle.id
+
+        response = self.client.post(
+            f"/api/documents/{document_id}/link-vehicle",
+            headers=headers,
+            json={"vehicle_id": target_vehicle_id},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["repair_id"], repair_id)
+        self.assertEqual(payload["job_id"], payload["document"]["latest_import_job"]["id"])
+        self.assertEqual(payload["import_status"], payload["document"]["latest_import_job"]["status"])
+        self.assertEqual(payload["document"]["vehicle"]["id"], target_vehicle_id)
+
+    def test_link_vehicle_writes_processing_audit_when_reprocessing_reopens_repair(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-LINK-AUDIT",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            target_vehicle = Vehicle(
+                external_id="truck-target-link-audit",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="А700АА116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, target_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-LINK-AUDIT-001",
+                repair_date=date(2025, 2, 1),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=1,
+                mileage=160000,
+                status=RepairStatus.EMPLOYEE_CONFIRMED,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=1,
+                original_filename="link-audit-order.pdf",
+                storage_key="documents/test/link-audit-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.CONFIRMED,
+                is_primary=True,
+                review_queue_priority=20,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            db.commit()
+
+            document_id = document.id
+            repair_id = repair.id
+            target_vehicle_id = target_vehicle.id
+
+        response = self.client.post(
+            f"/api/documents/{document_id}/link-vehicle",
+            headers=headers,
+            json={"vehicle_id": target_vehicle_id},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["document"]["status"], DocumentStatus.UPLOADED.value)
+        self.assertEqual(payload["document"]["repair"]["status"], RepairStatus.IN_REVIEW.value)
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+            self.assertEqual(repair.status, RepairStatus.IN_REVIEW)
+            self.assertEqual(document.status, DocumentStatus.UPLOADED)
+
+            audit_entry = db.query(AuditLog).filter(
+                AuditLog.entity_type == "document",
+                AuditLog.entity_id == str(document_id),
+                AuditLog.action_type == "document_processing_queued",
+            ).order_by(AuditLog.id.desc()).first()
+            self.assertIsNotNone(audit_entry)
+            assert audit_entry is not None
+            self.assertEqual(audit_entry.old_value["status"], DocumentStatus.CONFIRMED.value)
+            self.assertEqual(audit_entry.new_value["status"], DocumentStatus.UPLOADED.value)
+            self.assertEqual(audit_entry.old_value["repair_status"], RepairStatus.EMPLOYEE_CONFIRMED.value)
+            self.assertEqual(audit_entry.new_value["repair_status"], RepairStatus.IN_REVIEW.value)
+
+    def test_link_vehicle_clears_vehicle_manual_review_state_before_reprocessing(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-LINK-WARNING",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            target_vehicle = Vehicle(
+                external_id="truck-target-warning",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="Р700РР116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, target_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-LINK-WARNING-001",
+                repair_date=date(2025, 1, 28),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=1,
+                mileage=157000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=1,
+                original_filename="link-warning-order.pdf",
+                storage_key="documents/test/link-warning-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=1,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "extracted_fields": {"plate_number": "Р700РР116"},
+                        "manual_review_reasons": ["vehicle_not_found"],
+                    },
+                    field_confidence_map={},
+                    change_summary="Initial OCR payload",
+                )
+            )
+            db.add(
+                RepairCheck(
+                    repair_id=repair.id,
+                    check_type="ocr_vehicle_not_found",
+                    severity=CheckSeverity.WARNING,
+                    title="Техника не найдена в базе",
+                    details="Нужна ручная привязка техники",
+                    calculation_payload={"reason": "vehicle_not_found"},
+                    is_resolved=False,
+                )
+            )
+            repair.source_document_id = document.id
+            db.commit()
+
+            document_id = document.id
+            repair_id = repair.id
+            target_vehicle_id = target_vehicle.id
+
+        response = self.client.post(
+            f"/api/documents/{document_id}/link-vehicle",
+            headers=headers,
+            json={"vehicle_id": target_vehicle_id},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["document"]["vehicle"]["id"], target_vehicle_id)
+        self.assertEqual(payload["document"]["status"], DocumentStatus.UPLOADED.value)
+        self.assertEqual(payload["document"]["parsed_payload"]["ocr_status"], "queued")
+        self.assertEqual(payload["document"]["parsed_payload"]["pipeline"], "reprocessing")
+        self.assertNotIn("manual_review_reasons", payload["document"]["parsed_payload"])
+
+        repair_response = self.client.get(f"/api/repairs/{repair_id}", headers=headers)
+        self.assertEqual(repair_response.status_code, 200, repair_response.text)
+        repair_payload = repair_response.json()
+        vehicle_checks = [
+            item
+            for item in repair_payload["checks"]
+            if item["check_type"] in {"ocr_vehicle_not_found", "ocr_vehicle_missing"}
+        ]
+        self.assertEqual(len(vehicle_checks), 1)
+        self.assertTrue(vehicle_checks[0]["is_resolved"])
+
     def test_upload_to_repair_rolls_back_document_and_file_when_queueing_fails(self) -> None:
         headers = self._get_auth_headers()
         initial_payload = self._upload_order_document(headers)
@@ -1684,6 +2493,180 @@ FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пр�
             )
             self.assertEqual(db.query(ImportJob).filter(ImportJob.document_id == document_id).count(), 1)
 
+    def test_create_vehicle_response_includes_latest_import_job(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-CREATE-SUCCESS",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(placeholder_vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-CREATE-SUCCESS-001",
+                repair_date=date(2025, 1, 26),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=1,
+                mileage=155000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=1,
+                original_filename="create-success-order.pdf",
+                storage_key="documents/test/create-success-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            db.commit()
+
+            document_id = document.id
+            repair_id = repair.id
+
+        response = self.client.post(
+            f"/api/documents/{document_id}/create-vehicle",
+            headers=headers,
+            json={
+                "vehicle_type": "truck",
+                "plate_number": "С700СС116",
+                "vin": "YV2RT40A7LA856099",
+                "brand": "Volvo",
+                "model": "FH",
+                "year": 2020,
+                "comment": "create success",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["created_new_vehicle"])
+        self.assertEqual(payload["repair_id"], repair_id)
+        self.assertEqual(payload["job_id"], payload["document"]["latest_import_job"]["id"])
+        self.assertEqual(payload["import_status"], payload["document"]["latest_import_job"]["status"])
+        self.assertEqual(payload["document"]["vehicle"]["plate_number"], "С700СС116")
+
+    def test_create_vehicle_clears_vehicle_manual_review_state_before_reprocessing(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-CREATE-WARNING",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(placeholder_vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-CREATE-WARNING-001",
+                repair_date=date(2025, 1, 29),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=1,
+                mileage=158000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=1,
+                original_filename="create-warning-order.pdf",
+                storage_key="documents/test/create-warning-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=1,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "extracted_fields": {"plate_number": "С800СС116"},
+                        "manual_review_reasons": ["vehicle_missing"],
+                    },
+                    field_confidence_map={},
+                    change_summary="Initial OCR payload",
+                )
+            )
+            db.add(
+                RepairCheck(
+                    repair_id=repair.id,
+                    check_type="ocr_vehicle_missing",
+                    severity=CheckSeverity.WARNING,
+                    title="Не удалось определить технику",
+                    details="Нужна ручная привязка техники",
+                    calculation_payload={"reason": "vehicle_missing"},
+                    is_resolved=False,
+                )
+            )
+            repair.source_document_id = document.id
+            db.commit()
+
+            document_id = document.id
+            repair_id = repair.id
+
+        response = self.client.post(
+            f"/api/documents/{document_id}/create-vehicle",
+            headers=headers,
+            json={
+                "vehicle_type": "truck",
+                "plate_number": "С800СС116",
+                "vin": "YV2RT40A7LA856100",
+                "brand": "Volvo",
+                "model": "FH",
+                "year": 2020,
+                "comment": "create warning clear",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["document"]["status"], DocumentStatus.UPLOADED.value)
+        self.assertEqual(payload["document"]["parsed_payload"]["ocr_status"], "queued")
+        self.assertEqual(payload["document"]["parsed_payload"]["pipeline"], "reprocessing")
+        self.assertNotIn("manual_review_reasons", payload["document"]["parsed_payload"])
+
+        repair_response = self.client.get(f"/api/repairs/{repair_id}", headers=headers)
+        self.assertEqual(repair_response.status_code, 200, repair_response.text)
+        repair_payload = repair_response.json()
+        vehicle_checks = [
+            item
+            for item in repair_payload["checks"]
+            if item["check_type"] in {"ocr_vehicle_not_found", "ocr_vehicle_missing"}
+        ]
+        self.assertEqual(len(vehicle_checks), 1)
+        self.assertTrue(vehicle_checks[0]["is_resolved"])
+
     def test_create_vehicle_prefers_active_match_over_archived_duplicate(self) -> None:
         headers = self._get_auth_headers()
 
@@ -1779,6 +2762,92 @@ FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пр�
             self.assertEqual(refreshed_repair.vehicle_id, active_vehicle_id)
             self.assertEqual(db.query(ImportJob).filter(ImportJob.document_id == document_id).count(), 1)
 
+    def test_create_vehicle_reuses_active_vehicle_for_shifted_ocr_plate_format(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-CREATE-SHIFTED",
+                brand="Placeholder",
+                model="Upload",
+                status=VehicleStatus.ACTIVE,
+            )
+            active_vehicle = Vehicle(
+                external_id="truck-shifted-match",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="К879ВА/716",
+                vin=None,
+                brand="Volvo",
+                model="FH active",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, active_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-CREATE-SHIFTED-MATCH-001",
+                repair_date=date(2025, 1, 27),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=1,
+                mileage=156000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=1,
+                original_filename="create-shifted-match-order.pdf",
+                storage_key="documents/test/create-shifted-match-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            db.commit()
+
+            document_id = document.id
+            repair_id = repair.id
+            active_vehicle_id = active_vehicle.id
+
+        response = self.client.post(
+            f"/api/documents/{document_id}/create-vehicle",
+            headers=headers,
+            json={
+                "vehicle_type": "truck",
+                "plate_number": "879КВА716",
+                "vin": None,
+                "brand": "Volvo",
+                "model": "FH",
+                "year": 2020,
+                "comment": "shifted plate should match existing vehicle",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertFalse(payload["created_new_vehicle"])
+        self.assertEqual(payload["document"]["vehicle"]["id"], active_vehicle_id)
+        self.assertEqual(payload["repair_id"], repair_id)
+
+        with self.SessionLocal() as db:
+            refreshed_repair = db.get(Repair, repair_id)
+            self.assertIsNotNone(refreshed_repair)
+            assert refreshed_repair is not None
+            self.assertEqual(refreshed_repair.vehicle_id, active_vehicle_id)
+            self.assertEqual(db.query(Vehicle).filter(Vehicle.status == VehicleStatus.ACTIVE).count(), 2)
+            self.assertEqual(db.query(ImportJob).filter(ImportJob.document_id == document_id).count(), 1)
+
     def test_export_status_and_warnings_follow_executive_report_findings(self) -> None:
         headers = self._get_auth_headers()
         payload = self._upload_order_document(headers)
@@ -1827,6 +2896,34 @@ FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пр�
         self.assertTrue(any(row[2] == "По заявленной вибрации проблема не подтверждена" for row in warning_rows))
         self.assertTrue(any(row[2] == "Моторное масло требует проверки на соответствие Volvo" for row in warning_rows))
 
+    def test_archived_export_warning_rows_use_archived_source_document_ocr_confidence(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        repair_id = payload["document"]["repair"]["id"]
+        document_id = payload["document"]["id"]
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+
+            repair.status = RepairStatus.ARCHIVED
+            repair.source_document_id = document.id
+            document.status = DocumentStatus.ARCHIVED
+            document.ocr_confidence = 0.61
+            db.commit()
+            db.refresh(repair)
+
+            warning_rows = build_export_warning_rows(repair, include_archived_fallback=True)
+
+        self.assertTrue(
+            any(row[2] == "Низкая уверенность OCR по основному документу" for row in warning_rows),
+            warning_rows,
+        )
+
     def test_report_status_stays_in_ocr_queue_when_source_document_job_is_processing(self) -> None:
         headers = self._get_auth_headers()
         payload = self._upload_order_document(headers)
@@ -1851,6 +2948,49 @@ FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пр�
             db.add(repair)
             db.add(document)
             db.add(job)
+            db.commit()
+            db.refresh(repair)
+
+            report_status, report_status_comment = build_report_status_summary(repair)
+
+        self.assertEqual(report_status, "В очереди OCR")
+        self.assertIn("обработке", report_status_comment)
+
+    def test_report_status_uses_canonical_active_import_job_when_newer_completed_job_exists(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        repair_id = payload["document"]["repair"]["id"]
+        document_id = payload["document"]["id"]
+        initial_job_id = payload["job_id"]
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            document = db.get(Document, document_id)
+            initial_job = db.get(ImportJob, initial_job_id)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            self.assertIsNotNone(initial_job)
+            assert repair is not None
+            assert document is not None
+            assert initial_job is not None
+
+            repair.source_document_id = document.id
+            document.status = DocumentStatus.RECOGNIZED
+            initial_job.status = ImportStatus.PROCESSING
+            initial_job.started_at = datetime(2025, 1, 2, 10, 0, 0)
+            db.add(
+                ImportJob(
+                    document_id=document_id,
+                    import_type="document_ocr",
+                    source_filename=document.original_filename,
+                    status=ImportStatus.COMPLETED,
+                    summary={"document_id": document_id, "stage": "completed_after_active"},
+                    error_message=None,
+                    attempts=1,
+                    started_at=None,
+                    finished_at=None,
+                )
+            )
             db.commit()
             db.refresh(repair)
 
@@ -1899,6 +3039,97 @@ FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пр�
         self.assertIn("application/pdf", vehicle_response.headers["content-type"])
         self.assertIn('.pdf"', vehicle_response.headers["content-disposition"])
         self.assertTrue(vehicle_response.content.startswith(b"%PDF"))
+
+    def test_document_report_and_exports_use_selected_document_context(self) -> None:
+        headers = self._get_auth_headers()
+        initial_payload = self._upload_order_document(headers)
+        repair_id = initial_payload["document"]["repair"]["id"]
+        primary_document_id = initial_payload["document"]["id"]
+        primary_filename = initial_payload["document"]["original_filename"]
+
+        attach_response = self.client.post(
+            "/api/documents/upload-to-repair",
+            headers=headers,
+            files={"file": ("repeat-report-scan.pdf", b"%PDF-1.4\n%repeat-report\n", "application/pdf")},
+            data={"repair_id": str(repair_id), "kind": "repeat_scan"},
+        )
+        self.assertEqual(attach_response.status_code, 200, attach_response.text)
+        attached_payload = attach_response.json()
+        report_document_id = attached_payload["document"]["id"]
+        report_filename = attached_payload["document"]["original_filename"]
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            primary_document = db.get(Document, primary_document_id)
+            report_document = db.get(Document, report_document_id)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(primary_document)
+            self.assertIsNotNone(report_document)
+            assert repair is not None
+            assert primary_document is not None
+            assert report_document is not None
+
+            repair.source_document_id = primary_document.id
+            primary_document.status = DocumentStatus.RECOGNIZED
+            primary_document.ocr_confidence = 0.97
+            report_document.status = DocumentStatus.RECOGNIZED
+            report_document.ocr_confidence = 0.51
+            next_version_number = max((item.version_number for item in report_document.versions), default=0) + 1
+            db.add(
+                DocumentVersion(
+                    document_id=report_document.id,
+                    version_number=next_version_number,
+                    storage_key=report_document.storage_key,
+                    parsed_payload={
+                        "processor": "selected-document-report-test",
+                        "ocr_status": "completed",
+                        "manual_review_reasons": ["service_name_missing"],
+                        "extracted_fields": {"order_number": "ZN-DOC-REPORT-001"},
+                    },
+                    field_confidence_map={"order_number": 0.91},
+                    change_summary="Selected document report payload",
+                )
+            )
+            db.commit()
+
+        report_response = self.client.get(f"/api/documents/{report_document_id}/report", headers=headers)
+        self.assertEqual(report_response.status_code, 200, report_response.text)
+        report_payload = report_response.json()
+        self.assertEqual(report_payload["document_id"], report_document_id)
+        self.assertEqual(report_payload["source_document_id"], primary_document_id)
+        self.assertEqual(report_payload["report_document_id"], report_document_id)
+        self.assertEqual(report_payload["source_document_filename"], primary_filename)
+        self.assertEqual(report_payload["report_document_filename"], report_filename)
+        self.assertFalse(report_payload["is_primary_document"])
+        finding_titles = [item["title"] for item in report_payload["executive_report"]["findings"]]
+        self.assertIn("Низкая уверенность OCR по основному документу", finding_titles)
+
+        export_response = self.client.get(f"/api/documents/{report_document_id}/export", headers=headers)
+        self.assertEqual(export_response.status_code, 200, export_response.text)
+        workbook = load_workbook(filename=BytesIO(export_response.content))
+        summary_rows = {
+            str(row[0]): row[1]
+            for row in workbook["Отчет"].iter_rows(min_row=2, values_only=True)
+            if row and row[0]
+        }
+        self.assertEqual(summary_rows["Документ отчета"], report_filename)
+        self.assertEqual(summary_rows["Основной документ"], primary_filename)
+
+        document_rows = [
+            row
+            for row in workbook["Документы"].iter_rows(min_row=2, values_only=True)
+            if row and row[0]
+        ]
+        primary_row = next(row for row in document_rows if row[0] == primary_document_id)
+        report_row = next(row for row in document_rows if row[0] == report_document_id)
+        self.assertEqual(primary_row[4], "Да")
+        self.assertEqual(report_row[5], "Да")
+
+        pdf_response = self.client.get(f"/api/documents/{report_document_id}/export.pdf", headers=headers)
+        self.assertEqual(pdf_response.status_code, 200, pdf_response.text)
+        self.assertIn("application/pdf", pdf_response.headers["content-type"])
+        self.assertIn('.pdf"', pdf_response.headers["content-disposition"])
+        self.assertTrue(pdf_response.content.startswith(b"%PDF"))
 
     def _mark_job_failed(self, db: Session, job_id: int, document_id: int) -> None:
         job = db.get(ImportJob, job_id)

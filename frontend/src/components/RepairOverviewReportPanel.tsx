@@ -1,5 +1,5 @@
 import { Alert, Box, Button, Chip, Grid, Paper, Stack, Typography } from "@mui/material";
-import type { RepairCheck, RepairDetail } from "../shared/repairDetailTypes";
+import type { DocumentReport, RepairCheck, RepairDetail } from "../shared/repairDetailTypes";
 import type { CheckSeverity } from "../shared/workspaceViewTypes";
 import type { DocumentStatus } from "../shared/workspaceBootstrapTypes";
 import type { ReviewRequiredFieldComparisonItem } from "../shared/workspaceFormTypes";
@@ -24,9 +24,23 @@ type RepairOverviewReportPanelProps = {
     | "executive_report"
   >;
   selectedRepairDocument: {
+    id?: number;
     status: string;
     ocr_confidence: number | null;
   } | null;
+  selectedDocumentReport: Pick<
+    DocumentReport,
+    | "report_document_filename"
+    | "source_document_filename"
+    | "is_primary_document"
+    | "report_document_id"
+    | "report_status"
+    | "report_status_comment"
+    | "workflow_status"
+    | "workflow_comment"
+    | "executive_report"
+  > | null;
+  selectedDocumentReportLoading: boolean;
   selectedRepairAwaitingOcr: boolean;
   selectedRepairUnresolvedChecksCount: number;
   selectedRepairHasBlockingFindings: boolean;
@@ -34,7 +48,7 @@ type RepairOverviewReportPanelProps = {
   selectedRepairComparisonAttentionCount: number;
   selectedRepairDocumentWorksCount: number;
   selectedRepairDocumentPartsCount: number;
-  selectedRepairDocumentManualReviewReasons: string[];
+  overviewRepairDocumentManualReviewReasons: string[];
   selectedRepairReportSections: Array<{
     key: string;
     title: string;
@@ -63,6 +77,8 @@ type RepairOverviewReportPanelProps = {
 export function RepairOverviewReportPanel({
   selectedRepair,
   selectedRepairDocument,
+  selectedDocumentReport,
+  selectedDocumentReportLoading,
   selectedRepairAwaitingOcr,
   selectedRepairUnresolvedChecksCount,
   selectedRepairHasBlockingFindings,
@@ -70,7 +86,7 @@ export function RepairOverviewReportPanel({
   selectedRepairComparisonAttentionCount,
   selectedRepairDocumentWorksCount,
   selectedRepairDocumentPartsCount,
-  selectedRepairDocumentManualReviewReasons,
+  overviewRepairDocumentManualReviewReasons,
   selectedRepairReportSections,
   showRepairOverviewDetails,
   onToggleShowDetails,
@@ -91,10 +107,18 @@ export function RepairOverviewReportPanel({
   checkSeverityColor,
   formatStatus,
 }: RepairOverviewReportPanelProps) {
-  const executiveReport = selectedRepair.executive_report;
+  const executiveReport = selectedDocumentReport?.executive_report ?? selectedRepair.executive_report;
+  const reportRefreshing =
+    selectedDocumentReportLoading &&
+    (selectedRepairDocument?.id ?? null) !== null &&
+    selectedDocumentReport?.report_document_id !== (selectedRepairDocument?.id ?? null);
   const executiveFindingsCount = executiveReport.findings.length;
   const executiveHasBlockingFindings = executiveReport.findings.some((item) => item.severity === "high");
-  const effectiveAttentionCount = Math.max(selectedRepairUnresolvedChecksCount, executiveFindingsCount);
+  const effectiveAttentionCount = Math.max(
+    selectedRepairUnresolvedChecksCount,
+    executiveFindingsCount,
+    selectedRepairComparisonAttentionCount,
+  );
   const effectiveHasBlockingFindings = selectedRepairHasBlockingFindings || executiveHasBlockingFindings;
   const vehicleMatched =
     !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
@@ -102,6 +126,8 @@ export function RepairOverviewReportPanel({
   const serviceMatched = Boolean(selectedRepair.service?.name);
   const reportAlertSeverity = selectedRepairAwaitingOcr
     ? "info"
+    : reportRefreshing
+      ? "info"
     : effectiveAttentionCount === 0
       ? "success"
       : effectiveHasBlockingFindings
@@ -109,10 +135,16 @@ export function RepairOverviewReportPanel({
         : "info";
   const reportAlertText = selectedRepairAwaitingOcr
     ? "Документ ещё находится в очереди OCR или перепроверки. Итоговый отчёт будет обновлён автоматически."
+    : reportRefreshing
+      ? "Обновляем итоговый отчёт по выбранному документу."
     : effectiveAttentionCount === 0
       ? "По заказ-наряду открытых несоответствий не найдено."
       : "В отчёте есть несоответствия. Ниже они сгруппированы по типам проверки.";
-  const conciseReportTitle = selectedRepairAwaitingOcr ? "Документ обрабатывается" : executiveReport.headline;
+  const conciseReportTitle = selectedRepairAwaitingOcr
+    ? "Документ обрабатывается"
+    : reportRefreshing
+      ? "Отчёт обновляется"
+      : executiveReport.headline;
   const overviewAttentionItems = reviewRequiredFieldComparisons.filter(
     (item) => item.status === "missing" || item.status === "mismatch",
   );
@@ -124,9 +156,11 @@ export function RepairOverviewReportPanel({
       : null;
   const conciseExecutiveSummary = selectedRepairAwaitingOcr
     ? `Заказ-наряд ${selectedRepair.order_number || "без номера"} загружен. Документ еще проходит OCR, итог проверки появится автоматически после распознавания.`
-    : executiveReport.summary;
+    : reportRefreshing
+      ? "Пересчитываем отчёт и несоответствия для выбранного документа."
+      : executiveReport.summary;
   const conciseFacts =
-    executiveReport.highlights.length > 0
+    !reportRefreshing && executiveReport.highlights.length > 0
       ? executiveReport.highlights
       : [
           `Машина: ${vehicleMatched ? formatVehicle(selectedRepair.vehicle) : "не найдена в базе"}`,
@@ -136,11 +170,32 @@ export function RepairOverviewReportPanel({
               ? "ожидает завершения OCR"
               : effectiveAttentionCount === 0
                 ? "замечаний нет"
-                : `найдено ${effectiveAttentionCount} несоответствий`
+              : `найдено ${effectiveAttentionCount} несоответствий`
           }`,
           `Структура заказ-наряда: работ ${selectedRepair.works.length}, запчастей ${selectedRepair.parts.length}`,
         ];
-  const conciseFindings = selectedRepairAwaitingOcr ? [] : executiveReport.findings.slice(0, 4);
+  const conciseFindings = selectedRepairAwaitingOcr || reportRefreshing ? [] : executiveReport.findings.slice(0, 4);
+  const specialistDocumentName = selectedDocumentReport?.report_document_filename || "выбранный документ";
+  const specialistSourceDocumentName = selectedDocumentReport?.source_document_filename || "не определён";
+  const specialistUsesAlternateDocument =
+    selectedDocumentReport !== null &&
+    selectedDocumentReport.report_document_filename !== null &&
+    selectedDocumentReport.source_document_filename !== null &&
+    selectedDocumentReport.report_document_filename !== selectedDocumentReport.source_document_filename;
+  const specialistReportStatusColor =
+    selectedRepairAwaitingOcr || reportRefreshing
+      ? "default"
+      : effectiveHasBlockingFindings
+        ? "warning"
+        : effectiveAttentionCount > 0
+          ? "default"
+          : "success";
+  const specialistWorkflowColor =
+    selectedRepair.status === "confirmed"
+      ? "success"
+      : selectedRepair.status === "suspicious" || selectedRepair.status === "ocr_error"
+        ? "warning"
+        : "default";
 
   return (
     <Paper className="repair-summary" elevation={0}>
@@ -261,7 +316,7 @@ export function RepairOverviewReportPanel({
             {executiveReport.full_report_sections.length > 0 ? (
               <Paper className="repair-line" elevation={0}>
                 <Stack spacing={1.5}>
-                  <Typography variant="subtitle1">Короткий отчёт для руководителя</Typography>
+                  <Typography variant="subtitle1">Развёрнутый отчёт для руководителя</Typography>
                   {executiveReport.full_report_sections.map((section) => (
                     <Stack spacing={0.75} key={`executive-full-section-${section.key}`}>
                       <Typography className="metric-label">{section.title}</Typography>
@@ -466,6 +521,58 @@ export function RepairOverviewReportPanel({
               </Grid>
             </Grid>
 
+            <Paper className="repair-line" elevation={0}>
+              <Stack spacing={1.25}>
+                <Box>
+                  <Typography variant="subtitle1">Подробный отчёт для специалиста</Typography>
+                  <Typography className="muted-copy">
+                    Детализация проверки и OCR-сверки по выбранному документу перед подтверждением.
+                  </Typography>
+                </Box>
+                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    color={specialistWorkflowColor}
+                    label={`Workflow: ${selectedDocumentReport?.workflow_status || "не определён"}`}
+                  />
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    color={specialistReportStatusColor}
+                    label={`Отчёт: ${selectedDocumentReport?.report_status || "не сформирован"}`}
+                  />
+                  {selectedRepairDocument ? (
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      color={statusColor(selectedRepairDocument.status as DocumentStatus)}
+                      label={`Документ: ${formatDocumentStatusLabel(selectedRepairDocument.status)}`}
+                    />
+                  ) : null}
+                  {selectedRepairDocument ? (
+                    <Chip size="small" variant="outlined" label={`OCR ${formatConfidence(selectedRepairDocument.ocr_confidence)}`} />
+                  ) : null}
+                </Stack>
+                <Stack spacing={0.5}>
+                  <Typography className="muted-copy">Документ отчёта: {specialistDocumentName}.</Typography>
+                  {specialistUsesAlternateDocument ? (
+                    <Typography className="muted-copy">
+                      Основной документ ремонта: {specialistSourceDocumentName}. Проверка ниже относится именно к выбранному документу.
+                    </Typography>
+                  ) : selectedDocumentReport?.is_primary_document ? (
+                    <Typography className="muted-copy">Проверка строится по основному документу ремонта.</Typography>
+                  ) : null}
+                  {selectedDocumentReport?.workflow_comment ? (
+                    <Typography className="muted-copy">Workflow: {selectedDocumentReport.workflow_comment}</Typography>
+                  ) : null}
+                  {selectedDocumentReport?.report_status_comment ? (
+                    <Typography className="muted-copy">Статус отчёта: {selectedDocumentReport.report_status_comment}</Typography>
+                  ) : null}
+                </Stack>
+              </Stack>
+            </Paper>
+
             {selectedRepairDocument ? (
               <Paper className="repair-line" elevation={0}>
                 <Stack spacing={1}>
@@ -475,7 +582,7 @@ export function RepairOverviewReportPanel({
                     justifyContent="space-between"
                     alignItems={{ xs: "flex-start", sm: "center" }}
                   >
-                    <Typography className="metric-label">Короткая сверка OCR</Typography>
+                    <Typography className="metric-label">Сверка OCR и карточки ремонта</Typography>
                     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                       <Chip size="small" variant="outlined" label={`OCR ${formatConfidence(selectedRepairDocument.ocr_confidence)}`} />
                       <Chip
@@ -505,9 +612,9 @@ export function RepairOverviewReportPanel({
                   ) : (
                     <Typography className="muted-copy">Ключевые поля OCR совпадают с подтверждёнными данными.</Typography>
                   )}
-                  {selectedRepairDocumentManualReviewReasons.length > 0 ? (
+                  {overviewRepairDocumentManualReviewReasons.length > 0 ? (
                     <Typography className="muted-copy">
-                      Ручная проверка OCR: {formatManualReviewReasons(selectedRepairDocumentManualReviewReasons)}.
+                      Ручная проверка OCR: {formatManualReviewReasons(overviewRepairDocumentManualReviewReasons)}.
                     </Typography>
                   ) : null}
                 </Stack>
@@ -516,6 +623,7 @@ export function RepairOverviewReportPanel({
 
             {selectedRepairReportSections.length > 0 ? (
               <Stack spacing={1.5}>
+                <Typography variant="subtitle1">Замечания и проверки для специалиста</Typography>
                 {selectedRepairReportSections.map((section) => (
                   <Stack spacing={1} key={`report-section-${section.key}`}>
                     <Stack direction="row" spacing={1} alignItems="center">

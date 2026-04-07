@@ -7,20 +7,19 @@ import {
   isPlaceholderVehicle,
 } from "../shared/fleetDocumentHelpers";
 import {
-  documentHasActiveImportJob,
-  isDocumentAwaitingOcr,
-} from "../shared/displayFormatters";
-import {
   buildAttentionVisualBars,
   buildQualityVisualBars,
   buildRepairVisualBars,
 } from "../shared/dashboardVisuals";
+import { documentHasActiveImportJob, isDocumentAwaitingOcr } from "../shared/displayFormatters";
 import {
   getReviewComparisonStatus,
+  resolveSourceRepairDocument,
+  repairSourceDocumentAwaitingOcr,
   readConfidenceValue,
 } from "../shared/repairUiHelpers";
 import { groupRepairChecksForReport } from "../shared/repairReportHelpers";
-import type { RepairDetail } from "../shared/repairDetailTypes";
+import type { DocumentReport, RepairDetail } from "../shared/repairDetailTypes";
 import type {
   DashboardDataQuality,
   DashboardDataQualityDetails,
@@ -55,12 +54,131 @@ type UseRepairDerivedViewModelParams = {
   selectedFiles: File[];
   userRole: UserRole | null | undefined;
   selectedRepair: RepairDetailLike | null;
+  selectedDocumentReport: DocumentReport | null;
+  selectedDocumentReportLoading: boolean;
   reviewQueue: ReviewQueueItem[];
   summary: DashboardSummary | null;
   dataQuality: DashboardDataQuality | null;
   dataQualityDetails: DashboardDataQualityDetails | null;
   formatMoney: (value: number | null | undefined) => string | null;
 };
+
+function buildReviewRequiredFieldComparisons(
+  selectedRepair: RepairDetailLike | null,
+  documentExtractedFields: Record<string, unknown> | null,
+  documentPayload: Record<string, unknown> | null,
+  documentConfidenceMap: Record<string, unknown> | null,
+  formatMoney: (value: number | null | undefined) => string | null,
+): ReviewRequiredFieldComparisonItem[] {
+  if (!selectedRepair) {
+    return [];
+  }
+
+  return [
+    {
+      key: "vehicle",
+      label: "Машина",
+      currentValue:
+        !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
+        (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
+          ? selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || `ID ${selectedRepair.vehicle.id}`
+          : "",
+      ocrValue:
+        typeof documentExtractedFields?.plate_number === "string"
+          ? documentExtractedFields.plate_number
+          : typeof documentExtractedFields?.vin === "string"
+            ? documentExtractedFields.vin
+            : "",
+      currentDisplay:
+        !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
+        (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
+          ? selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || `ID ${selectedRepair.vehicle.id}`
+          : "Не привязана",
+      ocrDisplay:
+        typeof documentExtractedFields?.plate_number === "string"
+          ? documentExtractedFields.plate_number
+          : typeof documentExtractedFields?.vin === "string"
+            ? documentExtractedFields.vin
+            : "—",
+      currentSourceLabel: "Карточка ремонта",
+      ocrSourceLabel:
+        typeof documentExtractedFields?.plate_number === "string"
+          ? getExtractedFieldSourceLabel(documentPayload, "plate_number")
+          : typeof documentExtractedFields?.vin === "string"
+            ? getExtractedFieldSourceLabel(documentPayload, "vin")
+            : "Документ",
+      status:
+        !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
+        (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
+          ? "match"
+          : "missing",
+      confidenceValue: readConfidenceValue(documentConfidenceMap, "plate_number", "vin"),
+    },
+    {
+      key: "order_number",
+      label: "Номер заказ-наряда",
+      currentValue: selectedRepair.order_number || "",
+      ocrValue: documentExtractedFields?.order_number,
+      currentDisplay: selectedRepair.order_number || "—",
+      ocrDisplay: String(documentExtractedFields?.order_number || "—"),
+      currentSourceLabel: "Карточка ремонта",
+      ocrSourceLabel: getExtractedFieldSourceLabel(documentPayload, "order_number"),
+      confidenceValue: readConfidenceValue(documentConfidenceMap, "order_number"),
+      status: getReviewComparisonStatus(selectedRepair.order_number, documentExtractedFields?.order_number),
+    },
+    {
+      key: "repair_date",
+      label: "Дата ремонта",
+      currentValue: selectedRepair.repair_date || "",
+      ocrValue: documentExtractedFields?.repair_date,
+      currentDisplay: selectedRepair.repair_date || "—",
+      ocrDisplay: String(documentExtractedFields?.repair_date || "—"),
+      currentSourceLabel: "Карточка ремонта",
+      ocrSourceLabel: getExtractedFieldSourceLabel(documentPayload, "repair_date"),
+      confidenceValue: readConfidenceValue(documentConfidenceMap, "repair_date"),
+      status: getReviewComparisonStatus(selectedRepair.repair_date, documentExtractedFields?.repair_date),
+    },
+    {
+      key: "service",
+      label: "Сервис",
+      currentValue: selectedRepair.service?.name || "",
+      ocrValue: documentExtractedFields?.service_name,
+      currentDisplay: selectedRepair.service?.name || "—",
+      ocrDisplay: String(documentExtractedFields?.service_name || "—"),
+      currentSourceLabel: "Карточка ремонта",
+      ocrSourceLabel: getExtractedFieldSourceLabel(documentPayload, "service_name"),
+      confidenceValue: readConfidenceValue(documentConfidenceMap, "service_name"),
+      status: getReviewComparisonStatus(selectedRepair.service?.name, documentExtractedFields?.service_name),
+    },
+    {
+      key: "mileage",
+      label: "Пробег",
+      currentValue: selectedRepair.mileage,
+      ocrValue: documentExtractedFields?.mileage,
+      currentDisplay: selectedRepair.mileage > 0 ? String(selectedRepair.mileage) : "—",
+      ocrDisplay: String(documentExtractedFields?.mileage || "—"),
+      currentSourceLabel: "Карточка ремонта",
+      ocrSourceLabel: getExtractedFieldSourceLabel(documentPayload, "mileage"),
+      confidenceValue: readConfidenceValue(documentConfidenceMap, "mileage"),
+      status: getReviewComparisonStatus(selectedRepair.mileage, documentExtractedFields?.mileage, "int"),
+    },
+    {
+      key: "grand_total",
+      label: "Итоговая сумма",
+      currentValue: selectedRepair.grand_total,
+      ocrValue: documentExtractedFields?.grand_total,
+      currentDisplay: formatMoney(selectedRepair.grand_total) || "—",
+      ocrDisplay:
+        typeof documentExtractedFields?.grand_total === "number"
+          ? formatMoney(documentExtractedFields.grand_total) || "—"
+          : "—",
+      currentSourceLabel: "Карточка ремонта",
+      ocrSourceLabel: getExtractedFieldSourceLabel(documentPayload, "grand_total"),
+      confidenceValue: readConfidenceValue(documentConfidenceMap, "grand_total"),
+      status: getReviewComparisonStatus(selectedRepair.grand_total, documentExtractedFields?.grand_total, "money"),
+    },
+  ];
+}
 
 function buildFallbackReviewQueueItem(
   selectedRepair: RepairDetailLike | null,
@@ -153,6 +271,8 @@ export function useRepairDerivedViewModel({
   selectedFiles,
   userRole,
   selectedRepair,
+  selectedDocumentReport,
+  selectedDocumentReportLoading,
   reviewQueue,
   summary,
   dataQuality,
@@ -161,10 +281,16 @@ export function useRepairDerivedViewModel({
 }: UseRepairDerivedViewModelParams) {
   const matchedReviewQueueItem = reviewQueue.find((item) => item.document.id === selectedDocumentId) ?? null;
   const selectedRepairDocument = selectedRepair?.documents.find((item) => item.id === selectedDocumentId) ?? null;
+  const overviewRepairDocument = selectedRepairDocument ?? resolveSourceRepairDocument(selectedRepair);
+  const overviewRepairDocumentId = overviewRepairDocument?.id ?? null;
   const selectedRepairDocumentPayload = getLatestRepairDocumentPayload(selectedRepair, selectedDocumentId);
   const selectedRepairDocumentConfidenceMap = getLatestRepairDocumentConfidenceMap(selectedRepair, selectedDocumentId);
   const selectedRepairDocumentExtractedFields = getPayloadExtractedFields(selectedRepairDocumentPayload);
   const selectedRepairDocumentExtractedItems = getPayloadExtractedItems(selectedRepairDocumentPayload);
+  const overviewRepairDocumentPayload = getLatestRepairDocumentPayload(selectedRepair, overviewRepairDocumentId);
+  const overviewRepairDocumentConfidenceMap = getLatestRepairDocumentConfidenceMap(selectedRepair, overviewRepairDocumentId);
+  const overviewRepairDocumentExtractedFields = getPayloadExtractedFields(overviewRepairDocumentPayload);
+  const overviewRepairDocumentExtractedItems = getPayloadExtractedItems(overviewRepairDocumentPayload);
   const selectedRepairDocumentOcrServiceName =
     typeof selectedRepairDocumentExtractedFields?.service_name === "string"
       ? selectedRepairDocumentExtractedFields.service_name.trim()
@@ -175,21 +301,19 @@ export function useRepairDerivedViewModel({
   const selectedRepairDocumentParts = Array.isArray(selectedRepairDocumentExtractedItems?.parts)
     ? selectedRepairDocumentExtractedItems.parts
     : [];
+  const overviewRepairDocumentWorks = Array.isArray(overviewRepairDocumentExtractedItems?.works)
+    ? overviewRepairDocumentExtractedItems.works
+    : [];
+  const overviewRepairDocumentParts = Array.isArray(overviewRepairDocumentExtractedItems?.parts)
+    ? overviewRepairDocumentExtractedItems.parts
+    : [];
   const selectedRepairUnresolvedChecks = selectedRepair
     ? selectedRepair.checks.filter((item) => !item.is_resolved)
     : [];
-  const sourceRepairDocument = selectedRepair
-    ? (selectedRepair.source_document_id !== null
-        ? selectedRepair.documents.find((document) => document.id === selectedRepair.source_document_id)
-        : null) ??
-      selectedRepair.documents.find((document) => document.is_primary) ??
-      selectedRepair.documents[0] ??
-      null
-    : null;
   const selectedRepairAwaitingOcr =
-    sourceRepairDocument !== null
-      ? isDocumentAwaitingOcr(sourceRepairDocument.status) || documentHasActiveImportJob(sourceRepairDocument)
-      : false;
+    overviewRepairDocument !== null && overviewRepairDocument.status !== "archived"
+      ? isDocumentAwaitingOcr(overviewRepairDocument.status) || documentHasActiveImportJob(overviewRepairDocument)
+      : repairSourceDocumentAwaitingOcr(selectedRepair);
   const selectedRepairHasBlockingFindings = selectedRepairUnresolvedChecks.some(
     (item) => item.severity === "suspicious" || item.severity === "error",
   );
@@ -197,6 +321,10 @@ export function useRepairDerivedViewModel({
   const selectedRepairDocumentManualReviewReasons =
     Array.isArray(selectedRepairDocumentPayload?.manual_review_reasons)
       ? selectedRepairDocumentPayload.manual_review_reasons.filter((item): item is string => typeof item === "string")
+      : [];
+  const overviewRepairDocumentManualReviewReasons =
+    Array.isArray(overviewRepairDocumentPayload?.manual_review_reasons)
+      ? overviewRepairDocumentPayload.manual_review_reasons.filter((item): item is string => typeof item === "string")
       : [];
   const selectedReviewItem =
     matchedReviewQueueItem !== null
@@ -215,112 +343,20 @@ export function useRepairDerivedViewModel({
   const attentionVisualBars = buildAttentionVisualBars(dataQualityDetails);
   const attentionVisualMax = Math.max(...attentionVisualBars.map((item) => item.value), 0);
   const topAttentionServices = dataQualityDetails?.services.slice(0, 5) || [];
-  const reviewRequiredFieldComparisons: ReviewRequiredFieldComparisonItem[] = selectedRepair
-    ? [
-        {
-          key: "vehicle",
-          label: "Машина",
-          currentValue:
-            !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
-            (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
-              ? selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || `ID ${selectedRepair.vehicle.id}`
-              : "",
-          ocrValue:
-            typeof selectedRepairDocumentExtractedFields?.plate_number === "string"
-              ? selectedRepairDocumentExtractedFields.plate_number
-              : typeof selectedRepairDocumentExtractedFields?.vin === "string"
-                ? selectedRepairDocumentExtractedFields.vin
-                : "",
-          currentDisplay:
-            !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
-            (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
-              ? selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || `ID ${selectedRepair.vehicle.id}`
-              : "Не привязана",
-          ocrDisplay:
-            typeof selectedRepairDocumentExtractedFields?.plate_number === "string"
-              ? selectedRepairDocumentExtractedFields.plate_number
-              : typeof selectedRepairDocumentExtractedFields?.vin === "string"
-                ? selectedRepairDocumentExtractedFields.vin
-                : "—",
-          currentSourceLabel: "Карточка ремонта",
-          ocrSourceLabel:
-            typeof selectedRepairDocumentExtractedFields?.plate_number === "string"
-              ? getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "plate_number")
-              : typeof selectedRepairDocumentExtractedFields?.vin === "string"
-                ? getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "vin")
-                : "Документ",
-          status:
-            !isPlaceholderVehicle(selectedRepair.vehicle.external_id) &&
-            (selectedRepair.vehicle.plate_number || selectedRepair.vehicle.model || selectedRepair.vehicle.id)
-              ? "match"
-              : "missing",
-          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "plate_number", "vin"),
-        },
-        {
-          key: "order_number",
-          label: "Номер заказ-наряда",
-          currentValue: selectedRepair.order_number || "",
-          ocrValue: selectedRepairDocumentExtractedFields?.order_number,
-          currentDisplay: selectedRepair.order_number || "—",
-          ocrDisplay: String(selectedRepairDocumentExtractedFields?.order_number || "—"),
-          currentSourceLabel: "Карточка ремонта",
-          ocrSourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "order_number"),
-          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "order_number"),
-          status: getReviewComparisonStatus(selectedRepair.order_number, selectedRepairDocumentExtractedFields?.order_number),
-        },
-        {
-          key: "repair_date",
-          label: "Дата ремонта",
-          currentValue: selectedRepair.repair_date || "",
-          ocrValue: selectedRepairDocumentExtractedFields?.repair_date,
-          currentDisplay: selectedRepair.repair_date || "—",
-          ocrDisplay: String(selectedRepairDocumentExtractedFields?.repair_date || "—"),
-          currentSourceLabel: "Карточка ремонта",
-          ocrSourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "repair_date"),
-          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "repair_date"),
-          status: getReviewComparisonStatus(selectedRepair.repair_date, selectedRepairDocumentExtractedFields?.repair_date),
-        },
-        {
-          key: "service",
-          label: "Сервис",
-          currentValue: selectedRepair.service?.name || "",
-          ocrValue: selectedRepairDocumentExtractedFields?.service_name,
-          currentDisplay: selectedRepair.service?.name || "—",
-          ocrDisplay: String(selectedRepairDocumentExtractedFields?.service_name || "—"),
-          currentSourceLabel: "Карточка ремонта",
-          ocrSourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "service_name"),
-          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "service_name"),
-          status: getReviewComparisonStatus(selectedRepair.service?.name, selectedRepairDocumentExtractedFields?.service_name),
-        },
-        {
-          key: "mileage",
-          label: "Пробег",
-          currentValue: selectedRepair.mileage,
-          ocrValue: selectedRepairDocumentExtractedFields?.mileage,
-          currentDisplay: selectedRepair.mileage > 0 ? String(selectedRepair.mileage) : "—",
-          ocrDisplay: String(selectedRepairDocumentExtractedFields?.mileage || "—"),
-          currentSourceLabel: "Карточка ремонта",
-          ocrSourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "mileage"),
-          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "mileage"),
-          status: getReviewComparisonStatus(selectedRepair.mileage, selectedRepairDocumentExtractedFields?.mileage, "int"),
-        },
-        {
-          key: "grand_total",
-          label: "Итоговая сумма",
-          currentValue: selectedRepair.grand_total,
-          ocrValue: selectedRepairDocumentExtractedFields?.grand_total,
-          currentDisplay: formatMoney(selectedRepair.grand_total) || "—",
-          ocrDisplay:
-            typeof selectedRepairDocumentExtractedFields?.grand_total === "number"
-              ? formatMoney(selectedRepairDocumentExtractedFields.grand_total) || "—"
-              : "—",
-          currentSourceLabel: "Карточка ремонта",
-          ocrSourceLabel: getExtractedFieldSourceLabel(selectedRepairDocumentPayload, "grand_total"),
-          confidenceValue: readConfidenceValue(selectedRepairDocumentConfidenceMap, "grand_total"),
-          status: getReviewComparisonStatus(selectedRepair.grand_total, selectedRepairDocumentExtractedFields?.grand_total, "money"),
-        },
-      ]
-    : [];
+  const reviewRequiredFieldComparisons = buildReviewRequiredFieldComparisons(
+    selectedRepair,
+    selectedRepairDocumentExtractedFields,
+    selectedRepairDocumentPayload,
+    selectedRepairDocumentConfidenceMap,
+    formatMoney,
+  );
+  const overviewReviewRequiredFieldComparisons = buildReviewRequiredFieldComparisons(
+    selectedRepair,
+    overviewRepairDocumentExtractedFields,
+    overviewRepairDocumentPayload,
+    overviewRepairDocumentConfidenceMap,
+    formatMoney,
+  );
   const selectedRepairDocumentFieldSnapshots: ReviewExtractedFieldSnapshot[] = [
     {
       key: "order_number",
@@ -408,7 +444,7 @@ export function useRepairDerivedViewModel({
   const reviewMissingRequiredFields = reviewRequiredFieldComparisons
     .filter((item) => item.status === "missing")
     .map((item) => item.label);
-  const selectedRepairComparisonAttentionCount = reviewRequiredFieldComparisons.filter(
+  const selectedRepairComparisonAttentionCount = overviewReviewRequiredFieldComparisons.filter(
     (item) => item.status === "missing" || item.status === "mismatch",
   ).length;
   const reviewReadyFieldsCount = reviewRequiredFieldComparisons.filter((item) => item.status !== "missing").length;
@@ -433,6 +469,9 @@ export function useRepairDerivedViewModel({
   return {
     selectedReviewItem,
     selectedRepairDocument,
+    overviewRepairDocument,
+    selectedDocumentReport,
+    selectedDocumentReportLoading,
     selectedRepairDocumentPayload,
     selectedRepairDocumentConfidenceMap,
     selectedRepairDocumentExtractedFields,
@@ -443,7 +482,10 @@ export function useRepairDerivedViewModel({
     selectedRepairAwaitingOcr,
     selectedRepairHasBlockingFindings,
     selectedRepairReportSections,
-    selectedRepairDocumentManualReviewReasons,
+    overviewRepairDocumentManualReviewReasons,
+    overviewReviewRequiredFieldComparisons,
+    overviewRepairDocumentWorksCount: overviewRepairDocumentWorks.length,
+    overviewRepairDocumentPartsCount: overviewRepairDocumentParts.length,
     repairVisualBars,
     repairVisualMax,
     qualityVisualBars,

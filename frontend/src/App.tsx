@@ -13,6 +13,7 @@ import { useRepairHistoryFilters } from "./hooks/useRepairHistoryFilters";
 import { useRepairWorkspaceActions } from "./hooks/useRepairWorkspaceActions";
 import { useRepairReviewWorkflow } from "./hooks/useRepairReviewWorkflow";
 import { useRepairPresentationState } from "./hooks/useRepairPresentationState";
+import { useSelectedDocumentReport } from "./hooks/useSelectedDocumentReport";
 import { useWorkspaceDataLifecycle } from "./hooks/useWorkspaceDataLifecycle";
 import { useWorkspaceSupportModules } from "./hooks/useWorkspaceSupportModules";
 import { buildAuthLandingProps } from "./shared/buildAuthLandingProps";
@@ -22,6 +23,7 @@ import { resolveRepairDocumentId } from "./shared/repairUiHelpers";
 import {
   formatDocumentKind,
   formatDocumentStatusLabel,
+  formatStatus,
   formatMoney,
 } from "./shared/displayFormatters";
 import {
@@ -147,6 +149,7 @@ export default function App() {
     openRepairByIds: openRepairByIdsFromDocuments,
     selectedDocumentId,
     selectedRepairId: selectedRepair?.id ?? null,
+    formatStatus,
     formatDocumentStatusLabel,
   });
   const {
@@ -220,11 +223,23 @@ export default function App() {
     openLaborNormsAdmin: openLaborNormsAdminInternal,
     openRepairByIds,
   } = appNavigation;
+  const documentReportState = useSelectedDocumentReport({
+    token,
+    selectedDocumentId,
+    selectedRepair,
+    setErrorMessage,
+  });
+  const {
+    selectedDocumentReport,
+    selectedDocumentReportLoading,
+  } = documentReportState;
   const repairDerivedViewModel = useRepairDerivedViewModel({
     selectedDocumentId,
     selectedFiles,
     userRole: user?.role,
     selectedRepair,
+    selectedDocumentReport,
+    selectedDocumentReportLoading,
     reviewQueue,
     summary,
     dataQuality,

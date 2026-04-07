@@ -46,6 +46,55 @@ class DocumentRead(BaseModel):
     latest_import_job: "DocumentImportJobRead | None" = None
 
 
+class DocumentExecutiveReportFindingRead(BaseModel):
+    title: str
+    severity: str
+    category: str
+    summary: str
+    rationale: Optional[str]
+    evidence: list[str]
+    recommendation: Optional[str]
+
+
+class DocumentExecutiveReportRiskRead(BaseModel):
+    zone: str
+    level: str
+    comment: str
+
+
+class DocumentExecutiveReportSectionRead(BaseModel):
+    key: str
+    title: str
+    items: list[str]
+
+
+class DocumentExecutiveReportRead(BaseModel):
+    headline: str
+    summary: str
+    status: str
+    overall_risk: str
+    highlights: list[str]
+    findings: list[DocumentExecutiveReportFindingRead]
+    risk_matrix: list[DocumentExecutiveReportRiskRead]
+    recommendations: list[str]
+    full_report_sections: list[DocumentExecutiveReportSectionRead]
+
+
+class DocumentReportRead(BaseModel):
+    document_id: int
+    repair_id: int
+    source_document_id: Optional[int]
+    report_document_id: Optional[int]
+    source_document_filename: Optional[str]
+    report_document_filename: Optional[str]
+    is_primary_document: bool
+    workflow_status: str
+    workflow_comment: str
+    report_status: str
+    report_status_comment: str
+    executive_report: DocumentExecutiveReportRead
+
+
 class DocumentImportJobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

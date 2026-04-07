@@ -7,6 +7,7 @@ import {
   buildRepairHistoryDetails,
   type HistoryDetailFormatters,
 } from "./historyDetails";
+import type { DocumentReport } from "./repairDetailTypes";
 import type { ServiceFormState } from "./workspaceFormTypes";
 
 type RepairWorkspacePanelProps = ComponentProps<typeof RepairWorkspacePanel>;
@@ -124,11 +125,17 @@ export type BuildRepairWorkspacePropsParams = {
   addPartDraft: RepairEditProps["onAddPartDraft"];
   updatePartDraft: RepairEditProps["onUpdatePartDraft"];
   removePartDraft: RepairEditProps["onRemovePartDraft"];
+  overviewRepairDocument: RepairOverviewProps["selectedRepairDocument"];
+  selectedDocumentReport: DocumentReport | null;
+  selectedDocumentReportLoading: boolean;
   selectedRepairAwaitingOcr: RepairOverviewProps["selectedRepairAwaitingOcr"];
   selectedRepairUnresolvedChecks: Array<unknown>;
   selectedRepairHasBlockingFindings: RepairOverviewProps["selectedRepairHasBlockingFindings"];
+  overviewReviewRequiredFieldComparisons: RepairOverviewProps["reviewRequiredFieldComparisons"];
   selectedRepairComparisonAttentionCount: RepairOverviewProps["selectedRepairComparisonAttentionCount"];
-  selectedRepairDocumentManualReviewReasons: RepairOverviewProps["selectedRepairDocumentManualReviewReasons"];
+  overviewRepairDocumentWorksCount: RepairOverviewProps["selectedRepairDocumentWorksCount"];
+  overviewRepairDocumentPartsCount: RepairOverviewProps["selectedRepairDocumentPartsCount"];
+  overviewRepairDocumentManualReviewReasons: RepairOverviewProps["overviewRepairDocumentManualReviewReasons"];
   selectedRepairReportSections: RepairOverviewProps["selectedRepairReportSections"];
   showRepairOverviewDetails: RepairOverviewProps["showRepairOverviewDetails"];
   setShowRepairOverviewDetails: Dispatch<SetStateAction<RepairOverviewProps["showRepairOverviewDetails"]>>;
@@ -369,15 +376,17 @@ export function buildRepairWorkspaceProps(params: BuildRepairWorkspacePropsParam
                   : null,
               overviewProps: {
                 selectedRepair: params.selectedRepair,
-                selectedRepairDocument: params.selectedRepairDocument,
+                selectedRepairDocument: params.overviewRepairDocument,
+                selectedDocumentReport: params.selectedDocumentReport,
+                selectedDocumentReportLoading: params.selectedDocumentReportLoading,
                 selectedRepairAwaitingOcr: params.selectedRepairAwaitingOcr,
                 selectedRepairUnresolvedChecksCount: params.selectedRepairUnresolvedChecks.length,
                 selectedRepairHasBlockingFindings: params.selectedRepairHasBlockingFindings,
-                reviewRequiredFieldComparisons: params.reviewRequiredFieldComparisons,
+                reviewRequiredFieldComparisons: params.overviewReviewRequiredFieldComparisons,
                 selectedRepairComparisonAttentionCount: params.selectedRepairComparisonAttentionCount,
-                selectedRepairDocumentWorksCount: params.selectedRepairDocumentWorks.length,
-                selectedRepairDocumentPartsCount: params.selectedRepairDocumentParts.length,
-                selectedRepairDocumentManualReviewReasons: params.selectedRepairDocumentManualReviewReasons,
+                selectedRepairDocumentWorksCount: params.overviewRepairDocumentWorksCount,
+                selectedRepairDocumentPartsCount: params.overviewRepairDocumentPartsCount,
+                overviewRepairDocumentManualReviewReasons: params.overviewRepairDocumentManualReviewReasons,
                 selectedRepairReportSections: params.selectedRepairReportSections,
                 showRepairOverviewDetails: params.showRepairOverviewDetails,
                 onToggleShowDetails: () => params.setShowRepairOverviewDetails((current) => !current),

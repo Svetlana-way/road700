@@ -76,6 +76,16 @@ def get_canonical_active_import_job(
     return choose_canonical_active_job(active_jobs)
 
 
+def get_document_display_import_job(document: Document | None) -> ImportJob | None:
+    if document is None:
+        return None
+
+    active_job = choose_canonical_active_job(list(document.import_jobs))
+    if active_job is not None:
+        return active_job
+    return max(document.import_jobs, key=lambda item: item.id, default=None)
+
+
 def fail_superseded_active_jobs(
     db: Session,
     *,
@@ -241,19 +251,9 @@ def load_job_document_context(db: Session, *, document_id: int) -> Document | No
 def get_non_operational_job_error(document: Document | None) -> str | None:
     if document is None:
         return "Document not found"
-    if document.status.value == "archived":
-        return "Archived documents cannot be modified"
-    if document.repair is None:
-        return "Document repair relation is incomplete"
-    if document.repair.vehicle is None:
-        return "Document vehicle relation is incomplete"
-    if document.repair.status.value == "archived":
-        return "Archived repairs cannot be modified"
-    if document.repair.vehicle is not None and document.repair.vehicle.status.value == "archived":
-        return "Archived vehicles cannot be used in operational actions"
-    if document.repair.service is not None and document.repair.service.status.value == "archived":
-        return "Repairs for archived services cannot be modified"
-    return None
+    from app.services.document_processing import get_document_processing_block_reason
+
+    return get_document_processing_block_reason(document)
 
 
 def claim_next_document_processing_job(db: Session) -> ImportJob | None:

@@ -1,10 +1,7 @@
 import { historyFilters } from "./appUiConfig";
+import { formatHistoryActionLabel } from "../entities/history/formatters";
+import { formatReviewPriority, reviewPriorityColor } from "../entities/repair/formatters";
 import type { BuildRepairWorkspacePropsParams } from "./buildRepairWorkspaceProps";
-import {
-  formatHistoryActionLabel,
-  formatReviewPriority,
-  reviewPriorityColor,
-} from "./displayFormatters";
 import {
   formatWorkLaborNormMeta,
   readCheckResolutionMeta,

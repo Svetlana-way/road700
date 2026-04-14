@@ -5,21 +5,21 @@ import {
   getPayloadExtractedFields,
   getPayloadExtractedItems,
   isPlaceholderVehicle,
-} from "../shared/fleetDocumentHelpers";
+} from "../entities/vehicle/helpers";
 import {
   buildAttentionVisualBars,
   buildQualityVisualBars,
   buildRepairVisualBars,
 } from "../shared/dashboardVisuals";
-import { documentHasActiveImportJob, isDocumentAwaitingOcr } from "../shared/displayFormatters";
+import { documentHasActiveImportJob, isDocumentAwaitingOcr } from "../entities/document/formatters";
 import {
   getReviewComparisonStatus,
   resolveSourceRepairDocument,
   repairSourceDocumentAwaitingOcr,
   readConfidenceValue,
-} from "../shared/repairUiHelpers";
+} from "../entities/repair/helpers";
 import { groupRepairChecksForReport } from "../shared/repairReportHelpers";
-import type { DocumentReport, RepairDetail } from "../shared/repairDetailTypes";
+import type { DocumentReport, RepairDetail } from "../contracts/domain/repair";
 import type {
   DashboardDataQuality,
   DashboardDataQualityDetails,
@@ -27,7 +27,7 @@ import type {
   DashboardSummary,
   ReviewQueueItem,
   UserRole,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 import type {
   ReviewExtractedFieldSnapshot,
   ReviewRequiredFieldComparisonItem,

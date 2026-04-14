@@ -12,8 +12,8 @@ from app.models.enums import DocumentStatus, RepairStatus, ServiceStatus, Vehicl
 from app.models.repair import Repair
 from app.models.service import Service
 from app.models.vehicle import Vehicle
-from app.services.document_processing import derive_service_name_from_source_path, extract_document_source_path
-from app.services.document_repair_relations import order_repair_documents_by_source_priority
+from app.services.document_metadata import derive_service_name_from_source_path, extract_document_source_path
+from app.services.document_repair_relations import is_document_primary_eligible, order_repair_documents_by_source_priority
 from app.services.service_catalog import ensure_service_catalog_synced, resolve_catalog_service
 
 
@@ -38,7 +38,7 @@ def load_repair_documents(db, repair: Repair) -> list[Document]:
     return [
         document
         for document in order_repair_documents_by_source_priority(repair)
-        if document.status != DocumentStatus.ARCHIVED
+        if document.status != DocumentStatus.ARCHIVED and is_document_primary_eligible(document)
     ]
 
 

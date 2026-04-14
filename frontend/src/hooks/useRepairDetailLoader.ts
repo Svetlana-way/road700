@@ -1,21 +1,39 @@
 import { useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
-import { ApiError, apiRequest } from "../shared/api";
-import type { RepairDocumentItem } from "../shared/repairDetailTypes";
-import { resolveRepairDocumentId, type RepairDetailForDraft } from "../shared/repairUiHelpers";
+import { ApiError, apiRequest } from "../shared/apiCore";
+import { getLatestRepairDocumentVersion } from "../entities/vehicle/helpers";
+import type { RepairDocumentItem } from "../contracts/domain/repair";
+import { resolveRepairDocumentId, type RepairDetailForDraft } from "../entities/repair/helpers";
 
 type RepairDocumentVersionLike = {
+  version_number?: number;
   parsed_payload: Record<string, unknown> | null;
+  field_confidence_map?: Record<string, unknown> | null;
 };
 
 type RepairDocumentLike = Pick<
   RepairDocumentItem,
-  "id" | "mime_type" | "status" | "is_primary" | "ocr_confidence" | "review_queue_priority" | "notes" | "created_at"
+  | "id"
+  | "mime_type"
+  | "status"
+  | "is_primary"
+  | "ocr_confidence"
+  | "review_queue_priority"
+  | "notes"
+  | "created_at"
+  | "latest_import_job"
 > & {
   versions: RepairDocumentVersionLike[];
 };
 
 type RepairDetailLike = Omit<RepairDetailForDraft, "documents"> & {
   id: number;
+  vehicle?: {
+    id: number;
+    external_id: string | null;
+    plate_number: string | null;
+    brand: string | null;
+    model: string | null;
+  };
   documents: RepairDocumentLike[];
 };
 
@@ -27,8 +45,16 @@ type LastUploadedDocumentLike = {
   is_primary?: boolean;
   ocr_confidence?: number | null;
   review_queue_priority?: number;
+  latest_import_job?: RepairDocumentItem["latest_import_job"];
   notes: string | null;
   created_at: string;
+  vehicle?: {
+    id: number;
+    external_id: string | null;
+    plate_number: string | null;
+    brand: string | null;
+    model: string | null;
+  };
   repair: {
     id: number;
     order_number: string | null;
@@ -110,9 +136,9 @@ export function useRepairDetailLoader<
         }
         const refreshedDocument = payload.documents.find((item) => item.id === current.id);
         if (!refreshedDocument) {
-          return current;
+          return null;
         }
-        const latestVersion = refreshedDocument.versions[refreshedDocument.versions.length - 1];
+        const latestVersion = getLatestRepairDocumentVersion(refreshedDocument.versions);
         return {
           ...current,
           mime_type: refreshedDocument.mime_type,
@@ -120,9 +146,11 @@ export function useRepairDetailLoader<
           is_primary: refreshedDocument.is_primary,
           ocr_confidence: refreshedDocument.ocr_confidence,
           review_queue_priority: refreshedDocument.review_queue_priority,
+          latest_import_job: refreshedDocument.latest_import_job,
           notes: refreshedDocument.notes,
           created_at: refreshedDocument.created_at,
-          parsed_payload: latestVersion?.parsed_payload ?? current.parsed_payload,
+          parsed_payload: latestVersion?.parsed_payload ?? null,
+          vehicle: payload.vehicle ?? current.vehicle,
           repair: {
             id: payload.id,
             order_number: payload.order_number,

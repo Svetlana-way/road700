@@ -1,5 +1,5 @@
 import { Box, Button, Chip, Grid, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
-import type { VehicleType } from "../shared/workspaceBootstrapTypes";
+import type { VehicleType } from "../contracts/domain/workspace";
 import type { DocumentVehicleFormState } from "../shared/workspaceFormTypes";
 
 type DocumentVehicleCreatePanelProps = {

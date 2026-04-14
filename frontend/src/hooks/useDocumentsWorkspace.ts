@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { apiRequest } from "../shared/api";
-import type { DocumentBatchProcessResponse, DocumentUploadResponse } from "../shared/documentApiTypes";
-import { parseOrderNumberFromFilename, parseRepairDateFromFilename } from "../shared/fleetDocumentHelpers";
+import type { DocumentBatchProcessResponse, DocumentUploadResponse } from "../contracts/api/document";
+import { apiRequest } from "../shared/apiCore";
+import { parseOrderNumberFromFilename, parseRepairDateFromFilename } from "../entities/vehicle/helpers";
 import type { WorkspaceTab } from "../shared/appRoute";
 import type {
   DocumentItem,
   DocumentStatus,
   UserRole,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 import type { UploadFormState } from "../shared/workspaceFormTypes";
 
 type UseDocumentsWorkspaceParams = {
@@ -297,7 +297,7 @@ export function useDocumentsWorkspace({
         return;
       }
       if (activeWorkspaceTab === "repair" && selectedRepairId === repairId) {
-        await openRepairByIds(updatedDocument.id, repairId);
+        await openRepairByIds(selectedDocumentId === documentId ? null : selectedDocumentId, repairId);
       }
     } catch (error) {
       if (documentArchiveRequestIdRef.current !== requestId) {

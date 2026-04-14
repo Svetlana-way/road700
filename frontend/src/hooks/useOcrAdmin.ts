@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import type { OcrLearningDraftsResponse } from "../contracts/api/admin";
 import { buildOcrProfileMatcherPayload, buildOcrRulePayload } from "../shared/adminPayloadBuilders";
-import type { OcrLearningDraftsResponse } from "../shared/adminApiTypes";
 import { type TechAdminTab, type WorkspaceTab } from "../shared/appRoute";
-import { apiRequest } from "../shared/api";
+import { apiRequest } from "../shared/apiCore";
 import {
   createEmptyOcrProfileMatcherForm,
   createEmptyOcrRuleForm,
@@ -13,7 +13,7 @@ import {
   buildOcrLearningSignalsQueryString,
   buildOcrProfileMatchersQueryString,
   buildOcrRulesQueryString,
-} from "../shared/queryBuilders";
+} from "../features/admin/queryBuilders";
 import type {
   OcrLearningResponse,
   OcrLearningSignalItem,
@@ -23,7 +23,7 @@ import type {
   OcrRuleResponse,
   SystemStatus,
   UserRole,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 import type { OcrProfileMatcherFormState, OcrRuleFormState } from "../shared/workspaceFormTypes";
 
 type UseOcrAdminParams = {
@@ -190,11 +190,7 @@ export function useOcrAdmin({
     ocrLearningRequestIdRef.current = requestId;
     setOcrLearningLoading(true);
     try {
-      const payload = await apiRequest<OcrLearningResponse>(
-        `/ocr-learning/signals?${buildOcrLearningSignalsQueryString(statusFilter, targetFieldFilter, profileScopeFilter)}`,
-        { method: "GET" },
-        token,
-      );
+      const payload = await fetchAllOcrLearningSignals(statusFilter, targetFieldFilter, profileScopeFilter);
       if (ocrLearningRequestIdRef.current !== requestId) {
         return;
       }
@@ -209,6 +205,49 @@ export function useOcrAdmin({
         setOcrLearningLoading(false);
       }
     }
+  }
+
+  async function fetchOcrLearningSignalsPage(
+    statusFilter: string,
+    targetFieldFilter: string,
+    profileScopeFilter: string,
+    limit: number,
+    offset: number,
+  ) {
+    return apiRequest<OcrLearningResponse>(
+      `/ocr-learning/signals?${buildOcrLearningSignalsQueryString(
+        statusFilter,
+        targetFieldFilter,
+        profileScopeFilter,
+        limit,
+        offset,
+      )}`,
+      { method: "GET" },
+      token || undefined,
+    );
+  }
+
+  async function fetchAllOcrLearningSignals(
+    statusFilter: string,
+    targetFieldFilter: string,
+    profileScopeFilter: string,
+  ) {
+    const pageSize = 200;
+    const firstPage = await fetchOcrLearningSignalsPage(statusFilter, targetFieldFilter, profileScopeFilter, pageSize, 0);
+    if (firstPage.total <= firstPage.items.length) {
+      return firstPage;
+    }
+
+    const items = [...firstPage.items];
+    for (let offset = firstPage.items.length; offset < firstPage.total; offset += pageSize) {
+      const nextPage = await fetchOcrLearningSignalsPage(statusFilter, targetFieldFilter, profileScopeFilter, pageSize, offset);
+      items.push(...nextPage.items);
+    }
+
+    return {
+      ...firstPage,
+      items,
+    };
   }
 
   function updateOcrRuleFormField(field: keyof OcrRuleFormState, value: string) {

@@ -9,8 +9,9 @@ from openpyxl import Workbook
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.access import PLACEHOLDER_EXTERNAL_ID, apply_vehicle_scope
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.application.services.visibility import apply_vehicle_scope, get_non_placeholder_vehicle_clause
+from app.constants.vehicles import PLACEHOLDER_EXTERNAL_ID
 from app.models.audit import AuditLog
 from app.models.document import Document
 from app.models.enums import DocumentStatus, RepairStatus, ServiceStatus, VehicleStatus
@@ -30,6 +31,7 @@ from app.schemas.vehicle import (
 from app.services.exporting import append_rows, safe_filename
 from app.services.historical_repairs_import import IMPORT_REASON_PREFIX
 from app.services.pdf_tools import render_text_report_pdf
+from app.services.review_queue import has_open_suspicious_checks
 from app.scripts.import_vehicles import (
     DEFAULT_TRAILERS_PATH,
     DEFAULT_TRUCKS_PATH,
@@ -210,8 +212,17 @@ def build_history_summary(repair_history: list[Repair]) -> dict[str, object]:
         for document in repair.documents
         if document.status != DocumentStatus.ARCHIVED
     )
-    confirmed_repairs = sum(1 for repair in repair_history if repair.status == RepairStatus.CONFIRMED)
-    suspicious_repairs = sum(1 for repair in repair_history if repair.status == RepairStatus.SUSPICIOUS)
+    confirmed_repairs = sum(
+        1
+        for repair in repair_history
+        if repair.status == RepairStatus.CONFIRMED and not has_open_suspicious_checks(repair)
+    )
+    suspicious_repairs = sum(
+        1
+        for repair in repair_history
+        if repair.status == RepairStatus.SUSPICIOUS
+        or has_open_suspicious_checks(repair)
+    )
     last_repair = repair_history[0] if repair_history else None
     return {
         "repairs_total": len(repair_history),
@@ -276,6 +287,7 @@ def build_vehicle_detail_payload(db: Session, vehicle: Vehicle) -> dict:
         .options(
             joinedload(Repair.service),
             joinedload(Repair.documents),
+            joinedload(Repair.checks),
         )
         .where(
             Repair.vehicle_id == vehicle.id,
@@ -302,6 +314,7 @@ def build_vehicle_detail_payload(db: Session, vehicle: Vehicle) -> dict:
             },
         }
         for assignment in active_assignments
+        if assignment.user is not None
     ]
     historical_repair_history = [
         repair
@@ -365,6 +378,9 @@ def list_vehicles(
     else:
         base_stmt = base_stmt.where(Vehicle.status != VehicleStatus.ARCHIVED)
         count_stmt = count_stmt.where(Vehicle.status != VehicleStatus.ARCHIVED)
+
+    base_stmt = base_stmt.where(get_non_placeholder_vehicle_clause())
+    count_stmt = count_stmt.where(get_non_placeholder_vehicle_clause())
 
     if search:
         pattern = f"%{search.strip()}%"

@@ -4,11 +4,11 @@ import argparse
 import logging
 import time
 
+from app.application.imports.document_jobs import claim_next_document_processing_job, run_document_processing_job
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.imports import ImportJob
-from app.services.document_processing import ensure_ocr_runtime, format_ocr_runtime_status_lines
-from app.services.import_jobs import claim_next_document_processing_job, run_document_processing_job
+from app.services.ocr_runtime import ensure_ocr_runtime, format_ocr_runtime_status_lines
 
 
 logger = logging.getLogger(__name__)

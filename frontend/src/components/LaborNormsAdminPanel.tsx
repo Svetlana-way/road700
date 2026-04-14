@@ -16,7 +16,7 @@ import {
 import type {
   LaborNormCatalogConfigItem,
   LaborNormCatalogItem,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 import type { LaborNormCatalogFormState, LaborNormEntryFormState } from "../shared/workspaceFormTypes";
 
 type LaborNormsAdminPanelProps = {

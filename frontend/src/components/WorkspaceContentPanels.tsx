@@ -1,10 +1,14 @@
 import { lazy, Suspense, type ComponentProps } from "react";
 import { CircularProgress, Grid, Paper, Stack, Typography } from "@mui/material";
 const WorkspaceDocumentsPanel = lazy(() =>
-  import("./WorkspaceDocumentsPanel").then((module) => ({ default: module.WorkspaceDocumentsPanel })),
+  import("../features/documents/components/WorkspaceDocumentsPanel").then((module) => ({
+    default: module.WorkspaceDocumentsPanel,
+  })),
 );
 const RepairWorkspacePanel = lazy(() =>
-  import("./RepairWorkspacePanel").then((module) => ({ default: module.RepairWorkspacePanel })),
+  import("../features/repair/components/RepairWorkspacePanel").then((module) => ({
+    default: module.RepairWorkspacePanel,
+  })),
 );
 const WorkspaceAdminPanels = lazy(() =>
   import("./WorkspaceAdminPanels").then((module) => ({ default: module.WorkspaceAdminPanels })),
@@ -15,9 +19,11 @@ const WorkspaceOperationsPanels = lazy(() =>
 
 type WorkspaceTab = "documents" | "repair" | "admin" | "tech_admin" | "fleet" | "search" | "audit";
 
-type WorkspaceDocumentsPanelProps = ComponentProps<(typeof import("./WorkspaceDocumentsPanel"))["WorkspaceDocumentsPanel"]>;
+type WorkspaceDocumentsPanelProps =
+  ComponentProps<(typeof import("../features/documents/components/WorkspaceDocumentsPanel"))["WorkspaceDocumentsPanel"]>;
 type WorkspaceAdminPanelsProps = ComponentProps<(typeof import("./WorkspaceAdminPanels"))["WorkspaceAdminPanels"]>;
-type RepairWorkspacePanelProps = ComponentProps<(typeof import("./RepairWorkspacePanel"))["RepairWorkspacePanel"]>;
+type RepairWorkspacePanelProps =
+  ComponentProps<(typeof import("../features/repair/components/RepairWorkspacePanel"))["RepairWorkspacePanel"]>;
 type WorkspaceOperationsPanelsProps = ComponentProps<(typeof import("./WorkspaceOperationsPanels"))["WorkspaceOperationsPanels"]>;
 
 type WorkspaceContentPanelsProps = {

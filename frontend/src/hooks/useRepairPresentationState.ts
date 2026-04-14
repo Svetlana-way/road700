@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { createVehicleFormFromPayload } from "../shared/fleetDocumentHelpers";
+import { createVehicleFormFromPayload } from "../entities/vehicle/helpers";
 import type { DocumentVehicleFormState } from "../shared/workspaceFormTypes";
 
 type UseRepairPresentationStateParams = {

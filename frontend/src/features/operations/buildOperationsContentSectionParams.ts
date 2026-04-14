@@ -1,0 +1,107 @@
+import type { WorkspaceContentSectionBuilderContext } from "../../app/workspaceContentSectionBuilderContext";
+import {
+  formatDocumentStatusLabel,
+  statusColor,
+} from "../../entities/document/formatters";
+import {
+  formatAuditEntityLabel,
+  formatHistoryActionLabel,
+} from "../../entities/history/formatters";
+import { formatRepairStatus } from "../../entities/repair/formatters";
+import {
+  formatVehicleStatusLabel,
+  formatVehicleTypeLabel,
+  vehicleStatusColor,
+} from "../../entities/vehicle/formatters";
+import { formatVehicle } from "../../entities/vehicle/helpers";
+import {
+  formatConfidence,
+  formatDateTime,
+  formatDateValue,
+  formatMoney,
+  formatUserRoleLabel,
+} from "../../shared/formattersCore";
+import {
+  historyDetailFormatters,
+} from "../../app/workspaceContentSectionBuilderContext";
+import type { BuildOperationsWorkspacePropsParams } from "./buildOperationsWorkspaceProps";
+
+export function buildOperationsContentSectionParams(
+  context: WorkspaceContentSectionBuilderContext,
+): BuildOperationsWorkspacePropsParams {
+  const { rootState, employeesAdmin, operationsWorkspace, fleetWorkspace, navigation } = context;
+
+  return {
+    activeWorkspaceTab: rootState.activeWorkspaceTab,
+    globalSearchQuery: operationsWorkspace.globalSearchQuery,
+    globalSearchLoading: operationsWorkspace.globalSearchLoading,
+    globalSearchResult: operationsWorkspace.globalSearchResult,
+    setGlobalSearchQuery: operationsWorkspace.setGlobalSearchQuery,
+    handleGlobalSearchSubmit: operationsWorkspace.handleGlobalSearchSubmit,
+    resetGlobalSearch: operationsWorkspace.resetGlobalSearch,
+    openRepairByIds: navigation.openRepairByIds,
+    openFleetVehicleById: fleetWorkspace.openFleetVehicleById,
+    setActiveWorkspaceTab: rootState.setActiveWorkspaceTab,
+    updateBrowserRoute: navigation.updateBrowserRoute,
+    statusColor,
+    vehicleStatusColor,
+    formatDocumentStatusLabel,
+    formatRepairStatus,
+    formatVehicleTypeLabel,
+    formatVehicleStatusLabel,
+    formatConfidence,
+    formatDateTime,
+    formatMoney,
+    userRole: rootState.user?.role,
+    auditSearchQuery: operationsWorkspace.auditSearchQuery,
+    auditEntityTypeFilter: operationsWorkspace.auditEntityTypeFilter,
+    auditActionTypeFilter: operationsWorkspace.auditActionTypeFilter,
+    auditUserIdFilter: operationsWorkspace.auditUserIdFilter,
+    auditDateFrom: operationsWorkspace.auditDateFrom,
+    auditDateTo: operationsWorkspace.auditDateTo,
+    auditEntityTypes: operationsWorkspace.auditEntityTypes,
+    auditActionTypes: operationsWorkspace.auditActionTypes,
+    usersList: employeesAdmin.allUsersList,
+    auditLogLoading: operationsWorkspace.auditLogLoading,
+    auditLogItems: operationsWorkspace.auditLogItems,
+    auditLogTotal: operationsWorkspace.auditLogTotal,
+    setAuditSearchQuery: operationsWorkspace.setAuditSearchQuery,
+    setAuditEntityTypeFilter: operationsWorkspace.setAuditEntityTypeFilter,
+    setAuditActionTypeFilter: operationsWorkspace.setAuditActionTypeFilter,
+    setAuditUserIdFilter: operationsWorkspace.setAuditUserIdFilter,
+    setAuditDateFrom: operationsWorkspace.setAuditDateFrom,
+    setAuditDateTo: operationsWorkspace.setAuditDateTo,
+    handleRefreshAuditLog: operationsWorkspace.handleRefreshAuditLog,
+    handleResetAuditFilters: operationsWorkspace.handleResetAuditFilters,
+    resetAudit: operationsWorkspace.resetAudit,
+    formatAuditEntityLabel,
+    formatHistoryActionLabel,
+    historyDetailFormatters,
+    fleetViewMode: fleetWorkspace.fleetViewMode,
+    selectedFleetVehicleLoading: fleetWorkspace.selectedFleetVehicleLoading,
+    selectedFleetVehicle: fleetWorkspace.selectedFleetVehicle,
+    vehicleSaving: fleetWorkspace.vehicleSaving,
+    vehicleExportLoading: fleetWorkspace.vehicleExportLoading,
+    vehiclePdfExportLoading: fleetWorkspace.vehiclePdfExportLoading,
+    vehicles: fleetWorkspace.vehicleOptions,
+    fleetVehicles: fleetWorkspace.fleetVehicles,
+    handleUpdateVehicle: fleetWorkspace.handleUpdateVehicle,
+    handleExportVehicle: fleetWorkspace.handleExportVehicle,
+    handleExportVehiclePdf: fleetWorkspace.handleExportVehiclePdf,
+    formatVehicle,
+    formatDateValue,
+    formatUserRoleLabel,
+    fleetQuery: fleetWorkspace.fleetQuery,
+    fleetVehicleTypeFilter: fleetWorkspace.fleetVehicleTypeFilter,
+    fleetStatusFilter: fleetWorkspace.fleetStatusFilter,
+    fleetVehiclesTotal: fleetWorkspace.fleetVehiclesTotal,
+    selectedFleetVehicleId: fleetWorkspace.selectedFleetVehicleId,
+    fleetLoading: fleetWorkspace.fleetLoading,
+    setFleetQuery: fleetWorkspace.setFleetQuery,
+    setFleetVehicleTypeFilter: fleetWorkspace.setFleetVehicleTypeFilter,
+    setFleetStatusFilter: fleetWorkspace.setFleetStatusFilter,
+    loadFleetVehicles: fleetWorkspace.loadFleetVehicles,
+    returnToFleetList: fleetWorkspace.returnToFleetList,
+    openFleetVehicleCard: fleetWorkspace.openFleetVehicleCard,
+  };
+}

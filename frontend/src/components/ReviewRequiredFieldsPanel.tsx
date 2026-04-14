@@ -1,5 +1,5 @@
 import { Alert, Box, Button, Chip, Grid, Paper, Stack, TextField, Typography } from "@mui/material";
-import type { ReviewComparisonStatus } from "../shared/repairUiHelpers";
+import type { ReviewComparisonStatus } from "../entities/repair/helpers";
 import type {
   ReviewRepairFieldsDraft,
   ReviewRequiredFieldComparisonItem,

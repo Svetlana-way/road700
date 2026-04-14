@@ -1,10 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { apiRequest } from "../shared/api";
-import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
-import {
-  buildHistoricalWorkReferenceQueryString,
-  buildImportConflictsQueryString,
-} from "../shared/queryBuilders";
 import type {
   HistoricalRepairImportResponse,
   HistoricalWorkReferenceItem,
@@ -14,8 +8,15 @@ import type {
   ImportConflictsResponse,
   ImportJobItem,
   ImportJobsResponse,
-} from "../shared/importAdminTypes";
-import type { UserRole } from "../shared/workspaceBootstrapTypes";
+} from "../contracts/api/import";
+import { apiRequest } from "../shared/apiCore";
+import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
+import {
+  buildHistoricalWorkReferenceQueryString,
+  buildImportJobsQueryString,
+  buildImportConflictsQueryString,
+} from "../features/admin/queryBuilders";
+import type { UserRole } from "../contracts/domain/workspace";
 
 type UseHistoricalImportsAdminParams = {
   token: string;
@@ -67,11 +68,7 @@ export function useHistoricalImportsAdmin({
     historicalImportJobsRequestIdRef.current = requestId;
     setHistoricalImportJobsLoading(true);
     try {
-      const payload = await apiRequest<ImportJobsResponse>(
-        "/imports/jobs?import_type=historical_repairs&limit=12",
-        { method: "GET" },
-        token,
-      );
+      const payload = await fetchAllHistoricalImportJobs();
       if (historicalImportJobsRequestIdRef.current !== requestId) {
         return;
       }
@@ -94,11 +91,7 @@ export function useHistoricalImportsAdmin({
     historicalWorkReferenceRequestIdRef.current = requestId;
     setHistoricalWorkReferenceLoading(true);
     try {
-      const payload = await apiRequest<HistoricalWorkReferenceResponse>(
-        `/imports/historical-work-reference?${buildHistoricalWorkReferenceQueryString(query, minSamplesValue)}`,
-        { method: "GET" },
-        token,
-      );
+      const payload = await fetchAllHistoricalWorkReference(query, minSamplesValue);
       if (historicalWorkReferenceRequestIdRef.current !== requestId) {
         return;
       }
@@ -119,11 +112,7 @@ export function useHistoricalImportsAdmin({
     importConflictsRequestIdRef.current = requestId;
     setImportConflictsLoading(true);
     try {
-      const payload = await apiRequest<ImportConflictsResponse>(
-        `/imports/conflicts?${buildImportConflictsQueryString(status)}`,
-        { method: "GET" },
-        token,
-      );
+      const payload = await fetchAllImportConflicts(status);
       if (importConflictsRequestIdRef.current !== requestId) {
         return;
       }
@@ -133,6 +122,98 @@ export function useHistoricalImportsAdmin({
         setImportConflictsLoading(false);
       }
     }
+  }
+
+  async function fetchHistoricalWorkReference(
+    query: string,
+    minSamplesValue: string,
+    limit: number,
+    offset: number,
+  ) {
+    return apiRequest<HistoricalWorkReferenceResponse>(
+      `/imports/historical-work-reference?${buildHistoricalWorkReferenceQueryString(query, minSamplesValue, limit, offset)}`,
+      { method: "GET" },
+      token,
+    );
+  }
+
+  async function fetchHistoricalImportJobs(limit: number, offset: number) {
+    return apiRequest<ImportJobsResponse>(
+      `/imports/jobs?${buildImportJobsQueryString("historical_repairs", limit, offset)}`,
+      { method: "GET" },
+      token,
+    );
+  }
+
+  async function fetchAllHistoricalImportJobs() {
+    const pageSize = 100;
+    const firstPage = await fetchHistoricalImportJobs(pageSize, 0);
+    if (firstPage.total <= firstPage.items.length) {
+      return firstPage;
+    }
+
+    const items = [...firstPage.items];
+    for (let offset = firstPage.items.length; offset < firstPage.total; offset += pageSize) {
+      const nextPage = await fetchHistoricalImportJobs(pageSize, offset);
+      items.push(...nextPage.items);
+    }
+
+    return {
+      ...firstPage,
+      items,
+      limit: pageSize,
+    };
+  }
+
+  async function fetchImportConflicts(status: string, limit: number, offset: number) {
+    return apiRequest<ImportConflictsResponse>(
+      `/imports/conflicts?${buildImportConflictsQueryString(status, limit, offset)}`,
+      { method: "GET" },
+      token,
+    );
+  }
+
+  async function fetchAllImportConflicts(status: string) {
+    const pageSize = 100;
+    const firstPage = await fetchImportConflicts(status, pageSize, 0);
+    if (firstPage.total <= firstPage.items.length) {
+      return firstPage;
+    }
+
+    const items = [...firstPage.items];
+    for (let offset = firstPage.items.length; offset < firstPage.total; offset += pageSize) {
+      const nextPage = await fetchImportConflicts(status, pageSize, offset);
+      items.push(...nextPage.items);
+    }
+
+    return {
+      ...firstPage,
+      items,
+      limit: pageSize,
+    };
+  }
+
+  async function fetchAllHistoricalWorkReference(
+    query: string,
+    minSamplesValue: string,
+  ) {
+    const pageSize = 200;
+    const firstPage = await fetchHistoricalWorkReference(query, minSamplesValue, pageSize, 0);
+    if (firstPage.total <= firstPage.items.length) {
+      return firstPage;
+    }
+
+    const items = [...firstPage.items];
+    for (let offset = firstPage.items.length; offset < firstPage.total; offset += pageSize) {
+      const nextPage = await fetchHistoricalWorkReference(query, minSamplesValue, pageSize, offset);
+      items.push(...nextPage.items);
+    }
+
+    return {
+      ...firstPage,
+      items,
+      limit: pageSize,
+    };
   }
 
   function applyResolvedImportConflict(conflictId: number) {

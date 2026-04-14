@@ -12,7 +12,7 @@ import {
   type TechAdminTab,
   type WorkspaceTab,
 } from "../shared/appRoute";
-import type { UserRole } from "../shared/workspaceBootstrapTypes";
+import type { UserRole } from "../contracts/domain/workspace";
 
 type LoadRepairDetailOptions = {
   silent?: boolean;
@@ -435,32 +435,13 @@ export function useAppNavigation({
       return;
     }
     const repairMatches = selectedRepairId === routeSnapshot.repairId;
-    const routeWithoutDocumentShouldResetSelection =
+    const routeWithoutDocumentShouldSyncSelection =
       repairMatches &&
       routeSnapshot.documentId === null &&
       selectedDocumentId !== selectedRepairDefaultDocumentId;
 
-    if (routeWithoutDocumentShouldResetSelection) {
-      const routeLoadKey = buildRepairRouteLoadKey(routeSnapshot.repairId, routeSnapshot.documentId);
-      if (routeRepairLoadKeyRef.current === routeLoadKey) {
-        return;
-      }
-      routeRepairLoadKeyRef.current = routeLoadKey;
-      void loadRepairDetailRef
-        .current(token, routeSnapshot.repairId, null, {
-          silent: true,
-          resetTransientState: false,
-        })
-        .then((result) => {
-          if (result === "not_found") {
-            handleMissingRepairRoute();
-          }
-        })
-        .finally(() => {
-          if (routeRepairLoadKeyRef.current === routeLoadKey) {
-            routeRepairLoadKeyRef.current = null;
-          }
-        });
+    if (routeWithoutDocumentShouldSyncSelection) {
+      setSelectedDocumentId(selectedRepairDefaultDocumentId);
       return;
     }
 

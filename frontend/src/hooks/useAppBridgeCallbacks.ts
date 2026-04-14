@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import type { ReviewQueueCategory } from "../shared/workspaceBootstrapTypes";
+import type { ReviewQueueCategory } from "../contracts/domain/workspace";
 import type { TechAdminTab } from "../shared/appRoute";
 import type { WorkspaceRefreshScope } from "../shared/loadWorkspaceBootstrap";
 

@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends
 
 from app.api.deps import get_current_admin
 from app.models.user import User
-from app.services.document_processing import get_ocr_runtime_status
 from app.services.email_delivery import is_email_delivery_configured
+from app.services.ocr_runtime import get_ocr_runtime_status
 
 
 router = APIRouter(prefix="/system", tags=["system"])

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { apiRequest, downloadDocumentFile } from "../shared/api";
-import type { DocumentComparisonReviewResponse } from "../shared/repairWorkflowApiTypes";
+import type { DocumentComparisonReviewResponse } from "../contracts/api/repairWorkflow";
+import { downloadDocumentFile } from "../features/documents/api";
+import { resolveSourceRepairDocument } from "../entities/repair/helpers";
+import { apiRequest } from "../shared/apiCore";
 import type {
   DocumentComparisonResponse,
   DocumentKind,
   UserRole,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 
 type RepairDocumentLike = {
   id: number;
@@ -15,6 +17,7 @@ type RepairDocumentLike = {
 
 type RepairLike = {
   id: number;
+  source_document_id: number | null;
   status: string;
   documents: RepairDocumentLike[];
 } | null;
@@ -138,7 +141,7 @@ export function useRepairDocumentsWorkflow({
       setSuccessMessage(result.message);
       setAttachedDocumentNotes("");
       setAttachedDocumentFiles([]);
-      await refreshWorkspace("review");
+      await refreshWorkspace("documents");
       if (repairDocumentActionRequestIdRef.current !== requestId) {
         return;
       }
@@ -186,7 +189,7 @@ export function useRepairDocumentsWorkflow({
         return;
       }
       setSuccessMessage("Основной документ обновлён");
-      await refreshWorkspace("review");
+      await refreshWorkspace("documents");
       if (repairDocumentActionRequestIdRef.current !== requestId) {
         return;
       }
@@ -209,8 +212,13 @@ export function useRepairDocumentsWorkflow({
     }
 
     const targetDocument = selectedRepair.documents.find((item) => item.id === documentId) ?? null;
-    const primaryDocument = selectedRepair.documents.find((item) => item.is_primary);
-    if (!primaryDocument || primaryDocument.id === documentId) {
+    const primaryDocument = resolveSourceRepairDocument(selectedRepair);
+    if (!primaryDocument) {
+      setErrorMessage("У ремонта нет основного документа для сравнения");
+      return;
+    }
+    if (primaryDocument.id === documentId) {
+      setErrorMessage("Текущий документ уже является основным");
       return;
     }
     if (
@@ -294,7 +302,7 @@ export function useRepairDocumentsWorkflow({
       setSuccessMessage(result.message);
       setDocumentComparison(null);
       setDocumentComparisonComment("");
-      await refreshWorkspace("review");
+      await refreshWorkspace("documents");
       if (repairDocumentActionRequestIdRef.current !== requestId) {
         return;
       }

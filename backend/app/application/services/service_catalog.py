@@ -1,0 +1,422 @@
+from __future__ import annotations
+
+import logging
+import re
+import zipfile
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+from xml.etree import ElementTree
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.paths import PROJECT_ROOT
+from app.models.enums import ServiceStatus
+from app.models.service import Service
+
+
+DOCX_TEXT_NAMESPACE = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+logger = logging.getLogger(__name__)
+LEGAL_FORM_PATTERN = re.compile(r"\b(?:ооо|ао|пао|зао|ип)\b", re.IGNORECASE)
+LONG_LEGAL_FORM_PATTERN = re.compile(
+    r"\bобщество\s*с\s*ограниченной\s*ответственностью\b",
+    re.IGNORECASE,
+)
+NON_ALNUM_PATTERN = re.compile(r"[^0-9a-zа-я]+", re.IGNORECASE)
+SERVICE_ALIASES = {
+    "ООО «Енисей Трак Сервис»": ("ЕТС", "Енисей", "Енисей Трак Сервис"),
+    "ООО «ЛидерТрак»": ("Лидер Трак", "Лидертрак"),
+}
+FALLBACK_SERVICE_CATALOG_DEFINITIONS = (
+    {
+        "name": "ООО «АХВ Трак Сервис»",
+        "city": None,
+        "contact": None,
+        "comment": "Источник: встроенный fallback-каталог; карточка сервиса отсутствует в папке `Сервисы`.",
+        "aliases": (
+            "АХВ Трак Сервис",
+            'Общество с ограниченной ответственностью "АХВ Трак Сервис"',
+            "AXB",
+            "АXB",
+            "АХВ",
+        ),
+    },
+    {
+        "name": "ООО «ЛОГИСТИКА»",
+        "city": None,
+        "contact": None,
+        "comment": "Источник: встроенный fallback-каталог; карточка сервиса отсутствует в папке `Сервисы`.",
+        "aliases": (
+            "Логистика",
+            'Общество с ограниченной ответственностью "ЛОГИСТИКА"',
+            'Общество с ограниченной ответственностью "Логистика"',
+        ),
+    },
+    {
+        "name": "ООО «КЛЕВЕР ТРАК»",
+        "city": "Набережные Челны",
+        "contact": None,
+        "comment": (
+            "Юрлицо: Общество с ограниченной ответственностью \"КЛЕВЕР ТРАК\"\n"
+            "Адрес: 423806, Татарстан Респ, г.о. город Набережные Челны, г Набережные Челны, "
+            "пр-кт Казанский, д. 148, этаж 1, помещ. 11\n"
+            "ИНН/КПП: 1650419584 / 165001001\n"
+            "Источник: встроенный fallback-каталог по образцу заказ-наряда `КТ262600020`."
+        ),
+        "aliases": (
+            "Клевер Трак",
+            "КЛЕВЕР ТРАК",
+            'Общество с ограниченной ответственностью "КЛЕВЕР ТРАК"',
+            'Общество с ограниченной ответственностью "Клевер Трак"',
+        ),
+    },
+)
+
+
+@dataclass(frozen=True)
+class ServiceCatalogEntry:
+    name: str
+    city: str | None
+    contact: str | None
+    comment: str
+    aliases: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ServiceLookupEntry:
+    name: str
+    aliases: tuple[str, ...]
+
+
+def get_service_catalog_dir() -> Path:
+    return PROJECT_ROOT / "Сервисы"
+
+
+def normalize_service_key(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = value.lower().replace("ё", "е")
+    normalized = LONG_LEGAL_FORM_PATTERN.sub(" ", normalized)
+    normalized = LEGAL_FORM_PATTERN.sub(" ", normalized)
+    normalized = NON_ALNUM_PATTERN.sub("", normalized)
+    return normalized.strip()
+
+
+def read_docx_text(path: Path) -> str:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            document_xml = archive.read("word/document.xml")
+        root = ElementTree.fromstring(document_xml)
+    except (OSError, zipfile.BadZipFile, KeyError, ElementTree.ParseError, UnicodeDecodeError, ValueError) as error:
+        raise ValueError(f"Service card is unreadable: {path}") from error
+    paragraphs: list[str] = []
+    for paragraph in root.findall(".//w:p", DOCX_TEXT_NAMESPACE):
+        text_parts = [
+            node.text.strip()
+            for node in paragraph.findall(".//w:t", DOCX_TEXT_NAMESPACE)
+            if node.text and node.text.strip()
+        ]
+        if text_parts:
+            paragraphs.append("".join(text_parts))
+    return "\n".join(paragraphs)
+
+
+def extract_value(text: str, pattern: str) -> str | None:
+    match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+    if match is None:
+        return None
+    value = match.group(1).strip()
+    return value or None
+
+
+def extract_city(address: str | None) -> str | None:
+    if not address:
+        return None
+    match = re.search(r"г\.\s*([^,]+)", address, re.IGNORECASE)
+    if match is None:
+        return None
+    value = match.group(1).strip()
+    return value or None
+
+
+def strip_legal_form(name: str) -> str:
+    normalized = LONG_LEGAL_FORM_PATTERN.sub(" ", name)
+    normalized = LEGAL_FORM_PATTERN.sub(" ", normalized)
+    normalized = normalized.replace("«", " ").replace("»", " ").replace('"', " ")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized or name.strip()
+
+
+def build_service_aliases(
+    name: str,
+    *,
+    file_name: str | None = None,
+    extra_aliases: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    short_name = strip_legal_form(name)
+    aliases: list[str] = [name, short_name]
+
+    if file_name:
+        aliases.append(file_name)
+    if short_name:
+        aliases.append(short_name.replace(" ", ""))
+        parts = [item for item in re.split(r"\s+", short_name) if item]
+        if len(parts) >= 2:
+            aliases.append(" ".join(parts))
+        initials = "".join(part[0] for part in parts if part)
+        if len(initials) >= 3:
+            aliases.append(initials.upper())
+
+    aliases.extend(extra_aliases)
+    return tuple(
+        dict.fromkeys(alias.strip() for alias in aliases if isinstance(alias, str) and alias.strip())
+    )
+
+
+def build_comment(fields: dict[str, str | None]) -> str:
+    lines = [
+        f"Юрлицо: {fields['name']}",
+        f"Адрес: {fields['address']}" if fields["address"] else None,
+        f"ИНН/КПП: {fields['inn_kpp']}" if fields["inn_kpp"] else None,
+        f"ОГРН: {fields['ogrn']}" if fields["ogrn"] else None,
+        f"Банк: {fields['bank']}" if fields["bank"] else None,
+        f"Расчётный счёт: {fields['account']}" if fields["account"] else None,
+        f"Корр. счёт: {fields['corr_account']}" if fields["corr_account"] else None,
+        f"БИК: {fields['bik']}" if fields["bik"] else None,
+        f"Телефон: {fields['phone']}" if fields["phone"] else None,
+        f"Email: {fields['email']}" if fields["email"] else None,
+        f"Директор: {fields['director']}" if fields["director"] else None,
+        "Источник: папка `Сервисы`",
+    ]
+    return "\n".join(line for line in lines if line)
+
+
+def build_contact(fields: dict[str, str | None]) -> str | None:
+    parts = [fields["phone"], fields["email"]]
+    contact = " | ".join(part for part in parts if part)
+    return contact or None
+
+
+def build_entry(path: Path) -> ServiceCatalogEntry:
+    text = read_docx_text(path)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        raise ValueError(f"Service card is empty: {path}")
+
+    name = lines[0]
+    address = extract_value(text, r"Адрес:\s*(.+)")
+    fields = {
+        "name": name,
+        "address": address,
+        "inn_kpp": extract_value(text, r"ИНН/КПП:\s*(.+)"),
+        "ogrn": extract_value(text, r"ОГРН:\s*(.+)"),
+        "bank": extract_value(text, r"Банк:\s*(.+)"),
+        "account": extract_value(text, r"(?:р/с|Расч[её]тный сч[её]т):\s*(.+)"),
+        "corr_account": extract_value(text, r"(?:к/с|Корр\.\s*сч[её]т):\s*(.+)"),
+        "bik": extract_value(text, r"БИК:\s*(.+)"),
+        "phone": extract_value(text, r"Телефон:\s*(.+)"),
+        "email": extract_value(text, r"Email:\s*(.+)"),
+        "director": extract_value(text, r"Директор:\s*(.+)"),
+    }
+    file_name = path.stem.replace("_", " ")
+    aliases = build_service_aliases(name, file_name=file_name, extra_aliases=SERVICE_ALIASES.get(name, ()))
+    return ServiceCatalogEntry(
+        name=name,
+        city=extract_city(address),
+        contact=build_contact(fields),
+        comment=build_comment(fields),
+        aliases=aliases,
+    )
+
+
+def build_fallback_entry(definition: dict[str, object]) -> ServiceCatalogEntry:
+    name = str(definition["name"])
+    aliases = build_service_aliases(
+        name,
+        extra_aliases=tuple(str(item) for item in definition.get("aliases", ()) if str(item).strip()),
+    )
+    return ServiceCatalogEntry(
+        name=name,
+        city=str(definition["city"]).strip() if definition.get("city") else None,
+        contact=str(definition["contact"]).strip() if definition.get("contact") else None,
+        comment=str(definition["comment"]).strip(),
+        aliases=aliases,
+    )
+
+
+@lru_cache(maxsize=1)
+def get_service_catalog_entries() -> tuple[ServiceCatalogEntry, ...]:
+    service_dir = get_service_catalog_dir()
+    entries_by_name = {
+        entry.name: entry
+        for entry in (build_fallback_entry(item) for item in FALLBACK_SERVICE_CATALOG_DEFINITIONS)
+    }
+    if service_dir.exists():
+        for path in sorted(service_dir.glob("*.docx")):
+            try:
+                entry = build_entry(path)
+            except ValueError as error:
+                logger.warning("service_catalog_entry_skipped: %s", error)
+                continue
+            entries_by_name[entry.name] = entry
+    return tuple(sorted(entries_by_name.values(), key=lambda item: item.name.lower()))
+
+
+def get_service_catalog_names() -> tuple[str, ...]:
+    return tuple(entry.name for entry in get_service_catalog_entries())
+
+
+def get_service_lookup_entries(db: Session | None = None) -> tuple[ServiceLookupEntry, ...]:
+    lookup_map: dict[str, tuple[str, ...]] = {
+        entry.name: entry.aliases for entry in get_service_catalog_entries()
+    }
+    if db is not None:
+        archived_catalog_names = set(
+            db.scalars(
+                select(Service.name).where(
+                    Service.name.in_(tuple(lookup_map.keys())),
+                    Service.status == ServiceStatus.ARCHIVED,
+                )
+            ).all()
+        )
+        for archived_name in archived_catalog_names:
+            lookup_map.pop(archived_name, None)
+        for service_item in db.scalars(
+            select(Service)
+            .where(
+                Service.created_by_user_id.is_not(None),
+                Service.status == ServiceStatus.CONFIRMED,
+            )
+            .order_by(Service.name.asc())
+        ).all():
+            aliases = build_service_aliases(service_item.name)
+            existing_aliases = lookup_map.get(service_item.name, ())
+            lookup_map[service_item.name] = tuple(dict.fromkeys([*existing_aliases, *aliases]))
+    return tuple(
+        ServiceLookupEntry(name=name, aliases=aliases)
+        for name, aliases in sorted(lookup_map.items(), key=lambda item: item[0].lower())
+    )
+
+
+def find_service_catalog_entry(service_name: str | None) -> ServiceCatalogEntry | None:
+    lookup_key = normalize_service_key(service_name)
+    if not lookup_key:
+        return None
+    for entry in get_service_catalog_entries():
+        for alias in entry.aliases:
+            if normalize_service_key(alias) == lookup_key:
+                return entry
+    return None
+
+
+def ensure_service_catalog_synced(db: Session, *, commit: bool = False) -> tuple[Service, ...]:
+    catalog_entries = get_service_catalog_entries()
+    if not catalog_entries:
+        return ()
+
+    existing_services = {
+        service_item.name: service_item
+        for service_item in db.scalars(
+            select(Service).where(Service.name.in_(tuple(entry.name for entry in catalog_entries)))
+        ).all()
+    }
+    services: list[Service] = []
+    changed = False
+    for entry in catalog_entries:
+        service_item = existing_services.get(entry.name)
+        if service_item is None:
+            service_item = Service(name=entry.name)
+            db.add(service_item)
+            changed = True
+        is_manual_override = service_item.created_by_user_id is not None or service_item.confirmed_by_user_id is not None
+        preserve_existing_values = is_manual_override or service_item.status == ServiceStatus.ARCHIVED
+        next_city = service_item.city if preserve_existing_values else entry.city
+        next_contact = service_item.contact if preserve_existing_values else entry.contact
+        next_comment = service_item.comment if preserve_existing_values else entry.comment
+        next_status = (
+            service_item.status
+            if is_manual_override or service_item.status == ServiceStatus.ARCHIVED
+            else ServiceStatus.CONFIRMED
+        )
+        if (
+            service_item.city != next_city
+            or service_item.contact != next_contact
+            or service_item.comment != next_comment
+            or service_item.status != next_status
+        ):
+            changed = True
+        service_item.city = next_city
+        service_item.contact = next_contact
+        service_item.comment = next_comment
+        service_item.status = next_status
+        services.append(service_item)
+    if changed:
+        db.flush()
+    if commit and changed:
+        db.commit()
+    return tuple(services)
+
+
+def find_service_name_in_text(text: str | None, db: Session | None = None) -> tuple[str, str] | None:
+    normalized_text = normalize_service_key(text)
+    if not normalized_text:
+        return None
+
+    best_match: tuple[int, int, str, str] | None = None
+    for entry in get_service_lookup_entries(db):
+        for alias in entry.aliases:
+            alias_key = normalize_service_key(alias)
+            if len(alias_key) < 4:
+                continue
+            if alias_key not in normalized_text:
+                continue
+            score = (len(alias_key), 1 if alias == entry.name else 0, entry.name, alias)
+            if best_match is None or score > best_match:
+                best_match = score
+
+    if best_match is None:
+        return None
+    return best_match[2], best_match[3]
+
+
+def resolve_service_by_name(db: Session, service_name: str | None) -> Service | None:
+    entry = find_service_catalog_entry(service_name)
+    if entry is not None:
+        ensure_service_catalog_synced(db)
+        return db.scalar(
+            select(Service).where(
+                Service.name == entry.name,
+                Service.status != ServiceStatus.ARCHIVED,
+            )
+        )
+
+    lookup_key = normalize_service_key(service_name)
+    if not lookup_key:
+        return None
+
+    for service_item in db.scalars(
+        select(Service)
+        .where(
+            Service.created_by_user_id.is_not(None),
+            Service.status != ServiceStatus.ARCHIVED,
+        )
+        .order_by(Service.name.asc())
+    ).all():
+        for alias in build_service_aliases(service_item.name):
+            if normalize_service_key(alias) == lookup_key:
+                return service_item
+    return None
+
+
+def resolve_catalog_service(db: Session, service_name: str | None) -> Service | None:
+    entry = find_service_catalog_entry(service_name)
+    if entry is None:
+        return None
+    ensure_service_catalog_synced(db)
+    return db.scalar(
+        select(Service).where(
+            Service.name == entry.name,
+            Service.status != ServiceStatus.ARCHIVED,
+        )
+    )

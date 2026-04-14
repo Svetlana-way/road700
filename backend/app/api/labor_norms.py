@@ -339,6 +339,7 @@ def list_labor_norms(
         .select_from(LaborNorm)
         .outerjoin(LaborNormCatalog, LaborNormCatalog.scope == LaborNorm.scope)
     )
+    query_filter = None
     normalized_scope = normalize_labor_norm_scope(scope)
     catalog_operational_clause = or_(
         LaborNormCatalog.id.is_(None),
@@ -386,7 +387,10 @@ def list_labor_norms(
         select(distinct(LaborNorm.scope))
         .select_from(LaborNorm)
         .outerjoin(LaborNormCatalog, LaborNormCatalog.scope == LaborNorm.scope)
-        .where(LaborNorm.scope.is_not(None))
+        .where(
+            LaborNorm.scope.is_not(None),
+            query_filter if query_filter is not None else true(),
+        )
         .order_by(LaborNorm.scope.asc())
     )
     category_stmt = (
@@ -395,6 +399,7 @@ def list_labor_norms(
         .outerjoin(LaborNormCatalog, LaborNormCatalog.scope == LaborNorm.scope)
         .where(
             LaborNorm.category.is_not(None),
+            query_filter if query_filter is not None else true(),
             LaborNorm.scope == normalized_scope if normalized_scope else true(),
         )
         .order_by(LaborNorm.category.asc())
@@ -405,6 +410,7 @@ def list_labor_norms(
         .outerjoin(LaborNormCatalog, LaborNormCatalog.scope == LaborNorm.scope)
         .where(
             LaborNorm.source_file.is_not(None),
+            query_filter if query_filter is not None else true(),
             LaborNorm.scope == normalized_scope if normalized_scope else true(),
         )
         .order_by(LaborNorm.source_file.asc())

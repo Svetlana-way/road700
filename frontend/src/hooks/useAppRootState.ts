@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import type { AdminTab, RepairTab, TechAdminTab, WorkspaceTab } from "../shared/appRoute";
-import type { RepairDetail } from "../shared/repairDetailTypes";
+import { REVIEW_QUEUE_PAGE_SIZE } from "../shared/appUiConfig";
+import type { RepairDetail } from "../contracts/domain/repair";
 import type { HistoryFilter, QualityDetailTab } from "../shared/workspaceViewTypes";
 import type {
   DashboardDataQuality,
@@ -10,7 +11,7 @@ import type {
   ReviewQueueCategory,
   ReviewQueueItem,
   User,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 import type { DocumentVehicleFormState } from "../shared/workspaceFormTypes";
 
 type UseAppRootStateParams = {
@@ -39,6 +40,9 @@ export function useAppRootState({ createEmptyDocumentVehicleForm }: UseAppRootSt
     employee_confirmation: 0,
     manual_review: 0,
   });
+  const [reviewQueueTotal, setReviewQueueTotal] = useState(0);
+  const [reviewQueueLimit, setReviewQueueLimit] = useState(REVIEW_QUEUE_PAGE_SIZE);
+  const [reviewQueueOffset, setReviewQueueOffset] = useState(0);
   const [selectedReviewCategory, setSelectedReviewCategory] = useState<ReviewQueueCategory>("all");
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
   const [selectedRepair, setSelectedRepair] = useState<RepairDetail | null>(null);
@@ -83,6 +87,12 @@ export function useAppRootState({ createEmptyDocumentVehicleForm }: UseAppRootSt
     setReviewQueue,
     reviewQueueCounts,
     setReviewQueueCounts,
+    reviewQueueTotal,
+    setReviewQueueTotal,
+    reviewQueueLimit,
+    setReviewQueueLimit,
+    reviewQueueOffset,
+    setReviewQueueOffset,
     selectedReviewCategory,
     setSelectedReviewCategory,
     selectedDocumentId,

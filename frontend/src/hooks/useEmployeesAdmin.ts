@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
 import { buildUserPayload } from "../shared/adminPayloadBuilders";
-import { apiRequest } from "../shared/api";
+import { apiRequest } from "../shared/apiCore";
+import { isPlaceholderVehicle } from "../entities/vehicle/helpers";
 import { createEmptyUserAssignmentForm, createEmptyUserForm, createUserFormFromItem } from "../shared/formStateFactories";
-import { buildUsersQueryString } from "../shared/queryBuilders";
-import type { UserItem, UserRole, UsersResponse, Vehicle, VehiclesResponse, UserAssignment } from "../shared/workspaceBootstrapTypes";
+import { buildUsersQueryString } from "../features/admin/queryBuilders";
+import { fetchAllMatchingVehicles } from "../features/fleet/api";
+import type { UserItem, UserRole, UsersResponse, Vehicle, UserAssignment } from "../contracts/domain/workspace";
 import type { UserAssignmentFormState, UserFormState } from "../shared/workspaceFormTypes";
 
 type UseEmployeesAdminParams = {
@@ -114,14 +116,11 @@ export function useEmployeesAdmin({
     userVehicleSearchRequestIdRef.current = requestId;
     setUserVehicleSearchLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set("limit", "50");
-      params.set("search", search.trim());
-      const payload = await apiRequest<VehiclesResponse>(`/vehicles?${params.toString()}`, { method: "GET" }, token);
+      const payload = await fetchAllMatchingVehicles(token, search.trim());
       if (userVehicleSearchRequestIdRef.current !== requestId) {
         return;
       }
-      setUserVehicleSearchResults(payload.items);
+      setUserVehicleSearchResults(payload.items.filter((item) => !isPlaceholderVehicle(item.external_id)));
     } finally {
       if (userVehicleSearchRequestIdRef.current === requestId) {
         setUserVehicleSearchLoading(false);

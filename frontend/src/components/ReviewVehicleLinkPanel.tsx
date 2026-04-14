@@ -1,5 +1,5 @@
 import { Box, Button, Chip, Paper, Stack, TextField, Typography } from "@mui/material";
-import type { UserRole, VehicleType } from "../shared/workspaceBootstrapTypes";
+import type { UserRole, VehicleType } from "../contracts/domain/workspace";
 
 type ReviewVehicleLinkPanelProps = {
   plateNumber: string | null;

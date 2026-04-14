@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from app.api.deps import get_db
@@ -193,6 +194,24 @@ class Wave1DomainRegressionTestCase(unittest.TestCase):
 
         self.assertIn(response.status_code, {400, 409}, response.text)
 
+    def test_employee_review_action_hides_document_for_archived_service(self) -> None:
+        with self.SessionLocal() as db:
+            service = db.get(Service, 1)
+            self.assertIsNotNone(service)
+            assert service is not None
+            service.status = ServiceStatus.ARCHIVED
+            db.commit()
+
+        headers = self._auth_headers("employee")
+        response = self.client.post(
+            "/api/review/queue/1/action",
+            headers=headers,
+            json={"action": "send_to_review", "comment": "Should be hidden"},
+        )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"], "Document not found")
+
     def test_admin_patch_repair_preserves_existing_ocr_checks(self) -> None:
         with self.SessionLocal() as db:
             db.add(
@@ -219,6 +238,18 @@ class Wave1DomainRegressionTestCase(unittest.TestCase):
         self.assertEqual(len(payload["checks"]), 1, payload["checks"])
         self.assertEqual(payload["checks"][0]["check_type"], "ocr_total_mismatch")
 
+    def test_admin_patch_repair_rejects_null_required_fields(self) -> None:
+        headers = self._auth_headers("admin")
+
+        response = self.client.patch(
+            "/api/repairs/1",
+            headers=headers,
+            json={"repair_date": None},
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"], "Дата ремонта обязательна")
+
     def test_repair_archive_and_restore_use_explicit_endpoints(self) -> None:
         headers = self._auth_headers("admin")
 
@@ -244,6 +275,35 @@ class Wave1DomainRegressionTestCase(unittest.TestCase):
         self.assertTrue(all(item["status"] == DocumentStatus.NEEDS_REVIEW.value for item in restored_payload["documents"]))
         self.assertEqual(restored_payload["source_document_id"], 1)
         self.assertTrue(any(item["id"] == 1 and item["is_primary"] is True for item in restored_payload["documents"]))
+
+    def test_repair_admin_mutations_return_not_found_for_legacy_missing_vehicle_relation(self) -> None:
+        headers = self._auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            db.execute(text("PRAGMA foreign_keys = OFF"))
+            db.execute(text("UPDATE repairs SET vehicle_id = 999999 WHERE id = 1"))
+            db.commit()
+            db.execute(text("PRAGMA foreign_keys = ON"))
+
+        patch_response = self.client.patch(
+            "/api/repairs/1",
+            headers=headers,
+            json={"employee_comment": "legacy drift should not 500"},
+        )
+        self.assertEqual(patch_response.status_code, 404, patch_response.text)
+        self.assertEqual(patch_response.json()["detail"], "Repair not found")
+
+        archive_response = self.client.post("/api/repairs/1/archive", headers=headers)
+        self.assertEqual(archive_response.status_code, 404, archive_response.text)
+        self.assertEqual(archive_response.json()["detail"], "Repair not found")
+
+        restore_response = self.client.post("/api/repairs/1/restore", headers=headers)
+        self.assertEqual(restore_response.status_code, 404, restore_response.text)
+        self.assertEqual(restore_response.json()["detail"], "Repair not found")
+
+        delete_response = self.client.delete("/api/repairs/1", headers=headers)
+        self.assertEqual(delete_response.status_code, 404, delete_response.text)
+        self.assertEqual(delete_response.json()["detail"], "Repair not found")
 
     def test_repair_restore_rejects_archived_service(self) -> None:
         headers = self._auth_headers("admin")

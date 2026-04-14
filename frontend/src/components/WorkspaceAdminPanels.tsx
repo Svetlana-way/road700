@@ -11,7 +11,7 @@ import { ReviewRulesAdminPanel } from "./ReviewRulesAdminPanel";
 import { ServicesAdminPanel } from "./ServicesAdminPanel";
 import { TechAdminWorkspacePanel } from "./TechAdminWorkspacePanel";
 import type { AdminTab, TechAdminTab, WorkspaceTab } from "../shared/appRoute";
-import type { UserRole } from "../shared/workspaceBootstrapTypes";
+import type { UserRole } from "../contracts/domain/workspace";
 
 type WorkspaceAdminPanelsProps = {
   activeWorkspaceTab: WorkspaceTab;

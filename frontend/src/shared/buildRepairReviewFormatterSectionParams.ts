@@ -1,21 +1,23 @@
 import {
+  formatDocumentKind,
+  formatDocumentStatusLabel,
+  formatLaborNormApplicability,
+  formatManualReviewReasons,
+  formatOcrProfileMeta,
+  formatSourceTypeLabel,
+  statusColor,
+} from "../entities/document/formatters";
+import { formatVehicleTypeLabel } from "../entities/vehicle/formatters";
+import { formatVehicle } from "../entities/vehicle/helpers";
+import {
   formatCompactNumber,
   formatConfidence,
   formatConfidenceLabel,
   formatDateTime,
-  formatDocumentKind,
-  formatDocumentStatusLabel,
   formatHours,
-  formatLaborNormApplicability,
-  formatManualReviewReasons,
   formatMoney,
-  formatOcrProfileMeta,
-  formatSourceTypeLabel,
-  formatVehicleTypeLabel,
   getConfidenceColor,
-  statusColor,
-} from "./displayFormatters";
-import { formatVehicle } from "./fleetDocumentHelpers";
+} from "./formattersCore";
 import type { BuildRepairWorkspacePropsParams } from "./buildRepairWorkspaceProps";
 import { formatOcrLineUnit, readNumberValue, readStringValue } from "./repairReportHelpers";
 import { getReviewComparisonColor, getReviewComparisonLabel } from "./repairUiHelpers";

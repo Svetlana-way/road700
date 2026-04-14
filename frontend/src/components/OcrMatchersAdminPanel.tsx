@@ -1,5 +1,5 @@
 import { Box, Button, Chip, Grid, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
-import type { OcrProfileMatcherItem } from "../shared/workspaceBootstrapTypes";
+import type { OcrProfileMatcherItem } from "../contracts/domain/workspace";
 import type { OcrProfileMatcherFormState } from "../shared/workspaceFormTypes";
 
 type OcrMatchersAdminPanelProps = {

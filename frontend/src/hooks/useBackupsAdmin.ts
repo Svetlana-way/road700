@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { apiRequest, downloadApiFile } from "../shared/api";
-import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
 import type {
   BackupCreateResponse,
   BackupItem,
   BackupListResponse,
   BackupRestoreResponse,
-} from "../shared/backupAdminTypes";
+} from "../contracts/api/backup";
+import { apiRequest } from "../shared/apiCore";
+import { downloadApiFile } from "../shared/apiFiles";
+import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
 
 type UseBackupsAdminParams = {
   token: string;

@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api import services as services_api
@@ -357,6 +357,56 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["total"], 0)
         self.assertEqual(payload["counts"]["all"], 0)
 
+    def test_review_queue_excludes_uploaded_documents_awaiting_ocr(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, 1)
+            self.assertIsNotNone(document)
+            assert document is not None
+            document.status = DocumentStatus.UPLOADED
+            document.ocr_confidence = None
+            db.add(
+                ImportJob(
+                    document_id=document.id,
+                    import_type="document_ocr",
+                    source_filename=document.original_filename,
+                    status=ImportStatus.QUEUED,
+                    summary={"stage": "queued"},
+                    error_message=None,
+                    attempts=0,
+                )
+            )
+            db.commit()
+
+        response = self.client.get("/api/review/queue?limit=10&category=all", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["total"], 0)
+        self.assertEqual(payload["counts"]["all"], 0)
+        self.assertEqual(payload["items"], [])
+
+    def test_review_action_rejects_uploaded_document_awaiting_ocr(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, 1)
+            self.assertIsNotNone(document)
+            assert document is not None
+            document.status = DocumentStatus.UPLOADED
+            document.ocr_confidence = None
+            db.commit()
+
+        response = self.client.post(
+            "/api/review/queue/1/action",
+            headers=headers,
+            json={"action": "send_to_review", "comment": "Need another pass"},
+        )
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"], "Document is not in review queue")
+
     def test_review_action_rejects_archived_service(self) -> None:
         headers = self._get_auth_headers("employee")
 
@@ -373,8 +423,8 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             json={"action": "send_to_review", "comment": "Need another pass"},
         )
 
-        self.assertEqual(response.status_code, 409, response.text)
-        self.assertEqual(response.json()["detail"], "Repairs for archived services cannot be modified")
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"], "Document not found")
 
     def test_employee_can_execute_review_action_for_assigned_vehicle(self) -> None:
         headers = self._get_auth_headers("employee")
@@ -619,6 +669,50 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             self.assertIn("Возвращено в ручную проверку", document.notes or "")
             self.assertIn("Подтверждено администратором", document.notes or "")
 
+    def test_check_resolution_reopens_admin_confirmed_repair_as_preliminary(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+
+            repair.status = RepairStatus.CONFIRMED
+            repair.is_preliminary = False
+            document.status = DocumentStatus.CONFIRMED
+            check = RepairCheck(
+                repair_id=repair.id,
+                check_type="ocr_service_missing_confirmed",
+                severity=CheckSeverity.WARNING,
+                title="Не удалось определить сервис после подтверждения",
+                details="Нужна ручная проверка",
+                is_resolved=False,
+            )
+            db.add(check)
+            db.commit()
+            check_id = check.id
+
+        response = self.client.patch(
+            f"/api/repairs/1/checks/{check_id}",
+            headers=headers,
+            json={"is_resolved": True, "comment": "Проверил подтвержденный ремонт"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], RepairStatus.IN_REVIEW.value)
+        self.assertTrue(payload["is_preliminary"])
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            self.assertEqual(repair.status, RepairStatus.IN_REVIEW)
+            self.assertTrue(repair.is_preliminary)
+
     def test_employee_cannot_confirm_repair_twice_after_employee_confirmation(self) -> None:
         headers = self._get_auth_headers("employee")
 
@@ -692,6 +786,19 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             self.assertEqual(repair.status, RepairStatus.IN_REVIEW)
             self.assertTrue(repair.is_preliminary)
 
+            audit_entry = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "document",
+                    AuditLog.action_type == "document_attached",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            self.assertIsNotNone(audit_entry)
+            assert audit_entry is not None
+            self.assertEqual(audit_entry.new_value["repair_status"], RepairStatus.IN_REVIEW.value)
+            self.assertTrue(audit_entry.new_value["is_preliminary"])
+
     def test_reprocess_reopens_employee_confirmed_repair_for_review(self) -> None:
         headers = self._get_auth_headers("employee")
 
@@ -708,18 +815,12 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             document.review_queue_priority = 20
             db.commit()
 
-        with patch.object(documents_api, "queue_document_processing", autospec=True) as queue_mock:
-            queue_mock.return_value = type(
-                "QueuedJobStub",
-                (),
-                {"id": 602, "status": type("JobStatusStub", (), {"value": "queued"})()},
-            )()
-
-            response = self.client.post("/api/documents/1/process", headers=headers)
+        response = self.client.post("/api/documents/1/process", headers=headers)
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["document"]["status"], DocumentStatus.UPLOADED.value)
+        self.assertEqual(payload["import_status"], "queued")
 
         with self.SessionLocal() as db:
             repair = db.get(Repair, 1)
@@ -732,6 +833,22 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             self.assertTrue(repair.is_preliminary)
             self.assertEqual(document.status, DocumentStatus.UPLOADED)
             self.assertEqual(document.review_queue_priority, 100)
+
+            audit_entry = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "document",
+                    AuditLog.entity_id == str(document.id),
+                    AuditLog.action_type == "document_processing_queued",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            self.assertIsNotNone(audit_entry)
+            assert audit_entry is not None
+            self.assertEqual(audit_entry.old_value["status"], DocumentStatus.CONFIRMED.value)
+            self.assertEqual(audit_entry.new_value["status"], DocumentStatus.UPLOADED.value)
+            self.assertEqual(audit_entry.old_value["repair_status"], RepairStatus.EMPLOYEE_CONFIRMED.value)
+            self.assertEqual(audit_entry.new_value["repair_status"], RepairStatus.IN_REVIEW.value)
 
     def test_review_field_update_resets_employee_confirmed_repair_back_to_in_review(self) -> None:
         headers = self._get_auth_headers("employee")
@@ -768,6 +885,40 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             assert document is not None
             self.assertEqual(repair.status, RepairStatus.IN_REVIEW)
             self.assertEqual(document.status, DocumentStatus.CONFIRMED)
+            self.assertTrue(repair.is_preliminary)
+
+    def test_review_field_update_reopens_admin_confirmed_repair_as_preliminary(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+            repair.status = RepairStatus.CONFIRMED
+            repair.is_preliminary = False
+            document.status = DocumentStatus.CONFIRMED
+            db.commit()
+
+        response = self.client.patch(
+            "/api/repairs/1/review-fields",
+            headers=headers,
+            json={"mileage": 120700},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], RepairStatus.IN_REVIEW.value)
+        self.assertTrue(payload["is_preliminary"])
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            self.assertEqual(repair.status, RepairStatus.IN_REVIEW)
+            self.assertTrue(repair.is_preliminary)
 
     def test_archived_service_rejects_review_field_updates(self) -> None:
         headers = self._get_auth_headers("employee")
@@ -787,6 +938,53 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 409, response.text)
         self.assertEqual(response.json()["detail"], "Repairs for archived services cannot be modified")
+
+    def test_review_field_update_syncs_manual_review_payload(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, 1)
+            self.assertIsNotNone(document)
+            assert document is not None
+            document.status = DocumentStatus.RECOGNIZED
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=1,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "extracted_fields": {},
+                        "manual_review_reasons": [
+                            "order_number_missing",
+                            "mileage_missing",
+                            "repair_date_invalid",
+                        ],
+                    },
+                    field_confidence_map={},
+                    change_summary="Initial OCR payload",
+                )
+            )
+            db.commit()
+
+        response = self.client.patch(
+            "/api/repairs/1/review-fields",
+            headers=headers,
+            json={
+                "order_number": "ZN-REVIEW-SYNC-001",
+                "mileage": 120500,
+                "repair_date": "2025-01-16",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        latest_payload = payload["documents"][0]["versions"][0]["parsed_payload"]
+        self.assertEqual(latest_payload["manual_review_reasons"], [])
+        self.assertEqual(latest_payload["extracted_fields"]["order_number"], "ZN-REVIEW-SYNC-001")
+        self.assertEqual(latest_payload["extracted_fields"]["mileage"], 120500)
+        self.assertEqual(latest_payload["extracted_fields"]["repair_date"], "2025-01-16")
+        finding_titles = [item["title"] for item in payload["executive_report"]["findings"]]
+        self.assertNotIn("Документ содержит признаки неполного или спорного распознавания", finding_titles)
 
     def test_employee_can_access_own_preliminary_repair_after_server_vehicle_relink(self) -> None:
         headers = self._get_auth_headers("employee")
@@ -1294,6 +1492,418 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["documents_total"], 0)
         self.assertEqual(payload["documents_review_queue"], 0)
 
+    def test_dashboard_summary_review_queue_matches_documents_blocked_by_repair_status(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            service = db.scalar(select(Service).where(Service.name == "Service Alpha"))
+            self.assertIsNotNone(employee)
+            self.assertIsNotNone(service)
+            assert employee is not None
+            assert service is not None
+
+            suspicious_vehicle = Vehicle(
+                external_id="truck-dashboard-summary-suspicious",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="S111SS116",
+                brand="Dong Feng",
+                model="GX",
+                status=VehicleStatus.ACTIVE,
+            )
+            employee_confirmation_vehicle = Vehicle(
+                external_id="truck-dashboard-summary-employee-confirmed",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="S222SS116",
+                brand="Sitrak",
+                model="C7H",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([suspicious_vehicle, employee_confirmation_vehicle])
+            db.flush()
+
+            suspicious_repair = Repair(
+                order_number="ZN-DASH-QUEUE-002",
+                repair_date=date(2025, 1, 16),
+                vehicle_id=suspicious_vehicle.id,
+                service_id=service.id,
+                created_by_user_id=employee.id,
+                mileage=130000,
+                grand_total=10000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+                is_partially_recognized=False,
+            )
+            employee_confirmation_repair = Repair(
+                order_number="ZN-DASH-QUEUE-003",
+                repair_date=date(2025, 1, 17),
+                vehicle_id=employee_confirmation_vehicle.id,
+                service_id=service.id,
+                created_by_user_id=employee.id,
+                mileage=140000,
+                grand_total=11000,
+                status=RepairStatus.EMPLOYEE_CONFIRMED,
+                is_preliminary=True,
+                is_partially_recognized=False,
+            )
+            db.add_all([suspicious_repair, employee_confirmation_repair])
+            db.flush()
+
+            db.add_all(
+                [
+                    Document(
+                        repair_id=suspicious_repair.id,
+                        uploaded_by_user_id=employee.id,
+                        original_filename="dashboard-summary-suspicious.pdf",
+                        storage_key="documents/test/dashboard-summary-suspicious.pdf",
+                        mime_type="application/pdf",
+                        source_type="pdf",
+                        kind=DocumentKind.ORDER,
+                        status=DocumentStatus.RECOGNIZED,
+                        is_primary=True,
+                        review_queue_priority=80,
+                    ),
+                    Document(
+                        repair_id=employee_confirmation_repair.id,
+                        uploaded_by_user_id=employee.id,
+                        original_filename="dashboard-summary-employee-confirmed.pdf",
+                        storage_key="documents/test/dashboard-summary-employee-confirmed.pdf",
+                        mime_type="application/pdf",
+                        source_type="pdf",
+                        kind=DocumentKind.ORDER,
+                        status=DocumentStatus.CONFIRMED,
+                        is_primary=True,
+                        review_queue_priority=60,
+                    ),
+                ]
+            )
+            db.flush()
+            db.add(
+                RepairCheck(
+                    repair_id=suspicious_repair.id,
+                    check_type="ocr_total_mismatch",
+                    severity=CheckSeverity.SUSPICIOUS,
+                    title="Сумма строк не совпадает",
+                    details="Требуется проверка",
+                    is_resolved=False,
+                )
+            )
+            db.commit()
+
+        review_response = self.client.get("/api/review/queue?limit=20&category=all", headers=headers)
+        self.assertEqual(review_response.status_code, 200, review_response.text)
+        review_payload = review_response.json()
+
+        summary_response = self.client.get("/api/dashboard/summary", headers=headers)
+        self.assertEqual(summary_response.status_code, 200, summary_response.text)
+        summary_payload = summary_response.json()
+
+        self.assertEqual(review_payload["counts"]["all"], 3)
+        self.assertEqual(summary_payload["documents_review_queue"], review_payload["counts"]["all"])
+
+    def test_dashboard_data_quality_matches_review_queue_for_documents_blocked_by_repair_status(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            service = db.scalar(select(Service).where(Service.name == "Service Alpha"))
+            self.assertIsNotNone(employee)
+            self.assertIsNotNone(service)
+            assert employee is not None
+            assert service is not None
+
+            suspicious_vehicle = Vehicle(
+                external_id="truck-dashboard-quality-suspicious",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="Q111QQ116",
+                brand="Dong Feng",
+                model="GX",
+                status=VehicleStatus.ACTIVE,
+            )
+            employee_confirmation_vehicle = Vehicle(
+                external_id="truck-dashboard-quality-employee-confirmed",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="Q222QQ116",
+                brand="Sitrak",
+                model="C7H",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([suspicious_vehicle, employee_confirmation_vehicle])
+            db.flush()
+
+            suspicious_repair = Repair(
+                order_number="ZN-DASH-DQ-002",
+                repair_date=date(2025, 1, 18),
+                vehicle_id=suspicious_vehicle.id,
+                service_id=service.id,
+                created_by_user_id=employee.id,
+                mileage=130000,
+                grand_total=10000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+                is_partially_recognized=False,
+            )
+            employee_confirmation_repair = Repair(
+                order_number="ZN-DASH-DQ-003",
+                repair_date=date(2025, 1, 19),
+                vehicle_id=employee_confirmation_vehicle.id,
+                service_id=service.id,
+                created_by_user_id=employee.id,
+                mileage=140000,
+                grand_total=11000,
+                status=RepairStatus.EMPLOYEE_CONFIRMED,
+                is_preliminary=True,
+                is_partially_recognized=False,
+            )
+            db.add_all([suspicious_repair, employee_confirmation_repair])
+            db.flush()
+
+            db.add_all(
+                [
+                    Document(
+                        repair_id=suspicious_repair.id,
+                        uploaded_by_user_id=employee.id,
+                        original_filename="dashboard-quality-suspicious.pdf",
+                        storage_key="documents/test/dashboard-quality-suspicious.pdf",
+                        mime_type="application/pdf",
+                        source_type="pdf",
+                        kind=DocumentKind.ORDER,
+                        status=DocumentStatus.RECOGNIZED,
+                        is_primary=True,
+                        review_queue_priority=80,
+                        ocr_confidence=0.95,
+                    ),
+                    Document(
+                        repair_id=employee_confirmation_repair.id,
+                        uploaded_by_user_id=employee.id,
+                        original_filename="dashboard-quality-employee-confirmed.pdf",
+                        storage_key="documents/test/dashboard-quality-employee-confirmed.pdf",
+                        mime_type="application/pdf",
+                        source_type="pdf",
+                        kind=DocumentKind.ORDER,
+                        status=DocumentStatus.CONFIRMED,
+                        is_primary=True,
+                        review_queue_priority=60,
+                        ocr_confidence=0.95,
+                    ),
+                ]
+            )
+            db.flush()
+            db.add(
+                RepairCheck(
+                    repair_id=suspicious_repair.id,
+                    check_type="ocr_total_mismatch",
+                    severity=CheckSeverity.SUSPICIOUS,
+                    title="Сумма строк не совпадает",
+                    details="Требуется проверка",
+                    is_resolved=False,
+                )
+            )
+            db.commit()
+
+        review_response = self.client.get("/api/review/queue?limit=20&category=all", headers=headers)
+        self.assertEqual(review_response.status_code, 200, review_response.text)
+        review_payload = review_response.json()
+
+        quality_response = self.client.get("/api/dashboard/data-quality", headers=headers)
+        self.assertEqual(quality_response.status_code, 200, quality_response.text)
+        quality_payload = quality_response.json()
+
+        details_response = self.client.get("/api/dashboard/data-quality/details?limit=20", headers=headers)
+        self.assertEqual(details_response.status_code, 200, details_response.text)
+        details_payload = details_response.json()
+
+        self.assertEqual(review_payload["counts"]["all"], 3)
+        self.assertEqual(quality_payload["documents_needs_review"], review_payload["counts"]["all"])
+        self.assertEqual(details_payload["counts"]["documents"], review_payload["counts"]["all"])
+
+    def test_dashboard_data_quality_counts_repair_level_ocr_errors(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            service = db.scalar(select(Service).where(Service.name == "Service Alpha"))
+            self.assertIsNotNone(employee)
+            self.assertIsNotNone(service)
+            assert employee is not None
+            assert service is not None
+
+            vehicle = Vehicle(
+                external_id="truck-dashboard-quality-ocr-repair-status",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="Q333QQ116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-DASH-DQ-OCR-001",
+                repair_date=date(2025, 1, 20),
+                vehicle_id=vehicle.id,
+                service_id=service.id,
+                created_by_user_id=employee.id,
+                mileage=150000,
+                grand_total=12000,
+                status=RepairStatus.OCR_ERROR,
+                is_preliminary=True,
+                is_partially_recognized=False,
+            )
+            db.add(repair)
+            db.flush()
+
+            db.add(
+                Document(
+                    repair_id=repair.id,
+                    uploaded_by_user_id=employee.id,
+                    original_filename="dashboard-quality-repair-ocr-error.pdf",
+                    storage_key="documents/test/dashboard-quality-repair-ocr-error.pdf",
+                    mime_type="application/pdf",
+                    source_type="pdf",
+                    kind=DocumentKind.ORDER,
+                    status=DocumentStatus.RECOGNIZED,
+                    is_primary=True,
+                    review_queue_priority=70,
+                    ocr_confidence=0.97,
+                )
+            )
+            db.commit()
+
+        review_response = self.client.get("/api/review/queue?limit=20&category=ocr_error", headers=headers)
+        self.assertEqual(review_response.status_code, 200, review_response.text)
+        review_payload = review_response.json()
+
+        quality_response = self.client.get("/api/dashboard/data-quality", headers=headers)
+        self.assertEqual(quality_response.status_code, 200, quality_response.text)
+        quality_payload = quality_response.json()
+
+        self.assertEqual(review_payload["counts"]["ocr_error"], 1)
+        self.assertEqual(quality_payload["documents_ocr_error"], review_payload["counts"]["ocr_error"])
+
+    def test_dashboard_suspicious_repair_counts_include_open_suspicious_checks(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            service = db.scalar(select(Service).where(Service.name == "Service Alpha"))
+            self.assertIsNotNone(employee)
+            self.assertIsNotNone(service)
+            assert employee is not None
+            assert service is not None
+
+            vehicle = Vehicle(
+                external_id="truck-dashboard-suspicious-checks",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="Q444QQ116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-DASH-SUSP-001",
+                repair_date=date(2025, 1, 21),
+                vehicle_id=vehicle.id,
+                service_id=service.id,
+                created_by_user_id=employee.id,
+                mileage=155000,
+                grand_total=12500,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+                is_partially_recognized=False,
+            )
+            db.add(repair)
+            db.flush()
+
+            db.add(
+                Document(
+                    repair_id=repair.id,
+                    uploaded_by_user_id=employee.id,
+                    original_filename="dashboard-suspicious-checks.pdf",
+                    storage_key="documents/test/dashboard-suspicious-checks.pdf",
+                    mime_type="application/pdf",
+                    source_type="pdf",
+                    kind=DocumentKind.ORDER,
+                    status=DocumentStatus.RECOGNIZED,
+                    is_primary=True,
+                    review_queue_priority=75,
+                    ocr_confidence=0.97,
+                )
+            )
+            db.flush()
+            db.add(
+                RepairCheck(
+                    repair_id=repair.id,
+                    check_type="ocr_total_mismatch",
+                    severity=CheckSeverity.SUSPICIOUS,
+                    title="Сумма строк не совпадает",
+                    details="Требуется проверка",
+                    is_resolved=False,
+                )
+            )
+            db.commit()
+
+        review_response = self.client.get("/api/review/queue?limit=20&category=suspicious", headers=headers)
+        self.assertEqual(review_response.status_code, 200, review_response.text)
+        review_payload = review_response.json()
+
+        summary_response = self.client.get("/api/dashboard/summary", headers=headers)
+        self.assertEqual(summary_response.status_code, 200, summary_response.text)
+        summary_payload = summary_response.json()
+
+        quality_response = self.client.get("/api/dashboard/data-quality", headers=headers)
+        self.assertEqual(quality_response.status_code, 200, quality_response.text)
+        quality_payload = quality_response.json()
+
+        self.assertEqual(review_payload["counts"]["suspicious"], 1)
+        self.assertEqual(summary_payload["repairs_suspicious"], review_payload["counts"]["suspicious"])
+        self.assertEqual(quality_payload["repairs_suspicious"], review_payload["counts"]["suspicious"])
+
+    def test_dashboard_excludes_uploaded_documents_awaiting_ocr_from_review_metrics(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, 1)
+            self.assertIsNotNone(document)
+            assert document is not None
+            document.status = DocumentStatus.UPLOADED
+            document.ocr_confidence = None
+            db.add(
+                ImportJob(
+                    document_id=document.id,
+                    import_type="document_ocr",
+                    source_filename=document.original_filename,
+                    status=ImportStatus.QUEUED,
+                    summary={"stage": "queued"},
+                    error_message=None,
+                    attempts=0,
+                )
+            )
+            db.commit()
+
+        summary_response = self.client.get("/api/dashboard/summary", headers=headers)
+        self.assertEqual(summary_response.status_code, 200, summary_response.text)
+        summary_payload = summary_response.json()
+        self.assertEqual(summary_payload["documents_total"], 1)
+        self.assertEqual(summary_payload["documents_review_queue"], 0)
+
+        quality_response = self.client.get("/api/dashboard/data-quality", headers=headers)
+        self.assertEqual(quality_response.status_code, 200, quality_response.text)
+        quality_payload = quality_response.json()
+        self.assertEqual(quality_payload["documents_needs_review"], 0)
+        self.assertEqual(quality_payload["documents_ocr_error"], 0)
+        self.assertEqual(quality_payload["documents_low_confidence"], 0)
+
+        details_response = self.client.get("/api/dashboard/data-quality/details?limit=8", headers=headers)
+        self.assertEqual(details_response.status_code, 200, details_response.text)
+        details_payload = details_response.json()
+        self.assertEqual(details_payload["counts"]["documents"], 0)
+        self.assertEqual(details_payload["documents"], [])
+
     def test_dashboard_data_quality_excludes_documents_with_archived_service(self) -> None:
         headers = self._get_auth_headers("admin")
 
@@ -1456,6 +2066,109 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertFalse(
             any(item["name"] == "Dashboard Preliminary Archived Tail" for item in details_payload["services"])
         )
+
+    def test_dashboard_data_quality_includes_visible_preliminary_service_confirmed_by_admin(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            service_item = db.scalar(select(Service).where(Service.name == "Service Alpha"))
+            self.assertIsNotNone(service_item)
+            assert service_item is not None
+
+            service_item.name = "Dashboard Renamed Preliminary Service"
+            service_item.status = ServiceStatus.PRELIMINARY
+            service_item.created_by_user_id = None
+            service_item.confirmed_by_user_id = 1
+            db.add(service_item)
+            db.commit()
+
+        services_response = self.client.get("/api/services", headers=headers)
+        self.assertEqual(services_response.status_code, 200, services_response.text)
+        self.assertTrue(
+            any(item["name"] == "Dashboard Renamed Preliminary Service" for item in services_response.json()["items"])
+        )
+
+        quality_response = self.client.get("/api/dashboard/data-quality", headers=headers)
+        self.assertEqual(quality_response.status_code, 200, quality_response.text)
+        quality_payload = quality_response.json()
+        self.assertEqual(quality_payload["services_preliminary"], 1)
+
+        details_response = self.client.get("/api/dashboard/data-quality/details?limit=8", headers=headers)
+        self.assertEqual(details_response.status_code, 200, details_response.text)
+        details_payload = details_response.json()
+        self.assertEqual(details_payload["counts"]["services"], 1)
+        self.assertTrue(
+            any(item["name"] == "Dashboard Renamed Preliminary Service" for item in details_payload["services"])
+        )
+
+    def test_dashboard_data_quality_details_without_limit_return_full_problem_document_list(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            self.assertIsNotNone(admin)
+            assert admin is not None
+
+            service = db.scalar(select(Service).where(Service.name == "Service Alpha"))
+            self.assertIsNotNone(service)
+            assert service is not None
+
+            created_document_ids: list[int] = []
+            for index in range(9):
+                vehicle = Vehicle(
+                    external_id=f"truck-dashboard-full-{index}",
+                    vehicle_type=VehicleType.TRUCK,
+                    plate_number=f"K10{index}KK116",
+                    brand="Volvo",
+                    model="FH",
+                    status=VehicleStatus.ACTIVE,
+                )
+                db.add(vehicle)
+                db.flush()
+
+                repair = Repair(
+                    order_number=f"ZN-DASH-FULL-{index:03d}",
+                    repair_date=date(2025, 2, index + 1),
+                    vehicle_id=vehicle.id,
+                    service_id=service.id,
+                    created_by_user_id=admin.id,
+                    mileage=150000 + index,
+                    grand_total=10000,
+                    status=RepairStatus.IN_REVIEW,
+                    is_preliminary=True,
+                    is_partially_recognized=False,
+                )
+                db.add(repair)
+                db.flush()
+
+                document = Document(
+                    repair_id=repair.id,
+                    uploaded_by_user_id=admin.id,
+                    original_filename=f"dashboard-full-quality-{index}.pdf",
+                    storage_key=f"documents/test/dashboard-full-quality-{index}.pdf",
+                    mime_type="application/pdf",
+                    source_type="pdf",
+                    kind=DocumentKind.ORDER,
+                    status=DocumentStatus.NEEDS_REVIEW,
+                    is_primary=True,
+                    review_queue_priority=100 - index,
+                    ocr_confidence=0.5,
+                )
+                db.add(document)
+                db.flush()
+                created_document_ids.append(document.id)
+
+            db.commit()
+
+        response = self.client.get("/api/dashboard/data-quality/details", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        expected_total = 10
+        self.assertEqual(payload["counts"]["documents"], expected_total)
+        self.assertEqual(len(payload["documents"]), expected_total)
+        returned_document_ids = {item["document_id"] for item in payload["documents"]}
+        self.assertTrue(set(created_document_ids).issubset(returned_document_ids))
 
     def test_dashboard_work_and_part_items_ignore_legacy_foreign_source_document_id(self) -> None:
         headers = self._get_auth_headers("admin")
@@ -1647,6 +2360,62 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertIsNone(work_item["document_id"])
         self.assertIsNone(part_item["document_id"])
 
+    def test_admin_repair_detail_keeps_source_document_empty_when_repair_has_only_attachments(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            self.assertIsNotNone(admin)
+            assert admin is not None
+
+            vehicle = Vehicle(
+                external_id="truck-detail-attachment-only",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="M202MM116",
+                brand="MAN",
+                model="TGX",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-DETAIL-ATT-001",
+                repair_date=date(2025, 1, 30),
+                vehicle_id=vehicle.id,
+                created_by_user_id=admin.id,
+                mileage=24000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            attachment_document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="detail-attachment.pdf",
+                storage_key="documents/test/detail-attachment.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ATTACHMENT,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=False,
+                review_queue_priority=35,
+            )
+            db.add(attachment_document)
+            db.commit()
+            repair_id = repair.id
+            attachment_document_id = attachment_document.id
+
+        response = self.client.get(f"/api/repairs/{repair_id}", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        self.assertIsNone(payload["source_document_id"])
+        attachment_payload = next(item for item in payload["documents"] if item["id"] == attachment_document_id)
+        self.assertFalse(attachment_payload["is_primary"])
+
     def test_employee_cannot_read_audit_log_even_for_own_preliminary_repair_after_vehicle_relink(self) -> None:
         headers = self._get_auth_headers("employee")
 
@@ -1732,6 +2501,102 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403, response.text)
         self.assertEqual(response.json()["detail"], "Admin access required")
+
+    def test_global_search_supports_offset_per_section_pagination(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            service = db.scalar(select(Service).where(Service.name == "Service Alpha"))
+            self.assertIsNotNone(admin)
+            self.assertIsNotNone(service)
+            assert admin is not None
+            assert service is not None
+
+            for index in range(9):
+                vehicle = Vehicle(
+                    external_id=f"bulk-search-{index:03d}",
+                    vehicle_type=VehicleType.TRUCK,
+                    plate_number=f"Q10{index}QQ116",
+                    brand="Bulk Search",
+                    model=f"Model {index}",
+                    status=VehicleStatus.ACTIVE,
+                )
+                db.add(vehicle)
+                db.flush()
+
+                repair = Repair(
+                    order_number=f"BULK-SEARCH-{index:03d}",
+                    repair_date=date(2025, 3, index + 1),
+                    vehicle_id=vehicle.id,
+                    service_id=service.id,
+                    created_by_user_id=admin.id,
+                    mileage=200000 + index,
+                    grand_total=10000 + index,
+                    status=RepairStatus.IN_REVIEW,
+                    is_preliminary=True,
+                    is_partially_recognized=False,
+                )
+                db.add(repair)
+                db.flush()
+
+                db.add(
+                    Document(
+                        repair_id=repair.id,
+                        uploaded_by_user_id=admin.id,
+                        original_filename=f"bulk-search-{index:03d}.pdf",
+                        storage_key=f"documents/test/bulk-search-{index:03d}.pdf",
+                        mime_type="application/pdf",
+                        source_type="pdf",
+                        kind=DocumentKind.ORDER,
+                        status=DocumentStatus.NEEDS_REVIEW,
+                        is_primary=True,
+                        review_queue_priority=100,
+                    )
+                )
+
+            db.commit()
+
+        first_page_response = self.client.get(
+            "/api/search/global?q=bulk-search&limit_per_section=8&offset_per_section=0",
+            headers=headers,
+        )
+        second_page_response = self.client.get(
+            "/api/search/global?q=bulk-search&limit_per_section=8&offset_per_section=8",
+            headers=headers,
+        )
+
+        self.assertEqual(first_page_response.status_code, 200, first_page_response.text)
+        self.assertEqual(second_page_response.status_code, 200, second_page_response.text)
+
+        first_page_payload = first_page_response.json()
+        second_page_payload = second_page_response.json()
+
+        self.assertEqual(first_page_payload["documents_total"], 9)
+        self.assertEqual(first_page_payload["repairs_total"], 9)
+        self.assertEqual(first_page_payload["vehicles_total"], 9)
+        self.assertEqual(len(first_page_payload["documents"]), 8)
+        self.assertEqual(len(first_page_payload["repairs"]), 8)
+        self.assertEqual(len(first_page_payload["vehicles"]), 8)
+        self.assertEqual(len(second_page_payload["documents"]), 1)
+        self.assertEqual(len(second_page_payload["repairs"]), 1)
+        self.assertEqual(len(second_page_payload["vehicles"]), 1)
+
+        self.assertEqual(
+            {item["document_id"] for item in first_page_payload["documents"]} &
+            {item["document_id"] for item in second_page_payload["documents"]},
+            set(),
+        )
+        self.assertEqual(
+            {item["repair_id"] for item in first_page_payload["repairs"]} &
+            {item["repair_id"] for item in second_page_payload["repairs"]},
+            set(),
+        )
+        self.assertEqual(
+            {item["vehicle_id"] for item in first_page_payload["vehicles"]} &
+            {item["vehicle_id"] for item in second_page_payload["vehicles"]},
+            set(),
+        )
 
     def test_employee_can_download_own_preliminary_document_after_vehicle_relink(self) -> None:
         headers = self._get_auth_headers("employee")
@@ -2109,6 +2974,129 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertIn("Основной документ: Не выбран", summary_section)
         self.assertIn("Статус основного документа: Не определён", summary_section)
 
+    def test_export_uses_canonical_primary_marker_in_xlsx_and_pdf_documents_section(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+
+            document.is_primary = False
+            repair.source_document_id = document.id
+            db.commit()
+            repair_id = repair.id
+            document_filename = document.original_filename
+
+        xlsx_response = self.client.get(f"/api/repairs/{repair_id}/export", headers=headers)
+        self.assertEqual(xlsx_response.status_code, 200, xlsx_response.text)
+
+        workbook = load_workbook(filename=BytesIO(xlsx_response.content))
+        document_rows = [
+            row
+            for row in workbook["Документы"].iter_rows(min_row=2, values_only=True)
+            if row and row[0]
+        ]
+        exported_row = next(row for row in document_rows if row[1] == document_filename)
+        self.assertEqual(exported_row[4], "Да")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            pdf_sections = build_repair_pdf_sections(repair, include_archived_documents=False)
+
+        documents_section = next(items for title, items in pdf_sections if title == "Документы")
+        self.assertTrue(any(f"{document_filename} | order | needs_review | основной" in item for item in documents_section))
+
+    def test_admin_export_uses_archived_source_document_for_archived_repair(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+
+            document.status = DocumentStatus.ARCHIVED
+            document.is_primary = False
+            document.review_queue_priority = 0
+            repair.status = RepairStatus.ARCHIVED
+            repair.is_preliminary = False
+            repair.source_document_id = document.id
+            db.commit()
+            repair_id = repair.id
+            document_filename = document.original_filename
+
+        xlsx_response = self.client.get(f"/api/repairs/{repair_id}/export", headers=headers)
+        self.assertEqual(xlsx_response.status_code, 200, xlsx_response.text)
+
+        workbook = load_workbook(filename=BytesIO(xlsx_response.content))
+        summary_rows = {
+            str(row[0]): row[1]
+            for row in workbook["Отчет"].iter_rows(min_row=2, values_only=True)
+            if row and row[0]
+        }
+        self.assertEqual(summary_rows["Основной документ"], document_filename)
+        self.assertEqual(summary_rows["Статус основного документа"], DocumentStatus.ARCHIVED.value)
+
+        document_rows = [
+            row
+            for row in workbook["Документы"].iter_rows(min_row=2, values_only=True)
+            if row and row[0]
+        ]
+        exported_row = next(row for row in document_rows if row[1] == document_filename)
+        self.assertEqual(exported_row[4], "Да")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            pdf_sections = build_repair_pdf_sections(repair, include_archived_documents=True)
+
+        summary_section = next(items for title, items in pdf_sections if title == "Сводка")
+        self.assertIn(f"Основной документ: {document_filename}", summary_section)
+        self.assertIn(f"Статус основного документа: {DocumentStatus.ARCHIVED.value}", summary_section)
+        documents_section = next(items for title, items in pdf_sections if title == "Документы")
+        self.assertTrue(any(f"{document_filename} | order | archived | основной" in item for item in documents_section))
+
+    def test_admin_repair_detail_uses_archived_source_document_for_archived_repair(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+
+            document.status = DocumentStatus.ARCHIVED
+            document.is_primary = False
+            document.review_queue_priority = 0
+            document.ocr_confidence = 0.61
+            repair.status = RepairStatus.ARCHIVED
+            repair.is_preliminary = False
+            repair.source_document_id = document.id
+            db.commit()
+            repair_id = repair.id
+            document_id = document.id
+
+        response = self.client.get(f"/api/repairs/{repair_id}", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        self.assertEqual(payload["source_document_id"], document_id)
+        finding_titles = [item["title"] for item in payload["executive_report"]["findings"]]
+        self.assertIn("Низкая уверенность OCR по основному документу", finding_titles)
+        archived_document = next(item for item in payload["documents"] if item["id"] == document_id)
+        self.assertTrue(archived_document["is_primary"])
+
     def test_employee_cannot_export_own_preliminary_repair_after_vehicle_archived(self) -> None:
         headers = self._get_auth_headers("employee")
 
@@ -2317,6 +3305,93 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertIn("7. Итог", pdf_section_titles)
         summary_section = next(items for title, items in pdf_sections if title == "Сводка")
         self.assertIn("Этап workflow: Ожидает финального подтверждения администратора", summary_section)
+
+    def test_repair_export_marks_blocking_checks_as_suspicious_workflow(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            self.assertIsNotNone(employee)
+            assert employee is not None
+
+            vehicle = Vehicle(
+                external_id="truck-export-suspicious-1",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="H321BC116",
+                brand="Scania",
+                model="R",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-REPORT-SUSP-001",
+                repair_date=date(2025, 1, 26),
+                vehicle_id=vehicle.id,
+                created_by_user_id=employee.id,
+                mileage=167000,
+                reason="Проверка на дребезг",
+                work_total=14000,
+                parts_total=6000,
+                vat_total=4000,
+                grand_total=24000,
+                expected_total=24000,
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=employee.id,
+                original_filename="blocking-check-order.pdf",
+                storage_key="documents/test/blocking-check-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.RECOGNIZED,
+                is_primary=True,
+                review_queue_priority=80,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            db.add(
+                RepairCheck(
+                    repair_id=repair.id,
+                    check_type="export_workflow_blocking_check",
+                    severity=CheckSeverity.ERROR,
+                    title="Есть блокирующее замечание",
+                    details="Тест проверяет workflow summary при открытом blocking check",
+                    is_resolved=False,
+                )
+            )
+            db.commit()
+            repair_id = repair.id
+
+        xlsx_response = self.client.get(f"/api/repairs/{repair_id}/export", headers=headers)
+        self.assertEqual(xlsx_response.status_code, 200, xlsx_response.text)
+
+        workbook = load_workbook(filename=BytesIO(xlsx_response.content))
+        summary_rows = {
+            str(row[0]): row[1]
+            for row in workbook["Отчет"].iter_rows(min_row=2, values_only=True)
+            if row and row[0]
+        }
+        self.assertEqual(summary_rows["Этап workflow"], "Подозрительный ремонт")
+        self.assertIn("управленческого решения", str(summary_rows["Комментарий к workflow"]))
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            pdf_sections = build_repair_pdf_sections(repair)
+
+        summary_section = next(items for title, items in pdf_sections if title == "Сводка")
+        self.assertIn("Этап workflow: Подозрительный ремонт", summary_section)
 
     def test_employee_can_compare_own_preliminary_documents_after_vehicle_relink(self) -> None:
         headers = self._get_auth_headers("employee")
@@ -2542,6 +3617,329 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             self.assertFalse(old_primary.is_primary)
             self.assertIn("Повторный скан качественнее", new_primary.notes or "")
 
+    def test_set_primary_does_not_reopen_workflow_or_write_audit_when_canonical_source_is_unchanged(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            self.assertIsNotNone(admin)
+            assert admin is not None
+
+            vehicle = Vehicle(
+                external_id="truck-set-primary-noop",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="S555SP116",
+                brand="Volvo",
+                model="FM",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-SET-PRIMARY-NOOP",
+                repair_date=date(2025, 1, 29),
+                vehicle_id=vehicle.id,
+                created_by_user_id=admin.id,
+                mileage=22000,
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="set-primary-noop.pdf",
+                storage_key="documents/test/set-primary-noop.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.CONFIRMED,
+                is_primary=False,
+                review_queue_priority=100,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            db.commit()
+            repair_id = repair.id
+            document_id = document.id
+
+        response = self.client.post(
+            f"/api/documents/{document_id}/set-primary",
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["is_primary"])
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+            self.assertEqual(repair.source_document_id, document_id)
+            self.assertEqual(repair.status, RepairStatus.CONFIRMED)
+            self.assertTrue(document.is_primary)
+
+            self.assertIsNone(
+                db.scalar(
+                    select(AuditLog)
+                    .where(
+                        AuditLog.entity_type == "repair",
+                        AuditLog.entity_id == str(repair_id),
+                        AuditLog.action_type == "primary_document_changed",
+                    )
+                    .order_by(AuditLog.id.desc())
+                )
+            )
+            self.assertIsNone(
+                db.scalar(
+                    select(AuditLog)
+                    .where(
+                        AuditLog.entity_type == "document",
+                        AuditLog.entity_id == str(document_id),
+                        AuditLog.action_type == "set_primary",
+                    )
+                    .order_by(AuditLog.id.desc())
+                )
+            )
+
+    def test_restore_document_writes_primary_document_audit_when_it_becomes_source(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            self.assertIsNotNone(admin)
+            assert admin is not None
+
+            vehicle = Vehicle(
+                external_id="truck-restore-primary-audit",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="R777RT116",
+                brand="MAN",
+                model="TGS",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-RESTORE-PRIMARY-AUDIT",
+                repair_date=date(2025, 1, 30),
+                vehicle_id=vehicle.id,
+                created_by_user_id=admin.id,
+                mileage=26000,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="restore-primary-audit.pdf",
+                storage_key="documents/test/restore-primary-audit.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.ARCHIVED,
+                is_primary=False,
+                review_queue_priority=0,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = None
+            db.commit()
+            repair_id = repair.id
+            document_id = document.id
+
+        response = self.client.post(
+            f"/api/documents/{document_id}/restore",
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], DocumentStatus.NEEDS_REVIEW.value)
+        self.assertTrue(payload["is_primary"])
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            document = db.get(Document, document_id)
+            audit_entry = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "repair",
+                    AuditLog.entity_id == str(repair_id),
+                    AuditLog.action_type == "primary_document_changed",
+                )
+                .order_by(AuditLog.id.desc())
+            )
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            self.assertIsNotNone(audit_entry)
+            assert repair is not None
+            assert document is not None
+            assert audit_entry is not None
+            self.assertEqual(repair.source_document_id, document_id)
+            self.assertTrue(document.is_primary)
+            self.assertIsNone(audit_entry.old_value["source_document_id"])
+            self.assertEqual(audit_entry.new_value["source_document_id"], document_id)
+
+    def test_restore_document_reopens_confirmed_repair_for_review(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            self.assertIsNotNone(admin)
+            assert admin is not None
+
+            vehicle = Vehicle(
+                external_id="truck-restore-reopen-confirmed",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="V888VV116",
+                brand="Scania",
+                model="G",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-RESTORE-REOPEN-001",
+                repair_date=date(2025, 1, 31),
+                vehicle_id=vehicle.id,
+                created_by_user_id=admin.id,
+                mileage=31000,
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="restore-reopen-confirmed.pdf",
+                storage_key="documents/test/restore-reopen-confirmed.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.ARCHIVED,
+                is_primary=True,
+                review_queue_priority=0,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            db.commit()
+            repair_id = repair.id
+            document_id = document.id
+
+        response = self.client.post(
+            f"/api/documents/{document_id}/restore",
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], DocumentStatus.NEEDS_REVIEW.value)
+        self.assertTrue(payload["is_primary"])
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+            self.assertEqual(repair.status, RepairStatus.IN_REVIEW)
+            self.assertTrue(repair.is_preliminary)
+            self.assertEqual(document.status, DocumentStatus.NEEDS_REVIEW)
+            self.assertEqual(document.review_queue_priority, 20)
+
+    def test_archive_document_reopens_confirmed_repair_for_review(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            self.assertIsNotNone(admin)
+            assert admin is not None
+
+            vehicle = Vehicle(
+                external_id="truck-archive-reopen-confirmed",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="W999WW116",
+                brand="Mercedes",
+                model="Arocs",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-ARCHIVE-REOPEN-001",
+                repair_date=date(2025, 2, 1),
+                vehicle_id=vehicle.id,
+                created_by_user_id=admin.id,
+                mileage=33000,
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="archive-reopen-confirmed.pdf",
+                storage_key="documents/test/archive-reopen-confirmed.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.CONFIRMED,
+                is_primary=True,
+                review_queue_priority=20,
+            )
+            db.add(document)
+            db.flush()
+
+            repair.source_document_id = document.id
+            db.commit()
+            repair_id = repair.id
+            document_id = document.id
+
+        response = self.client.post(
+            f"/api/documents/{document_id}/archive",
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], DocumentStatus.ARCHIVED.value)
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            document = db.get(Document, document_id)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+            self.assertEqual(repair.status, RepairStatus.IN_REVIEW)
+            self.assertTrue(repair.is_preliminary)
+            self.assertEqual(document.status, DocumentStatus.ARCHIVED)
+            self.assertEqual(document.review_queue_priority, 0)
+
     def test_comparison_review_accepts_canonical_source_document_even_if_primary_flag_drifted(self) -> None:
         headers = self._get_auth_headers("admin")
 
@@ -2625,15 +4023,32 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             repair = db.get(Repair, repair_id)
             primary_document = db.get(Document, primary_document_id)
             candidate_document = db.get(Document, candidate_document_id)
+            audit_entry = db.scalar(
+                select(AuditLog)
+                .where(
+                    AuditLog.entity_type == "repair",
+                    AuditLog.entity_id == str(repair_id),
+                    AuditLog.action_type == "document_comparison_reviewed",
+                )
+                .order_by(AuditLog.id.desc())
+            )
             self.assertIsNotNone(repair)
             self.assertIsNotNone(primary_document)
             self.assertIsNotNone(candidate_document)
+            self.assertIsNotNone(audit_entry)
             assert repair is not None
             assert primary_document is not None
             assert candidate_document is not None
+            assert audit_entry is not None
             self.assertEqual(repair.source_document_id, primary_document_id)
             self.assertTrue(primary_document.is_primary)
             self.assertFalse(candidate_document.is_primary)
+            old_documents = {item["id"]: item for item in audit_entry.old_value["documents"]}
+            new_documents = {item["id"]: item for item in audit_entry.new_value["documents"]}
+            self.assertTrue(old_documents[primary_document_id]["is_primary"])
+            self.assertFalse(old_documents[candidate_document_id]["is_primary"])
+            self.assertTrue(new_documents[primary_document_id]["is_primary"])
+            self.assertFalse(new_documents[candidate_document_id]["is_primary"])
 
     def test_comparison_review_ignores_legacy_foreign_source_document_id_in_response_and_audit(self) -> None:
         headers = self._get_auth_headers("admin")
@@ -2957,6 +4372,52 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(latest_payload["manual_review_reasons"], [])
         self.assertEqual(latest_payload["extracted_fields"]["service_name"], "Service Alpha")
 
+    def test_manual_service_assignment_reopens_admin_confirmed_repair_as_preliminary(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+
+            service = Service(
+                name="Confirmed Repair Reopen Service",
+                city="Kazan",
+                status=ServiceStatus.CONFIRMED,
+                created_by_user_id=1,
+                confirmed_by_user_id=1,
+            )
+            db.add(service)
+            db.flush()
+
+            repair.status = RepairStatus.CONFIRMED
+            repair.is_preliminary = False
+            repair.service_id = None
+            document.status = DocumentStatus.CONFIRMED
+            db.commit()
+
+        response = self.client.patch(
+            "/api/repairs/1/service",
+            headers=headers,
+            json={"service_name": "Confirmed Repair Reopen Service"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], RepairStatus.IN_REVIEW.value)
+        self.assertTrue(payload["is_preliminary"])
+        self.assertEqual(payload["service"]["name"], "Confirmed Repair Reopen Service")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            self.assertEqual(repair.status, RepairStatus.IN_REVIEW)
+            self.assertTrue(repair.is_preliminary)
+
     def test_manual_service_assignment_tolerates_non_object_check_payload(self) -> None:
         headers = self._get_auth_headers("admin")
 
@@ -3008,6 +4469,106 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(len(service_checks), 1)
         self.assertTrue(service_checks[0]["is_resolved"])
         self.assertEqual(payload["service"]["name"], "Service Alpha")
+
+    def test_manual_service_assignment_stores_canonical_service_name_for_alias(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+
+            repair.service_id = None
+            document.status = DocumentStatus.RECOGNIZED
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=1,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "extracted_fields": {},
+                        "manual_review_reasons": ["service_name_missing"],
+                    },
+                    field_confidence_map={},
+                    change_summary="Initial OCR payload",
+                )
+            )
+            db.commit()
+
+        response = self.client.patch(
+            "/api/repairs/1/service",
+            headers=headers,
+            json={"service_name": "AXB"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["service"]["name"], "ООО «АХВ Трак Сервис»")
+        latest_payload = payload["documents"][0]["versions"][0]["parsed_payload"]
+        self.assertEqual(latest_payload["manual_review_reasons"], [])
+        self.assertEqual(latest_payload["extracted_fields"]["service_name"], "ООО «АХВ Трак Сервис»")
+
+    def test_admin_manual_update_syncs_service_and_review_payload_state(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            document = db.get(Document, 1)
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(document)
+            assert repair is not None
+            assert document is not None
+
+            repair.service_id = None
+            document.status = DocumentStatus.RECOGNIZED
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=1,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "extracted_fields": {},
+                        "manual_review_reasons": ["service_name_missing", "order_number_missing"],
+                    },
+                    field_confidence_map={},
+                    change_summary="Initial OCR payload",
+                )
+            )
+            db.add(
+                RepairCheck(
+                    repair_id=repair.id,
+                    check_type="ocr_service_missing",
+                    severity=CheckSeverity.WARNING,
+                    title="Не удалось определить сервис",
+                    details="Сервис у ремонта не назначен. Нужна ручная проверка.",
+                    calculation_payload={"reason": "service_name_missing"},
+                    is_resolved=False,
+                )
+            )
+            db.commit()
+
+        response = self.client.patch(
+            "/api/repairs/1",
+            headers=headers,
+            json={
+                "service_name": "Service Alpha",
+                "order_number": "ZN-MANUAL-SYNC-001",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["service"]["name"], "Service Alpha")
+        service_checks = [item for item in payload["checks"] if item["check_type"] == "ocr_service_missing"]
+        self.assertEqual(len(service_checks), 1)
+        self.assertTrue(service_checks[0]["is_resolved"])
+        latest_payload = payload["documents"][0]["versions"][0]["parsed_payload"]
+        self.assertEqual(latest_payload["manual_review_reasons"], [])
+        self.assertEqual(latest_payload["extracted_fields"]["service_name"], "Service Alpha")
+        self.assertEqual(latest_payload["extracted_fields"]["order_number"], "ZN-MANUAL-SYNC-001")
 
     def test_admin_created_service_keeps_confirmed_status(self) -> None:
         headers = self._get_auth_headers("admin")
@@ -3357,6 +4918,37 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(archived_payload["items"], [])
         self.assertEqual(archived_payload["cities"], [])
 
+    def test_service_list_cities_follow_search_filter(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            db.add_all(
+                [
+                    Service(
+                        name="Alpha Fleet Branch",
+                        city="Kazan",
+                        status=ServiceStatus.CONFIRMED,
+                        created_by_user_id=1,
+                        confirmed_by_user_id=1,
+                    ),
+                    Service(
+                        name="Beta Truck Branch",
+                        city="Moscow",
+                        status=ServiceStatus.CONFIRMED,
+                        created_by_user_id=1,
+                        confirmed_by_user_id=1,
+                    ),
+                ]
+            )
+            db.commit()
+
+        response = self.client.get("/api/services?q=alpha", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual({item["name"] for item in payload["items"]}, {"Alpha Fleet Branch", "Service Alpha"})
+        self.assertEqual(payload["cities"], ["Kazan"])
+
     def test_confirmed_service_stays_visible_after_rename_outside_catalog(self) -> None:
         headers = self._get_auth_headers("admin")
 
@@ -3558,6 +5150,86 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         archived_payload = archived_response.json()
         self.assertEqual(archived_payload["total"], 1)
         self.assertEqual([item["id"] for item in archived_payload["items"]], [archived_vehicle_id])
+
+    def test_employee_visibility_excludes_placeholder_vehicle_even_with_legacy_assignment(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            self.assertIsNotNone(employee)
+            assert employee is not None
+
+            placeholder_vehicle = Vehicle(
+                external_id="__batch_import_placeholder__",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="PLACEHOLDER-ACCESS",
+                brand="Placeholder",
+                model="Legacy",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(placeholder_vehicle)
+            db.flush()
+
+            db.add(
+                VehicleAssignmentHistory(
+                    vehicle_id=placeholder_vehicle.id,
+                    user_id=employee.id,
+                    starts_at=date(2025, 1, 1),
+                    ends_at=None,
+                    assigned_by_user_id=1,
+                    comment="legacy placeholder assignment",
+                )
+            )
+            db.commit()
+
+        vehicles_response = self.client.get("/api/vehicles?limit=50", headers=headers)
+
+        self.assertEqual(vehicles_response.status_code, 200, vehicles_response.text)
+        vehicles_payload = vehicles_response.json()
+        self.assertEqual(vehicles_payload["total"], 1)
+        self.assertEqual([item["external_id"] for item in vehicles_payload["items"]], ["truck-1"])
+
+        dashboard_response = self.client.get("/api/dashboard/summary", headers=headers)
+
+        self.assertEqual(dashboard_response.status_code, 200, dashboard_response.text)
+        dashboard_payload = dashboard_response.json()
+        self.assertEqual(dashboard_payload["vehicles_total"], 1)
+
+    def test_admin_vehicle_views_exclude_placeholder_vehicle(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            db.add(
+                Vehicle(
+                    external_id="__batch_import_placeholder__",
+                    vehicle_type=VehicleType.TRUCK,
+                    plate_number="PLACEHOLDER-ADMIN",
+                    brand="Placeholder",
+                    model="System",
+                    status=VehicleStatus.ACTIVE,
+                )
+            )
+            db.commit()
+
+        vehicles_response = self.client.get("/api/vehicles?limit=50", headers=headers)
+
+        self.assertEqual(vehicles_response.status_code, 200, vehicles_response.text)
+        vehicles_payload = vehicles_response.json()
+        self.assertEqual(vehicles_payload["total"], 1)
+        self.assertEqual([item["external_id"] for item in vehicles_payload["items"]], ["truck-1"])
+
+        dashboard_response = self.client.get("/api/dashboard/summary", headers=headers)
+
+        self.assertEqual(dashboard_response.status_code, 200, dashboard_response.text)
+        dashboard_payload = dashboard_response.json()
+        self.assertEqual(dashboard_payload["vehicles_total"], 1)
+
+        search_response = self.client.get("/api/search/global?q=PLACEHOLDER-ADMIN", headers=headers)
+
+        self.assertEqual(search_response.status_code, 200, search_response.text)
+        search_payload = search_response.json()
+        self.assertEqual(search_payload["vehicles_total"], 0)
+        self.assertEqual(search_payload["vehicles"], [])
 
     def test_placeholder_vehicle_cannot_be_archived_via_patch(self) -> None:
         headers = self._get_auth_headers("admin")
@@ -3796,6 +5468,16 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
                 ]
             )
             db.flush()
+            db.add(
+                RepairCheck(
+                    repair_id=active_historical_repair.id,
+                    check_type="historical_vehicle_summary_suspicious",
+                    severity=CheckSeverity.SUSPICIOUS,
+                    title="Исторический ремонт требует проверки",
+                    details="Скрытый suspicious check для проверки summary техники",
+                    is_resolved=False,
+                )
+            )
 
             db.add_all(
                 [
@@ -3847,6 +5529,8 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["historical_last_repair_date"], "2025-01-20")
         self.assertEqual(payload["history_summary"]["repairs_total"], 2)
         self.assertEqual(payload["history_summary"]["documents_total"], 2)
+        self.assertEqual(payload["history_summary"]["confirmed_repairs"], 0)
+        self.assertEqual(payload["history_summary"]["suspicious_repairs"], 1)
         self.assertEqual(payload["history_summary"]["last_repair_date"], "2025-01-20")
         self.assertEqual(payload["historical_history_summary"]["repairs_total"], 1)
         self.assertEqual(payload["historical_history_summary"]["services_total"], 1)
@@ -3863,6 +5547,51 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             [repair["order_number"] for repair in payload["historical_repair_history"]],
             ["ZN-HIST-VEH-001"],
         )
+
+    def test_vehicle_detail_and_export_skip_legacy_broken_assignment_users(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            broken_assignment = VehicleAssignmentHistory(
+                vehicle_id=1,
+                user_id=2,
+                starts_at=date(2025, 2, 1),
+                ends_at=None,
+                assigned_by_user_id=1,
+                comment="broken vehicle detail assignment",
+            )
+            db.add(broken_assignment)
+            db.flush()
+            broken_assignment_id = broken_assignment.id
+            db.commit()
+
+        with self.SessionLocal() as db:
+            db.execute(text("PRAGMA foreign_keys = OFF"))
+            db.execute(
+                text("UPDATE vehicle_assignment_history SET user_id = 999999 WHERE id = :assignment_id"),
+                {"assignment_id": broken_assignment_id},
+            )
+            db.commit()
+            db.execute(text("PRAGMA foreign_keys = ON"))
+
+        detail_response = self.client.get("/api/vehicles/1", headers=headers)
+
+        self.assertEqual(detail_response.status_code, 200, detail_response.text)
+        detail_payload = detail_response.json()
+        self.assertEqual(len(detail_payload["active_assignments"]), 1)
+        self.assertEqual(detail_payload["active_assignments"][0]["comment"], "Primary assignment")
+
+        export_response = self.client.get("/api/vehicles/1/export", headers=headers)
+
+        self.assertEqual(export_response.status_code, 200, export_response.text)
+        workbook = load_workbook(filename=BytesIO(export_response.content))
+        assignment_rows = [
+            row
+            for row in workbook["Закрепления"].iter_rows(min_row=2, values_only=True)
+            if row and row[0]
+        ]
+        self.assertEqual(len(assignment_rows), 1)
+        self.assertEqual(assignment_rows[0][0], "Employee User")
 
     def test_vehicle_export_excludes_archived_repairs_and_archived_service_history(self) -> None:
         headers = self._get_auth_headers("admin")
@@ -4264,6 +5993,8 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
             assert document is not None
             self.assertEqual(repair.status, RepairStatus.ARCHIVED)
             self.assertEqual(document.status, DocumentStatus.ARCHIVED)
+            self.assertIsNone(repair.source_document_id)
+            self.assertFalse(document.is_primary)
 
 
 if __name__ == "__main__":

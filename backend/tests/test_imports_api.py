@@ -269,6 +269,9 @@ class ImportsApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["limit"], 20)
+        self.assertEqual(payload["offset"], 0)
         self.assertEqual(payload["items"][0]["summary"], {})
 
     def test_list_import_conflicts_tolerates_non_object_payloads(self) -> None:
@@ -302,6 +305,9 @@ class ImportsApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["limit"], 20)
+        self.assertEqual(payload["offset"], 0)
         self.assertEqual(payload["items"][0]["incoming_payload"], {})
         self.assertEqual(payload["items"][0]["existing_payload"], {})
         self.assertEqual(payload["items"][0]["resolution_payload"], {})
@@ -339,9 +345,66 @@ class ImportsApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["limit"], 10)
+        self.assertEqual(payload["offset"], 0)
         self.assertEqual(len(payload["items"]), 1)
         self.assertEqual(payload["items"][0]["import_type"], "historical_repairs")
         self.assertEqual(payload["items"][0]["source_filename"], "history.xlsx")
+
+    def test_list_import_jobs_supports_offset_pagination(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            db.add_all(
+                [
+                    ImportJob(
+                        import_type="historical_repairs",
+                        source_filename="history-1.xlsx",
+                        status=ImportStatus.COMPLETED,
+                        summary={"stage": "completed"},
+                        error_message=None,
+                        attempts=1,
+                    ),
+                    ImportJob(
+                        import_type="historical_repairs",
+                        source_filename="history-2.xlsx",
+                        status=ImportStatus.COMPLETED,
+                        summary={"stage": "completed"},
+                        error_message=None,
+                        attempts=1,
+                    ),
+                    ImportJob(
+                        import_type="historical_repairs",
+                        source_filename="history-3.xlsx",
+                        status=ImportStatus.COMPLETED,
+                        summary={"stage": "completed"},
+                        error_message=None,
+                        attempts=1,
+                    ),
+                    ImportJob(
+                        import_type="document_ocr",
+                        source_filename="ocr-1.pdf",
+                        status=ImportStatus.QUEUED,
+                        summary={"stage": "queued"},
+                        error_message=None,
+                        attempts=0,
+                    ),
+                ]
+            )
+            db.commit()
+
+        response = self.client.get(
+            "/api/imports/jobs?import_type=historical_repairs&limit=2&offset=1",
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["total"], 3)
+        self.assertEqual(payload["limit"], 2)
+        self.assertEqual(payload["offset"], 1)
+        self.assertEqual([item["source_filename"] for item in payload["items"]], ["history-2.xlsx", "history-1.xlsx"])
 
     def test_list_import_conflicts_filters_by_status_and_includes_source_filename(self) -> None:
         headers = self._get_auth_headers()
@@ -380,10 +443,68 @@ class ImportsApiTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["limit"], 10)
+        self.assertEqual(payload["offset"], 0)
         self.assertEqual(len(payload["items"]), 1)
         self.assertEqual(payload["items"][0]["conflict_key"], "pending-key")
         self.assertEqual(payload["items"][0]["status"], "pending")
         self.assertEqual(payload["items"][0]["source_filename"], "history.xlsx")
+
+    def test_list_import_conflicts_supports_offset_pagination(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            job = ImportJob(
+                import_type="historical_repairs",
+                source_filename="history.xlsx",
+                status=ImportStatus.COMPLETED_WITH_CONFLICTS,
+                summary={"stage": "completed"},
+                error_message=None,
+                attempts=1,
+            )
+            db.add(job)
+            db.flush()
+            db.add_all(
+                [
+                    ImportConflict(
+                        import_job_id=job.id,
+                        entity_type="repair",
+                        conflict_key="pending-1",
+                        status="pending",
+                    ),
+                    ImportConflict(
+                        import_job_id=job.id,
+                        entity_type="repair",
+                        conflict_key="pending-2",
+                        status="pending",
+                    ),
+                    ImportConflict(
+                        import_job_id=job.id,
+                        entity_type="repair",
+                        conflict_key="pending-3",
+                        status="pending",
+                    ),
+                    ImportConflict(
+                        import_job_id=job.id,
+                        entity_type="repair",
+                        conflict_key="resolved-1",
+                        status="resolved",
+                        resolution_payload={"status": "resolved"},
+                    ),
+                ]
+            )
+            db.commit()
+
+        response = self.client.get("/api/imports/conflicts?status=pending&limit=2&offset=1", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["total"], 3)
+        self.assertEqual(payload["limit"], 2)
+        self.assertEqual(payload["offset"], 1)
+        self.assertEqual([item["conflict_key"] for item in payload["items"]], ["pending-2", "pending-1"])
+        self.assertTrue(all(item["source_filename"] == "history.xlsx" for item in payload["items"]))
 
     def test_get_import_conflict_returns_source_filename(self) -> None:
         headers = self._get_auth_headers()
@@ -704,6 +825,164 @@ class ImportsApiTestCase(unittest.TestCase):
         self.assertEqual(item["operational_sample_repairs"], 0)
         self.assertEqual(item["sample_repairs"], 1)
         self.assertEqual(item["sample_lines"], 1)
+
+    def test_historical_work_reference_excludes_employee_confirmed_repairs_from_operational_reference(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            vehicle = Vehicle(
+                external_id="truck-ref-employee-confirmed",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="E567JK116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            service = Service(
+                name="Historical Reference Employee Confirmed Service",
+                city="Kazan",
+                status=ServiceStatus.CONFIRMED,
+                created_by_user_id=1,
+                confirmed_by_user_id=1,
+            )
+            db.add_all([vehicle, service])
+            db.flush()
+
+            confirmed_repair = Repair(
+                order_number="REF-OP-CONF-001",
+                repair_date=date(2025, 2, 5),
+                vehicle_id=vehicle.id,
+                service_id=service.id,
+                created_by_user_id=1,
+                mileage=103000,
+                reason="manual_confirmed",
+                status=RepairStatus.CONFIRMED,
+                is_preliminary=False,
+            )
+            employee_confirmed_repair = Repair(
+                order_number="REF-OP-EMP-001",
+                repair_date=date(2025, 2, 6),
+                vehicle_id=vehicle.id,
+                service_id=service.id,
+                created_by_user_id=1,
+                mileage=103500,
+                reason="manual_employee_confirmed",
+                status=RepairStatus.EMPLOYEE_CONFIRMED,
+                is_preliminary=False,
+            )
+            db.add_all([confirmed_repair, employee_confirmed_repair])
+            db.flush()
+
+            db.add_all(
+                [
+                    RepairWork(
+                        repair_id=confirmed_repair.id,
+                        work_code="REF-003",
+                        work_name="Замена ремня",
+                        quantity=1,
+                        price=1200,
+                        line_total=1200,
+                    ),
+                    RepairWork(
+                        repair_id=employee_confirmed_repair.id,
+                        work_code="REF-003",
+                        work_name="Замена ремня",
+                        quantity=1,
+                        price=1300,
+                        line_total=1300,
+                    ),
+                ]
+            )
+            db.commit()
+
+        response = self.client.get(
+            "/api/imports/historical-work-reference?q=%D0%97%D0%B0%D0%BC%D0%B5%D0%BD%D0%B0%20%D1%80%D0%B5%D0%BC%D0%BD%D1%8F&limit=20&min_samples=1",
+            headers=headers,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        item = payload["items"][0]
+        self.assertEqual(item["work_name"], "Замена ремня")
+        self.assertEqual(item["operational_sample_repairs"], 1)
+        self.assertEqual(item["operational_sample_lines"], 1)
+        self.assertEqual(item["sample_repairs"], 1)
+        self.assertEqual(item["sample_lines"], 1)
+
+    def test_historical_work_reference_supports_offset_pagination(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            vehicle = Vehicle(
+                external_id="truck-ref-pagination",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="P123AA116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            service = Service(
+                name="Historical Reference Pagination Service",
+                city="Kazan",
+                status=ServiceStatus.CONFIRMED,
+                created_by_user_id=1,
+                confirmed_by_user_id=1,
+            )
+            db.add_all([vehicle, service])
+            db.flush()
+
+            for index in range(25):
+                repair = Repair(
+                    order_number=f"REF-PAGE-{index:03d}",
+                    repair_date=date(2025, 1, index + 1),
+                    vehicle_id=vehicle.id,
+                    service_id=service.id,
+                    created_by_user_id=1,
+                    mileage=100000 + index,
+                    reason=f"{IMPORT_REASON_PREFIX}pagination-{index}",
+                    status=RepairStatus.CONFIRMED,
+                    is_preliminary=False,
+                )
+                db.add(repair)
+                db.flush()
+                db.add(
+                    RepairWork(
+                        repair_id=repair.id,
+                        work_code=f"PAGE-{index:03d}",
+                        work_name=f"Пагинация работа {index:03d}",
+                        quantity=1,
+                        price=1000 + index,
+                        line_total=1000 + index,
+                    )
+                )
+            db.commit()
+
+        first_page_response = self.client.get(
+            "/api/imports/historical-work-reference?q=%D0%9F%D0%B0%D0%B3%D0%B8%D0%BD%D0%B0%D1%86%D0%B8%D1%8F&limit=20&offset=0&min_samples=1",
+            headers=headers,
+        )
+        second_page_response = self.client.get(
+            "/api/imports/historical-work-reference?q=%D0%9F%D0%B0%D0%B3%D0%B8%D0%BD%D0%B0%D1%86%D0%B8%D1%8F&limit=20&offset=20&min_samples=1",
+            headers=headers,
+        )
+
+        self.assertEqual(first_page_response.status_code, 200, first_page_response.text)
+        self.assertEqual(second_page_response.status_code, 200, second_page_response.text)
+
+        first_page_payload = first_page_response.json()
+        second_page_payload = second_page_response.json()
+        self.assertEqual(first_page_payload["total"], 25)
+        self.assertEqual(first_page_payload["offset"], 0)
+        self.assertEqual(len(first_page_payload["items"]), 20)
+        self.assertEqual(second_page_payload["total"], 25)
+        self.assertEqual(second_page_payload["offset"], 20)
+        self.assertEqual(len(second_page_payload["items"]), 5)
+
+        first_page_keys = {item["key"] for item in first_page_payload["items"]}
+        second_page_keys = {item["key"] for item in second_page_payload["items"]}
+        self.assertEqual(len(first_page_keys & second_page_keys), 0)
+        self.assertEqual(len(first_page_keys | second_page_keys), 25)
 
 
 if __name__ == "__main__":

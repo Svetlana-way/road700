@@ -13,7 +13,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import type { ServiceItem, ServiceStatus } from "../shared/workspaceBootstrapTypes";
+import type { ServiceItem, ServiceStatus } from "../contracts/domain/workspace";
 import type { ServiceFormState } from "../shared/workspaceFormTypes";
 
 type ServicesAdminPanelProps = {
@@ -21,6 +21,7 @@ type ServicesAdminPanelProps = {
   serviceCityFilter: string;
   serviceStatusFilter: "" | ServiceStatus;
   serviceCities: string[];
+  serviceTotal: number;
   serviceLoading: boolean;
   showServiceEditor: boolean;
   serviceForm: ServiceFormState;
@@ -49,6 +50,7 @@ export function ServicesAdminPanel({
   serviceCityFilter,
   serviceStatusFilter,
   serviceCities,
+  serviceTotal,
   serviceLoading,
   showServiceEditor,
   serviceForm,
@@ -201,7 +203,7 @@ export function ServicesAdminPanel({
             </Stack>
           </Paper>
         ) : null}
-        <Typography className="muted-copy">В справочнике сервисов {services.length} записей по текущему фильтру.</Typography>
+        <Typography className="muted-copy">В справочнике сервисов {serviceTotal} записей по текущему фильтру.</Typography>
         {serviceLoading ? (
           <Stack spacing={1} alignItems="center">
             <CircularProgress size={24} />

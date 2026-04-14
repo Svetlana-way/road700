@@ -8,6 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_admin, get_db
+from app.constants.vehicles import PLACEHOLDER_EXTERNAL_ID
 from app.core.security import get_password_hash
 from app.models.audit import AuditLog
 from app.models.enums import UserRole, VehicleStatus
@@ -94,7 +95,7 @@ def serialize_assignment(assignment: VehicleAssignmentHistory) -> dict:
 
 def serialize_user(user: User) -> UserDetailRead:
     assignments = sorted(
-        user.assigned_vehicles,
+        [item for item in user.assigned_vehicles if item.vehicle is not None],
         key=lambda item: ((item.ends_at is not None), item.starts_at, item.id),
         reverse=False,
     )
@@ -169,6 +170,11 @@ def validate_assignment_dates(starts_at: date, ends_at: date | None) -> None:
 
 
 def ensure_vehicle_is_assignable(vehicle: Vehicle) -> None:
+    if vehicle.external_id == PLACEHOLDER_EXTERNAL_ID:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Нельзя назначить сотрудника на системную placeholder-технику",
+        )
     if vehicle.status == VehicleStatus.ARCHIVED:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нельзя назначить сотрудника на архивную технику")
 

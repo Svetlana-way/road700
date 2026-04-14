@@ -1,7 +1,7 @@
-import { matchesTextSearch } from "../shared/fleetDocumentHelpers";
-import type { RepairDocumentHistoryEntry, RepairHistoryEntry } from "../shared/repairDetailTypes";
+import { matchesTextSearch } from "../entities/vehicle/helpers";
+import type { RepairDocumentHistoryEntry, RepairHistoryEntry } from "../contracts/domain/repair";
 import type { HistoryFilter } from "../shared/workspaceViewTypes";
-import type { DocumentKind } from "../shared/workspaceBootstrapTypes";
+import type { DocumentKind } from "../contracts/domain/workspace";
 
 type RepairHistorySource = {
   history: RepairHistoryEntry[];
@@ -15,6 +15,19 @@ type UseRepairHistoryFiltersParams = {
   formatDocumentKind: (kind: DocumentKind) => string;
 };
 
+function historyEntryChangedSourceDocument(
+  entry: Pick<RepairHistoryEntry | RepairDocumentHistoryEntry, "old_value" | "new_value">,
+) {
+  return entry.old_value?.source_document_id !== entry.new_value?.source_document_id;
+}
+
+function documentHistoryEntryAssignedPrimaryOnUpload(entry: Pick<RepairDocumentHistoryEntry, "action_type" | "new_value">) {
+  return (
+    (entry.action_type === "document_uploaded" || entry.action_type === "document_attached") &&
+    entry.new_value?.is_primary === true
+  );
+}
+
 export function useRepairHistoryFilters({
   selectedRepair,
   historyFilter,
@@ -26,7 +39,11 @@ export function useRepairHistoryFilters({
         if (historyFilter === "documents" || historyFilter === "uploads") {
           return false;
         }
-        if (historyFilter === "primary" && entry.action_type !== "primary_document_changed") {
+        if (
+          historyFilter === "primary" &&
+          entry.action_type !== "primary_document_changed" &&
+          !(entry.action_type === "document_comparison_reviewed" && historyEntryChangedSourceDocument(entry))
+        ) {
           return false;
         }
         if (historyFilter === "comparison" && entry.action_type !== "document_comparison_reviewed") {
@@ -59,7 +76,9 @@ export function useRepairHistoryFilters({
         if (
           historyFilter === "primary" &&
           entry.action_type !== "set_primary" &&
-          entry.action_type !== "primary_document_changed"
+          entry.action_type !== "primary_document_changed" &&
+          entry.action_type !== "comparison_make_document_primary" &&
+          !documentHistoryEntryAssignedPrimaryOnUpload(entry)
         ) {
           return false;
         }

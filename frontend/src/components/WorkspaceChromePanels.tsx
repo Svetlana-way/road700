@@ -13,7 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import type { WorkspaceTab } from "../shared/appRoute";
-import type { DashboardSummary, User } from "../shared/workspaceBootstrapTypes";
+import type { DashboardSummary, User } from "../contracts/domain/workspace";
 
 type WorkspaceChromePanelsProps = {
   user: Pick<User, "full_name" | "email" | "role"> | null;
@@ -155,7 +155,7 @@ export function WorkspaceChromePanels({
             scrollButtons="auto"
             allowScrollButtonsMobile
           >
-            <Tab label={`Документы · ${documentsCount}`} value="documents" />
+            <Tab label={`Документы · ${summary?.documents_total ?? documentsCount}`} value="documents" />
             <Tab label={selectedRepairId ? `Ремонт · #${selectedRepairId}` : "Ремонт"} value="repair" />
             <Tab label="Поиск" value="search" />
             {user?.role === "admin" ? <Tab label="Журнал" value="audit" /> : null}

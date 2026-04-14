@@ -9,7 +9,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import type { ImportConflictItem } from "../shared/importAdminTypes";
+import type { ImportConflictItem } from "../contracts/api/import";
 
 type ImportConflictDialogProps = {
   open: boolean;

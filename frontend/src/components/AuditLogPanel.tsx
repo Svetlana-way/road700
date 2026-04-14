@@ -10,7 +10,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import type { AuditLogItem } from "../shared/auditApiTypes";
+import type { AuditLogItem } from "../contracts/api/audit";
 
 type AuditUserOption = {
   id: number;

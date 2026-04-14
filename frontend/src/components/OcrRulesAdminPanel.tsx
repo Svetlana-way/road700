@@ -1,5 +1,5 @@
 import { Box, Button, Chip, Grid, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
-import type { OcrRuleItem } from "../shared/workspaceBootstrapTypes";
+import type { OcrRuleItem } from "../contracts/domain/workspace";
 import type { OcrRuleFormState } from "../shared/workspaceFormTypes";
 
 type OcrRulesAdminPanelProps = {

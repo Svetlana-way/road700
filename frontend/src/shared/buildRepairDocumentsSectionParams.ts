@@ -1,6 +1,6 @@
 import { documentKindOptions } from "./appUiConfig";
+import { importJobStatusColor } from "../entities/document/formatters";
 import type { BuildRepairWorkspacePropsParams } from "./buildRepairWorkspaceProps";
-import { importJobStatusColor } from "./displayFormatters";
 import type { WorkspaceContentSectionBuilderContext } from "./workspaceContentSectionBuilderContext";
 
 type RepairDocumentsSectionParams = Pick<

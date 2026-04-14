@@ -16,7 +16,7 @@ import type {
   GlobalSearchResponse,
   VehicleStatus,
   VehicleType,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 
 type GlobalSearchPanelProps = {
   query: string;

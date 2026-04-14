@@ -10,7 +10,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import type { UserAssignment, UserItem, UserRole, Vehicle, VehicleType } from "../shared/workspaceBootstrapTypes";
+import type { UserAssignment, UserItem, UserRole, Vehicle, VehicleType } from "../contracts/domain/workspace";
 import type { UserAssignmentFormState, UserFormState } from "../shared/workspaceFormTypes";
 
 type EmployeesAdminPanelProps = {

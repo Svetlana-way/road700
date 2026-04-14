@@ -5,6 +5,7 @@ from sqlalchemy import distinct, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.application.services.visibility import get_visible_services_stmt
 from app.models.audit import AuditLog
 from app.models.document import Document
 from app.models.enums import DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus
@@ -21,15 +22,6 @@ from app.services.service_catalog import (
 
 
 router = APIRouter(prefix="/services", tags=["services"])
-
-
-def get_visible_services_stmt():
-    catalog_names = get_service_catalog_names()
-    return or_(
-        Service.name.in_(catalog_names),
-        Service.created_by_user_id.is_not(None),
-        Service.confirmed_by_user_id.is_not(None),
-    )
 
 
 def normalize_optional_text(value: str | None) -> str | None:
@@ -142,6 +134,7 @@ def list_services(
     visible_services = get_visible_services_stmt()
     stmt = select(Service).where(visible_services)
     count_stmt = select(func.count(Service.id)).where(visible_services)
+    query_filter = None
 
     if q:
         normalized_query = f"%{q.strip().lower()}%"
@@ -176,6 +169,7 @@ def list_services(
         .where(
             visible_services,
             Service.city.is_not(None),
+            query_filter if query_filter is not None else true(),
             Service.status != ServiceStatus.ARCHIVED if current_user.role != UserRole.ADMIN else true(),
             Service.status == status_filter if status_filter is not None else Service.status != ServiceStatus.ARCHIVED,
             Service.city == city if city else true(),

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
 import { buildServicePayload } from "../shared/adminPayloadBuilders";
-import { apiRequest } from "../shared/api";
+import { apiRequest } from "../shared/apiCore";
 import { createEmptyServiceForm, createServiceFormFromItem } from "../shared/formStateFactories";
-import { buildServiceQueryString } from "../shared/queryBuilders";
-import type { ServiceItem, ServicesResponse, ServiceStatus, UserRole } from "../shared/workspaceBootstrapTypes";
+import { buildServiceQueryString } from "../features/admin/queryBuilders";
+import type { ServiceItem, ServicesResponse, ServiceStatus, UserRole } from "../contracts/domain/workspace";
 import type { ServiceFormState } from "../shared/workspaceFormTypes";
 
 type UseServicesAdminParams = {
@@ -28,6 +28,7 @@ export function useServicesAdmin({
   const [allServices, setAllServices] = useState<ServiceItem[]>([]);
   const [serviceOptions, setServiceOptions] = useState<ServiceItem[]>([]);
   const [serviceCities, setServiceCities] = useState<string[]>([]);
+  const [serviceTotal, setServiceTotal] = useState(0);
   const [serviceQuery, setServiceQuery] = useState("");
   const [serviceCityFilter, setServiceCityFilter] = useState("");
   const [serviceStatusFilter, setServiceStatusFilter] = useState<"" | ServiceStatus>("");
@@ -50,18 +51,44 @@ export function useServicesAdmin({
     setAllServices(items);
     setServiceOptions(items.filter((item) => item.status !== "archived"));
     setServiceCities(payload?.cities || []);
+    setServiceTotal(payload?.total || 0);
   }
 
   async function fetchServices(
     query: string = serviceQuery,
     city: string = serviceCityFilter,
     statusFilter: string = serviceStatusFilter,
+    limit = 100,
+    offset = 0,
   ) {
     return apiRequest<ServicesResponse>(
-      `/services?${buildServiceQueryString(query, city, statusFilter)}`,
+      `/services?${buildServiceQueryString(query, city, statusFilter, limit, offset)}`,
       { method: "GET" },
       token,
     );
+  }
+
+  async function fetchAllServices(
+    query: string = serviceQuery,
+    city: string = serviceCityFilter,
+    statusFilter: string = serviceStatusFilter,
+  ) {
+    const pageSize = 200;
+    const firstPage = await fetchServices(query, city, statusFilter, pageSize, 0);
+    if (firstPage.total <= firstPage.items.length) {
+      return firstPage;
+    }
+
+    const items = [...firstPage.items];
+    for (let offset = firstPage.items.length; offset < firstPage.total; offset += pageSize) {
+      const nextPage = await fetchServices(query, city, statusFilter, pageSize, offset);
+      items.push(...nextPage.items);
+    }
+
+    return {
+      ...firstPage,
+      items,
+    };
   }
 
   async function loadServices(
@@ -77,8 +104,8 @@ export function useServicesAdmin({
     setServiceLoading(true);
     try {
       const [payload, fullPayload] = await Promise.all([
-        fetchServices(query, city, statusFilter),
-        query || city || statusFilter ? fetchServices("", "", "") : Promise.resolve<ServicesResponse | null>(null),
+        fetchAllServices(query, city, statusFilter),
+        query || city || statusFilter ? fetchAllServices("", "", "") : Promise.resolve<ServicesResponse | null>(null),
       ]);
       if (serviceCatalogRequestIdRef.current !== requestId) {
         return;
@@ -87,6 +114,7 @@ export function useServicesAdmin({
       serviceOptionsInitializedRef.current = true;
       setServices(payload.items);
       setServiceCities(payload.cities);
+      setServiceTotal(payload.total);
       const nextAllServices = fullPayload?.items || payload.items;
       setAllServices(nextAllServices);
       setServiceOptions(nextAllServices.filter((item) => item.status !== "archived"));
@@ -103,7 +131,7 @@ export function useServicesAdmin({
     }
     const requestId = serviceCatalogRequestIdRef.current + 1;
     serviceCatalogRequestIdRef.current = requestId;
-    const payload = await fetchServices("", "", "");
+    const payload = await fetchAllServices("", "", "");
     if (serviceCatalogRequestIdRef.current !== requestId) {
       return;
     }
@@ -257,6 +285,7 @@ export function useServicesAdmin({
     setAllServices([]);
     setServiceOptions([]);
     setServiceCities([]);
+    setServiceTotal(0);
     setServiceQuery("");
     setServiceCityFilter("");
     setServiceStatusFilter("");
@@ -302,11 +331,25 @@ export function useServicesAdmin({
     setShowServiceEditor(false);
   }, [allServices, serviceForm.id, showServiceEditor]);
 
+  useEffect(() => {
+    if (!serviceCityFilter || serviceCities.includes(serviceCityFilter)) {
+      return;
+    }
+    setServiceCityFilter("");
+    if (!token || userRole !== "admin") {
+      return;
+    }
+    void loadServices(serviceQuery, "", serviceStatusFilter).catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить сервисы");
+    });
+  }, [serviceCities, serviceCityFilter, serviceQuery, serviceStatusFilter, setErrorMessage, token, userRole]);
+
   return {
     services,
     allServices,
     serviceOptions,
     serviceCities,
+    serviceTotal,
     serviceQuery,
     setServiceQuery,
     serviceCityFilter,

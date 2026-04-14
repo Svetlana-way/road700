@@ -4,9 +4,9 @@ import {
   executiveRiskColor,
   formatExecutiveRiskLabel,
   formatRepairStatus,
-  formatStatus,
-} from "./displayFormatters";
-import { isPlaceholderVehicle } from "./fleetDocumentHelpers";
+} from "../entities/repair/formatters";
+import { isPlaceholderVehicle } from "../entities/vehicle/helpers";
+import { formatStatus } from "./formattersCore";
 import { buildCheckPayloadDetails, getCheckLinkedRepairId } from "./repairReportHelpers";
 import type { WorkspaceContentSectionBuilderContext } from "./workspaceContentSectionBuilderContext";
 

@@ -1,26 +1,26 @@
 import { useEffect, useRef, useState } from "react";
+import type { LaborNormImportResponse } from "../contracts/api/admin";
 import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
 import {
   buildLaborNormCatalogCreatePayload,
   buildLaborNormCatalogPayload,
   buildLaborNormEntryPayload,
 } from "../shared/adminPayloadBuilders";
-import type { LaborNormImportResponse } from "../shared/adminApiTypes";
-import { apiRequest } from "../shared/api";
+import { apiRequest } from "../shared/apiCore";
 import {
   createCatalogFormFromItem,
   createEmptyCatalogForm,
   createEmptyLaborNormEntryForm,
   createLaborNormEntryFormFromItem,
 } from "../shared/formStateFactories";
-import { buildLaborNormQueryString } from "../shared/queryBuilders";
+import { buildLaborNormQueryString } from "../features/admin/queryBuilders";
 import type {
   LaborNormCatalogConfigItem,
   LaborNormCatalogConfigResponse,
   LaborNormCatalogItem,
   LaborNormCatalogResponse,
   UserRole,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 import type { LaborNormCatalogFormState, LaborNormEntryFormState } from "../shared/workspaceFormTypes";
 
 type UseLaborNormsAdminParams = {
@@ -106,12 +106,30 @@ export function useLaborNormsAdmin({
     setLaborNormCatalogs(payload.laborNormCatalogConfigs?.items || []);
   }
 
-  async function fetchLaborNormCatalog(query: string, scope: string, category: string, limit = 12) {
+  async function fetchLaborNormCatalog(query: string, scope: string, category: string, limit = 12, offset = 0) {
     return apiRequest<LaborNormCatalogResponse>(
-      `/labor-norms?${buildLaborNormQueryString(query, scope, category, limit)}`,
+      `/labor-norms?${buildLaborNormQueryString(query, scope, category, limit, offset)}`,
       { method: "GET" },
       token || undefined,
     );
+  }
+
+  async function fetchAllLaborNormCatalog(query: string, scope: string, category: string, limit = 200) {
+    const firstPage = await fetchLaborNormCatalog(query, scope, category, limit, 0);
+    if (firstPage.total <= firstPage.items.length) {
+      return firstPage;
+    }
+
+    const items = [...firstPage.items];
+    for (let offset = firstPage.items.length; offset < firstPage.total; offset += limit) {
+      const nextPage = await fetchLaborNormCatalog(query, scope, category, limit, offset);
+      items.push(...nextPage.items);
+    }
+
+    return {
+      ...firstPage,
+      items,
+    };
   }
 
   async function loadLaborNormCatalog(
@@ -127,14 +145,16 @@ export function useLaborNormsAdmin({
     setLaborNormLoading(true);
     try {
       const [payload, fullPayload] = await Promise.all([
-        fetchLaborNormCatalog(query, scope, category),
-        fetchLaborNormCatalog("", "", "", 200),
+        fetchAllLaborNormCatalog(query, scope, category, 200),
+        query || scope || category
+          ? fetchAllLaborNormCatalog("", "", "", 200)
+          : Promise.resolve<LaborNormCatalogResponse | null>(null),
       ]);
       if (laborNormCatalogRequestIdRef.current !== requestId) {
         return;
       }
       setLaborNorms(payload.items);
-      setAllLaborNorms(fullPayload.items);
+      setAllLaborNorms(fullPayload?.items || payload.items);
       setLaborNormTotal(payload.total);
       setLaborNormScopes(payload.scopes);
       setLaborNormCategories(payload.categories);
@@ -490,12 +510,38 @@ export function useLaborNormsAdmin({
       applyCatalogScopeSelection(fallbackScope, laborNormCatalogs);
     }
   }, [
+    laborNormScopes,
     laborNormCatalogs,
     laborNormEntryForm.scope,
     laborNormImportBrandFamily,
     laborNormImportCatalogName,
     laborNormImportScope,
     laborNormScope,
+  ]);
+
+  useEffect(() => {
+    const operationalScopeSet = new Set(
+      laborNormScopes.filter((scope) => getOperationalCatalogs().some((item) => item.scope === scope)),
+    );
+    if (!laborNormScope || operationalScopeSet.has(laborNormScope)) {
+      return;
+    }
+    setLaborNormScope("");
+    if (!token || userRole !== "admin") {
+      return;
+    }
+    void loadLaborNormCatalog(laborNormQuery, "", laborNormCategory).catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить справочник нормо-часов");
+    });
+  }, [
+    laborNormCatalogs,
+    laborNormScopes,
+    laborNormScope,
+    laborNormQuery,
+    laborNormCategory,
+    setErrorMessage,
+    token,
+    userRole,
   ]);
 
   useEffect(() => {

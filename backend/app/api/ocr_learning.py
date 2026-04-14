@@ -185,20 +185,28 @@ def list_ocr_learning_signals(
         summary_stmt = summary_stmt.where(OcrLearningSignal.ocr_profile_scope == profile_scope)
     summary_items = db.scalars(summary_stmt).all()
 
-    statuses = db.scalars(select(distinct(OcrLearningSignal.status)).order_by(OcrLearningSignal.status.asc())).all()
-    target_fields = db.scalars(
-        select(distinct(OcrLearningSignal.target_field))
-        .where(OcrLearningSignal.status == status_filter if status_filter else true())
-        .order_by(OcrLearningSignal.target_field.asc())
-    ).all()
-    profile_scopes = db.scalars(
-        select(distinct(OcrLearningSignal.ocr_profile_scope))
-        .where(
-            OcrLearningSignal.ocr_profile_scope.is_not(None),
-            OcrLearningSignal.status == status_filter if status_filter else true(),
-        )
-        .order_by(OcrLearningSignal.ocr_profile_scope.asc())
-    ).all()
+    statuses_stmt = select(distinct(OcrLearningSignal.status)).where(
+        OcrLearningSignal.status == status_filter if status_filter else OcrLearningSignal.status != "rejected"
+    )
+    target_fields_stmt = select(distinct(OcrLearningSignal.target_field)).where(
+        OcrLearningSignal.status == status_filter if status_filter else true()
+    )
+    profile_scopes_stmt = select(distinct(OcrLearningSignal.ocr_profile_scope)).where(
+        OcrLearningSignal.ocr_profile_scope.is_not(None),
+        OcrLearningSignal.status == status_filter if status_filter else true(),
+    )
+    if target_field:
+        statuses_stmt = statuses_stmt.where(OcrLearningSignal.target_field == target_field)
+        target_fields_stmt = target_fields_stmt.where(OcrLearningSignal.target_field == target_field)
+        profile_scopes_stmt = profile_scopes_stmt.where(OcrLearningSignal.target_field == target_field)
+    if profile_scope:
+        statuses_stmt = statuses_stmt.where(OcrLearningSignal.ocr_profile_scope == profile_scope)
+        target_fields_stmt = target_fields_stmt.where(OcrLearningSignal.ocr_profile_scope == profile_scope)
+        profile_scopes_stmt = profile_scopes_stmt.where(OcrLearningSignal.ocr_profile_scope == profile_scope)
+
+    statuses = db.scalars(statuses_stmt.order_by(OcrLearningSignal.status.asc())).all()
+    target_fields = db.scalars(target_fields_stmt.order_by(OcrLearningSignal.target_field.asc())).all()
+    profile_scopes = db.scalars(profile_scopes_stmt.order_by(OcrLearningSignal.ocr_profile_scope.asc())).all()
 
     return OcrLearningSignalListResponse(
         items=[OcrLearningSignalRead.model_validate(item) for item in items],

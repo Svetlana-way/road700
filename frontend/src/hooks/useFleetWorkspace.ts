@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, apiRequest, downloadApiFile } from "../shared/api";
 import type { AppRoute, WorkspaceTab } from "../shared/appRoute";
-import { buildFleetVehiclesQueryString } from "../shared/queryBuilders";
-import type { UserRole, Vehicle, VehicleDetail, VehicleStatus, VehicleType, VehiclesResponse } from "../shared/workspaceBootstrapTypes";
+import { fetchAllMatchingVehicles } from "../features/fleet/api";
+import { ApiError, apiRequest } from "../shared/apiCore";
+import { downloadApiFile } from "../shared/apiFiles";
+import type { UserRole, Vehicle, VehicleDetail, VehicleStatus, VehicleType, VehiclesResponse } from "../contracts/domain/workspace";
 
 type VehicleUpdatePayload = {
   status?: VehicleStatus;
@@ -69,11 +70,7 @@ export function useFleetWorkspace({
     fleetListRequestIdRef.current = requestId;
     setFleetLoading(true);
     try {
-      const payload = await apiRequest<VehiclesResponse>(
-        `/vehicles?${buildFleetVehiclesQueryString(vehiclesFullListLimit, query, vehicleType, statusFilter)}`,
-        { method: "GET" },
-        token,
-      );
+      const payload = await fetchAllVehicles(query, vehicleType, statusFilter);
       if (fleetListRequestIdRef.current !== requestId) {
         return;
       }
@@ -107,16 +104,20 @@ export function useFleetWorkspace({
     }
     const requestId = vehicleOptionsRequestIdRef.current + 1;
     vehicleOptionsRequestIdRef.current = requestId;
-    const payload = await apiRequest<VehiclesResponse>(
-      `/vehicles?${buildFleetVehiclesQueryString(vehiclesFullListLimit, "", "", "")}`,
-      { method: "GET" },
-      token,
-    );
+    const payload = await fetchAllVehicles("", "", "");
     if (vehicleOptionsRequestIdRef.current !== requestId) {
       return;
     }
     vehicleOptionsInitializedRef.current = true;
     setVehicleOptions(payload.items);
+  }
+
+  async function fetchAllVehicles(
+    query: string,
+    vehicleType: "" | VehicleType,
+    statusFilter: "" | VehicleStatus,
+  ) {
+    return fetchAllMatchingVehicles(token, query, vehicleType, statusFilter, Math.min(vehiclesFullListLimit, 200));
   }
 
   async function loadFleetVehicleDetail(vehicleId: number) {

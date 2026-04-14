@@ -4,7 +4,7 @@ import type {
   HistoricalWorkReferenceItem,
   ImportConflictItem,
   ImportJobItem,
-} from "../shared/importAdminTypes";
+} from "../contracts/api/import";
 
 type HistoricalImportsAdminPanelProps = {
   historicalImportLoading: boolean;

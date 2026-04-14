@@ -1,16 +1,17 @@
 import { type Ref } from "react";
 import { Alert, Box, Button, Chip, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
-import type { RepairDetail } from "../shared/repairDetailTypes";
+import type { RepairDetail } from "../contracts/domain/repair";
+import { resolveSourceRepairDocument } from "../entities/repair/helpers";
 import type {
   DocumentComparisonResponse,
   DocumentKind,
   DocumentStatus,
   UserRole,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 
 type RepairDocumentsSectionProps = {
   userRole?: UserRole;
-  selectedRepair: Pick<RepairDetail, "id" | "status" | "documents">;
+  selectedRepair: Pick<RepairDetail, "id" | "status" | "source_document_id" | "documents">;
   documentKindOptions: Array<{ value: DocumentKind; label: string }>;
   attachedDocumentKind: DocumentKind;
   attachedDocumentNotes: string;
@@ -95,6 +96,8 @@ export function RepairDocumentsSection({
   formatOcrProfileMeta,
   formatLaborNormApplicability,
 }: RepairDocumentsSectionProps) {
+  const sourceDocument = resolveSourceRepairDocument(selectedRepair);
+
   return (
     <>
       <Stack spacing={1}>
@@ -225,14 +228,16 @@ export function RepairDocumentsSection({
                   document.status !== "archived" &&
                   selectedRepair.status !== "archived" ? (
                     <>
-                      <Button
-                        size="small"
-                        variant="text"
-                        disabled={documentComparisonLoadingId === document.id}
-                        onClick={() => onCompareWithPrimary(document.id)}
-                      >
-                        {documentComparisonLoadingId === document.id ? "Сравнение..." : "Сравнить с основным"}
-                      </Button>
+                      {sourceDocument && sourceDocument.id !== document.id ? (
+                        <Button
+                          size="small"
+                          variant="text"
+                          disabled={documentComparisonLoadingId === document.id}
+                          onClick={() => onCompareWithPrimary(document.id)}
+                        >
+                          {documentComparisonLoadingId === document.id ? "Сравнение..." : "Сравнить с основным"}
+                        </Button>
+                      ) : null}
                       {userRole === "admin" ? (
                         <Button
                           size="small"

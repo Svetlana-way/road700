@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import date
 
 from sqlalchemy import and_, or_, select
@@ -5,8 +7,10 @@ from sqlalchemy import and_, or_, select
 from app.constants.vehicles import PLACEHOLDER_EXTERNAL_ID
 from app.models.enums import UserRole, VehicleStatus
 from app.models.repair import Repair
+from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle, VehicleAssignmentHistory
+from app.application.services.service_catalog import get_service_catalog_names
 
 
 def get_non_placeholder_vehicle_clause():
@@ -47,4 +51,13 @@ def get_repair_visibility_clause(current_user: User):
             Repair.created_by_user_id == current_user.id,
             Repair.is_preliminary.is_(True),
         ),
+    )
+
+
+def get_visible_services_stmt():
+    catalog_names = get_service_catalog_names()
+    return or_(
+        Service.name.in_(catalog_names),
+        Service.created_by_user_id.is_not(None),
+        Service.confirmed_by_user_id.is_not(None),
     )

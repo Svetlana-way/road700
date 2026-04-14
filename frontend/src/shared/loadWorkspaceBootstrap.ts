@@ -1,4 +1,5 @@
-import { apiRequest } from "./api";
+import { apiRequest } from "./apiCore";
+import { REVIEW_QUEUE_PAGE_SIZE } from "./appUiConfig";
 import type {
   DashboardDataQuality,
   DashboardDataQualityDetails,
@@ -37,9 +38,24 @@ export type WorkspaceReviewData = {
   reviewQueueData: ReviewQueueResponse;
 };
 
+async function fetchReviewQueuePage(
+  activeToken: string,
+  reviewCategory: ReviewQueueCategory,
+  limit = REVIEW_QUEUE_PAGE_SIZE,
+  offset = 0,
+): Promise<ReviewQueueResponse> {
+  return apiRequest<ReviewQueueResponse>(
+    `/review/queue?limit=${limit}&offset=${offset}&category=${reviewCategory}`,
+    { method: "GET" },
+    activeToken,
+  );
+}
+
 export async function loadWorkspaceBootstrapData(
   activeToken: string,
   reviewCategory: ReviewQueueCategory,
+  reviewQueueOffset = 0,
+  reviewQueueLimit = REVIEW_QUEUE_PAGE_SIZE,
 ): Promise<WorkspaceBootstrapData> {
   const [
     me,
@@ -52,7 +68,7 @@ export async function loadWorkspaceBootstrapData(
     apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
     apiRequest<DashboardDataQuality>("/dashboard/data-quality", { method: "GET" }, activeToken),
     apiRequest<DocumentsResponse>("/documents?limit=8", { method: "GET" }, activeToken),
-    apiRequest<ReviewQueueResponse>(`/review/queue?limit=6&category=${reviewCategory}`, { method: "GET" }, activeToken),
+    fetchReviewQueuePage(activeToken, reviewCategory, reviewQueueLimit, reviewQueueOffset),
   ]);
 
   return {
@@ -67,12 +83,14 @@ export async function loadWorkspaceBootstrapData(
 export async function loadWorkspaceDataQualityDetails(
   activeToken: string,
 ): Promise<DashboardDataQualityDetails> {
-  return apiRequest<DashboardDataQualityDetails>("/dashboard/data-quality/details?limit=8", { method: "GET" }, activeToken);
+  return apiRequest<DashboardDataQualityDetails>("/dashboard/data-quality/details", { method: "GET" }, activeToken);
 }
 
 export async function loadWorkspaceOperationalData(
   activeToken: string,
   reviewCategory: ReviewQueueCategory,
+  reviewQueueOffset = 0,
+  reviewQueueLimit = REVIEW_QUEUE_PAGE_SIZE,
 ): Promise<OperationalWorkspaceData> {
   const [
     dashboard,
@@ -83,7 +101,7 @@ export async function loadWorkspaceOperationalData(
     apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
     apiRequest<DashboardDataQuality>("/dashboard/data-quality", { method: "GET" }, activeToken),
     apiRequest<DocumentsResponse>("/documents?limit=8", { method: "GET" }, activeToken),
-    apiRequest<ReviewQueueResponse>(`/review/queue?limit=6&category=${reviewCategory}`, { method: "GET" }, activeToken),
+    fetchReviewQueuePage(activeToken, reviewCategory, reviewQueueLimit, reviewQueueOffset),
   ]);
 
   return {
@@ -100,7 +118,7 @@ export async function loadWorkspaceMetricsData(
   const [dashboard, dataQualityPayload, dataQualityDetailsPayload] = await Promise.all([
     apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
     apiRequest<DashboardDataQuality>("/dashboard/data-quality", { method: "GET" }, activeToken),
-    apiRequest<DashboardDataQualityDetails>("/dashboard/data-quality/details?limit=8", { method: "GET" }, activeToken),
+    apiRequest<DashboardDataQualityDetails>("/dashboard/data-quality/details", { method: "GET" }, activeToken),
   ]);
 
   return {
@@ -113,11 +131,13 @@ export async function loadWorkspaceMetricsData(
 export async function loadWorkspaceReviewData(
   activeToken: string,
   reviewCategory: ReviewQueueCategory,
+  reviewQueueOffset = 0,
+  reviewQueueLimit = REVIEW_QUEUE_PAGE_SIZE,
 ): Promise<WorkspaceReviewData> {
   const [dashboard, dataQualityPayload, reviewQueueData] = await Promise.all([
     apiRequest<DashboardSummary>("/dashboard/summary", { method: "GET" }, activeToken),
     apiRequest<DashboardDataQuality>("/dashboard/data-quality", { method: "GET" }, activeToken),
-    apiRequest<ReviewQueueResponse>(`/review/queue?limit=6&category=${reviewCategory}`, { method: "GET" }, activeToken),
+    fetchReviewQueuePage(activeToken, reviewCategory, reviewQueueLimit, reviewQueueOffset),
   ]);
 
   return {

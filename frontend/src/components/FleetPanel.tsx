@@ -12,7 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import type { ChipProps } from "@mui/material/Chip";
-import type { Vehicle, VehicleStatus, VehicleType } from "../shared/workspaceBootstrapTypes";
+import type { Vehicle, VehicleStatus, VehicleType } from "../contracts/domain/workspace";
 
 type FleetPanelProps = {
   viewMode: "list" | "detail";

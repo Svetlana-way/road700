@@ -65,6 +65,7 @@ class HistoricalWorkReferenceListResponse(BaseModel):
     items: list[HistoricalWorkReferenceRead]
     total: int
     limit: int
+    offset: int
     q: Optional[str]
     min_samples: int
 
@@ -88,6 +89,9 @@ class ImportJobRead(BaseModel):
 
 class ImportJobListResponse(BaseModel):
     items: list[ImportJobRead]
+    total: int
+    limit: int
+    offset: int
 
 
 class ImportJobRetryResponse(BaseModel):
@@ -113,6 +117,9 @@ class ImportConflictRead(BaseModel):
 
 class ImportConflictListResponse(BaseModel):
     items: list[ImportConflictRead]
+    total: int
+    limit: int
+    offset: int
 
 
 class ImportConflictResolveRequest(BaseModel):

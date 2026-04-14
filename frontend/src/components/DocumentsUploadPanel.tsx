@@ -18,7 +18,7 @@ import type {
   DocumentStatus,
   ImportJobStatus,
   Vehicle,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 import type { UploadFormState } from "../shared/workspaceFormTypes";
 
 type DocumentKindOption = {
@@ -323,7 +323,7 @@ export function DocumentsUploadPanel({
                         {lastUploadedDocument.repair.mileage > 0 ? ` · пробег ${lastUploadedDocument.repair.mileage}` : ""}
                       </Typography>
                       <Typography className="muted-copy">
-                        Статус: {isDocumentAwaitingOcr(lastUploadedDocument.status)
+                        Статус: {isDocumentAwaitingOcr(lastUploadedDocument.status) || documentHasActiveImportJob(lastUploadedDocument)
                           ? "идет автоматическая проверка"
                           : "автоматическая обработка выполнена"}
                         {typeof lastUploadedDocument.ocr_confidence === "number"

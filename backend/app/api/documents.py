@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from io import BytesIO
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -10,7 +9,39 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app.api.access import get_allowed_vehicle_ids_query, get_non_placeholder_vehicle_clause, get_repair_visibility_clause
+from app.application.documents.actions import (
+    build_document_snapshot,
+    document_displays_queued_ocr_state,
+    ensure_document_is_operational,
+    ensure_document_vehicle_relation,
+    ensure_document_visible_to_user,
+    ensure_repair_is_operational,
+    ensure_vehicle_is_operational,
+    get_payload_mapping,
+    get_visible_repair,
+    load_document_with_relations,
+    log_document_processing_queued_event,
+    mark_document_for_reprocessing,
+    queue_document_processing,
+    queue_document_processing_result,
+    reopen_repair_review_workflow,
+)
+from app.application.imports.document_jobs import get_document_display_import_job
+from app.application.reports.repair_reports import (
+    MANUAL_REVIEW_REASON_LABELS,
+    build_repair_executive_report,
+    build_repair_export_workbook,
+    build_repair_pdf_sections,
+    build_report_status_summary,
+    build_report_workflow_summary,
+    get_report_source_payload,
+    resolve_report_document,
+)
+from app.application.services.visibility import (
+    get_allowed_vehicle_ids_query,
+    get_non_placeholder_vehicle_clause,
+    get_repair_visibility_clause,
+)
 from app.constants.vehicles import PLACEHOLDER_EXTERNAL_ID
 from app.api.deps import get_current_active_user, get_current_admin, get_db
 from app.api.upload_validation import validate_document_upload
@@ -19,7 +50,6 @@ from app.core.paths import resolve_storage_path
 from app.models.audit import AuditLog
 from app.models.document import Document, DocumentVersion
 from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
-from app.models.imports import ImportJob
 from app.models.repair import Repair
 from app.models.service import Service
 from app.models.user import User
@@ -47,26 +77,14 @@ from app.services.document_repair_relations import (
     PRIMARY_DOCUMENT_KINDS,
     assign_primary_document,
     build_canonical_source_document_id_expr,
-    ensure_repair_vehicle_relation,
     get_repair_source_document,
     is_document_primary_eligible,
     normalize_repair_primary_document,
 )
 from app.services.document_versions import get_latest_document_version, get_latest_parsed_payload
-from app.services.document_processing import normalize_compare_token, normalize_plate_compare_token
-from app.services.import_jobs import enqueue_document_processing_job, get_document_display_import_job
+from app.services.document_parsers.field_extractors import normalize_compare_token, normalize_plate_compare_token
 from app.services.exporting import safe_filename
 from app.services.pdf_tools import merge_images_to_pdf, render_text_report_pdf
-from app.api.repairs import (
-    MANUAL_REVIEW_REASON_LABELS,
-    build_repair_executive_report,
-    build_repair_export_workbook,
-    build_repair_pdf_sections,
-    build_report_status_summary,
-    build_report_workflow_summary,
-    get_report_source_payload,
-    resolve_report_document,
-)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 COMPARISON_REVIEW_ACTIONS = {"keep_current_primary", "make_document_primary", "mark_reviewed"}
@@ -94,17 +112,6 @@ def get_visible_vehicle(
     stmt = select(Vehicle).where(Vehicle.id == vehicle_id)
     if current_user.role != UserRole.ADMIN:
         stmt = stmt.where(Vehicle.id.in_(get_allowed_vehicle_ids_query(current_user)))
-    return db.scalar(stmt)
-
-
-def get_visible_repair(
-    db: Session,
-    current_user: User,
-    repair_id: int,
-) -> Optional[Repair]:
-    stmt = select(Repair).where(Repair.id == repair_id)
-    if current_user.role != UserRole.ADMIN:
-        stmt = stmt.where(get_repair_visibility_clause(current_user))
     return db.scalar(stmt)
 
 
@@ -274,21 +281,6 @@ def build_document_upload_artifact(
     }
 
 
-def load_document_with_relations(db: Session, document_id: int) -> Optional[Document]:
-    stmt = (
-        select(Document)
-        .options(
-            joinedload(Document.repair).joinedload(Repair.vehicle),
-            joinedload(Document.repair).joinedload(Repair.service),
-            joinedload(Document.repair).selectinload(Repair.documents),
-            joinedload(Document.versions),
-            joinedload(Document.import_jobs),
-        )
-        .where(Document.id == document_id)
-    )
-    return db.execute(stmt).unique().scalar_one_or_none()
-
-
 def get_visible_document(
     db: Session,
     current_user: User,
@@ -299,60 +291,6 @@ def get_visible_document(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     ensure_document_visible_to_user(db, current_user, document)
     return document
-
-
-def ensure_vehicle_is_operational(vehicle: Vehicle) -> None:
-    if vehicle.status == VehicleStatus.ARCHIVED:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Archived vehicles cannot be used in operational actions")
-
-
-def ensure_document_visible_to_user(db: Session, current_user: User, document: Document) -> None:
-    if document.repair is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    if current_user.role == UserRole.ADMIN:
-        return
-
-    visible_repair = get_visible_repair(db, current_user, document.repair.id)
-    if visible_repair is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    if (
-        document.status == DocumentStatus.ARCHIVED
-        or document.repair.status == RepairStatus.ARCHIVED
-        or document.repair.vehicle is None
-        or document.repair.vehicle.status == VehicleStatus.ARCHIVED
-        or (document.repair.service is not None and document.repair.service.status == ServiceStatus.ARCHIVED)
-    ):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-
-
-def ensure_document_vehicle_relation(document: Document) -> None:
-    if document.repair is None or document.repair.vehicle is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-
-
-def ensure_repair_is_operational(repair: Repair) -> None:
-    ensure_repair_vehicle_relation(repair)
-    if repair.status == RepairStatus.ARCHIVED:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Archived repairs cannot be modified")
-    ensure_vehicle_is_operational(repair.vehicle)
-    if repair.service is not None and repair.service.status == ServiceStatus.ARCHIVED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Repairs for archived services cannot be modified",
-        )
-
-
-def ensure_document_is_operational(document: Document) -> None:
-    if document.status == DocumentStatus.ARCHIVED:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Archived documents cannot be modified")
-    ensure_document_vehicle_relation(document)
-    ensure_repair_is_operational(document.repair)
-
-
-def reopen_repair_review_workflow(repair: Repair) -> None:
-    if repair.status in {RepairStatus.CONFIRMED, RepairStatus.EMPLOYEE_CONFIRMED}:
-        repair.status = RepairStatus.IN_REVIEW
-        repair.is_preliminary = True
 
 
 def get_or_create_placeholder_vehicle(db: Session) -> Vehicle:
@@ -503,25 +441,6 @@ def build_primary_document_snapshot(repair: Repair, documents: list[Document]) -
             }
             for item in sorted(documents, key=lambda item: item.id)
         ],
-    }
-
-
-def build_document_snapshot(document: Document) -> dict:
-    latest_payload = get_latest_parsed_payload(document)
-    extracted_fields = get_payload_mapping(latest_payload, "extracted_fields")
-    source_document = get_repair_source_document(document.repair) if document.repair is not None else None
-    return {
-        "document_id": document.id,
-        "repair_id": document.repair_id,
-        "original_filename": document.original_filename,
-        "kind": document.kind.value,
-        "status": document.status.value,
-        "repair_status": document.repair.status.value if document.repair is not None else None,
-        "is_preliminary": bool(document.repair.is_preliminary) if document.repair is not None else None,
-        "is_primary": source_document is not None and source_document.id == document.id,
-        "review_queue_priority": document.review_queue_priority,
-        "ocr_confidence": document.ocr_confidence,
-        "order_number": extracted_fields.get("order_number"),
     }
 
 
@@ -790,125 +709,6 @@ def log_document_upload_event(
             new_value=snapshot,
         )
     )
-
-
-def log_document_processing_queued_event(
-    db: Session,
-    current_user: User,
-    *,
-    document_id: int,
-    old_snapshot: dict,
-) -> Document:
-    refreshed_document = load_document_with_relations(db, document_id)
-    if refreshed_document is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Не удалось обновить документ")
-
-    new_snapshot = build_document_snapshot(refreshed_document)
-    if old_snapshot != new_snapshot:
-        db.add(
-            AuditLog(
-                user_id=current_user.id,
-                entity_type="document",
-                entity_id=str(refreshed_document.id),
-                action_type="document_processing_queued",
-                old_value=old_snapshot,
-                new_value=new_snapshot,
-            )
-        )
-    return refreshed_document
-
-
-def mark_document_for_reprocessing(db: Session, document_id: int, *, current_user: User | None = None) -> Document:
-    document = load_document_with_relations(db, document_id)
-    if document is None or document.repair is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    ensure_document_is_operational(document)
-
-    reopen_repair_review_workflow(document.repair)
-    document.status = DocumentStatus.UPLOADED
-    document.review_queue_priority = 100
-    document.ocr_confidence = None
-    next_version_number = max((item.version_number for item in document.versions), default=0) + 1
-    parsed_payload = {
-        "pipeline": "reprocessing",
-        "document_kind": document.kind.value,
-        "ocr_status": "queued",
-        "repair_id": document.repair.id,
-    }
-    if current_user is not None:
-        parsed_payload["queued_by_user_id"] = current_user.id
-
-    db.add(
-        DocumentVersion(
-            document_id=document.id,
-            version_number=next_version_number,
-            storage_key=document.storage_key,
-            parsed_payload=parsed_payload,
-            field_confidence_map={},
-            change_summary="Queued for reprocessing",
-        )
-    )
-    db.flush()
-
-    refreshed_document = load_document_with_relations(db, document_id)
-    if refreshed_document is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Не удалось обновить документ")
-    return refreshed_document
-
-
-def document_displays_queued_ocr_state(document: Document) -> bool:
-    if document.status != DocumentStatus.UPLOADED or document.ocr_confidence is not None:
-        return False
-    return get_latest_parsed_payload(document).get("ocr_status") == "queued"
-
-
-@dataclass(frozen=True)
-class QueueDocumentProcessingResult:
-    job_id: int
-    job_status: str
-    queued: bool
-
-
-def queue_document_processing_result(
-    db: Session,
-    document_id: int,
-    *,
-    retry_failed: bool = False,
-    recheck: bool = False,
-) -> QueueDocumentProcessingResult:
-    document = load_document_with_relations(db, document_id)
-    if document is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    ensure_document_is_operational(document)
-    job, created = enqueue_document_processing_job(db, document, retry_failed=retry_failed)
-    refreshed_document_state = False
-    if recheck and (created or not document_displays_queued_ocr_state(document)):
-        mark_document_for_reprocessing(db, document_id)
-        refreshed_document_state = True
-    return QueueDocumentProcessingResult(
-        job_id=job.id,
-        job_status=job.status.value,
-        queued=created or refreshed_document_state,
-    )
-
-
-def queue_document_processing(
-    db: Session,
-    document_id: int,
-    *,
-    retry_failed: bool = False,
-    recheck: bool = False,
-):
-    result = queue_document_processing_result(
-        db,
-        document_id,
-        retry_failed=retry_failed,
-        recheck=recheck,
-    )
-    job = db.get(ImportJob, result.job_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Document processing job not found")
-    return job
 
 
 def build_operational_document_id_query():

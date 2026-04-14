@@ -1,5 +1,5 @@
 import { Button, Grid, Paper, Stack, TextField, Typography } from "@mui/material";
-import type { EditablePartDraft, EditableRepairDraft, EditableWorkDraft } from "../shared/repairUiHelpers";
+import type { EditablePartDraft, EditableRepairDraft, EditableWorkDraft } from "../entities/repair/helpers";
 
 type RepairTab = "overview" | "works" | "parts" | "documents" | "checks" | "history";
 

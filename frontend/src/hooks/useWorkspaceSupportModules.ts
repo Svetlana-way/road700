@@ -8,7 +8,7 @@ import { useReviewRulesAdmin } from "./useReviewRulesAdmin";
 import { useServicesAdmin } from "./useServicesAdmin";
 import { useWorkspaceOperations } from "./useWorkspaceOperations";
 import type { AdminTab, TechAdminTab, WorkspaceTab } from "../shared/appRoute";
-import type { UserRole } from "../shared/workspaceBootstrapTypes";
+import type { UserRole } from "../contracts/domain/workspace";
 
 type UseWorkspaceSupportModulesParams = {
   token: string | null;

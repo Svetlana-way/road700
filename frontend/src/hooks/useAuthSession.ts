@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { TOKEN_STORAGE_KEY, apiRequest, loginRequest } from "../shared/api";
 import type {
   ChangePasswordResponse,
   LoginResponse,
   PasswordResetConfirmResponse,
   PasswordResetRequestResponse,
-} from "../shared/authApiTypes";
+} from "../contracts/api/auth";
+import { loginRequest } from "../features/auth/api";
+import { TOKEN_STORAGE_KEY, apiRequest } from "../shared/apiCore";
 
 const POST_LOGOUT_MESSAGE_STORAGE_KEY = "road700.post_logout_message";
 

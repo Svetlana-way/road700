@@ -17,7 +17,7 @@ import type {
   DocumentStatus,
   ImportJobStatus,
   UserRole,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 
 type DocumentsListPanelProps = {
   userRole: UserRole | null | undefined;

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, apiRequest } from "../shared/api";
-import type { DocumentReport, RepairDetail } from "../shared/repairDetailTypes";
+import { ApiError, apiRequest } from "../shared/apiCore";
+import type { DocumentReport, RepairDetail } from "../contracts/domain/repair";
 
 type UseSelectedDocumentReportParams = {
   token: string | null;

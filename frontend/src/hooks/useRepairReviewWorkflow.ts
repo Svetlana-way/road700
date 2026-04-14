@@ -1,20 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import { buildReviewFieldsPayload, buildServicePayload } from "../shared/adminPayloadBuilders";
-import { apiRequest, downloadDocumentFile } from "../shared/api";
-import { isPlaceholderVehicle } from "../shared/fleetDocumentHelpers";
-import { createReviewRepairFieldsDraft, getDocumentPreviewKind } from "../shared/repairUiHelpers";
-import type { RepairDetail } from "../shared/repairDetailTypes";
 import type {
   DocumentCreateVehicleResponse,
   ReviewActionResponse,
-} from "../shared/repairWorkflowApiTypes";
+} from "../contracts/api/repairWorkflow";
+import { buildReviewFieldsPayload, buildServicePayload } from "../shared/adminPayloadBuilders";
+import { downloadDocumentFile } from "../features/documents/api";
+import { isPlaceholderVehicle } from "../entities/vehicle/helpers";
+import { createReviewRepairFieldsDraft, getDocumentPreviewKind } from "../entities/repair/helpers";
+import { fetchAllMatchingVehicles } from "../features/fleet/api";
+import { apiRequest } from "../shared/apiCore";
+import type { RepairDetail } from "../contracts/domain/repair";
 import type {
   ReviewDecisionItem,
   ServiceItem,
   UserRole,
   Vehicle,
-  VehiclesResponse,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 import type { ReviewRepairFieldsDraft, ServiceFormState } from "../shared/workspaceFormTypes";
 
 type RepairDocumentExtractedFields = Record<string, unknown> | null | undefined;
@@ -217,7 +218,7 @@ export function useRepairReviewWorkflow({
       );
       setSuccessMessage(result.message);
       setReviewActionComment("");
-      await refreshWorkspace("review");
+      await refreshWorkspace("documents");
       await openRepairByIds(result.document_id, result.repair_id);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось применить действие по проверке");
@@ -255,7 +256,7 @@ export function useRepairReviewWorkflow({
       }
       setReviewServiceName(savedRepair.service?.name || "");
       setSuccessMessage(savedRepair.service ? "Сервис назначен ремонту" : "Сервис у ремонта очищен");
-      await refreshWorkspace("review");
+      await refreshWorkspace("documents");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось назначить сервис");
     } finally {
@@ -330,10 +331,7 @@ export function useRepairReviewWorkflow({
     reviewVehicleSearchRequestIdRef.current = requestId;
     setReviewVehicleSearchLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set("limit", "20");
-      params.set("search", search.trim());
-      const payload = await apiRequest<VehiclesResponse>(`/vehicles?${params.toString()}`, { method: "GET" }, token);
+      const payload = await fetchAllMatchingVehicles(token, search.trim());
       if (reviewVehicleSearchRequestIdRef.current !== requestId) {
         return;
       }
@@ -382,7 +380,7 @@ export function useRepairReviewWorkflow({
       );
       setSuccessMessage(result.message);
       setReviewVehicleSearchResults([]);
-      await refreshWorkspace("review");
+      await refreshWorkspace("documents");
       await openRepairByIds(result.document.id, result.repair_id);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось привязать технику");
@@ -466,7 +464,7 @@ export function useRepairReviewWorkflow({
       setRepairDraft(savedRepair);
       setReviewFieldDraft(createReviewRepairFieldsDraft(savedRepair));
       setSuccessMessage("Поля проверки сохранены");
-      await refreshWorkspace("review");
+      await refreshWorkspace("documents");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Не удалось сохранить поля проверки");
     } finally {

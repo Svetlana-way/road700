@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { AdminTab, WorkspaceTab } from "../shared/appRoute";
 import { buildReviewRulePayload } from "../shared/adminPayloadBuilders";
-import { apiRequest } from "../shared/api";
+import { apiRequest } from "../shared/apiCore";
 import { createEmptyReviewRuleForm, createReviewRuleFormFromItem } from "../shared/formStateFactories";
-import type { ReviewRuleItem, ReviewRuleResponse, UserRole } from "../shared/workspaceBootstrapTypes";
+import type { ReviewRuleItem, ReviewRuleResponse, UserRole } from "../contracts/domain/workspace";
 import type { ReviewRuleFormState } from "../shared/workspaceFormTypes";
 
 type UseReviewRulesAdminParams = {

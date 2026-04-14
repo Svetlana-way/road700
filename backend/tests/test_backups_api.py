@@ -263,6 +263,146 @@ class BackupsApiTestCase(unittest.TestCase):
                 )
         self.assertEqual(file_path.read_text(encoding="utf-8"), "mutated after backup")
 
+    def test_restore_database_snapshot_heals_legacy_foreign_source_document_drift(self) -> None:
+        with self.SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            service = db.scalar(select(Service).where(Service.name == "Backup Service"))
+            self.assertIsNotNone(admin)
+            self.assertIsNotNone(service)
+            assert admin is not None
+            assert service is not None
+
+            foreign_vehicle = Vehicle(
+                external_id="backup-foreign-truck",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="B002BB116",
+                brand="Volvo",
+                model="Foreign Carrier",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(foreign_vehicle)
+            db.flush()
+
+            foreign_repair = Repair(
+                order_number="BACKUP-FOREIGN-001",
+                repair_date=date(2025, 3, 2),
+                vehicle_id=foreign_vehicle.id,
+                service_id=service.id,
+                created_by_user_id=admin.id,
+                mileage=120000,
+                work_total=0,
+                parts_total=0,
+                vat_total=0,
+                grand_total=0,
+                status=RepairStatus.IN_REVIEW,
+                is_preliminary=True,
+                is_partially_recognized=False,
+            )
+            db.add(foreign_repair)
+            db.flush()
+
+            foreign_document = Document(
+                repair_id=foreign_repair.id,
+                uploaded_by_user_id=admin.id,
+                original_filename="backup-foreign-order.pdf",
+                storage_key="documents/backup-foreign-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=100,
+            )
+            db.add(foreign_document)
+            db.flush()
+
+            foreign_repair.source_document_id = foreign_document.id
+            db.commit()
+
+            local_repair = db.scalar(select(Repair).where(Repair.order_number == "BACKUP-001"))
+            local_document = db.scalar(select(Document).where(Document.original_filename == "backup-order.pdf"))
+            self.assertIsNotNone(local_repair)
+            self.assertIsNotNone(local_document)
+            assert local_repair is not None
+            assert local_document is not None
+
+            local_repair_id = local_repair.id
+            local_document_id = local_document.id
+            foreign_document_id = foreign_document.id
+
+            snapshot = backups_service.build_database_snapshot(db)
+
+        repair_rows = next(table["rows"] for table in snapshot["tables"] if table["table"] == "repairs")
+        document_rows = next(table["rows"] for table in snapshot["tables"] if table["table"] == "documents")
+        for row in repair_rows:
+            if row["id"] == local_repair_id:
+                row["source_document_id"] = foreign_document_id
+        for row in document_rows:
+            if row["id"] == local_document_id:
+                row["is_primary"] = False
+
+        with self.engine.begin() as connection:
+            backups_service.restore_database_snapshot(connection, snapshot)
+
+        with self.SessionLocal() as db:
+            restored_local_repair = db.get(Repair, local_repair_id)
+            restored_local_document = db.get(Document, local_document_id)
+            restored_foreign_document = db.get(Document, foreign_document_id)
+            self.assertIsNotNone(restored_local_repair)
+            self.assertIsNotNone(restored_local_document)
+            self.assertIsNotNone(restored_foreign_document)
+            assert restored_local_repair is not None
+            assert restored_local_document is not None
+            assert restored_foreign_document is not None
+
+            self.assertEqual(restored_local_repair.source_document_id, local_document_id)
+            self.assertTrue(restored_local_document.is_primary)
+            self.assertTrue(restored_foreign_document.is_primary)
+
+    def test_restore_database_snapshot_preserves_string_boolean_literals(self) -> None:
+        with self.SessionLocal() as db:
+            repair = db.scalar(select(Repair).where(Repair.order_number == "BACKUP-001"))
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            repair_id = repair.id
+            snapshot = backups_service.build_database_snapshot(db)
+
+        repair_rows = next(table["rows"] for table in snapshot["tables"] if table["table"] == "repairs")
+        for row in repair_rows:
+            if row["id"] == repair_id:
+                row["is_preliminary"] = "false"
+                row["is_partially_recognized"] = "false"
+                row["is_manually_completed"] = "true"
+
+        with self.engine.begin() as connection:
+            backups_service.restore_database_snapshot(connection, snapshot)
+
+        with self.SessionLocal() as db:
+            restored_repair = db.get(Repair, repair_id)
+            self.assertIsNotNone(restored_repair)
+            assert restored_repair is not None
+
+            self.assertFalse(restored_repair.is_preliminary)
+            self.assertFalse(restored_repair.is_partially_recognized)
+            self.assertTrue(restored_repair.is_manually_completed)
+
+    def test_restore_database_snapshot_rejects_invalid_boolean_literals(self) -> None:
+        with self.SessionLocal() as db:
+            repair = db.scalar(select(Repair).where(Repair.order_number == "BACKUP-001"))
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            repair_id = repair.id
+            snapshot = backups_service.build_database_snapshot(db)
+
+        repair_rows = next(table["rows"] for table in snapshot["tables"] if table["table"] == "repairs")
+        for row in repair_rows:
+            if row["id"] == repair_id:
+                row["is_preliminary"] = "maybe"
+
+        with self.engine.begin() as connection:
+            with self.assertRaises(backups_service.CorruptBackupError):
+                backups_service.restore_database_snapshot(connection, snapshot)
+
     def test_backup_paths_reject_traversal_backup_ids(self) -> None:
         with self.assertRaises(backups_service.InvalidBackupIdError):
             backups_service.archive_path_for("../../outside")

@@ -12,7 +12,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import type { OcrLearningSignalItem, OcrLearningSummaryItem } from "../shared/workspaceBootstrapTypes";
+import type { OcrLearningSignalItem, OcrLearningSummaryItem } from "../contracts/domain/workspace";
 
 type OcrLearningAdminPanelProps = {
   ocrLearningStatusFilter: string;

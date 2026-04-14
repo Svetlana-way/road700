@@ -9,8 +9,14 @@ from openpyxl import Workbook
 from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.access import get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.application.documents.support import (
+    build_manual_review_check,
+    replace_ocr_checks,
+    resolve_service,
+)
+from app.application.imports.document_jobs import get_document_display_import_job
+from app.application.services.visibility import get_repair_visibility_clause
 from app.core.paths import get_storage_root, resolve_storage_path
 from app.models.audit import AuditLog
 from app.models.document import Document
@@ -29,12 +35,9 @@ from app.schemas.repair import (
     RepairServiceUpdateRequest,
     RepairUpdateRequest,
 )
-from app.services.document_processing import (
+from app.services.document_metadata import (
     add_manual_review_reason,
-    build_manual_review_check,
     remove_manual_review_reason,
-    replace_ocr_checks,
-    resolve_service,
 )
 from app.services.document_repair_relations import (
     ensure_repair_vehicle_relation,
@@ -43,7 +46,6 @@ from app.services.document_repair_relations import (
 )
 from app.services.document_versions import get_latest_document_version, get_latest_parsed_payload
 from app.services.exporting import append_rows, safe_filename
-from app.services.import_jobs import get_document_display_import_job
 from app.services.pdf_tools import render_text_report_pdf
 from app.services.repair_report_analysis import build_repair_executive_report
 from app.services.review_queue import has_open_suspicious_checks

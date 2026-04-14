@@ -197,6 +197,49 @@ class SyncServiceCatalogTestCase(unittest.TestCase):
             assert repair is not None
             self.assertIsNone(repair.service_id)
 
+    def test_sync_service_catalog_skips_attachment_only_repairs_during_backfill(self) -> None:
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, self.repair_id)
+            source_document = db.scalar(select(Document).where(Document.repair_id == self.repair_id, Document.is_primary.is_(True)))
+            admin = db.scalar(select(User).where(User.login == "admin"))
+            self.assertIsNotNone(repair)
+            self.assertIsNotNone(source_document)
+            self.assertIsNotNone(admin)
+            assert repair is not None
+            assert source_document is not None
+            assert admin is not None
+
+            active_service = Service(
+                name="ООО «АХВ Трак Сервис»",
+                status=ServiceStatus.CONFIRMED,
+                city="Kazan",
+                created_by_user_id=admin.id,
+                confirmed_by_user_id=admin.id,
+            )
+            db.add(active_service)
+            db.flush()
+
+            source_document.kind = DocumentKind.ATTACHMENT
+            source_document.is_primary = False
+            repair.source_document_id = None
+            active_version = db.scalar(select(DocumentVersion).where(DocumentVersion.document_id == source_document.id))
+            self.assertIsNotNone(active_version)
+            assert active_version is not None
+            active_version.parsed_payload = {"source_path": "AXB/attachment-only.pdf"}
+            db.commit()
+
+        with patch.object(sync_service_catalog, "SessionLocal", self.SessionLocal):
+            stats = sync_service_catalog.sync_service_catalog()
+
+        self.assertEqual(stats.repairs_updated, 0)
+        self.assertEqual(stats.repairs_skipped, 1)
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, self.repair_id)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            self.assertIsNone(repair.service_id)
+
     def test_sync_service_catalog_skips_archived_repairs_during_backfill(self) -> None:
         with self.SessionLocal() as db:
             repair = db.get(Repair, self.repair_id)

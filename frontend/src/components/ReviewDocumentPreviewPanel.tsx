@@ -1,5 +1,5 @@
 import { Box, Button, Chip, CircularProgress, Paper, Stack, Typography } from "@mui/material";
-import type { DocumentKind, DocumentStatus } from "../shared/workspaceBootstrapTypes";
+import type { DocumentKind, DocumentStatus } from "../contracts/domain/workspace";
 
 type ReviewDocumentPreviewPanelProps = {
   document: {

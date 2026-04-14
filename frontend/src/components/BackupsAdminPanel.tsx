@@ -13,7 +13,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import type { BackupItem } from "../shared/backupAdminTypes";
+import type { BackupItem } from "../contracts/api/backup";
 
 const BACKUP_SECTION_LABELS: Record<BackupItem["included_sections"][number] | BackupItem["excluded_sections"][number], string> = {
   database: "база данных",

@@ -8,7 +8,7 @@ from app.api.deps import get_current_admin, get_db
 from app.models.ocr_rule import OcrRule
 from app.models.user import User
 from app.schemas.ocr_rule import OcrRuleCreate, OcrRuleListResponse, OcrRuleRead, OcrRuleUpdate
-from app.services.document_processing import ensure_default_ocr_rules, normalize_ocr_rule_code
+from app.services.ocr_profiles import ensure_default_ocr_rules, normalize_ocr_rule_code
 
 
 router = APIRouter(prefix="/ocr-rules", tags=["ocr-rules"])
@@ -69,8 +69,13 @@ def list_ocr_rules(
     if profile_scope:
         stmt = stmt.where(OcrRule.profile_scope == profile_scope)
     items = db.scalars(stmt).all()
-    profile_scopes = db.scalars(select(distinct(OcrRule.profile_scope)).order_by(OcrRule.profile_scope.asc())).all()
-    target_fields = db.scalars(select(distinct(OcrRule.target_field)).order_by(OcrRule.target_field.asc())).all()
+    profile_scopes_stmt = select(distinct(OcrRule.profile_scope))
+    target_fields_stmt = select(distinct(OcrRule.target_field))
+    if profile_scope:
+        profile_scopes_stmt = profile_scopes_stmt.where(OcrRule.profile_scope == profile_scope)
+        target_fields_stmt = target_fields_stmt.where(OcrRule.profile_scope == profile_scope)
+    profile_scopes = db.scalars(profile_scopes_stmt.order_by(OcrRule.profile_scope.asc())).all()
+    target_fields = db.scalars(target_fields_stmt.order_by(OcrRule.target_field.asc())).all()
     return OcrRuleListResponse(
         items=[OcrRuleRead.model_validate(item) for item in items],
         profile_scopes=[item for item in profile_scopes if item],

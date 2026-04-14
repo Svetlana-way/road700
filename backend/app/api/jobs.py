@@ -2,9 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.access import get_repair_visibility_clause
-from app.api.documents import ensure_document_is_operational
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.application.documents.actions import (
+    build_document_snapshot,
+    ensure_document_is_operational,
+    log_document_processing_queued_event,
+    queue_document_processing,
+)
+from app.application.imports.serializers import serialize_import_job
+from app.application.services.visibility import get_repair_visibility_clause
 from app.models.document import Document
 from app.models.enums import DocumentStatus, ImportStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus
 from app.models.imports import ImportJob
@@ -13,10 +19,6 @@ from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.schemas.imports import ImportJobRead, ImportJobRetryResponse
-from app.api.imports import serialize_import_job
-from app.services.import_jobs import enqueue_document_processing_job
-
-
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
@@ -55,7 +57,7 @@ def get_job(
 def retry_job(
     job_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    current_admin: User = Depends(get_current_admin),
 ) -> ImportJobRetryResponse:
     job = db.get(ImportJob, job_id)
     if job is None:
@@ -73,9 +75,16 @@ def retry_job(
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     ensure_document_is_operational(document)
+    old_snapshot = build_document_snapshot(document)
 
     try:
-        retried_job, _ = enqueue_document_processing_job(db, document, retry_failed=True)
+        retried_job = queue_document_processing(db, document.id, retry_failed=True, recheck=True)
+        log_document_processing_queued_event(
+            db,
+            current_admin,
+            document_id=document.id,
+            old_snapshot=old_snapshot,
+        )
         db.commit()
     except Exception:
         db.rollback()

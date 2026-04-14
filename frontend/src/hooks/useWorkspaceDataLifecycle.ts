@@ -9,7 +9,7 @@ import {
   loadWorkspaceReviewData,
   type WorkspaceRefreshScope,
 } from "../shared/loadWorkspaceBootstrap";
-import { repairHasDocumentsAwaitingOcr, type RepairDetailForDraft } from "../shared/repairUiHelpers";
+import { repairHasDocumentsAwaitingOcr, type RepairDetailForDraft } from "../entities/repair/helpers";
 import type {
   DashboardDataQuality,
   DashboardDataQualityDetails,
@@ -18,8 +18,8 @@ import type {
   ReviewQueueCategory,
   ReviewQueueItem,
   User,
-} from "../shared/workspaceBootstrapTypes";
-import { documentHasActiveImportJob, isDocumentAwaitingOcr } from "../shared/displayFormatters";
+} from "../contracts/domain/workspace";
+import { documentHasActiveImportJob, isDocumentAwaitingOcr } from "../entities/document/formatters";
 
 type ReviewQueueCounts = Record<ReviewQueueCategory, number>;
 
@@ -35,6 +35,8 @@ export type WorkspaceStateAppliers = {
   setDocuments: (value: DocumentItem[]) => void;
   setReviewQueue: (value: ReviewQueueItem[]) => void;
   setReviewQueueCounts: (value: ReviewQueueCounts) => void;
+  setReviewQueueTotal: (value: number) => void;
+  setReviewQueueOffset: Dispatch<SetStateAction<number>>;
   setSelectedDocumentId: (value: number | null) => void;
   clearSelectedRepair: () => void;
   setLastUploadedDocument: Dispatch<SetStateAction<DocumentItem | null>>;
@@ -71,6 +73,8 @@ type UseWorkspaceDataLifecycleParams = {
   token: string | null;
   activeWorkspaceTab: WorkspaceTab;
   selectedReviewCategory: ReviewQueueCategory;
+  reviewQueueLimit: number;
+  reviewQueueOffset: number;
   selectedDocumentId: number | null;
   documents: DocumentItem[];
   reviewQueue: ReviewQueueItem[];
@@ -124,8 +128,17 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
       if (!current) {
         return current;
       }
-      return items.find((item) => item.id === current.id) ?? current;
+      return items.find((item) => item.id === current.id) ?? null;
     });
+  }
+
+  function ensureReviewQueuePageInRange(total: number, limit: number, offset: number): boolean {
+    if (total <= 0 || offset < total) {
+      return false;
+    }
+    const lastValidOffset = Math.max(Math.floor((total - 1) / Math.max(limit, 1)) * Math.max(limit, 1), 0);
+    latestRef.current.workspaceState.setReviewQueueOffset(lastValidOffset);
+    return true;
   }
 
   async function loadWorkspace(
@@ -133,7 +146,7 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
     reviewCategory: ReviewQueueCategory = latestRef.current.selectedReviewCategory,
     options?: { silent?: boolean; scope?: WorkspaceRefreshScope },
   ) {
-    const { invalidateSession, workspaceState } = latestRef.current;
+    const { invalidateSession, workspaceState, reviewQueueLimit, reviewQueueOffset } = latestRef.current;
     const silent = options?.silent ?? false;
     const scope = options?.scope ?? "full";
     const requestId = workspaceLoadRequestIdRef.current + 1;
@@ -144,8 +157,11 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
     }
     try {
       if (scope === "documents") {
-        const data = await loadWorkspaceOperationalData(activeToken, reviewCategory);
+        const data = await loadWorkspaceOperationalData(activeToken, reviewCategory, reviewQueueOffset, reviewQueueLimit);
         if (workspaceLoadRequestIdRef.current !== requestId) {
+          return;
+        }
+        if (ensureReviewQueuePageInRange(data.reviewQueueData.total, reviewQueueLimit, reviewQueueOffset)) {
           return;
         }
         workspaceState.setSummary(data.dashboard);
@@ -153,6 +169,7 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
         syncRecentDocuments(data.recentDocuments.items);
         workspaceState.setReviewQueue(data.reviewQueueData.items);
         workspaceState.setReviewQueueCounts(data.reviewQueueData.counts);
+        workspaceState.setReviewQueueTotal(data.reviewQueueData.total);
       } else if (scope === "metrics") {
         const data = await loadWorkspaceMetricsData(activeToken);
         if (workspaceLoadRequestIdRef.current !== requestId) {
@@ -162,17 +179,24 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
         workspaceState.setDataQuality(data.dataQualityPayload);
         workspaceState.setDataQualityDetails(data.dataQualityDetailsPayload);
       } else if (scope === "review") {
-        const data = await loadWorkspaceReviewData(activeToken, reviewCategory);
+        const data = await loadWorkspaceReviewData(activeToken, reviewCategory, reviewQueueOffset, reviewQueueLimit);
         if (workspaceLoadRequestIdRef.current !== requestId) {
+          return;
+        }
+        if (ensureReviewQueuePageInRange(data.reviewQueueData.total, reviewQueueLimit, reviewQueueOffset)) {
           return;
         }
         workspaceState.setSummary(data.dashboard);
         workspaceState.setDataQuality(data.dataQualityPayload);
         workspaceState.setReviewQueue(data.reviewQueueData.items);
         workspaceState.setReviewQueueCounts(data.reviewQueueData.counts);
+        workspaceState.setReviewQueueTotal(data.reviewQueueData.total);
       } else {
-        const data = await loadWorkspaceBootstrapData(activeToken, reviewCategory);
+        const data = await loadWorkspaceBootstrapData(activeToken, reviewCategory, reviewQueueOffset, reviewQueueLimit);
         if (workspaceLoadRequestIdRef.current !== requestId) {
+          return;
+        }
+        if (ensureReviewQueuePageInRange(data.reviewQueueData.total, reviewQueueLimit, reviewQueueOffset)) {
           return;
         }
 
@@ -183,6 +207,7 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
         syncRecentDocuments(data.recentDocuments.items);
         workspaceState.setReviewQueue(data.reviewQueueData.items);
         workspaceState.setReviewQueueCounts(data.reviewQueueData.counts);
+        workspaceState.setReviewQueueTotal(data.reviewQueueData.total);
       }
       if (!silent) {
         workspaceState.setErrorMessage("");
@@ -245,6 +270,8 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
       resetters.resetHistoricalImportsState();
       workspaceState.setReviewQueue([]);
       workspaceState.setReviewQueueCounts(EMPTY_REVIEW_QUEUE_COUNTS);
+      workspaceState.setReviewQueueTotal(0);
+      workspaceState.setReviewQueueOffset(0);
       workspaceState.setSelectedDocumentId(null);
       workspaceState.clearSelectedRepair();
       resetters.setDocumentVehicleFormToEmpty();
@@ -253,7 +280,7 @@ export function useWorkspaceDataLifecycle(params: UseWorkspaceDataLifecycleParam
     const nextScope = lastBootstrapTokenRef.current === token ? "documents" : "full";
     lastBootstrapTokenRef.current = token;
     void loadWorkspace(token, selectedReviewCategory, { scope: nextScope });
-  }, [params.selectedReviewCategory, params.token]);
+  }, [params.reviewQueueLimit, params.reviewQueueOffset, params.selectedReviewCategory, params.token]);
 
   useEffect(() => {
     const { token, dataQualityDetails } = latestRef.current;

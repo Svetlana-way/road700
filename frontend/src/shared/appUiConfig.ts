@@ -88,6 +88,7 @@ export const reviewQueueFilters: Array<{ key: ReviewQueueCategory; label: string
   { key: "employee_confirmation", label: "Ждут подтверждения" },
   { key: "manual_review", label: "Ручная проверка" },
 ];
+export const REVIEW_QUEUE_PAGE_SIZE = 25;
 
 export const historyFilters: Array<{ key: HistoryFilter; label: string }> = [
   { key: "all", label: "Все события" },

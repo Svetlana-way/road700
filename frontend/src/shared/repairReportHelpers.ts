@@ -1,4 +1,4 @@
-import { formatCompactNumber, formatHours, formatMoney } from "./displayFormatters";
+import { formatCompactNumber, formatHours, formatMoney } from "./formattersCore";
 
 type RepairWorkLike = {
   reference_payload: Record<string, unknown> | null;

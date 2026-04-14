@@ -7,9 +7,9 @@ import type {
   RepairDocumentHistoryEntry,
   RepairHistoryEntry,
   RepairWorkItem,
-} from "../shared/repairDetailTypes";
+} from "../contracts/domain/repair";
 import type { CheckSeverity, HistoryFilter } from "../shared/workspaceViewTypes";
-import type { DocumentKind } from "../shared/workspaceBootstrapTypes";
+import type { DocumentKind } from "../contracts/domain/workspace";
 
 type RepairReadOnlySectionsProps = {
   activeRepairTab: RepairTab;

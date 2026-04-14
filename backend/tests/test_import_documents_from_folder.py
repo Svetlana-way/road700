@@ -582,6 +582,82 @@ class ImportDocumentsFromFolderTestCase(unittest.TestCase):
             assert repair is not None
             self.assertEqual(repair.vehicle_id, placeholder_vehicle_id)
 
+    def test_retry_unmatched_documents_matches_shifted_ocr_plate_format(self) -> None:
+        with self.SessionLocal() as db:
+            placeholder_vehicle = Vehicle(
+                external_id=import_documents_from_folder.PLACEHOLDER_EXTERNAL_ID,
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="IMPORT-QUEUE",
+                brand="System",
+                model="Placeholder",
+                status=VehicleStatus.INACTIVE,
+            )
+            target_vehicle = Vehicle(
+                external_id="truck-retry-shifted-active",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="К879ВА/716",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add_all([placeholder_vehicle, target_vehicle])
+            db.flush()
+
+            repair = Repair(
+                order_number="BATCH-RETRY-SHIFTED-001",
+                repair_date=date(2025, 1, 12),
+                vehicle_id=placeholder_vehicle.id,
+                created_by_user_id=1,
+                mileage=3000,
+                reason="historical_import:retry_shifted_plate",
+                status=RepairStatus.DRAFT,
+                is_preliminary=True,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=1,
+                original_filename="shifted_retry_plate.pdf",
+                storage_key="documents/test/batch-retry-shifted-order.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.NEEDS_REVIEW,
+                is_primary=True,
+                review_queue_priority=20,
+            )
+            db.add(document)
+            db.flush()
+            repair.source_document_id = document.id
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=1,
+                    storage_key=document.storage_key,
+                    parsed_payload={"extracted_fields": {"plate_number": "879КВА716"}},
+                    field_confidence_map={},
+                    change_summary="Retry unmatched shifted plate",
+                )
+            )
+            db.commit()
+            repair_id = repair.id
+            target_vehicle_id = target_vehicle.id
+
+        with self.SessionLocal() as db, patch.object(import_documents_from_folder, "process_document") as process_mock:
+            stats = import_documents_from_folder.retry_unmatched_documents_with_session(db)
+            process_mock.assert_called_once()
+
+        self.assertEqual(stats.matched_vehicle, 1)
+        self.assertEqual(stats.unmatched_vehicle, 0)
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, repair_id)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+            self.assertEqual(repair.vehicle_id, target_vehicle_id)
+
     def test_retry_unmatched_documents_skips_archived_service_repairs(self) -> None:
         with self.SessionLocal() as db:
             placeholder_vehicle = Vehicle(

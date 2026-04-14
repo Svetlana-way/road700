@@ -5,7 +5,7 @@ import type {
   VehiclePreview,
   VehicleStatus,
   VehicleType,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 
 type FleetVehicleDetailPanelProps = {
   selectedFleetVehicleLoading: boolean;

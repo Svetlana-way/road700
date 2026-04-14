@@ -12,7 +12,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import type { ReviewRuleItem } from "../shared/workspaceBootstrapTypes";
+import type { ReviewRuleItem } from "../contracts/domain/workspace";
 import type { ReviewRuleFormState } from "../shared/workspaceFormTypes";
 
 type ReviewRulesAdminPanelProps = {

@@ -247,6 +247,70 @@ class LaborNormsApiTestCase(unittest.TestCase):
         self.assertEqual(payload["categories"], ["Активное"])
         self.assertEqual(payload["source_files"], ["active.xlsx"])
 
+    def test_list_labor_norms_facets_follow_search_filter(self) -> None:
+        headers = self._get_auth_headers()
+
+        with self.SessionLocal() as db:
+            db.add(
+                LaborNormCatalog(
+                    scope="second_active_catalog",
+                    catalog_name="Second Active Catalog",
+                    brand_family="dongfeng",
+                    priority=60,
+                    auto_match_enabled=True,
+                    status=CatalogStatus.CONFIRMED,
+                )
+            )
+            db.add_all(
+                [
+                    LaborNorm(
+                        scope="active_catalog",
+                        brand_family="dongfeng",
+                        catalog_name="Active Catalog",
+                        code="A-100",
+                        category="Двигатель",
+                        name_ru="Alpha операция",
+                        name_ru_alt=None,
+                        name_cn=None,
+                        name_en=None,
+                        normalized_name="alpha операция",
+                        search_text="A-100 | Alpha операция",
+                        standard_hours=2.5,
+                        source_sheet="Sheet1",
+                        source_file="alpha.xlsx",
+                        status=CatalogStatus.CONFIRMED,
+                    ),
+                    LaborNorm(
+                        scope="second_active_catalog",
+                        brand_family="dongfeng",
+                        catalog_name="Second Active Catalog",
+                        code="B-200",
+                        category="Трансмиссия",
+                        name_ru="Beta операция",
+                        name_ru_alt=None,
+                        name_cn=None,
+                        name_en=None,
+                        normalized_name="beta операция",
+                        search_text="B-200 | Beta операция",
+                        standard_hours=3.0,
+                        source_sheet="Sheet2",
+                        source_file="beta.xlsx",
+                        status=CatalogStatus.CONFIRMED,
+                    ),
+                ]
+            )
+            db.commit()
+
+        response = self.client.get("/api/labor-norms?q=alpha", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual([item["code"] for item in payload["items"]], ["A-100"])
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["scopes"], ["active_catalog"])
+        self.assertEqual(payload["categories"], ["Двигатель"])
+        self.assertEqual(payload["source_files"], ["alpha.xlsx"])
+
     def test_create_catalog_writes_audit_log(self) -> None:
         headers = self._get_auth_headers()
 

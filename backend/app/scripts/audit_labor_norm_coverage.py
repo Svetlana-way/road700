@@ -10,12 +10,14 @@ from typing import Iterable, Optional
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.application.documents.parsing_access import parse_document_text_for_application
 from app.core.paths import PROJECT_ROOT, get_backend_data_root
 from app.db.base import Base
 from app.db.sqlite import create_sqlite_in_memory_engine
 from app.models.labor_norm import LaborNorm
 from app.scripts.import_labor_norms import import_labor_norms_with_session
-from app.services.document_processing import extract_document_text, normalize_line, parse_document_text
+from app.services.document_text_utils import normalize_line
+from app.services.text_extraction_facade import extract_document_text
 from app.services.labor_norms import (
     build_normalized_name,
     classify_known_non_catalog_operation,
@@ -289,7 +291,7 @@ def audit_documents(
         files = files[:limit]
     for path in files:
         text, _extract_source, _extract_failure_reason = extract_document_text(path, detect_source_type(path))
-        parsed = parse_document_text(text, db=None, profile_scope=profile_scope) if text else {
+        parsed = parse_document_text_for_application(text, db=None, profile_scope=profile_scope) if text else {
             "extracted_items": {"works": []},
         }
         works = parsed.get("extracted_items", {}).get("works", [])

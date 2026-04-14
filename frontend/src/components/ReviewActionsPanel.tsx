@@ -1,5 +1,5 @@
 import { Button, Stack, TextField, Typography } from "@mui/material";
-import type { UserRole } from "../shared/workspaceBootstrapTypes";
+import type { UserRole } from "../contracts/domain/workspace";
 
 type ReviewActionsPanelProps = {
   userRole: UserRole | undefined;

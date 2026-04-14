@@ -6,8 +6,8 @@ import { ReviewExtractedDataPanel } from "./ReviewExtractedDataPanel";
 import { ReviewRequiredFieldsPanel } from "./ReviewRequiredFieldsPanel";
 import { ReviewServicePanel } from "./ReviewServicePanel";
 import { ReviewVehicleLinkPanel } from "./ReviewVehicleLinkPanel";
-import type { ReviewComparisonStatus } from "../shared/repairUiHelpers";
-import type { DocumentKind, DocumentStatus, ReviewDecisionItem, UserRole, VehicleType } from "../shared/workspaceBootstrapTypes";
+import type { ReviewComparisonStatus } from "../entities/repair/helpers";
+import type { DocumentKind, DocumentStatus, ReviewDecisionItem, UserRole, VehicleType } from "../contracts/domain/workspace";
 import type {
   DocumentVehicleFormState,
   ReviewExtractedFieldSnapshot,

@@ -54,9 +54,9 @@ export function buildRepairVisualBars(
 
   const items: DashboardVisualBar[] = [
     {
-      label: "Подтверждено",
+      label: "Без подозрительности",
       value: confirmedRepairs,
-      hint: "Ремонты без открытой подозрительности",
+      hint: "Не черновики и без открытой подозрительности",
       tone: "green",
     },
     {
@@ -74,7 +74,7 @@ export function buildRepairVisualBars(
     {
       label: "Документы в очереди",
       value: summary.documents_review_queue,
-      hint: "Ожидают OCR или ручной разбор",
+      hint: "Ждут ручной проверки или решения по замечаниям",
       tone: "blue",
     },
   ];

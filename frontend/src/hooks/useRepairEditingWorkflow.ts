@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { apiRequest } from "../shared/api";
-import { createRepairDraft, resolveRepairDocumentId, type EditablePartDraft, type EditableRepairDraft, type EditableWorkDraft } from "../shared/repairUiHelpers";
-import type { RepairDetail } from "../shared/repairDetailTypes";
+import { apiRequest } from "../shared/apiCore";
+import { createRepairDraft, resolveRepairDocumentId, type EditablePartDraft, type EditableRepairDraft, type EditableWorkDraft } from "../entities/repair/helpers";
+import type { RepairDetail } from "../contracts/domain/repair";
 
 type RepairEditingRecord = RepairDetail;
 
@@ -228,7 +228,7 @@ export function useRepairEditingWorkflow({
       setRepairDraft(createRepairDraft(savedRepair));
       setIsEditingRepair(false);
       setSuccessMessage("Карточка ремонта обновлена");
-      await refreshWorkspace("review");
+      await refreshWorkspace("documents");
     } catch (error) {
       if (repairEditingRequestIdRef.current !== requestId) {
         return;
@@ -272,7 +272,7 @@ export function useRepairEditingWorkflow({
       setIsEditingRepair(false);
       setSelectedDocumentId((current) => resolveRepairDocumentId(savedRepair, current));
       setSuccessMessage(`Ремонт #${savedRepair.id} отправлен в архив`);
-      await refreshWorkspace("review");
+      await refreshWorkspace("documents");
     } catch (error) {
       if (repairEditingRequestIdRef.current !== requestId) {
         return;
@@ -311,16 +311,13 @@ export function useRepairEditingWorkflow({
       if (repairEditingRequestIdRef.current !== requestId) {
         return;
       }
-      const deletedActiveRepair = selectedRepair?.id === repairId;
       if (selectedRepair?.id === repairId) {
         setSelectedRepair(null);
         setSelectedDocumentId(null);
         navigateToDocuments();
       }
       setSuccessMessage("Заказ-наряд и связанные документы отправлены в архив");
-      if (!deletedActiveRepair) {
-        await refreshWorkspace("documents");
-      }
+      await refreshWorkspace("documents");
     } catch (error) {
       if (repairEditingRequestIdRef.current !== requestId) {
         return;

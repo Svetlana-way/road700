@@ -11,7 +11,7 @@ type HistoryDetailsPreviewProps = {
 export function HistoryDetailsPreview({ lines }: HistoryDetailsPreviewProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const text = lines.join("\n");
-  const previewLines = lines.slice(-HISTORY_DETAIL_PREVIEW_LINES);
+  const previewLines = lines.slice(0, HISTORY_DETAIL_PREVIEW_LINES);
   const previewText = previewLines.join("\n");
   const isExpandable = text.length > HISTORY_DETAIL_PREVIEW_LIMIT || lines.length > HISTORY_DETAIL_PREVIEW_LINES;
   const visibleText =

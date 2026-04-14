@@ -14,6 +14,7 @@ from typing import Callable, Optional
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.constants.vehicles import PLACEHOLDER_EXTERNAL_ID
 from app.core.config import settings
 from app.core.paths import PROJECT_ROOT, resolve_storage_path
 from app.db.session import SessionLocal
@@ -23,40 +24,12 @@ from app.models.repair import Repair
 from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle
-from app.services.document_processing import process_document
+from app.application.imports.document_processing_runner import start_and_run_document_processing
+from app.services.document_parsers.field_extractors import normalize_compare_token, normalize_plate_compare_token
 from app.services.document_repair_relations import normalize_repair_primary_document
 
 DEFAULT_SOURCE_DIR = PROJECT_ROOT / "Заказ-наряды"
-PLACEHOLDER_EXTERNAL_ID = "__batch_import_placeholder__"
 SUPPORTED_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".tif", ".tiff"}
-IDENTIFIER_CHAR_TRANSLATION = str.maketrans(
-    {
-        "О": "O",
-        "о": "O",
-        "А": "A",
-        "а": "A",
-        "В": "B",
-        "в": "B",
-        "Е": "E",
-        "е": "E",
-        "К": "K",
-        "к": "K",
-        "М": "M",
-        "м": "M",
-        "Н": "H",
-        "н": "H",
-        "Р": "P",
-        "р": "P",
-        "С": "C",
-        "с": "C",
-        "Т": "T",
-        "т": "T",
-        "У": "Y",
-        "у": "Y",
-        "Х": "X",
-        "х": "X",
-    }
-)
 PLATE_PATTERN = re.compile(
     r"(?:[АВЕКМНОРСТУХABEKMHOPCTYX]\d{3}[АВЕКМНОРСТУХABEKMHOPCTYX]{2}\d{2,3}|[АВЕКМНОРСТУХABEKMHOPCTYX]{2}\d{4}\d{2,3})",
     re.IGNORECASE,
@@ -122,19 +95,16 @@ def build_storage_key_from_hash(file_hash: str, suffix: str) -> str:
     return f"documents/batch-import/{file_hash[:2]}/{file_hash}{normalized_suffix}"
 
 
-def normalize_identifier(value: Optional[str]) -> Optional[str]:
-    if not value:
-        return None
-    normalized = "".join(ch for ch in value.translate(IDENTIFIER_CHAR_TRANSLATION).upper() if ch.isalnum())
-    return normalized or None
-
-
 def extract_identifiers_from_text(value: Optional[str]) -> tuple[list[str], list[str]]:
     if not value:
         return [], []
     text = value.upper()
-    plate_numbers = [normalized for normalized in (normalize_identifier(match) for match in PLATE_PATTERN.findall(text)) if normalized]
-    vins = [normalized for normalized in (normalize_identifier(match) for match in VIN_PATTERN.findall(text)) if normalized]
+    plate_numbers = [
+        normalized
+        for normalized in (normalize_plate_compare_token(match) for match in PLATE_PATTERN.findall(text))
+        if normalized
+    ]
+    vins = [normalized for normalized in (normalize_compare_token(match) for match in VIN_PATTERN.findall(text)) if normalized]
     return list(dict.fromkeys(plate_numbers)), list(dict.fromkeys(vins))
 
 
@@ -183,8 +153,8 @@ def build_vehicle_lookup(db: Session) -> tuple[dict[str, Vehicle], dict[str, Veh
     by_vin: dict[str, Vehicle] = {}
     by_plate: dict[str, Vehicle] = {}
     for vehicle in vehicles:
-        vin = normalize_identifier(vehicle.vin)
-        plate = normalize_identifier(vehicle.plate_number)
+        vin = normalize_compare_token(vehicle.vin)
+        plate = normalize_plate_compare_token(vehicle.plate_number)
         if vin and vin not in by_vin:
             by_vin[vin] = vehicle
         if plate and plate not in by_plate:
@@ -206,8 +176,8 @@ def match_vehicle_from_document(
     candidates_vin: list[str] = []
     candidates_plate: list[str] = []
 
-    vin = normalize_identifier(str(extracted_fields.get("vin"))) if extracted_fields.get("vin") else None
-    plate_number = normalize_identifier(str(extracted_fields.get("plate_number"))) if extracted_fields.get("plate_number") else None
+    vin = normalize_compare_token(str(extracted_fields.get("vin"))) if extracted_fields.get("vin") else None
+    plate_number = normalize_plate_compare_token(str(extracted_fields.get("plate_number"))) if extracted_fields.get("plate_number") else None
     if vin:
         candidates_vin.append(vin)
     if plate_number:
@@ -251,7 +221,7 @@ def rebind_document_vehicle(
 
     document.repair.vehicle_id = vehicle.id
     db.add(document.repair)
-    process_document(db, document.id)
+    start_and_run_document_processing(db, document.id)
     return True
 
 
@@ -365,7 +335,7 @@ def import_documents_with_session(
                 storage_key=storage_key,
                 destination=destination,
             )
-            process_document(db, created_document_id)
+            start_and_run_document_processing(db, created_document_id)
             document = db.scalar(
                 select(Document)
                 .where(Document.id == created_document_id)

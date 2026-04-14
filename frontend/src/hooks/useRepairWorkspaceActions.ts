@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { apiRequest, downloadApiFile } from "../shared/api";
-import type { RepairDetail } from "../shared/repairDetailTypes";
-import type { DocumentCreateVehicleResponse } from "../shared/repairWorkflowApiTypes";
-import type { ServiceItem, ServiceStatus, UserRole } from "../shared/workspaceBootstrapTypes";
+import type { DocumentCreateVehicleResponse } from "../contracts/api/repairWorkflow";
+import { apiRequest } from "../shared/apiCore";
+import { downloadApiFile } from "../shared/apiFiles";
+import type { RepairDetail } from "../contracts/domain/repair";
+import type { ServiceItem, ServiceStatus, UserRole } from "../contracts/domain/workspace";
 import type { DocumentVehicleFormState } from "../shared/workspaceFormTypes";
 
 type UseRepairWorkspaceActionsParams = {

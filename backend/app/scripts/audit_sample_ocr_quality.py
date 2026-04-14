@@ -10,9 +10,22 @@ from unittest.mock import patch
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.application.documents.axb_fallback import get_line_items_total
+from app.application.documents.legacy_overrides import (
+    call_document_processing_override,
+    extract_document_text,
+    parse_document_text,
+)
+from app.application.documents.support import amounts_match
 from app.core.paths import PROJECT_ROOT
 from app.db.base import Base
 from app.db.sqlite import create_sqlite_in_memory_engine
+from app.services.document_parsers.field_extractors import (
+    has_explicit_missing_mileage as has_explicit_missing_mileage_default,
+    has_logistics_blank_mileage_field as has_logistics_blank_mileage_field_default,
+    is_gruzovye_rezervy_invoice_only_document as is_gruzovye_rezervy_invoice_only_document_default,
+    is_logistics_trailer_vehicle_context as is_logistics_trailer_vehicle_context_default,
+)
 from app.scripts.import_vehicles import import_vehicles_with_session
 
 DEFAULT_SOURCE_DIR = PROJECT_ROOT / "Заказ-наряды"
@@ -226,23 +239,52 @@ def null_audit_session() -> Iterable[Session | None]:
     yield None
 
 
+def has_explicit_missing_mileage(text: str) -> bool:
+    return bool(
+        call_document_processing_override(
+            "has_explicit_missing_mileage",
+            has_explicit_missing_mileage_default,
+            text,
+        )
+    )
+
+
+def has_logistics_blank_mileage_field(text: str) -> bool:
+    return bool(
+        call_document_processing_override(
+            "has_logistics_blank_mileage_field",
+            has_logistics_blank_mileage_field_default,
+            text,
+        )
+    )
+
+
+def is_gruzovye_rezervy_invoice_only_document(text: str) -> bool:
+    return bool(
+        call_document_processing_override(
+            "is_gruzovye_rezervy_invoice_only_document",
+            is_gruzovye_rezervy_invoice_only_document_default,
+            text,
+        )
+    )
+
+
+def is_logistics_trailer_vehicle_context(text: str) -> bool:
+    return bool(
+        call_document_processing_override(
+            "is_logistics_trailer_vehicle_context",
+            is_logistics_trailer_vehicle_context_default,
+            text,
+        )
+    )
+
+
 def audit_documents(
     source_dir: Path,
     *,
     use_registry_enrichment: bool = False,
     ocr_backend: str = "auto",
 ) -> list[AuditRow]:
-    from app.services.document_processing import (
-        amounts_match,
-        extract_document_text,
-        get_line_items_total,
-        has_explicit_missing_mileage,
-        has_logistics_blank_mileage_field,
-        is_gruzovye_rezervy_invoice_only_document,
-        is_logistics_trailer_vehicle_context,
-        parse_document_text,
-    )
-
     rows: list[AuditRow] = []
     session_factory = build_registry_audit_session if use_registry_enrichment else null_audit_session
     with override_ocr_backend(ocr_backend):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 
 from app.core.config import settings
-from app.services.document_processing import ensure_ocr_runtime, format_ocr_runtime_status_lines
+from app.services.ocr_runtime import ensure_ocr_runtime, format_ocr_runtime_status_lines
 
 
 def build_argument_parser() -> argparse.ArgumentParser:

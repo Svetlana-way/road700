@@ -1,0 +1,1 @@
+from app.compat.document_processing import get_document_processing_attr

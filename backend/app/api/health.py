@@ -8,7 +8,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.core.paths import get_storage_root
 from app.db.session import engine
-from app.services.document_processing import get_ocr_runtime_status
+from app.services.ocr_runtime import get_ocr_runtime_status
 
 
 router = APIRouter()

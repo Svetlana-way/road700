@@ -23,6 +23,8 @@ from app.core.security import rotate_auth_session_epoch
 from app.db.base import Base
 from app.db.session import engine
 from app.models.audit import AuditLog
+from app.models.enums import DocumentStatus
+from app.services.document_repair_relations import PRIMARY_DOCUMENT_KINDS as PRIMARY_ELIGIBLE_DOCUMENT_KINDS
 
 
 BACKUP_FORMAT = "road700_backup_v1"
@@ -34,6 +36,8 @@ BACKUP_INCLUDED_SECTIONS = ("database", "storage_files")
 BACKUP_EXCLUDED_SECTIONS = ("backup_archives",)
 BACKUP_RESTORE_EFFECTS = ("replace_database", "replace_storage_files", "keep_backup_archives", "relogin_required")
 BACKUP_ID_PATTERN = re.compile(r"^\d{8}T\d{6}Z_[0-9a-f]{8}$")
+PRIMARY_DOCUMENT_KINDS = {token for item in PRIMARY_ELIGIBLE_DOCUMENT_KINDS for token in (item.name, item.value)}
+ARCHIVED_DOCUMENT_STATUSES = {DocumentStatus.ARCHIVED.name, DocumentStatus.ARCHIVED.value}
 
 
 class InvalidBackupIdError(ValueError):
@@ -114,6 +118,33 @@ def serialize_value(value: Any) -> Any:
     return value
 
 
+def deserialize_boolean_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if value in {0, 1}:
+            return bool(value)
+        raise CorruptBackupError("Backup archive is corrupt")
+    if isinstance(value, float):
+        if value in {0.0, 1.0}:
+            return bool(value)
+        raise CorruptBackupError("Backup archive is corrupt")
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off", ""}:
+            return False
+        raise CorruptBackupError("Backup archive is corrupt")
+    raise CorruptBackupError("Backup archive is corrupt")
+
+
+def matches_any_enum_token(value: Any, allowed_tokens: set[str]) -> bool:
+    if isinstance(value, Enum):
+        return value.name in allowed_tokens or value.value in allowed_tokens
+    return str(value) in allowed_tokens
+
+
 def deserialize_value(column, value: Any) -> Any:
     if value is None:
         return None
@@ -129,7 +160,7 @@ def deserialize_value(column, value: Any) -> Any:
         enum_class = getattr(column_type, "enum_class", None)
         return enum_class(value) if enum_class is not None else value
     if isinstance(column_type, Boolean):
-        return bool(value)
+        return deserialize_boolean_value(value)
     if isinstance(column_type, Integer):
         return int(value)
     if isinstance(column_type, Float):
@@ -478,6 +509,97 @@ def restore_database_snapshot(connection: Connection, snapshot: dict[str, Any]) 
                 .where(documents_table.c.id == document_id)
                 .values(repair_id=repair_id)
             )
+
+    _heal_repair_source_document_alignment(connection)
+
+
+def _choose_aligned_source_document_id(
+    document_rows: list[dict[str, Any]],
+    current_source_document_id: int | None,
+) -> int | None:
+    eligible_rows = [
+        row
+        for row in document_rows
+        if matches_any_enum_token(row.get("kind"), PRIMARY_DOCUMENT_KINDS)
+        and not matches_any_enum_token(row.get("status"), ARCHIVED_DOCUMENT_STATUSES)
+    ]
+    if not eligible_rows:
+        return None
+
+    if current_source_document_id is not None:
+        current_source_row = next(
+            (row for row in eligible_rows if int(row["id"]) == int(current_source_document_id)),
+            None,
+        )
+        if current_source_row is not None:
+            return int(current_source_row["id"])
+
+    primary_rows = [row for row in eligible_rows if bool(row.get("is_primary"))]
+    candidate_rows = primary_rows or eligible_rows
+    chosen = max(candidate_rows, key=lambda row: (row.get("created_at"), int(row["id"])))
+    return int(chosen["id"])
+
+
+def _heal_repair_source_document_alignment(connection: Connection) -> None:
+    repair_rows = connection.execute(
+        text(
+            """
+            select id, source_document_id
+            from repairs
+            order by id asc
+            """
+        )
+    ).mappings().all()
+
+    for repair_row in repair_rows:
+        repair_id = int(repair_row["id"])
+        current_source_document_id = (
+            int(repair_row["source_document_id"])
+            if repair_row["source_document_id"] is not None
+            else None
+        )
+        document_rows = connection.execute(
+            text(
+                """
+                select id, kind, status, is_primary, created_at
+                from documents
+                where repair_id = :repair_id
+                order by created_at asc, id asc
+                """
+            ),
+            {"repair_id": repair_id},
+        ).mappings().all()
+
+        aligned_source_document_id = _choose_aligned_source_document_id(document_rows, current_source_document_id)
+        if aligned_source_document_id != current_source_document_id:
+            connection.execute(
+                text(
+                    """
+                    update repairs
+                    set source_document_id = :source_document_id,
+                        updated_at = current_timestamp
+                    where id = :repair_id
+                    """
+                ),
+                {
+                    "repair_id": repair_id,
+                    "source_document_id": aligned_source_document_id,
+                },
+            )
+
+        connection.execute(
+            text(
+                """
+                update documents
+                set is_primary = case when id = :source_document_id then true else false end
+                where repair_id = :repair_id
+                """
+            ),
+            {
+                "repair_id": repair_id,
+                "source_document_id": aligned_source_document_id,
+            },
+        )
 
 
 def reset_postgres_sequences(connection: Connection) -> None:

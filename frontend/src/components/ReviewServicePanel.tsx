@@ -1,5 +1,5 @@
 import { Box, Button, Chip, Grid, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
-import type { UserRole } from "../shared/workspaceBootstrapTypes";
+import type { UserRole } from "../contracts/domain/workspace";
 import type { ReviewServiceForm } from "../shared/workspaceFormTypes";
 
 type ReviewServicePanelProps = {

@@ -11,6 +11,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.constants.vehicles import PLACEHOLDER_EXTERNAL_ID
 from app.models.audit import AuditLog
 from app.models.enums import CatalogStatus, CheckSeverity, ImportStatus, RepairStatus, ServiceStatus, VehicleStatus
 from app.models.imports import ImportConflict, ImportJob
@@ -18,7 +19,8 @@ from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
 from app.models.user import User
 from app.models.vehicle import Vehicle
-from app.services.document_processing import normalize_compare_token, normalize_identifier_token
+from app.services.document_parsers.field_extractors import normalize_compare_token
+from app.services.document_text_utils import normalize_identifier_token
 from app.services.service_catalog import ensure_service_catalog_synced, resolve_service_by_name
 
 
@@ -38,7 +40,6 @@ EXPECTED_HEADERS = (
     "Количество",
     "Сумма",
 )
-PLACEHOLDER_EXTERNAL_ID = "__batch_import_placeholder__"
 ORDER_NUMBER_PATTERN = re.compile(r"(?:Заказ-наряд|Заказ наряд)\s*(?P<value>[A-Za-zА-Яа-я0-9/_-]+)", re.IGNORECASE)
 IMPORT_REASON_PREFIX = "historical_import:"
 WORK_EXPENSE_KEYWORDS = (

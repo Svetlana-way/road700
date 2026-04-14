@@ -15,7 +15,7 @@ from app.schemas.ocr_profile_matcher import (
     OcrProfileMatcherRead,
     OcrProfileMatcherUpdate,
 )
-from app.services.document_processing import normalize_ocr_rule_code
+from app.services.ocr_profiles import normalize_ocr_rule_code
 
 
 router = APIRouter(prefix="/ocr-profile-matchers", tags=["ocr-profile-matchers"])
@@ -83,9 +83,10 @@ def list_ocr_profile_matchers(
     if profile_scope:
         stmt = stmt.where(OcrProfileMatcher.profile_scope == profile_scope)
     items = db.scalars(stmt).all()
-    profile_scopes = db.scalars(
-        select(distinct(OcrProfileMatcher.profile_scope)).order_by(OcrProfileMatcher.profile_scope.asc())
-    ).all()
+    profile_scopes_stmt = select(distinct(OcrProfileMatcher.profile_scope))
+    if profile_scope:
+        profile_scopes_stmt = profile_scopes_stmt.where(OcrProfileMatcher.profile_scope == profile_scope)
+    profile_scopes = db.scalars(profile_scopes_stmt.order_by(OcrProfileMatcher.profile_scope.asc())).all()
     return OcrProfileMatcherListResponse(
         items=[OcrProfileMatcherRead.model_validate(item) for item in items],
         profile_scopes=[item for item in profile_scopes if item],

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { apiRequest } from "../shared/api";
+import type { AuditLogItem, AuditLogResponse } from "../contracts/api/audit";
+import { apiRequest } from "../shared/apiCore";
 import { type WorkspaceTab } from "../shared/appRoute";
-import type { AuditLogItem, AuditLogResponse } from "../shared/auditApiTypes";
-import { buildAuditLogQueryString, buildGlobalSearchQueryString } from "../shared/queryBuilders";
-import type { GlobalSearchResponse, UserRole } from "../shared/workspaceBootstrapTypes";
+import { buildAuditLogQueryString, buildGlobalSearchQueryString } from "../features/operations/queryBuilders";
+import type { GlobalSearchResponse, UserRole } from "../contracts/domain/workspace";
 
 type UseWorkspaceOperationsParams = {
   activeWorkspaceTab: WorkspaceTab;
@@ -81,11 +81,7 @@ export function useWorkspaceOperations({
     globalSearchRequestIdRef.current = requestId;
     setGlobalSearchLoading(true);
     try {
-      const payload = await apiRequest<GlobalSearchResponse>(
-        `/search/global?${buildGlobalSearchQueryString(normalizedQuery)}`,
-        { method: "GET" },
-        token,
-      );
+      const payload = await fetchAllGlobalSearch(normalizedQuery);
       if (globalSearchRequestIdRef.current !== requestId) {
         return;
       }
@@ -95,6 +91,44 @@ export function useWorkspaceOperations({
         setGlobalSearchLoading(false);
       }
     }
+  }
+
+  async function fetchGlobalSearchPage(query: string, limitPerSection: number, offsetPerSection: number) {
+    return apiRequest<GlobalSearchResponse>(
+      `/search/global?${buildGlobalSearchQueryString(query, limitPerSection, offsetPerSection)}`,
+      { method: "GET" },
+      token,
+    );
+  }
+
+  async function fetchAllGlobalSearch(query: string) {
+    const pageSize = 25;
+    const firstPage = await fetchGlobalSearchPage(query, pageSize, 0);
+    const needsMoreDocuments = firstPage.documents_total > firstPage.documents.length;
+    const needsMoreRepairs = firstPage.repairs_total > firstPage.repairs.length;
+    const needsMoreVehicles = firstPage.vehicles_total > firstPage.vehicles.length;
+    if (!needsMoreDocuments && !needsMoreRepairs && !needsMoreVehicles) {
+      return firstPage;
+    }
+
+    const documents = [...firstPage.documents];
+    const repairs = [...firstPage.repairs];
+    const vehicles = [...firstPage.vehicles];
+    const maxTotal = Math.max(firstPage.documents_total, firstPage.repairs_total, firstPage.vehicles_total);
+
+    for (let offset = pageSize; offset < maxTotal; offset += pageSize) {
+      const nextPage = await fetchGlobalSearchPage(query, pageSize, offset);
+      documents.push(...nextPage.documents);
+      repairs.push(...nextPage.repairs);
+      vehicles.push(...nextPage.vehicles);
+    }
+
+    return {
+      ...firstPage,
+      documents,
+      repairs,
+      vehicles,
+    };
   }
 
   async function handleGlobalSearchSubmit(event?: FormEvent<HTMLFormElement>) {
@@ -117,18 +151,7 @@ export function useWorkspaceOperations({
     auditLogRequestIdRef.current = requestId;
     setAuditLogLoading(true);
     try {
-      const payload = await apiRequest<AuditLogResponse>(
-        `/audit?${buildAuditLogQueryString(
-          filters.search,
-          filters.entityType,
-          filters.actionType,
-          filters.userId,
-          filters.dateFrom,
-          filters.dateTo,
-        )}`,
-        { method: "GET" },
-        token,
-      );
+      const payload = await fetchAllAuditLog(filters);
       if (auditLogRequestIdRef.current !== requestId) {
         return;
       }
@@ -141,6 +164,43 @@ export function useWorkspaceOperations({
         setAuditLogLoading(false);
       }
     }
+  }
+
+  async function fetchAuditLogPage(filters: AuditLogFilters, limit: number, offset: number) {
+    return apiRequest<AuditLogResponse>(
+      `/audit?${buildAuditLogQueryString(
+        filters.search,
+        filters.entityType,
+        filters.actionType,
+        filters.userId,
+        filters.dateFrom,
+        filters.dateTo,
+        limit,
+        offset,
+      )}`,
+      { method: "GET" },
+      token,
+    );
+  }
+
+  async function fetchAllAuditLog(filters: AuditLogFilters) {
+    const pageSize = 200;
+    const firstPage = await fetchAuditLogPage(filters, pageSize, 0);
+    if (firstPage.total <= firstPage.items.length) {
+      return firstPage;
+    }
+
+    const items = [...firstPage.items];
+    for (let offset = firstPage.items.length; offset < firstPage.total; offset += pageSize) {
+      const nextPage = await fetchAuditLogPage(filters, pageSize, offset);
+      items.push(...nextPage.items);
+    }
+
+    return {
+      ...firstPage,
+      items,
+      limit: pageSize,
+    };
   }
 
   function resetGlobalSearch() {

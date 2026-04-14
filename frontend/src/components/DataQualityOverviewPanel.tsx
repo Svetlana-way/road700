@@ -19,7 +19,7 @@ import type {
   DashboardDataQualityDetails,
   DocumentStatus,
   UserRole,
-} from "../shared/workspaceBootstrapTypes";
+} from "../contracts/domain/workspace";
 import type { QualityDetailTab } from "../shared/workspaceViewTypes";
 type DashboardVisualTone = "blue" | "amber" | "red" | "green";
 

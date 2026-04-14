@@ -4,8 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.access import apply_vehicle_scope, get_repair_visibility_clause
 from app.api.deps import get_current_active_user, get_db
+from app.application.services.visibility import (
+    apply_vehicle_scope,
+    get_non_placeholder_vehicle_clause,
+    get_repair_visibility_clause,
+)
 from app.models.document import Document
 from app.models.enums import DocumentStatus, RepairStatus, ServiceStatus, VehicleStatus
 from app.models.repair import Repair, RepairPart, RepairWork
@@ -116,6 +120,7 @@ def _build_repair_search_clause(pattern: str):
 def global_search(
     q: str = Query(min_length=2),
     limit_per_section: int = Query(default=8, ge=1, le=25),
+    offset_per_section: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> GlobalSearchResponse:
@@ -151,6 +156,7 @@ def global_search(
             ),
         )
         .order_by(Document.created_at.desc(), Document.id.desc())
+        .offset(offset_per_section)
         .limit(limit_per_section)
     )
 
@@ -171,6 +177,7 @@ def global_search(
             repair_search_clause,
         )
         .order_by(Repair.repair_date.desc(), Repair.id.desc())
+        .offset(offset_per_section)
         .limit(limit_per_section)
     )
 
@@ -186,10 +193,11 @@ def global_search(
             select(
                 Vehicle,
                 func.count(Vehicle.id).over().label("vehicles_total"),
-            ).where(vehicle_search_clause, Vehicle.status != VehicleStatus.ARCHIVED),
+            ).where(vehicle_search_clause, Vehicle.status != VehicleStatus.ARCHIVED, get_non_placeholder_vehicle_clause()),
             current_user,
         )
         .order_by(Vehicle.updated_at.desc(), Vehicle.id.desc())
+        .offset(offset_per_section)
         .limit(limit_per_section)
     )
 

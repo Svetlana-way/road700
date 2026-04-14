@@ -5,10 +5,11 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin, get_db
+from app.application.imports.serializers import serialize_import_job
 from app.api.upload_validation import validate_historical_import_upload
 from app.models.enums import RepairStatus, ServiceStatus, VehicleStatus
 from app.models.repair import Repair, RepairWork
@@ -35,28 +36,11 @@ from app.services.labor_norms import build_normalized_name
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 ALLOWED_CONFLICT_STATUSES = {"pending", "resolved", "ignored"}
-REFERENCE_OPERATIONAL_STATUSES = (RepairStatus.CONFIRMED, RepairStatus.EMPLOYEE_CONFIRMED)
+REFERENCE_OPERATIONAL_STATUSES = (RepairStatus.CONFIRMED,)
 
 
 def coerce_json_object(value: object) -> dict:
     return dict(value) if isinstance(value, dict) else {}
-
-
-def serialize_import_job(job: ImportJob) -> ImportJobRead:
-    return ImportJobRead(
-        id=job.id,
-        document_id=job.document_id,
-        import_type=job.import_type,
-        source_filename=job.source_filename,
-        status=job.status,
-        summary=coerce_json_object(job.summary) if job.summary is not None else None,
-        error_message=job.error_message,
-        attempts=job.attempts,
-        started_at=job.started_at,
-        finished_at=job.finished_at,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-    )
 
 
 def build_historical_work_reference(
@@ -64,6 +48,7 @@ def build_historical_work_reference(
     *,
     q: str | None,
     limit: int,
+    offset: int,
     min_samples: int,
 ) -> HistoricalWorkReferenceListResponse:
     rows = db.execute(
@@ -285,9 +270,10 @@ def build_historical_work_reference(
     )
 
     return HistoricalWorkReferenceListResponse(
-        items=filtered_items[:limit],
+        items=filtered_items[offset : offset + limit],
         total=len(filtered_items),
         limit=limit,
+        offset=offset,
         q=normalized_query or None,
         min_samples=min_samples,
     )
@@ -320,36 +306,55 @@ def get_import_conflict_or_404(db: Session, conflict_id: int) -> ImportConflict:
 def list_import_jobs(
     import_type: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_admin),
 ) -> ImportJobListResponse:
-    stmt = select(ImportJob).order_by(ImportJob.created_at.desc(), ImportJob.id.desc()).limit(limit)
+    stmt = select(ImportJob)
+    total_stmt = select(func.count()).select_from(ImportJob)
     if import_type:
         stmt = stmt.where(ImportJob.import_type == import_type)
-    items = db.execute(stmt).scalars().all()
-    return ImportJobListResponse(items=[serialize_import_job(item) for item in items])
+        total_stmt = total_stmt.where(ImportJob.import_type == import_type)
+    total = db.execute(total_stmt).scalar_one()
+    items = db.execute(
+        stmt.order_by(ImportJob.created_at.desc(), ImportJob.id.desc()).offset(offset).limit(limit)
+    ).scalars().all()
+    return ImportJobListResponse(
+        items=[serialize_import_job(item) for item in items],
+        total=int(total),
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/conflicts", response_model=ImportConflictListResponse)
 def list_import_conflicts(
     status_filter: str = Query(default="pending", alias="status"),
     limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_admin),
 ) -> ImportConflictListResponse:
     if status_filter not in ALLOWED_CONFLICT_STATUSES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректный статус конфликта")
 
+    total = db.execute(
+        select(func.count()).select_from(ImportConflict).where(ImportConflict.status == status_filter)
+    ).scalar_one()
     stmt = (
         select(ImportConflict, ImportJob.source_filename)
         .join(ImportJob, ImportJob.id == ImportConflict.import_job_id, isouter=True)
         .where(ImportConflict.status == status_filter)
         .order_by(ImportConflict.created_at.desc(), ImportConflict.id.desc())
+        .offset(offset)
         .limit(limit)
     )
     rows = db.execute(stmt).all()
     return ImportConflictListResponse(
-        items=[serialize_import_conflict(conflict, source_filename=source_filename) for conflict, source_filename in rows]
+        items=[serialize_import_conflict(conflict, source_filename=source_filename) for conflict, source_filename in rows],
+        total=int(total),
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -461,8 +466,9 @@ def upload_historical_repairs(
 def list_historical_work_reference(
     q: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     min_samples: int = Query(default=2, ge=1, le=100),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_admin),
 ) -> HistoricalWorkReferenceListResponse:
-    return build_historical_work_reference(db, q=q, limit=limit, min_samples=min_samples)
+    return build_historical_work_reference(db, q=q, limit=limit, offset=offset, min_samples=min_samples)

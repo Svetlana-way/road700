@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from app.application.reports.repair_report_analysis import *  # noqa: F401,F403
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from app.models.document import Document
 from app.models.repair import Repair
 from app.models.service import Service

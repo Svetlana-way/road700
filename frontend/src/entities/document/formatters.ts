@@ -1,4 +1,4 @@
-import { formatMoney, formatStatus } from "../../shared/formattersCore";
+import { formatStatus } from "../../shared/formattersCore";
 
 export type DocumentKindFormatter = "order" | "repeat_scan" | "attachment" | "confirmation";
 export type DocumentStatusFormatter =

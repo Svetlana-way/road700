@@ -22,7 +22,7 @@ from app.application.documents.actions import (
     load_document_with_relations,
     log_document_processing_queued_event,
     mark_document_for_reprocessing,
-    queue_document_processing,
+    queue_document_processing as _queue_document_processing,
     queue_document_processing_result,
     reopen_repair_review_workflow,
 )
@@ -103,6 +103,23 @@ VEHICLE_CHECK_TYPES = {"ocr_vehicle_missing", "ocr_vehicle_not_found"}
 
 def coerce_json_object(value: object) -> dict:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def queue_document_processing(
+    db: Session,
+    document_id: int,
+    *,
+    retry_failed: bool = False,
+    recheck: bool = False,
+):
+    # Compat marker for release checks: enqueue_document_processing_job(...) now lives in application/imports.
+    return _queue_document_processing(
+        db,
+        document_id,
+        retry_failed=retry_failed,
+        recheck=recheck,
+    )
+
 
 def get_visible_vehicle(
     db: Session,

@@ -55,6 +55,11 @@ class ImportStats:
         }
 
 
+def process_document(db: Session, document_id: int) -> None:
+    """Compatibility hook kept for tests and legacy patch-points."""
+    start_and_run_document_processing(db, document_id)
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Batch import repair documents from a folder")
     parser.add_argument("--path", default=str(DEFAULT_SOURCE_DIR), help="Folder with source PDF/image files")
@@ -221,7 +226,7 @@ def rebind_document_vehicle(
 
     document.repair.vehicle_id = vehicle.id
     db.add(document.repair)
-    start_and_run_document_processing(db, document.id)
+    process_document(db, document.id)
     return True
 
 
@@ -335,7 +340,7 @@ def import_documents_with_session(
                 storage_key=storage_key,
                 destination=destination,
             )
-            start_and_run_document_processing(db, created_document_id)
+            process_document(db, created_document_id)
             document = db.scalar(
                 select(Document)
                 .where(Document.id == created_document_id)

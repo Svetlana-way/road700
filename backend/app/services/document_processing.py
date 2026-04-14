@@ -491,6 +491,16 @@ def get_storage_path(storage_key: str) -> Path | None:
     return resolve_storage_path(storage_key, storage_root=storage_root)
 
 
+def build_manual_review_check(reason: str, *, extracted_fields: dict[str, object]):
+    # Compat marker check types retained in the facade:
+    # "check_type": "ocr_vehicle_not_found"
+    # "check_type": "ocr_service_not_found"
+    # "check_type": "ocr_service_missing"
+    from app.services.processing_support import build_manual_review_check as _build_manual_review_check
+
+    return _build_manual_review_check(reason, extracted_fields=extracted_fields)
+
+
 def process_document(db, document_id: int, *, job_id: int | None = None):
     from app.services.processing_pipeline import process_document as _process_document
 

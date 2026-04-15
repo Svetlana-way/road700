@@ -1947,6 +1947,94 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(summary_payload["repairs_suspicious"], review_payload["counts"]["suspicious"])
         self.assertEqual(quality_payload["repairs_suspicious"], review_payload["counts"]["suspicious"])
 
+    def test_dashboard_suspicious_repair_counts_exclude_ocr_error_repairs_with_blocking_checks(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            service = db.scalar(select(Service).where(Service.name == "Service Alpha"))
+            self.assertIsNotNone(employee)
+            self.assertIsNotNone(service)
+            assert employee is not None
+            assert service is not None
+
+            vehicle = Vehicle(
+                external_id="truck-dashboard-ocr-excluded-from-suspicious",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="Q445QQ116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-DASH-OCR-SUSP-001",
+                repair_date=date(2025, 1, 22),
+                vehicle_id=vehicle.id,
+                service_id=service.id,
+                created_by_user_id=employee.id,
+                mileage=156000,
+                grand_total=12600,
+                status=RepairStatus.OCR_ERROR,
+                is_preliminary=True,
+                is_partially_recognized=False,
+            )
+            db.add(repair)
+            db.flush()
+
+            db.add(
+                Document(
+                    repair_id=repair.id,
+                    uploaded_by_user_id=employee.id,
+                    original_filename="dashboard-ocr-error-not-suspicious.pdf",
+                    storage_key="documents/test/dashboard-ocr-error-not-suspicious.pdf",
+                    mime_type="application/pdf",
+                    source_type="pdf",
+                    kind=DocumentKind.ORDER,
+                    status=DocumentStatus.OCR_ERROR,
+                    is_primary=True,
+                    review_queue_priority=75,
+                    ocr_confidence=0.11,
+                )
+            )
+            db.flush()
+            db.add(
+                RepairCheck(
+                    repair_id=repair.id,
+                    check_type="ocr_processing_failed",
+                    severity=CheckSeverity.ERROR,
+                    title="OCR не обработал документ",
+                    details="Файл поврежден",
+                    is_resolved=False,
+                )
+            )
+            db.commit()
+
+        suspicious_review_response = self.client.get("/api/review/queue?limit=20&category=suspicious", headers=headers)
+        self.assertEqual(suspicious_review_response.status_code, 200, suspicious_review_response.text)
+        suspicious_review_payload = suspicious_review_response.json()
+
+        ocr_review_response = self.client.get("/api/review/queue?limit=20&category=ocr_error", headers=headers)
+        self.assertEqual(ocr_review_response.status_code, 200, ocr_review_response.text)
+        ocr_review_payload = ocr_review_response.json()
+
+        summary_response = self.client.get("/api/dashboard/summary", headers=headers)
+        self.assertEqual(summary_response.status_code, 200, summary_response.text)
+        summary_payload = summary_response.json()
+
+        quality_response = self.client.get("/api/dashboard/data-quality", headers=headers)
+        self.assertEqual(quality_response.status_code, 200, quality_response.text)
+        quality_payload = quality_response.json()
+
+        self.assertEqual(suspicious_review_payload["counts"]["suspicious"], 0)
+        self.assertEqual(suspicious_review_payload["total"], 0)
+        self.assertEqual(ocr_review_payload["counts"]["ocr_error"], 1)
+        self.assertEqual(summary_payload["repairs_suspicious"], 0)
+        self.assertEqual(quality_payload["repairs_suspicious"], 0)
+        self.assertEqual(quality_payload["documents_ocr_error"], 1)
+
     def test_dashboard_excludes_uploaded_documents_awaiting_ocr_from_review_metrics(self) -> None:
         headers = self._get_auth_headers("admin")
 

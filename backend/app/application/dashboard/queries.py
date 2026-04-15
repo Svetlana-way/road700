@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import and_, case, distinct, func, or_, select
+from sqlalchemy import and_, case, distinct, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.application.services.visibility import get_visible_services_stmt
@@ -54,16 +54,38 @@ def build_operational_document_clause():
     )
 
 
+def build_ocr_error_repair_condition():
+    ocr_error_documents_exist = exists(
+        select(1).where(
+            Document.repair_id == Repair.id,
+            Document.status != DocumentStatus.ARCHIVED,
+            Document.kind.in_(REVIEWABLE_DOCUMENT_KINDS),
+            Document.status == DocumentStatus.OCR_ERROR,
+        )
+    )
+    return or_(
+        Repair.status == RepairStatus.OCR_ERROR,
+        ocr_error_documents_exist,
+    )
+
+
+def build_suspicious_repair_condition():
+    return and_(
+        ~build_ocr_error_repair_condition(),
+        or_(
+            Repair.status == RepairStatus.SUSPICIOUS,
+            build_suspicious_checks_exist_expr(),
+        ),
+    )
+
+
 def build_dashboard_summary_response(
     db: Session,
     *,
     current_user: User,
 ) -> DashboardSummaryResponse:
     review_queue_filter = build_reviewable_documents_filter()
-    suspicious_repair_condition = or_(
-        Repair.status == RepairStatus.SUSPICIOUS,
-        build_suspicious_checks_exist_expr(),
-    )
+    suspicious_repair_condition = build_suspicious_repair_condition()
     repair_summary_stmt = select(
         func.count(Repair.id).label("repairs_total"),
         count_matching_rows(Repair.status == RepairStatus.DRAFT).label("repairs_draft"),
@@ -125,10 +147,7 @@ def build_dashboard_data_quality_response(
 ) -> DashboardDataQualityResponse:
     visible_services = get_visible_services_stmt()
     review_queue_filter = build_reviewable_documents_filter()
-    suspicious_repair_condition = or_(
-        Repair.status == RepairStatus.SUSPICIOUS,
-        build_suspicious_checks_exist_expr(),
-    )
+    suspicious_repair_condition = build_suspicious_repair_condition()
     documents_ocr_error_condition = and_(
         Document.kind.in_(REVIEWABLE_DOCUMENT_KINDS),
         or_(

@@ -240,14 +240,17 @@ function buildFallbackReviewQueueItem(
   manualReviewReasons.forEach(pushIssue);
   unresolvedChecks.forEach((item) => pushIssue(item.title));
 
+  const hasOcrError =
+    selectedRepairDocument.status === "ocr_error" || selectedRepair.status === "ocr_error";
+  const hasBlockingChecks = unresolvedChecks.some(
+    (item) => item.severity === "suspicious" || item.severity === "error",
+  );
+
   let category: ReviewQueueItem["category"] = "manual_review";
-  if (
-    selectedRepair.status === "suspicious" ||
-    unresolvedChecks.some((item) => item.severity === "suspicious" || item.severity === "error")
-  ) {
-    category = "suspicious";
-  } else if (selectedRepairDocument.status === "ocr_error" || selectedRepair.status === "ocr_error") {
+  if (hasOcrError) {
     category = "ocr_error";
+  } else if (selectedRepair.status === "suspicious" || hasBlockingChecks) {
+    category = "suspicious";
   } else if (selectedRepair.status === "employee_confirmed") {
     category = "employee_confirmation";
   } else if (selectedRepairDocument.status === "partially_recognized" || selectedRepair.is_partially_recognized) {

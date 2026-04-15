@@ -441,6 +441,41 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(suspicious_payload["total"], 0)
         self.assertEqual(quality_payload["documents_ocr_error"], 1)
 
+    def test_review_queue_localizes_manual_review_reasons(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, 1)
+            self.assertIsNotNone(document)
+            assert document is not None
+            document.status = DocumentStatus.RECOGNIZED
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=1,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "extracted_fields": {},
+                        "manual_review_reasons": ["vehicle_not_found", "service_name_missing"],
+                    },
+                    field_confidence_map={},
+                    change_summary="Manual review labels smoke",
+                )
+            )
+            db.commit()
+
+        response = self.client.get("/api/review/queue?limit=10&category=manual_review", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(
+            payload["items"][0]["manual_review_reasons"],
+            ["Техника не найдена в базе", "Не удалось определить сервис"],
+        )
+        self.assertIn("Техника не найдена в базе", payload["items"][0]["issue_titles"])
+        self.assertIn("Не удалось определить сервис", payload["items"][0]["issue_titles"])
+
     def test_review_queue_excludes_uploaded_documents_awaiting_ocr(self) -> None:
         headers = self._get_auth_headers("admin")
 

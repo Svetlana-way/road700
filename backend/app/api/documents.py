@@ -27,8 +27,8 @@ from app.application.documents.actions import (
     reopen_repair_review_workflow,
 )
 from app.application.imports.document_jobs import get_document_display_import_job
+from app.application.manual_review_labels import MANUAL_REVIEW_REASON_LABELS
 from app.application.reports.repair_reports import (
-    MANUAL_REVIEW_REASON_LABELS,
     build_repair_executive_report,
     build_repair_export_workbook,
     build_repair_pdf_sections,

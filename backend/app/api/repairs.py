@@ -10,6 +10,7 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_active_user, get_current_admin, get_db
+from app.application.manual_review_labels import MANUAL_REVIEW_REASON_LABELS
 from app.application.documents.support import (
     build_manual_review_check,
     replace_ocr_checks,
@@ -63,21 +64,6 @@ LEARNING_HEADER_FIELDS = (
     "vat_total",
     "grand_total",
 )
-MANUAL_REVIEW_REASON_LABELS = {
-    "mileage_missing": "Не удалось определить пробег",
-    "order_number_missing": "Не удалось определить номер заказ-наряда",
-    "repair_date_invalid": "Дата ремонта распознана с ошибкой",
-    "repair_date_missing": "Не удалось определить дату ремонта",
-    "service_name_missing": "Не удалось определить сервис",
-    "service_name_suspicious": "Название сервиса выглядит сомнительно",
-    "service_not_found": "Сервис не найден в справочнике",
-    "text_not_found": "Не удалось извлечь текст из документа",
-    "image_ocr_unavailable": "OCR для изображений недоступен в текущем окружении",
-    "pdf_ocr_unavailable": "OCR для сканов PDF недоступен в текущем окружении",
-    "pdf_renderer_unavailable": "Рендер PDF для OCR недоступен в текущем окружении",
-    "vehicle_missing": "Не удалось определить технику",
-    "vehicle_not_found": "Техника не найдена в базе",
-}
 CHECK_REPORT_SECTION_LABELS = {
     "catalogs": "Справочники",
     "labor_norms": "Нормо-часы",

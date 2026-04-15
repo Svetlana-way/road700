@@ -6,6 +6,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from app.application.manual_review_labels import MANUAL_REVIEW_REASON_LABELS
 from app.application.documents.actions import ensure_document_is_operational, ensure_document_visible_to_user
 from app.application.documents.document_versions import get_latest_document_version
 from app.application.services.visibility import get_repair_visibility_clause
@@ -108,6 +109,10 @@ def label_manual_review_reasons(
         rule = get_review_rule(rule_map, "manual_review_reason", code)
         if rule is not None:
             labels.append(rule.title)
+            continue
+        fallback_label = MANUAL_REVIEW_REASON_LABELS.get(code)
+        if fallback_label is not None:
+            labels.append(fallback_label)
             continue
         labels.append(humanize_review_code(code))
     return codes, labels

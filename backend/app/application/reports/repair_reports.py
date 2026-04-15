@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from openpyxl import Workbook
 
+from app.application.manual_review_labels import MANUAL_REVIEW_REASON_LABELS
 from app.application.documents.repair_relations import ensure_repair_vehicle_relation, get_repair_source_document
 from app.application.documents.support import build_manual_review_check
 from app.application.documents.document_versions import get_latest_parsed_payload
@@ -13,22 +14,6 @@ from app.models.repair import Repair, RepairCheck
 from app.application.reports.exporting import append_rows
 from app.application.reports.repair_report_analysis import build_repair_executive_report
 
-
-MANUAL_REVIEW_REASON_LABELS = {
-    "mileage_missing": "Не удалось определить пробег",
-    "order_number_missing": "Не удалось определить номер заказ-наряда",
-    "repair_date_invalid": "Дата ремонта распознана с ошибкой",
-    "repair_date_missing": "Не удалось определить дату ремонта",
-    "service_name_missing": "Не удалось определить сервис",
-    "service_name_suspicious": "Название сервиса выглядит сомнительно",
-    "service_not_found": "Сервис не найден в справочнике",
-    "text_not_found": "Не удалось извлечь текст из документа",
-    "image_ocr_unavailable": "OCR для изображений недоступен в текущем окружении",
-    "pdf_ocr_unavailable": "OCR для сканов PDF недоступен в текущем окружении",
-    "pdf_renderer_unavailable": "Рендер PDF для OCR недоступен в текущем окружении",
-    "vehicle_missing": "Не удалось определить технику",
-    "vehicle_not_found": "Техника не найдена в базе",
-}
 CHECK_REPORT_SECTION_LABELS = {
     "catalogs": "Справочники",
     "labor_norms": "Нормо-часы",

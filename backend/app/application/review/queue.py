@@ -51,12 +51,12 @@ def build_review_queue_category_expression() -> object:
     suspicious_checks_exist = build_suspicious_checks_exist_expr()
     return case(
         (
-            or_(Repair.status == RepairStatus.SUSPICIOUS, suspicious_checks_exist),
-            "suspicious",
-        ),
-        (
             or_(Document.status == DocumentStatus.OCR_ERROR, Repair.status == RepairStatus.OCR_ERROR),
             "ocr_error",
+        ),
+        (
+            or_(Repair.status == RepairStatus.SUSPICIOUS, suspicious_checks_exist),
+            "suspicious",
         ),
         (Repair.status == RepairStatus.EMPLOYEE_CONFIRMED, "employee_confirmation"),
         (
@@ -212,12 +212,12 @@ def build_priority(
 
 
 def determine_review_category(document: Document, unresolved_checks: list[RepairCheck]) -> str:
+    if document.status == DocumentStatus.OCR_ERROR or document.repair.status == RepairStatus.OCR_ERROR:
+        return "ocr_error"
     if document.repair.status == RepairStatus.SUSPICIOUS:
         return "suspicious"
     if has_blocking_unresolved_checks(unresolved_checks):
         return "suspicious"
-    if document.status == DocumentStatus.OCR_ERROR or document.repair.status == RepairStatus.OCR_ERROR:
-        return "ocr_error"
     if document.repair.status == RepairStatus.EMPLOYEE_CONFIRMED:
         return "employee_confirmation"
     if document.status == DocumentStatus.PARTIALLY_RECOGNIZED or document.repair.is_partially_recognized:

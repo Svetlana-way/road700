@@ -357,6 +357,90 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(payload["total"], 0)
         self.assertEqual(payload["counts"]["all"], 0)
 
+    def test_review_queue_prioritizes_ocr_error_over_blocking_checks(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            employee = db.scalar(select(User).where(User.login == "employee"))
+            service = db.scalar(select(Service).where(Service.name == "Service Alpha"))
+            self.assertIsNotNone(employee)
+            self.assertIsNotNone(service)
+            assert employee is not None
+            assert service is not None
+
+            vehicle = Vehicle(
+                external_id="truck-review-ocr-priority",
+                vehicle_type=VehicleType.TRUCK,
+                plate_number="Q336QQ116",
+                brand="Volvo",
+                model="FH",
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(vehicle)
+            db.flush()
+
+            repair = Repair(
+                order_number="ZN-REVIEW-OCR-PRIORITY-001",
+                repair_date=date(2025, 1, 22),
+                vehicle_id=vehicle.id,
+                service_id=service.id,
+                created_by_user_id=employee.id,
+                mileage=152000,
+                grand_total=12200,
+                status=RepairStatus.OCR_ERROR,
+                is_preliminary=True,
+                is_partially_recognized=False,
+            )
+            db.add(repair)
+            db.flush()
+
+            document = Document(
+                repair_id=repair.id,
+                uploaded_by_user_id=employee.id,
+                original_filename="ocr-error-with-blocking-check.pdf",
+                storage_key="documents/test/ocr-error-with-blocking-check.pdf",
+                mime_type="application/pdf",
+                source_type="pdf",
+                kind=DocumentKind.ORDER,
+                status=DocumentStatus.OCR_ERROR,
+                is_primary=True,
+                review_queue_priority=95,
+                ocr_confidence=0.12,
+            )
+            db.add(document)
+            db.flush()
+
+            db.add(
+                RepairCheck(
+                    repair_id=repair.id,
+                    check_type="ocr_processing_failed",
+                    severity=CheckSeverity.ERROR,
+                    title="OCR не обработал документ",
+                    details="Файл поврежден",
+                    is_resolved=False,
+                )
+            )
+            db.commit()
+
+        ocr_response = self.client.get("/api/review/queue?limit=10&category=ocr_error", headers=headers)
+        self.assertEqual(ocr_response.status_code, 200, ocr_response.text)
+        ocr_payload = ocr_response.json()
+
+        suspicious_response = self.client.get("/api/review/queue?limit=10&category=suspicious", headers=headers)
+        self.assertEqual(suspicious_response.status_code, 200, suspicious_response.text)
+        suspicious_payload = suspicious_response.json()
+
+        quality_response = self.client.get("/api/dashboard/data-quality", headers=headers)
+        self.assertEqual(quality_response.status_code, 200, quality_response.text)
+        quality_payload = quality_response.json()
+
+        self.assertEqual(ocr_payload["counts"]["ocr_error"], 1)
+        self.assertEqual(ocr_payload["total"], 1)
+        self.assertEqual(ocr_payload["items"][0]["category"], "ocr_error")
+        self.assertEqual(ocr_payload["items"][0]["document"]["original_filename"], "ocr-error-with-blocking-check.pdf")
+        self.assertEqual(suspicious_payload["total"], 0)
+        self.assertEqual(quality_payload["documents_ocr_error"], 1)
+
     def test_review_queue_excludes_uploaded_documents_awaiting_ocr(self) -> None:
         headers = self._get_auth_headers("admin")
 

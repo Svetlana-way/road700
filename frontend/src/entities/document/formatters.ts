@@ -64,6 +64,35 @@ export function formatDocumentStatusLabel(status: string | null | undefined) {
   return documentStatusLabels[status] || formatStatus(status);
 }
 
+export function formatDocumentVersionSummary(summary: string | null | undefined) {
+  if (!summary) {
+    return null;
+  }
+  const labels: Record<string, string> = {
+    "Initial upload": "Первичная загрузка",
+    "Attached to existing repair": "Документ привязан к существующему ремонту",
+    "Queued for reprocessing": "Поставлен в очередь на повторный OCR",
+    "Stored without OCR": "Сохранён без OCR",
+    "Document processed automatically": "Документ обработан автоматически",
+    "Document processed partially and sent for review": "Документ обработан частично и отправлен на проверку",
+    "Document processing did not extract text": "Не удалось извлечь текст из документа",
+    "Image uploaded; manual review is required": "Изображение загружено, требуется ручная проверка",
+  };
+  return labels[summary] || summary;
+}
+
+export function formatDocumentProcessor(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+  const labels: Record<string, string> = {
+    hybrid_document_ocr_v2: "Гибридный OCR v2",
+    document_storage_only_v1: "Сохранение без OCR",
+    "legacy-ocr": "Legacy OCR",
+  };
+  return labels[value] || formatStatus(value);
+}
+
 export function statusColor(status: DocumentStatusFormatter): "default" | "success" | "error" | "warning" {
   if (status === "confirmed" || status === "recognized") {
     return "success";

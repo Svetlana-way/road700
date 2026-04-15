@@ -2,6 +2,7 @@ import { type Ref } from "react";
 import { Alert, Box, Button, Chip, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
 import type { RepairDetail } from "../contracts/domain/repair";
 import { resolveSourceRepairDocument } from "../entities/repair/helpers";
+import { formatDocumentProcessor, formatDocumentVersionSummary } from "../entities/document/formatters";
 import type {
   DocumentComparisonResponse,
   DocumentKind,
@@ -263,30 +264,37 @@ export function RepairDocumentsSection({
                 </Stack>
                 <Stack spacing={1}>
                   <Typography className="metric-label">Версии обработки: {document.versions.length}</Typography>
-                  {document.versions.map((version) => (
-                    <Box key={version.id}>
-                      <Typography className="muted-copy">
-                        v{version.version_number} · {formatDateTime(version.created_at)}
-                        {version.change_summary ? ` · ${version.change_summary}` : ""}
-                      </Typography>
-                      {version.parsed_payload?.processor ? (
-                        <Typography className="muted-copy">Процессор: {String(version.parsed_payload.processor)}</Typography>
-                      ) : null}
-                      {version.parsed_payload?.manual_review_reasons &&
-                      Array.isArray(version.parsed_payload.manual_review_reasons) &&
-                      version.parsed_payload.manual_review_reasons.length > 0 ? (
+                  {document.versions.map((version) => {
+                    const versionSummary = formatDocumentVersionSummary(version.change_summary);
+                    const processorLabel = formatDocumentProcessor(
+                      typeof version.parsed_payload?.processor === "string" ? version.parsed_payload.processor : null,
+                    );
+
+                    return (
+                      <Box key={version.id}>
                         <Typography className="muted-copy">
-                          Ручная проверка: {formatManualReviewReasons(version.parsed_payload.manual_review_reasons as string[])}
+                          v{version.version_number} · {formatDateTime(version.created_at)}
+                          {versionSummary ? ` · ${versionSummary}` : ""}
                         </Typography>
-                      ) : null}
-                      {formatOcrProfileMeta(version.parsed_payload) ? (
-                        <Typography className="muted-copy">{formatOcrProfileMeta(version.parsed_payload)}</Typography>
-                      ) : null}
-                      {formatLaborNormApplicability(version.parsed_payload) ? (
-                        <Typography className="muted-copy">{formatLaborNormApplicability(version.parsed_payload)}</Typography>
-                      ) : null}
-                    </Box>
-                  ))}
+                        {processorLabel ? (
+                          <Typography className="muted-copy">Режим обработки: {processorLabel}</Typography>
+                        ) : null}
+                        {version.parsed_payload?.manual_review_reasons &&
+                        Array.isArray(version.parsed_payload.manual_review_reasons) &&
+                        version.parsed_payload.manual_review_reasons.length > 0 ? (
+                          <Typography className="muted-copy">
+                            Ручная проверка: {formatManualReviewReasons(version.parsed_payload.manual_review_reasons as string[])}
+                          </Typography>
+                        ) : null}
+                        {formatOcrProfileMeta(version.parsed_payload) ? (
+                          <Typography className="muted-copy">{formatOcrProfileMeta(version.parsed_payload)}</Typography>
+                        ) : null}
+                        {formatLaborNormApplicability(version.parsed_payload) ? (
+                          <Typography className="muted-copy">{formatLaborNormApplicability(version.parsed_payload)}</Typography>
+                        ) : null}
+                      </Box>
+                    );
+                  })}
                 </Stack>
               </Stack>
             </Paper>

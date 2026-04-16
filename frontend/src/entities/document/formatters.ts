@@ -194,12 +194,27 @@ export function formatOcrProfileName(value: string | null | undefined) {
   return value;
 }
 
+export function formatOcrProfileSourceLabel(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+  const labels: Record<string, string> = {
+    matcher: "по правилу профиля",
+    history: "по истории ремонта",
+    history_fallback: "резерв по истории ремонта",
+    ambiguous_fallback: "резервный выбор профиля",
+    default: "по умолчанию",
+  };
+  return labels[value] || formatStatus(value);
+}
+
 export function formatOcrProfileMeta(payload: Record<string, unknown> | null | undefined) {
   const meta = readOcrProfileMeta(payload);
   if (!meta?.scope) {
     return null;
   }
-  const sourceSuffix = meta.source ? ` · ${meta.source}` : "";
+  const sourceLabel = formatOcrProfileSourceLabel(meta.source);
+  const sourceSuffix = sourceLabel ? ` · ${sourceLabel}` : "";
   const reasonSuffix = meta.reason ? ` · ${meta.reason}` : "";
   return `Шаблон OCR: ${formatOcrProfileName(meta.scope)}${sourceSuffix}${reasonSuffix}`;
 }

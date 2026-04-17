@@ -143,7 +143,17 @@ export function formatCatalogCodeLabel(value: string | null | undefined) {
   if (!value) {
     return "Не указан";
   }
-  return value;
+  return value
+    .trim()
+    .split(/[_\-\s]+/)
+    .filter(Boolean)
+    .map((part) => {
+      if (/\d/.test(part) || part.length <= 3) {
+        return part.toUpperCase();
+      }
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(" ");
 }
 
 export function formatHours(value: number | null | undefined) {

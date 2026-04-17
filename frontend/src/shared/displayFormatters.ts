@@ -55,10 +55,3 @@ export function formatOcrSignalTypeLabel(value: string) {
   };
   return labels[value] || value;
 }
-
-export function formatCatalogCodeLabel(value: string | null | undefined) {
-  if (!value) {
-    return "Не указан";
-  }
-  return value;
-}

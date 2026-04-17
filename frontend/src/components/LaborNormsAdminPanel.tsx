@@ -493,7 +493,7 @@ export function LaborNormsAdminPanel({
                     ) : null}
                     {operationalCatalogs.map((item) => (
                       <MenuItem key={`entry-${item.scope}`} value={item.scope}>
-                        {item.catalog_name} · {item.scope}
+                        {item.catalog_name} · {formatCatalogCodeLabel(item.scope)}
                       </MenuItem>
                     ))}
                   </TextField>
@@ -632,7 +632,7 @@ export function LaborNormsAdminPanel({
                         <Typography>{formatHours(item.standard_hours) || "—"}</Typography>
                       </Stack>
                       <Typography className="muted-copy">
-                        {item.catalog_name || item.scope}
+                        {item.catalog_name || formatCatalogCodeLabel(item.scope)}
                         {item.brand_family ? ` · ${item.brand_family}` : ""}
                         {item.category ? ` · ${item.category}` : " · Без категории"}
                         {item.name_ru_alt ? ` · доп. название: ${item.name_ru_alt}` : ""}

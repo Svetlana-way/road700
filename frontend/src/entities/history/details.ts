@@ -60,12 +60,17 @@ function formatHistoryFieldLabel(fieldName: string, formatStatus: HistoryDetailF
     repair_id: "Ремонт",
     vehicle_id: "Техника",
     vehicle: "Техника",
+    external_id: "Внешний ID",
+    vin: "VIN",
     order_number: "Номер заказ-наряда",
     repair_date: "Дата ремонта",
     mileage: "Пробег",
     reason: "Причина обращения",
     employee_comment: "Комментарий сотрудника",
+    name: "Название",
     service_name: "Сервис",
+    city: "Город",
+    contact: "Контакт",
     work_total: "Сумма работ",
     parts_total: "Сумма запчастей",
     vat_total: "НДС",
@@ -73,7 +78,11 @@ function formatHistoryFieldLabel(fieldName: string, formatStatus: HistoryDetailF
     repair_status: "Статус ремонта",
     document_status: "Статус документа",
     review_queue_priority: "Приоритет очереди",
+    ocr_confidence: "Уверенность OCR",
     source_document_id: "Основной документ",
+    source_type: "Источник файла",
+    mime_type: "MIME-тип",
+    storage_key: "Файл в хранилище",
     is_preliminary: "Черновик",
     is_partially_recognized: "Частичное распознавание",
     is_primary: "Основной документ",
@@ -86,14 +95,47 @@ function formatHistoryFieldLabel(fieldName: string, formatStatus: HistoryDetailF
     email: "E-mail",
     role: "Роль",
     is_active: "Активен",
+    vehicle_type: "Тип техники",
     starts_at: "Дата начала",
     ends_at: "Дата окончания",
+    archived_at: "Дата архивации",
     comment: "Комментарий",
     plate_number: "Госномер",
     brand: "Марка",
     model: "Модель",
     notes: "Комментарий",
     created_new_vehicle: "Создана новая карточка техники",
+    scope: "Каталог",
+    catalog_id: "ID каталога",
+    catalog_name: "Название каталога",
+    brand_family: "Семейство бренда",
+    year_from: "Год от",
+    year_to: "Год до",
+    priority: "Приоритет",
+    auto_match_enabled: "Авто-матчинг",
+    code: "Код",
+    category: "Категория",
+    name_ru: "Название",
+    name_ru_alt: "Доп. название",
+    name_cn: "Название CN",
+    name_en: "Название EN",
+    standard_hours: "Нормо-часы",
+    source_sheet: "Лист",
+    source_file: "Исходный файл",
+    resolution_payload: "Решение",
+    filename: "Файл",
+    backup_id: "Резервная копия",
+    backup_type: "Тип копии",
+    size_bytes: "Размер",
+    storage_files_total: "Файлов в хранилище",
+    tables_total: "Таблиц",
+    included_sections: "Включённые разделы",
+    excluded_sections: "Исключённые разделы",
+    restore_effects: "Эффекты восстановления",
+    created: "Создано",
+    updated: "Обновлено",
+    skipped: "Пропущено",
+    error: "Ошибка",
   };
 
   return labels[fieldName] || formatStatus(fieldName);
@@ -120,6 +162,15 @@ function formatHistoryScalar(
     ) {
       return formatters.formatMoney(value) || "—";
     }
+    if (fieldName === "standard_hours") {
+      return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(value)} ч`;
+    }
+    if (fieldName === "ocr_confidence") {
+      return `${Math.round(value * 100)}%`;
+    }
+    if (fieldName === "size_bytes") {
+      return `${new Intl.NumberFormat("ru-RU").format(value)} Б`;
+    }
     return new Intl.NumberFormat("ru-RU").format(value);
   }
   if (typeof value === "string") {
@@ -128,6 +179,25 @@ function formatHistoryScalar(
     }
     if (fieldName === "role") {
       return value === "admin" ? "Администратор" : value === "employee" ? "Сотрудник" : value;
+    }
+    if (fieldName === "vehicle_type") {
+      return value === "truck" ? "Грузовик" : value === "trailer" ? "Прицеп" : value;
+    }
+    if (fieldName === "scope") {
+      return value
+        .trim()
+        .split(/[_\-\s]+/)
+        .filter(Boolean)
+        .map((part) => {
+          if (/\d/.test(part) || part.length <= 3) {
+            return part.toUpperCase();
+          }
+          return part.charAt(0).toUpperCase() + part.slice(1);
+        })
+        .join(" ");
+    }
+    if (fieldName === "source_type") {
+      return value === "pdf" ? "PDF" : value === "image" ? "Изображение" : value;
     }
     if (fieldName === "status") {
       if (context === "document") {
@@ -310,6 +380,37 @@ export function buildAuditEntryDetails(entry: AuditLogHistoryItem, formatters: H
     "source_document_id",
   ];
   const vehicleFields = ["plate_number", "vin", "brand", "model", "status", "comment"];
+  const serviceFields = ["name", "city", "contact", "comment", "status", "created_by_user_id", "confirmed_by_user_id"];
+  const laborNormCatalogFields = [
+    "scope",
+    "catalog_name",
+    "brand_family",
+    "vehicle_type",
+    "year_from",
+    "year_to",
+    "priority",
+    "auto_match_enabled",
+    "status",
+    "notes",
+  ];
+  const laborNormItemFields = [
+    "scope",
+    "catalog_name",
+    "brand_family",
+    "code",
+    "category",
+    "name_ru",
+    "name_ru_alt",
+    "name_cn",
+    "name_en",
+    "standard_hours",
+    "source_sheet",
+    "source_file",
+    "status",
+  ];
+  const laborNormImportFields = ["scope", "catalog_id", "catalog_name", "brand_family", "filename", "created", "updated", "skipped", "error"];
+  const importConflictFields = ["status", "resolution_payload"];
+  const systemFields = ["backup_id", "filename", "backup_type", "source", "status", "size_bytes", "storage_files_total", "tables_total", "created_at"];
   const userFields = ["full_name", "login", "email", "role", "is_active", "vehicle_id", "starts_at", "ends_at", "comment"];
   const genericFields = ["document_id", "repair_id", "original_filename", "source_filename", "status", "comment", "notes", "created_new_vehicle"];
 
@@ -323,6 +424,18 @@ export function buildAuditEntryDetails(entry: AuditLogHistoryItem, formatters: H
     fields = documentFields;
   } else if (entry.entity_type === "vehicle") {
     fields = vehicleFields;
+  } else if (entry.entity_type === "service") {
+    fields = serviceFields;
+  } else if (entry.entity_type === "labor_norm_catalog") {
+    fields = laborNormCatalogFields;
+  } else if (entry.entity_type === "labor_norm_item") {
+    fields = laborNormItemFields;
+  } else if (entry.entity_type === "labor_norm_import") {
+    fields = laborNormImportFields;
+  } else if (entry.entity_type === "import_conflict") {
+    fields = importConflictFields;
+  } else if (entry.entity_type === "system") {
+    fields = systemFields;
   } else if (entry.entity_type === "user") {
     fields = userFields;
   }

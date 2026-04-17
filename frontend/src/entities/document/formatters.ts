@@ -188,10 +188,25 @@ export function formatOcrProfileName(value: string | null | undefined) {
   if (!value) {
     return "Не указан";
   }
-  if (value === "default") {
-    return "Базовый";
+  const labels: Record<string, string> = {
+    default: "Базовый",
+    axb: "АХВ Трак Сервис",
+    antares: "Антарес",
+    ets_act: "Енисей Трак Сервис (акт)",
+    ets_invoice: "Енисей Трак Сервис (счёт)",
+    gruzovye_rezervy: "Грузовые резервы",
+    leader_trak: "ЛидерТрак",
+    klever_trak: "Клевер Трак",
+    sibtrakscan: "СибТракСкан",
+    logistics: "Логистика",
+  };
+  if (labels[value]) {
+    return labels[value];
   }
-  return value;
+  return value
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
 }
 
 export function formatOcrProfileSourceLabel(value: string | null | undefined) {

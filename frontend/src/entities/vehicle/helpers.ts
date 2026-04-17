@@ -1,3 +1,5 @@
+import { formatOcrProfileName } from "../document/formatters";
+
 type VehiclePreviewLike = {
   id: number;
   plate_number: string | null;
@@ -189,10 +191,7 @@ function getPayloadProfileScopeLabel(payload: Record<string, unknown> | null | u
   if (typeof rawValue !== "string" || !rawValue.trim()) {
     return "OCR";
   }
-  return rawValue
-    .trim()
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ");
+  return formatOcrProfileName(rawValue);
 }
 
 function getPayloadBaseSourceLabel(payload: Record<string, unknown> | null | undefined) {

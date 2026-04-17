@@ -223,6 +223,31 @@ export function formatOcrProfileSourceLabel(value: string | null | undefined) {
   return labels[value] || formatStatus(value);
 }
 
+export function formatOcrProfileReasonLabel(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+  const labels: Record<string, string> = {
+    "AXB Truck Service scanned order form": "АХВ Трак Сервис: скан заказ-наряда",
+    "Антарес order form": "Антарес: заказ-наряд",
+    "Грузовые резервы order form": "Грузовые резервы: заказ-наряд",
+    "Енисей Трак Сервис work act": "Енисей Трак Сервис: акт выполненных работ",
+    "Енисей Трак Сервис invoice": "Енисей Трак Сервис: счёт",
+    "ЛидерТрак order form": "ЛидерТрак: заказ-наряд",
+    "Логистика order form": "Логистика: заказ-наряд",
+    "Клевер Трак XLSX order form": "Клевер Трак: XLSX заказ-наряд",
+    "СибТракСкан order form": "СибТракСкан: заказ-наряд",
+  };
+  if (labels[value]) {
+    return labels[value];
+  }
+  return value
+    .replace(/\bscanned order form\b/gi, "скан заказ-наряда")
+    .replace(/\border form\b/gi, "заказ-наряд")
+    .replace(/\bwork act\b/gi, "акт выполненных работ")
+    .replace(/\binvoice\b/gi, "счёт");
+}
+
 export function formatOcrProfileMeta(payload: Record<string, unknown> | null | undefined) {
   const meta = readOcrProfileMeta(payload);
   if (!meta?.scope) {
@@ -230,7 +255,8 @@ export function formatOcrProfileMeta(payload: Record<string, unknown> | null | u
   }
   const sourceLabel = formatOcrProfileSourceLabel(meta.source);
   const sourceSuffix = sourceLabel ? ` · ${sourceLabel}` : "";
-  const reasonSuffix = meta.reason ? ` · ${meta.reason}` : "";
+  const reasonLabel = formatOcrProfileReasonLabel(meta.reason);
+  const reasonSuffix = reasonLabel ? ` · ${reasonLabel}` : "";
   return `Шаблон OCR: ${formatOcrProfileName(meta.scope)}${sourceSuffix}${reasonSuffix}`;
 }
 

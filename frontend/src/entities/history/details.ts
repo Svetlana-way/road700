@@ -71,6 +71,8 @@ function formatHistoryFieldLabel(fieldName: string, formatStatus: HistoryDetailF
     service_name: "Сервис",
     city: "Город",
     contact: "Контакт",
+    created_by_user_id: "Создал",
+    confirmed_by_user_id: "Подтвердил",
     work_total: "Сумма работ",
     parts_total: "Сумма запчастей",
     vat_total: "НДС",
@@ -109,6 +111,9 @@ function formatHistoryFieldLabel(fieldName: string, formatStatus: HistoryDetailF
     catalog_id: "ID каталога",
     catalog_name: "Название каталога",
     brand_family: "Семейство бренда",
+    brand_keywords: "Ключевые слова марок",
+    model_keywords: "Ключевые слова моделей",
+    vin_prefixes: "Префиксы VIN",
     year_from: "Год от",
     year_to: "Год до",
     priority: "Приоритет",
@@ -126,12 +131,17 @@ function formatHistoryFieldLabel(fieldName: string, formatStatus: HistoryDetailF
     filename: "Файл",
     backup_id: "Резервная копия",
     backup_type: "Тип копии",
+    source: "Источник",
     size_bytes: "Размер",
     storage_files_total: "Файлов в хранилище",
     tables_total: "Таблиц",
     included_sections: "Включённые разделы",
     excluded_sections: "Исключённые разделы",
     restore_effects: "Эффекты восстановления",
+    requested_by_user_id: "Запросил ID пользователя",
+    requested_by_login: "Запросил пользователь",
+    created_at: "Создано",
+    restored_at: "Восстановлено",
     created: "Создано",
     updated: "Обновлено",
     skipped: "Пропущено",
@@ -146,7 +156,7 @@ function formatHistoryScalar(
   value: unknown,
   formatters: HistoryDetailFormatters,
   context: HistoryContext = "generic",
-) {
+): string {
   if (value === null || value === undefined || value === "") {
     return "—";
   }
@@ -197,7 +207,27 @@ function formatHistoryScalar(
         .join(" ");
     }
     if (fieldName === "source_type") {
-      return value === "pdf" ? "PDF" : value === "image" ? "Изображение" : value;
+      return value === "pdf" ? "PDF" : value === "image" ? "Изображение" : value === "xlsx" ? "XLSX" : value;
+    }
+    if (fieldName === "source") {
+      return value === "manual" ? "Вручную" : value;
+    }
+    if (fieldName === "included_sections" || fieldName === "excluded_sections") {
+      const labels: Record<string, string> = {
+        database: "База данных",
+        storage_files: "Файлы хранилища",
+        backup_archives: "Архивы резервных копий",
+      };
+      return labels[value] || value;
+    }
+    if (fieldName === "restore_effects") {
+      const labels: Record<string, string> = {
+        replace_database: "Замена базы данных",
+        replace_storage_files: "Замена файлов хранилища",
+        keep_backup_archives: "Сохранение архивов резервных копий",
+        relogin_required: "Требуется повторный вход",
+      };
+      return labels[value] || value;
     }
     if (fieldName === "status") {
       if (context === "document") {
@@ -223,6 +253,12 @@ function formatHistoryScalar(
     return value;
   }
   if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return "—";
+    }
+    if (value.every((item) => item === null || ["string", "number", "boolean"].includes(typeof item))) {
+      return value.map((item) => formatHistoryScalar(fieldName, item, formatters, context)).join(", ");
+    }
     return `${value.length}`;
   }
   if (typeof value === "object") {
@@ -386,6 +422,9 @@ export function buildAuditEntryDetails(entry: AuditLogHistoryItem, formatters: H
     "catalog_name",
     "brand_family",
     "vehicle_type",
+    "brand_keywords",
+    "model_keywords",
+    "vin_prefixes",
     "year_from",
     "year_to",
     "priority",
@@ -410,7 +449,23 @@ export function buildAuditEntryDetails(entry: AuditLogHistoryItem, formatters: H
   ];
   const laborNormImportFields = ["scope", "catalog_id", "catalog_name", "brand_family", "filename", "created", "updated", "skipped", "error"];
   const importConflictFields = ["status", "resolution_payload"];
-  const systemFields = ["backup_id", "filename", "backup_type", "source", "status", "size_bytes", "storage_files_total", "tables_total", "created_at"];
+  const systemFields = [
+    "backup_id",
+    "filename",
+    "backup_type",
+    "source",
+    "status",
+    "size_bytes",
+    "storage_files_total",
+    "tables_total",
+    "included_sections",
+    "excluded_sections",
+    "restore_effects",
+    "requested_by_user_id",
+    "requested_by_login",
+    "created_at",
+    "restored_at",
+  ];
   const userFields = ["full_name", "login", "email", "role", "is_active", "vehicle_id", "starts_at", "ends_at", "comment"];
   const genericFields = ["document_id", "repair_id", "original_filename", "source_filename", "status", "comment", "notes", "created_new_vehicle"];
 

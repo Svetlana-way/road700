@@ -97,6 +97,7 @@ function formatHistoryFieldLabel(fieldName: string, formatStatus: HistoryDetailF
     email: "E-mail",
     role: "Роль",
     is_active: "Активен",
+    assignment_id: "Назначение",
     vehicle_type: "Тип техники",
     starts_at: "Дата начала",
     ends_at: "Дата окончания",
@@ -146,6 +147,13 @@ function formatHistoryFieldLabel(fieldName: string, formatStatus: HistoryDetailF
     updated: "Обновлено",
     skipped: "Пропущено",
     error: "Ошибка",
+    password_updated: "Пароль обновлён",
+    invalidated_password_reset_tokens: "Сброшено токенов восстановления",
+    password_reset: "Пароль сброшен",
+    self_service: "Самообслуживание",
+    delivery_status: "Статус доставки",
+    delivery_error: "Ошибка доставки",
+    password_recovered: "Пароль восстановлен",
   };
 
   return labels[fieldName] || formatStatus(fieldName);
@@ -211,6 +219,15 @@ function formatHistoryScalar(
     }
     if (fieldName === "source") {
       return value === "manual" ? "Вручную" : value;
+    }
+    if (fieldName === "delivery_status") {
+      return value === "sent"
+        ? "Отправлено"
+        : value === "pending"
+          ? "В ожидании"
+          : value === "pending_manual"
+            ? "Ожидает ручной передачи"
+            : value;
     }
     if (fieldName === "included_sections" || fieldName === "excluded_sections") {
       const labels: Record<string, string> = {
@@ -466,7 +483,26 @@ export function buildAuditEntryDetails(entry: AuditLogHistoryItem, formatters: H
     "created_at",
     "restored_at",
   ];
-  const userFields = ["full_name", "login", "email", "role", "is_active", "vehicle_id", "starts_at", "ends_at", "comment"];
+  const userFields = [
+    "full_name",
+    "login",
+    "email",
+    "role",
+    "is_active",
+    "assignment_id",
+    "vehicle_id",
+    "plate_number",
+    "starts_at",
+    "ends_at",
+    "comment",
+    "password_updated",
+    "invalidated_password_reset_tokens",
+    "password_reset",
+    "self_service",
+    "delivery_status",
+    "delivery_error",
+    "password_recovered",
+  ];
   const genericFields = ["document_id", "repair_id", "original_filename", "source_filename", "status", "comment", "notes", "created_new_vehicle"];
 
   let context: HistoryContext = "generic";

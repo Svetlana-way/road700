@@ -57,7 +57,9 @@ function formatHistoryFieldLabel(fieldName: string, formatStatus: HistoryDetailF
 
   const labels: Record<string, string> = {
     document_id: "Документ",
+    job_id: "Импорт",
     repair_id: "Ремонт",
+    service_id: "Сервис",
     vehicle_id: "Техника",
     vehicle: "Техника",
     external_id: "Внешний ID",
@@ -82,6 +84,7 @@ function formatHistoryFieldLabel(fieldName: string, formatStatus: HistoryDetailF
     review_queue_priority: "Приоритет очереди",
     ocr_confidence: "Уверенность OCR",
     source_document_id: "Основной документ",
+    source_key: "Ключ импорта",
     source_type: "Источник файла",
     mime_type: "MIME-тип",
     storage_key: "Файл в хранилище",
@@ -413,12 +416,17 @@ export function buildAuditEntryDetails(entry: AuditLogHistoryItem, formatters: H
     "source_document_id",
   ];
   const repairFields = [
+    "job_id",
     "order_number",
     "repair_date",
     "mileage",
+    "vehicle_id",
+    "service_id",
     "reason",
     "employee_comment",
     "service_name",
+    "source_filename",
+    "source_key",
     "work_total",
     "parts_total",
     "vat_total",
@@ -432,7 +440,7 @@ export function buildAuditEntryDetails(entry: AuditLogHistoryItem, formatters: H
     "is_partially_recognized",
     "source_document_id",
   ];
-  const vehicleFields = ["plate_number", "vin", "brand", "model", "status", "comment"];
+  const vehicleFields = ["plate_number", "vin", "brand", "model", "status", "archived_at", "comment"];
   const serviceFields = ["name", "city", "contact", "comment", "status", "created_by_user_id", "confirmed_by_user_id"];
   const laborNormCatalogFields = [
     "scope",

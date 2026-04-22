@@ -18,8 +18,11 @@ depends_on = None
 def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.execute("ALTER TYPE importstatus ADD VALUE IF NOT EXISTS 'QUEUED'")
-        op.execute("ALTER TYPE importstatus ADD VALUE IF NOT EXISTS 'RETRY'")
+        # PostgreSQL requires enum value additions to be committed before later
+        # statements in subsequent migrations can safely reference them.
+        with op.get_context().autocommit_block():
+            op.execute("ALTER TYPE importstatus ADD VALUE IF NOT EXISTS 'QUEUED'")
+            op.execute("ALTER TYPE importstatus ADD VALUE IF NOT EXISTS 'RETRY'")
 
     with op.batch_alter_table("import_jobs") as batch_op:
         batch_op.add_column(sa.Column("attempts", sa.Integer(), nullable=False, server_default="0"))

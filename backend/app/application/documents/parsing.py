@@ -27,6 +27,7 @@ from app.application.documents.parser_helpers import (
     reconcile_header_totals_with_line_items,
     sanitize_extracted_items,
 )
+from app.application.documents.document_parsers.axb_work_items import repair_axb_fragmented_work_items
 from app.application.documents.profile_fallbacks import (
     apply_profile_specific_item_fallbacks,
     apply_profile_specific_total_fallbacks,
@@ -305,6 +306,11 @@ def parse_document_text(text: str, db: Session | None = None, *, profile_scope: 
         extracted_fields=extracted_fields,
         normalization_notes=normalization_notes,
     )
+    if normalized_profile_scope == "axb":
+        extracted_items = {
+            "works": repair_axb_fragmented_work_items(extracted_items.get("works") or [], document_text=text),
+            "parts": list(extracted_items.get("parts") or []),
+        }
     extracted_items, removed_post_fallback_noise_work_count = sanitize_extracted_items(extracted_items)
     if removed_post_fallback_noise_work_count:
         normalization_notes.append(f"noise_work_items_removed_after_fallback:{removed_post_fallback_noise_work_count}")

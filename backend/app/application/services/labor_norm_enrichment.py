@@ -5,9 +5,14 @@ from sqlalchemy.orm import Session
 from app.application.services.labor_norms import (
     LaborNormApplicability,
     LaborNormEnrichmentSummary,
+    build_labor_norm_rewrite_draft,
+    build_labor_norm_resolution_hint,
     build_normalized_name,
     classify_known_non_catalog_operation,
     find_best_labor_norm_match,
+    infer_labor_norm_catalog_gap_reason_code,
+    infer_labor_norm_catalog_gap_reason,
+    normalize_known_work_name,
     normalize_labor_norm_code,
 )
 
@@ -16,6 +21,7 @@ def enrich_work_payloads_with_labor_norms(
     db: Session,
     works_payload: list[dict[str, object]],
     applicability: LaborNormApplicability,
+    document_text: str | None = None,
 ) -> tuple[list[str], LaborNormEnrichmentSummary]:
     notes: list[str] = []
     matched_count = 0
@@ -29,6 +35,10 @@ def enrich_work_payloads_with_labor_norms(
         work_code = normalize_labor_norm_code(str(item.get("work_code"))) if item.get("work_code") else None
         if work_code:
             item["work_code"] = work_code
+        normalized_work_name = normalize_known_work_name(work_name, work_code=work_code)
+        if normalized_work_name and normalized_work_name != work_name:
+            item["work_name"] = normalized_work_name
+            work_name = normalized_work_name
 
         reference_payload = item.get("reference_payload")
         if not isinstance(reference_payload, dict):
@@ -60,6 +70,10 @@ def enrich_work_payloads_with_labor_norms(
             reference_payload["labor_norm_item_reason_code"] = "outside_catalog_service"
             reference_payload["labor_norm_item_reason"] = non_catalog_reason
             reference_payload["labor_norm_reference_status"] = "outside_catalog_service"
+            reference_payload["labor_norm_next_step"] = build_labor_norm_resolution_hint(
+                work_name=work_name,
+                reference_status="outside_catalog_service",
+            )
             item["reference_payload"] = reference_payload
             notes.append("labor_norm_skip:outside_catalog_service")
             continue
@@ -78,6 +92,22 @@ def enrich_work_payloads_with_labor_norms(
         )
         if match is None:
             reference_payload["labor_norm_reference_status"] = "catalog_gap"
+            reference_payload["labor_norm_item_reason_code"] = (
+                infer_labor_norm_catalog_gap_reason_code(work_name) or "catalog_gap"
+            )
+            reference_payload["labor_norm_item_reason"] = (
+                infer_labor_norm_catalog_gap_reason(work_name)
+                or "работа выглядит осмысленной, но не находится в каталоге нормо-часов"
+            )
+            reference_payload["labor_norm_next_step"] = build_labor_norm_resolution_hint(
+                work_name=work_name,
+                reference_status="catalog_gap",
+            )
+            reference_payload["labor_norm_rewrite_draft"] = build_labor_norm_rewrite_draft(
+                work_name=work_name,
+                reference_status="catalog_gap",
+                document_text=document_text,
+            )
             item["reference_payload"] = reference_payload
             unmatched_count += 1
             continue

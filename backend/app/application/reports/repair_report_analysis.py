@@ -169,6 +169,9 @@ def build_repair_executive_report(
     for finding in _build_non_original_part_findings(repair):
         _append_finding(findings, seen_findings, finding)
 
+    for finding in _build_labor_norm_reference_findings(repair):
+        _append_finding(findings, seen_findings, finding)
+
     for finding in _build_document_quality_findings(
         repair,
         source_payload,
@@ -193,7 +196,7 @@ def build_repair_executive_report(
     recommendations = _collect_recommendations(findings)
     risk_matrix = _build_risk_matrix(findings)
     headline, summary = _build_summary(repair, findings, overall_risk)
-    full_report_sections = _build_full_report_sections(repair, findings, recommendations, overall_risk)
+    full_report_sections = _build_full_report_sections(repair, findings, recommendations, overall_risk, source_payload)
 
     return {
         "headline": headline,
@@ -860,6 +863,56 @@ def _build_document_program_findings(source_payload: dict) -> list[dict[str, obj
     ]
 
 
+def _build_labor_norm_reference_findings(repair: Repair) -> list[dict[str, object]]:
+    if any((not check.is_resolved) and "labor_norm" in str(check.check_type) for check in repair.checks):
+        return []
+
+    matched_count = 0
+    outside_catalog_count = 0
+    catalog_gap_rows: list[tuple[str, str, str, str]] = []
+
+    for work in repair.works:
+        payload = work.reference_payload if isinstance(work.reference_payload, dict) else {}
+        reference_status = str(payload.get("labor_norm_reference_status") or "").strip()
+        if reference_status == "matched":
+            matched_count += 1
+            continue
+        if reference_status == "outside_catalog_service":
+            outside_catalog_count += 1
+            continue
+        if reference_status != "catalog_gap":
+            continue
+
+        reason = str(payload.get("labor_norm_item_reason") or "").strip()
+        next_step = str(payload.get("labor_norm_next_step") or "").strip()
+        rewrite_draft = str(payload.get("labor_norm_rewrite_draft") or "").strip()
+        catalog_gap_rows.append((str(work.work_name or ""), reason, next_step, rewrite_draft))
+
+    if not catalog_gap_rows:
+        return []
+
+    evidence = [
+        f"По каталогу нормо-часов подтверждено {matched_count} работ; вне каталога оставлено {outside_catalog_count}; ручной сверки требуют {len(catalog_gap_rows)}."
+    ]
+    for work_name, reason, next_step, rewrite_draft in catalog_gap_rows[:3]:
+        detail = next_step or reason or "Нужна ручная сверка по каталогу нормо-часов."
+        if rewrite_draft:
+            detail = f"{detail} {rewrite_draft}"
+        evidence.append(f"{work_name}: {detail}")
+
+    return [
+        {
+            "title": "Часть работ не подтверждена каталогом нормо-часов",
+            "severity": "medium",
+            "category": "Нормо-часы",
+            "summary": "В заказ-наряде есть работы, для которых автоматическая сверка с каталогом не завершена и нужна ручная проверка или уточнение формулировки.",
+            "rationale": "Это не всегда ошибка сервиса, но такие строки нельзя считать автоматически подтвержденными до детализации оси, стороны, контура или конкретного узла.",
+            "evidence": evidence,
+            "recommendation": "Проверить строки с ручной сверкой отдельно и, где возможно, уточнить формулировки работ до уровня, достаточного для выбора нормы.",
+        }
+    ]
+
+
 def _build_service_not_done_findings(source_payload: dict) -> list[dict[str, object]]:
     raw_items = source_payload.get("service_not_done")
     items = [str(item) for item in raw_items] if isinstance(raw_items, list) else []
@@ -890,8 +943,12 @@ def _build_summary(
 
     if not findings:
         return (
-            "Серьезных управленческих рисков не найдено",
-            f"Заказ-наряд {order_ref} на сумму {total} проверен. Критичных несоответствий, требующих отдельного контроля, не выявлено.",
+            "Автоматическая проверка не показала явных критичных сигналов",
+            (
+                f"Заказ-наряд {order_ref} на сумму {total} проверен автоматически. "
+                "Критичных сигналов для отдельного управленческого контроля не найдено, "
+                "но это не заменяет выборочную ручную сверку спорных строк и качества OCR."
+            ),
         )
 
     risk_label = LEVEL_LABELS[overall_risk]
@@ -906,8 +963,10 @@ def _build_full_report_sections(
     findings: list[dict[str, object]],
     recommendations: list[str],
     overall_risk: str,
+    source_payload: dict,
 ) -> list[dict[str, object]]:
     sections = [
+        _build_customer_summary_section(repair, source_payload=source_payload),
         _build_finance_section(repair),
         _build_work_scope_section(repair),
         _build_findings_section(findings),
@@ -918,6 +977,37 @@ def _build_full_report_sections(
         _build_recommendations_section(recommendations),
     ]
     return [section for section in sections if section["items"]]
+
+
+def _build_customer_summary_section(
+    repair: Repair,
+    *,
+    source_payload: dict | None,
+) -> dict[str, object]:
+    matched_count, outside_catalog_count, manual_review_required_count = _collect_customer_reference_counts(repair)
+    ocr_risk_count = _collect_customer_ocr_risk_count(repair, source_payload or {})
+
+    items = [
+        f"Подтверждено по каталогу: {matched_count} строк.",
+        (
+            f"Вне каталога: {outside_catalog_count} строк. "
+            "Это локальные сервисные операции, их не нужно считать ошибкой сверки."
+        ),
+        (
+            f"Нужна ручная проверка: {manual_review_required_count} строк. "
+            "Такие работы нельзя подтверждать автоматически без уточнения формулировки или ручной сверки."
+        ),
+        (
+            f"OCR-риск: {ocr_risk_count} сигналов. "
+            "Если по документу есть OCR-ограничения, спорные строки нужно сверять по исходному PDF."
+        ),
+    ]
+
+    return {
+        "key": "customer_summary",
+        "title": "0. Краткая сводка для заказчика",
+        "items": items,
+    }
 
 
 def _build_finance_section(repair: Repair) -> dict[str, object]:
@@ -1002,7 +1092,10 @@ def _build_work_scope_section(repair: Repair) -> dict[str, object]:
 def _build_findings_section(findings: list[dict[str, object]]) -> dict[str, object]:
     ordered_findings = sorted(findings, key=_finding_sort_key)
     if not ordered_findings:
-        items = ["Критичных и средних замечаний по данным автоматической проверки не выявлено."]
+        items = [
+            "Автоматическая проверка не показала критичных и средних сигналов, "
+            "но остаточный риск стоит оценивать с учетом качества OCR и полноты документа."
+        ]
     else:
         items = [
             f"{item['title']}: {item['summary']}"
@@ -1041,6 +1134,9 @@ def _build_financial_risk_section(repair: Repair, findings: list[dict[str, objec
 def _build_norm_hours_section(repair: Repair, findings: list[dict[str, object]]) -> dict[str, object]:
     deviations = _collect_hour_deviations(repair)
     items: list[str] = []
+    reference_summary_items = _collect_labor_norm_reference_summary_items(repair)
+    if reference_summary_items:
+        items.extend(reference_summary_items)
 
     if deviations:
         in_range = len([item for item in deviations if item["status"] == "ok"])
@@ -1070,6 +1166,77 @@ def _build_norm_hours_section(repair: Repair, findings: list[dict[str, object]])
     }
 
 
+def _collect_customer_reference_counts(repair: Repair) -> tuple[int, int, int]:
+    matched_count = 0
+    outside_catalog_count = 0
+    manual_review_required_count = 0
+
+    for work in repair.works:
+        payload = work.reference_payload if isinstance(work.reference_payload, dict) else {}
+        reference_status = str(payload.get("labor_norm_reference_status") or "").strip()
+        if reference_status == "matched":
+            matched_count += 1
+        elif reference_status == "outside_catalog_service":
+            outside_catalog_count += 1
+        elif reference_status == "catalog_gap":
+            manual_review_required_count += 1
+
+    return matched_count, outside_catalog_count, manual_review_required_count
+
+
+def _collect_customer_ocr_risk_count(repair: Repair, source_payload: dict) -> int:
+    unresolved_ocr_checks = [
+        check
+        for check in repair.checks
+        if not check.is_resolved and str(check.check_type).startswith("ocr_")
+    ]
+    if unresolved_ocr_checks:
+        return len(unresolved_ocr_checks)
+
+    manual_review_reasons = source_payload.get("manual_review_reasons")
+    if isinstance(manual_review_reasons, list):
+        return len([str(item) for item in manual_review_reasons if str(item).strip()])
+    return 0
+
+
+def _collect_labor_norm_reference_summary_items(repair: Repair) -> list[str]:
+    matched_count = 0
+    outside_catalog_count = 0
+    catalog_gap_rows: list[tuple[str, str, str]] = []
+
+    for work in repair.works:
+        payload = work.reference_payload if isinstance(work.reference_payload, dict) else {}
+        reference_status = str(payload.get("labor_norm_reference_status") or "").strip()
+        if reference_status == "matched":
+            matched_count += 1
+            continue
+        if reference_status == "outside_catalog_service":
+            outside_catalog_count += 1
+            continue
+        if reference_status != "catalog_gap":
+            continue
+
+        next_step = str(payload.get("labor_norm_next_step") or "").strip()
+        reason = str(payload.get("labor_norm_item_reason") or "").strip()
+        rewrite_draft = str(payload.get("labor_norm_rewrite_draft") or "").strip()
+        catalog_gap_rows.append((str(work.work_name or ""), next_step or reason, rewrite_draft))
+
+    if matched_count == 0 and outside_catalog_count == 0 and not catalog_gap_rows:
+        return []
+
+    items = [
+        f"По каталогу нормо-часов автоматически подтверждено {matched_count} работ, вне каталога оставлено {outside_catalog_count}, ручной сверки требуют {len(catalog_gap_rows)}."
+    ]
+    for work_name, detail, rewrite_draft in catalog_gap_rows[:3]:
+        if rewrite_draft:
+            detail = f"{detail} {rewrite_draft}".strip()
+        if detail:
+            items.append(f"{work_name}: {detail}")
+        else:
+            items.append(f"{work_name}: нужна ручная сверка по каталогу нормо-часов.")
+    return items
+
+
 def _build_logic_section(repair: Repair, findings: list[dict[str, object]]) -> dict[str, object]:
     logic_categories = {"Соответствие дефекта и ремонта", "Состав ремонта", "Прозрачность ремонта"}
     items = [
@@ -1086,7 +1253,9 @@ def _build_logic_section(repair: Repair, findings: list[dict[str, object]]) -> d
         )
 
     if not items:
-        items = ["Явных логических противоречий между причиной обращения и составом ремонта система не нашла."]
+        items = [
+            "Автоматическая проверка не показала явных логических противоречий между причиной обращения и составом ремонта."
+        ]
 
     return {
         "key": "logic",
@@ -1107,7 +1276,9 @@ def _build_conclusion_section(
 
     if not findings:
         items.append(
-            f"Заказ-наряд на сумму {_format_money(float(repair.grand_total or 0))} выглядит управляемым: существенных сигналов не найдено."
+            "Автоматическая проверка не выявила существенных сигналов, "
+            f"поэтому заказ-наряд на сумму {_format_money(float(repair.grand_total or 0))} "
+            "можно считать управляемым только при условии выборочной ручной сверки."
         )
     else:
         high_count = len([item for item in findings if str(item["severity"]) == "high"])
@@ -1127,7 +1298,11 @@ def _build_conclusion_section(
 
 
 def _build_recommendations_section(recommendations: list[str]) -> dict[str, object]:
-    items = recommendations[:6] if recommendations else ["Дополнительных действий по данным автоматической проверки не требуется."]
+    items = (
+        recommendations[:6]
+        if recommendations
+        else ["Дополнительных действий по автоматическим сигналам не требуется, но выборочная ручная сверка остается желательной."]
+    )
     return {
         "key": "recommendations",
         "title": "8. Рекомендация",
@@ -1266,10 +1441,15 @@ def _estimate_gross_risk_total(repair: Repair, net_total: float) -> float:
 def _build_highlights(repair: Repair, findings: list[dict[str, object]]) -> list[str]:
     high_findings_count = len([item for item in findings if str(item["severity"]) == "high"])
     _, suspicious_total = _collect_financial_risk_items(repair, findings)
+    matched_count, outside_catalog_count, manual_review_required_count = _collect_customer_reference_counts(repair)
     gross_suspicious_total = _estimate_gross_risk_total(repair, suspicious_total)
     highlights = [
         f"Сумма заказ-наряда: {_format_money(float(repair.grand_total))}",
         f"Работ: {len(repair.works)} · запчастей: {len(repair.parts)}",
+        (
+            "По работам: подтверждено по каталогу "
+            f"{matched_count}, вне каталога {outside_catalog_count}, ручная проверка {manual_review_required_count}"
+        ),
         f"Сигналов в отчёте: {len(findings)}",
         f"Высокорисковых сигналов: {high_findings_count}",
     ]
@@ -1281,7 +1461,7 @@ def _build_highlights(repair: Repair, findings: list[dict[str, object]]) -> list
             )
         else:
             highlights.append(f"Спорные затраты по прямым сигналам: до {_format_money(suspicious_total)}")
-    return highlights[:5]
+    return highlights[:6]
 
 
 def _collect_recommendations(findings: list[dict[str, object]]) -> list[str]:
@@ -1323,7 +1503,7 @@ def _risk_comment(zone: str, level: str) -> str:
         return f"По зоне «{zone}» есть признаки, требующие отдельного управленческого контроля."
     if level == "medium":
         return f"По зоне «{zone}» есть спорные моменты, которые стоит уточнить до закрытия ремонта."
-    return f"По зоне «{zone}» значимых рисков не выявлено."
+    return f"По зоне «{zone}» автоматическая проверка не показала значимых сигналов риска."
 
 
 def _finding_sort_key(item: dict[str, object]) -> tuple[int, int, int, str]:

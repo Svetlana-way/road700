@@ -180,6 +180,8 @@ def is_meaningful_work_name(value: object) -> bool:
     lower_value = normalized_value.lower()
     if not normalized_value:
         return False
+    if lower_value in {"n", "no", "nº", "№"}:
+        return False
     if re.fullmatch(r"\d+(?:[.,]\d+)?\s*(?:н/?ч|нч|шт|г|гр|мл|литр|л|кг|м)\b", lower_value):
         return False
 

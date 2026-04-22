@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.api import services as services_api
 from app.api import documents as documents_api
-from app.api.repairs import build_repair_pdf_sections
+from app.api.repairs import build_repair_export_workbook, build_repair_pdf_sections
 from app.api.deps import get_db
 from app.core.paths import get_storage_root, set_storage_root
 from app.core.security import get_password_hash
@@ -2623,6 +2623,295 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         attachment_payload = next(item for item in payload["documents"] if item["id"] == attachment_document_id)
         self.assertFalse(attachment_payload["is_primary"])
 
+    def test_repair_detail_exposes_labor_norm_reference_fields_for_work_items(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+
+            db.add_all(
+                [
+                    RepairWork(
+                        repair_id=repair.id,
+                        work_code=None,
+                        work_name="Датчик ABS, замена",
+                        quantity=1,
+                        price=1377.5,
+                        line_total=1377.5,
+                        status=CatalogStatus.PRELIMINARY,
+                        reference_payload={
+                            "labor_norm_reference_status": "catalog_gap",
+                            "labor_norm_item_reason_code": "catalog_gap",
+                            "labor_norm_item_reason": "работа выглядит осмысленной, но для датчика ABS не указана ось или сторона, поэтому выбрать норму из каталога нельзя",
+                            "labor_norm_next_step": "Чтобы подобрать норму, в заказ-наряде нужно указать ось или сторону датчика ABS.",
+                        },
+                    ),
+                    RepairWork(
+                        repair_id=repair.id,
+                        work_code="11090111",
+                        work_name="Воздушный фильтр - замена",
+                        quantity=1,
+                        standard_hours=0.5,
+                        price=1710,
+                        line_total=1710,
+                        status=CatalogStatus.CONFIRMED,
+                        reference_payload={
+                            "labor_norm_reference_status": "matched",
+                            "labor_norm_code": "11090111",
+                            "labor_norm_name": "Диагностика неисправностей и замена элемента воздушного фильтра",
+                            "labor_norm_matched_by": "code",
+                            "labor_norm_match_score": 1.0,
+                        },
+                    ),
+                ]
+            )
+            db.commit()
+
+        response = self.client.get("/api/repairs/1", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        gap_work = next(item for item in payload["works"] if item["work_name"] == "Датчик ABS, замена")
+        matched_work = next(item for item in payload["works"] if item["work_name"] == "Воздушный фильтр - замена")
+
+        self.assertEqual(gap_work["reference_status"], "catalog_gap")
+        self.assertEqual(gap_work["reference_reason_code"], "catalog_gap_missing_abs_position")
+        self.assertIn("ось", gap_work["reference_reason"])
+        self.assertIn("ось", gap_work["reference_next_step"])
+        self.assertIn("Датчик ABS", gap_work["reference_rewrite_draft"])
+        self.assertIsNone(gap_work["reference_match_code"])
+
+        self.assertEqual(matched_work["reference_status"], "matched")
+        self.assertEqual(matched_work["reference_match_code"], "11090111")
+        self.assertEqual(
+            matched_work["reference_match_name"],
+            "Диагностика неисправностей и замена элемента воздушного фильтра",
+        )
+        self.assertEqual(matched_work["reference_matched_by"], "code")
+        self.assertEqual(matched_work["reference_match_score"], 1.0)
+
+    def test_document_list_exposes_labor_norm_reference_fields_in_parsed_payload_works(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, 1)
+            self.assertIsNotNone(document)
+            assert document is not None
+
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=1,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "extracted_items": {
+                            "works": [
+                                {
+                                    "work_code": None,
+                                    "work_name": "Датчик ABS, замена",
+                                    "reference_payload": {
+                                        "labor_norm_reference_status": "catalog_gap",
+                                        "labor_norm_item_reason_code": "catalog_gap",
+                                        "labor_norm_item_reason": "работа выглядит осмысленной, но для датчика ABS не указана ось или сторона, поэтому выбрать норму из каталога нельзя",
+                                        "labor_norm_next_step": "Чтобы подобрать норму, в заказ-наряде нужно указать ось или сторону датчика ABS.",
+                                    },
+                                },
+                                {
+                                    "work_code": "11090111",
+                                    "work_name": "Воздушный фильтр - замена",
+                                    "reference_payload": {
+                                        "labor_norm_reference_status": "matched",
+                                        "labor_norm_code": "11090111",
+                                        "labor_norm_name": "Диагностика неисправностей и замена элемента воздушного фильтра",
+                                        "labor_norm_matched_by": "code",
+                                        "labor_norm_match_score": 1.0,
+                                    },
+                                },
+                            ]
+                        }
+                    },
+                    field_confidence_map={},
+                    change_summary="seed parsed payload",
+                )
+            )
+            db.commit()
+
+        response = self.client.get("/api/documents?limit=8", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        document_payload = next(item for item in payload["items"] if item["id"] == 1)
+        works = document_payload["parsed_payload"]["extracted_items"]["works"]
+        gap_work = next(item for item in works if item["work_name"] == "Датчик ABS, замена")
+        matched_work = next(item for item in works if item["work_name"] == "Воздушный фильтр - замена")
+
+        self.assertEqual(gap_work["reference_status"], "catalog_gap")
+        self.assertEqual(gap_work["reference_reason_code"], "catalog_gap_missing_abs_position")
+        self.assertIn("ось", gap_work["reference_reason"])
+        self.assertIn("ось", gap_work["reference_next_step"])
+        self.assertIn("Датчик ABS", gap_work["reference_rewrite_draft"])
+        self.assertIsNone(gap_work["reference_match_code"])
+
+        self.assertEqual(matched_work["reference_status"], "matched")
+        self.assertEqual(matched_work["reference_match_code"], "11090111")
+        self.assertEqual(
+            matched_work["reference_match_name"],
+            "Диагностика неисправностей и замена элемента воздушного фильтра",
+        )
+        self.assertEqual(matched_work["reference_matched_by"], "code")
+        self.assertEqual(matched_work["reference_match_score"], 1.0)
+
+    def test_repair_detail_exposes_labor_norm_reference_fields_in_document_versions(self) -> None:
+        headers = self._get_auth_headers("admin")
+
+        with self.SessionLocal() as db:
+            document = db.get(Document, 1)
+            self.assertIsNotNone(document)
+            assert document is not None
+
+            db.add(
+                DocumentVersion(
+                    document_id=document.id,
+                    version_number=1,
+                    storage_key=document.storage_key,
+                    parsed_payload={
+                        "extracted_items": {
+                            "works": [
+                                {
+                                    "work_code": None,
+                                    "work_name": "Датчик ABS, замена",
+                                    "reference_payload": {
+                                        "labor_norm_reference_status": "catalog_gap",
+                                        "labor_norm_item_reason_code": "catalog_gap",
+                                        "labor_norm_item_reason": "работа выглядит осмысленной, но для датчика ABS не указана ось или сторона, поэтому выбрать норму из каталога нельзя",
+                                        "labor_norm_next_step": "Чтобы подобрать норму, в заказ-наряде нужно указать ось или сторону датчика ABS.",
+                                    },
+                                },
+                                {
+                                    "work_code": "11090111",
+                                    "work_name": "Воздушный фильтр - замена",
+                                    "reference_payload": {
+                                        "labor_norm_reference_status": "matched",
+                                        "labor_norm_code": "11090111",
+                                        "labor_norm_name": "Диагностика неисправностей и замена элемента воздушного фильтра",
+                                        "labor_norm_matched_by": "code",
+                                        "labor_norm_match_score": 1.0,
+                                    },
+                                },
+                            ]
+                        }
+                    },
+                    field_confidence_map={},
+                    change_summary="seed repair version payload",
+                )
+            )
+            db.commit()
+
+        response = self.client.get("/api/repairs/1", headers=headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        version_payload = payload["documents"][0]["versions"][0]["parsed_payload"]
+        works = version_payload["extracted_items"]["works"]
+        gap_work = next(item for item in works if item["work_name"] == "Датчик ABS, замена")
+        matched_work = next(item for item in works if item["work_name"] == "Воздушный фильтр - замена")
+
+        self.assertEqual(gap_work["reference_status"], "catalog_gap")
+        self.assertEqual(gap_work["reference_reason_code"], "catalog_gap_missing_abs_position")
+        self.assertIn("ось", gap_work["reference_reason"])
+        self.assertIn("ось", gap_work["reference_next_step"])
+        self.assertIn("Датчик ABS", gap_work["reference_rewrite_draft"])
+        self.assertIsNone(gap_work["reference_match_code"])
+
+        self.assertEqual(matched_work["reference_status"], "matched")
+        self.assertEqual(matched_work["reference_match_code"], "11090111")
+        self.assertEqual(
+            matched_work["reference_match_name"],
+            "Диагностика неисправностей и замена элемента воздушного фильтра",
+        )
+        self.assertEqual(matched_work["reference_matched_by"], "code")
+        self.assertEqual(matched_work["reference_match_score"], 1.0)
+
+    def test_export_surfaces_customer_summary_in_pdf_and_xlsx_summary(self) -> None:
+        with self.SessionLocal() as db:
+            repair = db.get(Repair, 1)
+            self.assertIsNotNone(repair)
+            assert repair is not None
+
+            db.add_all(
+                [
+                    RepairWork(
+                        repair_id=repair.id,
+                        work_code=None,
+                        work_name="Датчик ABS, замена",
+                        quantity=1,
+                        price=1377.5,
+                        line_total=1377.5,
+                        status=CatalogStatus.PRELIMINARY,
+                        reference_payload={
+                            "labor_norm_reference_status": "catalog_gap",
+                            "labor_norm_next_step": "Чтобы подобрать норму, в заказ-наряде нужно указать ось или сторону датчика ABS.",
+                        },
+                    ),
+                    RepairWork(
+                        repair_id=repair.id,
+                        work_code="11090111",
+                        work_name="Воздушный фильтр - замена",
+                        quantity=1,
+                        price=1710.0,
+                        line_total=1710.0,
+                        status=CatalogStatus.CONFIRMED,
+                        reference_payload={"labor_norm_reference_status": "matched"},
+                    ),
+                    RepairWork(
+                        repair_id=repair.id,
+                        work_code="0101",
+                        work_name="Мойка технологическая седельного тягача",
+                        quantity=1,
+                        price=1000.0,
+                        line_total=1000.0,
+                        status=CatalogStatus.PRELIMINARY,
+                        reference_payload={"labor_norm_reference_status": "outside_catalog_service"},
+                    ),
+                ]
+            )
+            db.add(
+                RepairCheck(
+                    repair_id=repair.id,
+                    check_type="ocr_total_mismatch",
+                    severity=CheckSeverity.SUSPICIOUS,
+                    title="Сумма строк не совпадает с итоговой суммой",
+                    details="Нужна ручная проверка итогов заказ-наряда",
+                    calculation_payload={},
+                    is_resolved=False,
+                )
+            )
+            db.commit()
+            db.refresh(repair)
+
+            pdf_sections = build_repair_pdf_sections(repair)
+            workbook = build_repair_export_workbook(repair)
+
+        summary_section = next(items for title, items in pdf_sections if title == "Сводка")
+        joined_summary = " ".join(summary_section)
+        self.assertIn("Сводка для заказчика:", joined_summary)
+        self.assertIn("Подтверждено по каталогу: 1", joined_summary)
+        self.assertIn("Вне каталога: 1", joined_summary)
+        self.assertIn("Нужна ручная проверка: 1", joined_summary)
+        self.assertIn("OCR-риск: 1", joined_summary)
+
+        summary_rows = {
+            str(row[0]): row[1]
+            for row in workbook["Отчет"].iter_rows(min_row=2, values_only=True)
+            if row and row[0]
+        }
+        self.assertIn("1 строк.", str(summary_rows["Подтверждено по каталогу"]))
+        self.assertIn("1 строк.", str(summary_rows["Вне каталога"]))
+        self.assertIn("1 строк.", str(summary_rows["Нужна ручная проверка"]))
+        self.assertIn("1 сигналов.", str(summary_rows["OCR-риск"]))
+
     def test_employee_cannot_read_audit_log_even_for_own_preliminary_repair_after_vehicle_relink(self) -> None:
         headers = self._get_auth_headers("employee")
 
@@ -3091,6 +3380,22 @@ class ReviewAndServicesApiTestCase(unittest.TestCase):
         self.assertEqual(pdf_response.status_code, 200, pdf_response.text)
         self.assertIn("application/pdf", pdf_response.headers["content-type"])
         self.assertTrue(pdf_response.content.startswith(b"%PDF"))
+
+    def test_repair_export_endpoints_support_head_requests(self) -> None:
+        headers = self._get_auth_headers("employee")
+
+        xlsx_response = self.client.head("/api/repairs/1/export", headers=headers)
+        self.assertEqual(xlsx_response.status_code, 200, xlsx_response.text)
+        self.assertIn(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            xlsx_response.headers["content-type"],
+        )
+        self.assertIn('.xlsx"', xlsx_response.headers["content-disposition"])
+
+        pdf_response = self.client.head("/api/repairs/1/export.pdf", headers=headers)
+        self.assertEqual(pdf_response.status_code, 200, pdf_response.text)
+        self.assertIn("application/pdf", pdf_response.headers["content-type"])
+        self.assertIn('.pdf"', pdf_response.headers["content-disposition"])
 
     def test_employee_export_hides_archived_documents_in_xlsx_and_pdf_sections(self) -> None:
         headers = self._get_auth_headers("employee")

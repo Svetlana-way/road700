@@ -27,6 +27,15 @@ export type RepairWorkItem = {
   line_total: number;
   status: string;
   reference_payload: Record<string, unknown> | null;
+  reference_status?: string | null;
+  reference_reason_code?: string | null;
+  reference_reason?: string | null;
+  reference_next_step?: string | null;
+  reference_rewrite_draft?: string | null;
+  reference_match_code?: string | null;
+  reference_match_name?: string | null;
+  reference_matched_by?: string | null;
+  reference_match_score?: number | null;
 };
 
 export type RepairPartItem = {

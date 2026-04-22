@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.base import Base
 from app.models.enums import VehicleStatus, VehicleType
 from app.models.vehicle import Vehicle
+from app.application.documents.document_parsers.axb_work_items import repair_axb_fragmented_work_items
 from app.services import document_processing
 from tests.sqlite_test_utils import create_sqlite_test_engine, reset_database
 
@@ -66,6 +67,14 @@ class DocumentParsingProfilesTestCase(unittest.TestCase):
                 },
                 {
                     "work_code": None,
+                    "work_name": "Nº",
+                    "quantity": 1.0,
+                    "unit_name": None,
+                    "price": 969.0,
+                    "line_total": 969.0,
+                },
+                {
+                    "work_code": None,
                     "work_name": "356,33 1 976,00Итого RUB:",
                     "quantity": 18.0,
                     "unit_name": None,
@@ -94,12 +103,58 @@ class DocumentParsingProfilesTestCase(unittest.TestCase):
 
         sanitized_items, removed_count = document_processing.sanitize_extracted_items(extracted_items)
 
-        self.assertEqual(removed_count, 2)
+        self.assertEqual(removed_count, 3)
         self.assertEqual(len(sanitized_items["works"]), 2)
         self.assertEqual(
             [item["work_name"] for item in sanitized_items["works"]],
             ["2 ШМ Колесо - смена (односкатное прицеп)", "ТО-2 (500 000)"],
         )
+
+    def test_repair_axb_fragmented_work_items_restores_diagnostic_tool_name_by_code(self) -> None:
+        repaired = repair_axb_fragmented_work_items(
+            [
+                {
+                    "work_code": "17010-2",
+                    "work_name": "нение диагностического прибора",
+                    "quantity": 1.0,
+                    "unit_name": "усл",
+                    "price": 285.0,
+                    "line_total": 285.0,
+                }
+            ],
+            document_text="Подсоединение-отсоединение диагностического прибора",
+        )
+
+        self.assertEqual(repaired[0]["work_name"], "Подсоединение/отсоединение диагностического прибора")
+
+    def test_repair_axb_fragmented_work_items_merges_confirmed_electrical_jump_fragments(self) -> None:
+        repaired = repair_axb_fragmented_work_items(
+            [
+                {
+                    "work_code": None,
+                    "work_name": "Перекидка",
+                    "quantity": 0.5,
+                    "standard_hours": 0.5,
+                    "unit_name": "ч",
+                    "price": 3600.0,
+                    "line_total": 1368.0,
+                },
+                {
+                    "work_code": None,
+                    "work_name": "электрическая замена",
+                    "quantity": 1.0,
+                    "standard_hours": None,
+                    "unit_name": "усл",
+                    "price": 285.0,
+                    "line_total": 285.0,
+                },
+            ],
+            document_text="Комментарий: Замена электрической перекидки. 11 Перекидка электрическая замена",
+        )
+
+        self.assertEqual(len(repaired), 1)
+        self.assertEqual(repaired[0]["work_name"], "Перекидка электрическая замена")
+        self.assertEqual(repaired[0]["line_total"], 1653.0)
 
     def test_parse_document_text_extracts_ets_act_vin_and_totals(self) -> None:
         text = (
@@ -1017,6 +1072,166 @@ Bcero
         self.assertEqual(works[0]["quantity"], 2.8)
         self.assertEqual(works[0]["line_total"], 9576.0)
 
+    def test_parse_document_text_aligns_sparse_axb_work_codes_with_following_work_names(self) -> None:
+        text = """
+Заказ-наряд Nº 0000020428 от 26.04.2025
+TC : KOLUMAN S гос. номер: BO015416, VIN: NLFS3010000057267, год вып. 2022, пробег 148 985
+Выполненные работы по заказ-наряду Nº 0000020428 от 26.04.2025
+N
+1
+Артикул
+2
+Наименование
+3
+Кол. оп.
+4
+2
+700700
+17010-2
+ТО прицепа.
+Подсоединение/отсоеди
+Цена н/ч
+5
+З 600,00
+3 600,00
+Норма
+6
+H/ч
+7
+,800 Ремон
+,500 Ремон
+нение диагностического
+прибора
+00
+Нормокомплект
+Резиновое уплотнения
+0,2
+1
+З 600,00
+3 600,00
+палм (замена)
+Итого работ:
+3,2
+0,400 Ремонт
+0,300 Ремонт
+на сумму:
+Скидка
+8
+504,00
+90,00
+Всего
+9
+9 576,00
+1710,00
+в т. ч. НДС
+10
+1 596,00
+285,00
+14,40
+54,00
+662,40
+273,60
+45,60
+1 026,00
+171,00
+12 585,60/
+2 097,60
+"""
+
+        works = document_processing.extract_axb_work_items(text)
+
+        self.assertEqual(len(works), 4)
+        self.assertEqual(works[0]["work_code"], "700700")
+        self.assertEqual(works[0]["work_name"], "ТО прицепа.")
+        self.assertEqual(works[1]["work_code"], "17010-2")
+        self.assertIn("диагностического прибора", works[1]["work_name"])
+
+    def test_parse_document_text_aligns_sparse_axb_work_codes_when_second_code_appears_after_first_hours(self) -> None:
+        text = """
+Заказ-наряд Nº 0000020577 от 02.05.2025
+Выполненные работы по заказ-наряду Nº 0000020577 от 02.05.2025
+N
+Артикул
+Наименование
+Кол. оп.
+Цена н/ч Норма
+H/y
+5
+6
+7
+Скидка
+1
+2
+3
+8
+1
+700700
+ТО прицепа.
+2
+З 600,00
+2,800 Ремонт
+17010-2
+Подсоединение/отсоеди
+1
+З 600,00
+504,00
+0,500 Ремонт
+90,00
+нение диагностического
+3
+00
+прибора
+Нормокомплект
+0,2
+3 600,00
+4
+0,400 Ремонт
+14,40
+Амортизатор подвески
+замена
+6
+3 600,00
+0,500 Ремонт
+540,00
+Запасное колесо, снятие
+З 600,00
+0,300 Ремонт
+6
+54,00
+Сварочные работы
+3 600,00
+1,500 Ремонт
+270,00
+Итого работ:
+10,2
+на сумму: 1 472,40
+Bcero
+9
+9 576,00
+1 710,00
+10
+1 596,00
+285,00
+273,60
+10 260,00
+1 026,00
+5 130,00
+27 975,60
+45,60
+171,00
+855,00
+4 662,60
+"""
+
+        works = document_processing.extract_axb_work_items(text)
+
+        self.assertEqual(len(works), 6)
+        self.assertEqual(works[0]["work_code"], "700700")
+        self.assertEqual(works[1]["work_code"], "17010-2")
+        self.assertIn("диагностического прибора", works[1]["work_name"])
+        self.assertEqual(works[2]["work_code"], "00")
+        self.assertEqual(works[3]["work_name"], "Амортизатор подвески замена")
+
     def test_parse_document_text_extracts_axb_parts_from_material_section_without_invoice_block(self) -> None:
         text = """
 Заказ-наряд № 0000019968 от 06.04.2025
@@ -1511,6 +1726,45 @@ DongFeng
         self.assertEqual(len(works), 1)
         self.assertAlmostEqual(works[0]["line_total"], 1425.0, places=2)
         self.assertIn("DongFeng", works[0]["work_name"])
+
+    def test_extract_axb_work_items_restores_clipped_name_from_same_document_text(self) -> None:
+        text = """
+Комментарий: Замена электрической перекидки.
+Выполненные работы по заказ-наряду Nº 0000019380 от 11.03.2025 к причине
+обращения "Прочее"
+Артикул
+Наименование
+Кол. оп.
+Цена н/ч
+Норма
+н/ч
+Скидка
+Проверка и регулировка
+Перекидка
+электрическая замена
+Итого работ:
+8,6
+на сумму: 1 150,20
+Bcero
+1 710,00
+1 368,00
+285,00
+3 363,00
+в т.4. НДС
+285,00
+228,00
+47,50
+560,50
+Проверка и регулировка клапанов.
+11 Перекидка электрическая замена
+"""
+
+        works = document_processing.extract_axb_work_items(text)
+
+        self.assertEqual(len(works), 3)
+        self.assertEqual(works[0]["work_name"], "Проверка и регулировка клапанов")
+        self.assertEqual(works[1]["work_name"], "Перекидка")
+        self.assertEqual(works[2]["work_name"], "электрическая замена")
 
     def test_parse_document_text_prefers_axb_profile_work_items_when_invoice_rows_are_noisy(self) -> None:
         text = """

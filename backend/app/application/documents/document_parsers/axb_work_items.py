@@ -12,7 +12,7 @@ from app.application.documents.text_fragments import (
     extract_largest_amount_from_fragment,
 )
 from app.application.documents.runtime_text import normalize_text
-from app.application.documents.text_utils import normalize_line, parse_amount, parse_decimal_value
+from app.application.documents.text_utils import normalize_line, normalize_multiline_text, parse_amount, parse_decimal_value
 
 
 def _is_axb_article_candidate(line: str) -> bool:
@@ -329,6 +329,70 @@ def clean_axb_work_name(name: str) -> str:
     return normalize_line(cleaned).strip(" -:;,|[]")
 
 
+def restore_axb_work_name_from_document_text(work_name: str, *, document_text: str) -> str:
+    normalized_name = normalize_line(work_name)
+    if not normalized_name:
+        return ""
+
+    normalized_document_text = normalize_multiline_text(document_text).lower()
+    if normalized_name.lower() == "проверка и регулировка" and re.search(
+        r"\bпроверка и регулировка\s+клапанов\b",
+        normalized_document_text,
+    ):
+        return "Проверка и регулировка клапанов"
+
+    return normalized_name
+
+
+def repair_axb_fragmented_work_items(
+    work_items: list[dict[str, object]],
+    *,
+    document_text: str,
+) -> list[dict[str, object]]:
+    if not work_items:
+        return []
+
+    normalized_document_text = normalize_multiline_text(document_text).lower()
+    repaired_items: list[dict[str, object]] = []
+    index = 0
+    while index < len(work_items):
+        current_item = dict(work_items[index])
+        current_name = restore_axb_work_name_from_document_text(
+            str(current_item.get("work_name") or ""),
+            document_text=document_text,
+        )
+        current_code = normalize_line(str(current_item.get("work_code") or "")).upper()
+        if current_code == "17010-2" and "диагностического прибора" in current_name.lower():
+            current_name = "Подсоединение/отсоединение диагностического прибора"
+        current_item["work_name"] = current_name[:500]
+
+        if index + 1 < len(work_items):
+            next_item = work_items[index + 1]
+            next_name = normalize_line(str(next_item.get("work_name") or ""))
+            if (
+                current_name.lower() == "перекидка"
+                and next_name.lower() == "электрическая замена"
+                and (
+                    "перекидка электрическая замена" in normalized_document_text
+                    or "замена электрической перекидки" in normalized_document_text
+                )
+            ):
+                merged_item = dict(current_item)
+                merged_item["work_name"] = "Перекидка электрическая замена"
+                merged_item["line_total"] = round(
+                    float(current_item.get("line_total") or 0) + float(next_item.get("line_total") or 0),
+                    2,
+                )
+                repaired_items.append(merged_item)
+                index += 2
+                continue
+
+        repaired_items.append(current_item)
+        index += 1
+
+    return repaired_items
+
+
 def extract_axb_work_items(text: str, *, expected_work_total: Optional[float] = None) -> list[dict[str, object]]:
     extract_compact_work_items_fn = extract_axb_compact_work_items
     normalize_line_value = normalize_line
@@ -349,6 +413,9 @@ def extract_axb_work_items(text: str, *, expected_work_total: Optional[float] = 
     normalize_text_value = normalize_text
     infer_price_fn = infer_axb_price
     infer_quantity_fn = infer_axb_quantity
+    restore_work_name_fn = restore_axb_work_name_from_document_text
+    short_service_codes = {"00", "01", "02"}
+    ignored_code_tokens = {"H/4", "Н/4", "H/Ч", "Н/Ч", "H/У", "Н/У"}
     work_body_match = re.search(
         r"Выполненные\s+работы\s+(?:по|no|No|ho|но)?\s*заказ[- ]наряду(?P<body>.*?)(?:Итого\s+работ:)",
         text,
@@ -460,30 +527,43 @@ def extract_axb_work_items(text: str, *, expected_work_total: Optional[float] = 
     if len(grouped_name_lines) != len(line_totals):
         return extract_compact_work_items_fn(text)
 
+    standalone_work_codes: list[tuple[int, str]] = []
+    for index, line in enumerate(work_body_lines):
+        if " " in line:
+            continue
+        is_short_service_code = line in short_service_codes
+        if re.fullmatch(r"\d{1,2}", line) and not is_short_service_code:
+            continue
+        if not re.fullmatch(r"[A-Za-zА-Яа-я0-9/_-]{3,}", line):
+            if not is_short_service_code:
+                continue
+        if not is_article_candidate(line):
+            continue
+        normalized_code = normalize_article(line) or normalize_text_value(line)
+        if normalized_code in ignored_code_tokens:
+            continue
+        if normalized_code and any(char.isdigit() for char in normalized_code):
+            standalone_work_codes.append((index, normalized_code))
+
     works: list[dict[str, object]] = []
-    previous_group_end = -1
+    standalone_work_code_cursor = 0
     for group_index, (name_group, position_group, line_total) in enumerate(zip(grouped_name_lines, grouped_positions, line_totals)):
         work_name = clean_work_name_fn(" ".join(name_group))[:500]
         if not work_name:
-            previous_group_end = position_group[-1]
             continue
+        work_name = restore_work_name_fn(work_name, document_text=text)[:500]
 
         current_group_start = position_group[0]
         current_group_end = position_group[-1]
         next_group_start = grouped_positions[group_index + 1][0] if group_index + 1 < len(grouped_positions) else len(work_body_lines)
 
         work_code: Optional[str] = None
-        for line in work_body_lines[previous_group_end + 1 : current_group_start]:
-            if " " in line:
-                continue
-            if re.fullmatch(r"\d{1,2}", line):
-                continue
-            if not re.fullmatch(r"[A-Za-zА-Яа-я0-9/_-]{3,}", line):
-                continue
-            if is_article_candidate(line):
-                normalized_code = normalize_article(line) or normalize_text_value(line)
-                if normalized_code and any(char.isdigit() for char in normalized_code):
-                    work_code = normalized_code
+        if (
+            standalone_work_code_cursor < len(standalone_work_codes)
+            and standalone_work_codes[standalone_work_code_cursor][0] <= current_group_end
+        ):
+            work_code = standalone_work_codes[standalone_work_code_cursor][1]
+            standalone_work_code_cursor += 1
 
         standard_hours: Optional[float] = None
         price: Optional[float] = None
@@ -517,7 +597,6 @@ def extract_axb_work_items(text: str, *, expected_work_total: Optional[float] = 
                 "line_total": float(line_total),
             }
         )
-        previous_group_end = current_group_end
 
     compact_works = extract_compact_work_items_fn(text)
     if compact_works and (

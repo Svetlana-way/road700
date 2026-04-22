@@ -29,11 +29,12 @@ def assess_labor_norm_applicability(db, vehicle):
     )
 
 
-def enrich_work_payloads_with_labor_norms(db, works_payload, labor_norm_applicability):
+def enrich_work_payloads_with_labor_norms(db, works_payload, labor_norm_applicability, document_text=None):
     return call_document_processing_override(
         "enrich_work_payloads_with_labor_norms",
         enrich_work_payloads_with_labor_norms_default,
         db,
         works_payload,
         labor_norm_applicability,
+        document_text,
     )

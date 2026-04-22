@@ -100,6 +100,23 @@ export function RepairReadOnlySections({
                     <Typography>{formatMoney(item.line_total) || "—"}</Typography>
                   </Stack>
                   {formatWorkLaborNormMeta(item) ? <Typography className="muted-copy">{formatWorkLaborNormMeta(item)}</Typography> : null}
+                  {item.reference_status === "catalog_gap" && (item.reference_next_step || item.reference_rewrite_draft) ? (
+                    <Box
+                      sx={{
+                        px: 1.25,
+                        py: 1,
+                        borderRadius: 1.5,
+                        bgcolor: "rgba(25, 118, 210, 0.06)",
+                        border: "1px solid rgba(25, 118, 210, 0.16)",
+                      }}
+                    >
+                      <Stack spacing={0.5}>
+                        <Typography className="metric-label">Ручная сверка по каталогу</Typography>
+                        {item.reference_next_step ? <Typography className="muted-copy">{item.reference_next_step}</Typography> : null}
+                        {item.reference_rewrite_draft ? <Typography>{item.reference_rewrite_draft}</Typography> : null}
+                      </Stack>
+                    </Box>
+                  ) : null}
                 </Stack>
               </Paper>
             ))

@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.security import get_password_hash
 from app.db.base import Base
 from app.models.document import Document, DocumentVersion
-from app.models.enums import DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
+from app.models.enums import CheckSeverity, DocumentKind, DocumentStatus, RepairStatus, ServiceStatus, UserRole, VehicleStatus, VehicleType
 from app.models.repair import Repair, RepairCheck, RepairPart, RepairWork
 from app.models.service import Service
 from app.models.user import User
@@ -875,6 +875,166 @@ class DocumentProcessingTotalsTestCase(unittest.TestCase):
         self.assertEqual(summary.matched_count, 0)
         self.assertEqual(summary.unmatched_count, 0)
         self.assertIn("labor_norm_skip:outside_catalog_service", notes)
+        self.assertIn("labor_norm_next_step", reference_payload)
+
+    def test_enrich_work_payloads_normalizes_clipped_axb_service_name_before_classification(self) -> None:
+        works_payload = [
+            {
+                "work_code": "17010-2",
+                "work_name": "нение диагностического прибора",
+                "quantity": 0.5,
+                "standard_hours": 0.5,
+                "price": 3420.0,
+                "line_total": 1710.0,
+            }
+        ]
+        applicability = LaborNormApplicability(
+            eligible=True,
+            scope="dongfeng_2025",
+            reason_code="supported",
+            reason="Автоматически выбран каталог Dong Feng 2025",
+            brand_family="dongfeng",
+            catalog_name="Dong Feng 2025",
+        )
+
+        with self.SessionLocal() as db:
+            notes, summary = document_processing.enrich_work_payloads_with_labor_norms(
+                db,
+                works_payload,
+                applicability,
+            )
+
+        reference_payload = works_payload[0]["reference_payload"]
+        self.assertEqual(works_payload[0]["work_name"], "Подсоединение/отсоединение диагностического прибора")
+        self.assertEqual(reference_payload["labor_norm_item_reason_code"], "outside_catalog_service")
+        self.assertEqual(reference_payload["labor_norm_reference_status"], "outside_catalog_service")
+        self.assertEqual(summary.matched_count, 0)
+        self.assertEqual(summary.unmatched_count, 0)
+        self.assertIn("labor_norm_skip:outside_catalog_service", notes)
+
+    def test_enrich_work_payloads_marks_catalog_gap_with_reason_and_next_step(self) -> None:
+        works_payload = [
+            {
+                "work_code": None,
+                "work_name": "Датчик ABS, замена",
+                "quantity": 1.0,
+                "standard_hours": None,
+                "price": 1377.5,
+                "line_total": 1377.5,
+            }
+        ]
+        applicability = LaborNormApplicability(
+            eligible=True,
+            scope="dongfeng_2025",
+            reason_code="supported",
+            reason="Автоматически выбран каталог Dong Feng 2025",
+            brand_family="dongfeng",
+            catalog_name="Dong Feng 2025",
+        )
+
+        with self.SessionLocal() as db:
+            notes, summary = document_processing.enrich_work_payloads_with_labor_norms(
+                db,
+                works_payload,
+                applicability,
+            )
+
+        reference_payload = works_payload[0]["reference_payload"]
+        self.assertEqual(reference_payload["labor_norm_reference_status"], "catalog_gap")
+        self.assertEqual(reference_payload["labor_norm_item_reason_code"], "catalog_gap_missing_abs_position")
+        self.assertIn("ось", reference_payload["labor_norm_item_reason"])
+        self.assertIn("ось", reference_payload["labor_norm_next_step"])
+        self.assertIn("Датчик ABS", reference_payload["labor_norm_rewrite_draft"])
+        self.assertEqual(summary.matched_count, 0)
+        self.assertEqual(summary.unmatched_count, 1)
+        self.assertIn("labor_norm_match_missing", notes)
+
+    def test_enrich_work_payloads_adds_contextual_rewrite_draft_for_abs_wiring_gap(self) -> None:
+        works_payload = [
+            {
+                "work_code": None,
+                "work_name": "Ремонт электропроводки",
+                "quantity": 1.0,
+                "standard_hours": None,
+                "price": 1377.5,
+                "line_total": 1377.5,
+            }
+        ]
+        applicability = LaborNormApplicability(
+            eligible=True,
+            scope="dongfeng_2025",
+            reason_code="supported",
+            reason="Автоматически выбран каталог Dong Feng 2025",
+            brand_family="dongfeng",
+            catalog_name="Dong Feng 2025",
+        )
+
+        with self.SessionLocal() as db:
+            notes, summary = document_processing.enrich_work_payloads_with_labor_norms(
+                db,
+                works_payload,
+                applicability,
+                document_text="Рекомендации: Ремонт электропроводки ремонт провода удлинителя датчика АБС 2 шт.",
+            )
+
+        reference_payload = works_payload[0]["reference_payload"]
+        self.assertEqual(reference_payload["labor_norm_reference_status"], "catalog_gap")
+        self.assertIn("Проводка/удлинитель датчика АБС", reference_payload["labor_norm_rewrite_draft"])
+        self.assertEqual(summary.matched_count, 0)
+        self.assertEqual(summary.unmatched_count, 1)
+        self.assertIn("labor_norm_match_missing", notes)
+
+    def test_build_dynamic_work_reference_checks_skips_catalog_gap_operations(self) -> None:
+        with self.SessionLocal() as db:
+            current_repair = db.get(Repair, 1)
+            self.assertIsNotNone(current_repair)
+            assert current_repair is not None
+
+            works_payload = [
+                {
+                    "work_code": None,
+                    "work_name": "Датчик ABS, замена",
+                    "quantity": 1.0,
+                    "standard_hours": None,
+                    "price": 1377.5,
+                    "line_total": 1377.5,
+                    "reference_payload": {
+                        "labor_norm_reference_status": "catalog_gap",
+                        "labor_norm_item_reason_code": "catalog_gap_missing_abs_position",
+                        "labor_norm_item_reason": "работа выглядит осмысленной, но для датчика ABS не указана ось или сторона, поэтому выбрать норму из каталога нельзя",
+                        "labor_norm_next_step": "Чтобы подобрать норму, в заказ-наряде нужно указать ось или сторону датчика ABS.",
+                    },
+                }
+            ]
+
+            checks = document_processing.build_dynamic_work_reference_checks(db, current_repair, works_payload)
+
+        self.assertEqual(checks, [])
+        dynamic_reference = works_payload[0]["reference_payload"]["dynamic_work_reference"]
+        self.assertEqual(dynamic_reference["comparison_source"], "manual_review_required")
+        self.assertEqual(dynamic_reference["reason_code"], "catalog_gap_missing_abs_position")
+        self.assertIn("ось", dynamic_reference["next_step"])
+
+    def test_build_labor_norm_reference_checks_adds_manual_review_warning_for_catalog_gap(self) -> None:
+        works_payload = [
+            {
+                "work_code": None,
+                "work_name": "Датчик ABS, замена",
+                "reference_payload": {
+                    "labor_norm_reference_status": "catalog_gap",
+                    "labor_norm_item_reason_code": "catalog_gap_missing_abs_position",
+                    "labor_norm_item_reason": "работа выглядит осмысленной, но для датчика ABS не указана ось или сторона, поэтому выбрать норму из каталога нельзя",
+                    "labor_norm_next_step": "Чтобы подобрать норму, в заказ-наряде нужно указать ось или сторону датчика ABS.",
+                },
+            }
+        ]
+
+        checks = document_processing.build_labor_norm_reference_checks(works_payload)
+
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0]["check_type"], "ocr_labor_norm_catalog_gap_missing_abs_position")
+        self.assertEqual(checks[0]["severity"], CheckSeverity.WARNING)
+        self.assertIn("ось", checks[0]["details"])
 
     def test_build_dynamic_work_reference_checks_skips_outside_catalog_service_operations(self) -> None:
         with self.SessionLocal() as db:

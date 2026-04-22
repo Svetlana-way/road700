@@ -140,6 +140,9 @@ export function ReviewExtractedDataPanel({
                 const lineTotal = readNumberValue(item, "line_total");
                 const standardHours = readNumberValue(item, "standard_hours");
                 const actualHours = readNumberValue(item, "actual_hours");
+                const referenceStatus = readStringValue(item, "reference_status");
+                const referenceNextStep = readStringValue(item, "reference_next_step");
+                const referenceRewriteDraft = readStringValue(item, "reference_rewrite_draft");
 
                 return (
                   <Paper className="ocr-line-card" key={`review-work-${index}`} elevation={0}>
@@ -158,6 +161,23 @@ export function ReviewExtractedDataPanel({
                         {standardHours !== null ? <span>{`Норма ${formatHours(standardHours)}`}</span> : null}
                         {actualHours !== null ? <span>{`Факт ${formatHours(actualHours)}`}</span> : null}
                       </Box>
+                      {referenceStatus === "catalog_gap" && (referenceNextStep || referenceRewriteDraft) ? (
+                        <Box
+                          sx={{
+                            px: 1.25,
+                            py: 1,
+                            borderRadius: 1.5,
+                            bgcolor: "rgba(25, 118, 210, 0.06)",
+                            border: "1px solid rgba(25, 118, 210, 0.16)",
+                          }}
+                        >
+                          <Stack spacing={0.5}>
+                            <Typography className="metric-label">Что уточнить для каталога</Typography>
+                            {referenceNextStep ? <Typography className="muted-copy">{referenceNextStep}</Typography> : null}
+                            {referenceRewriteDraft ? <Typography>{referenceRewriteDraft}</Typography> : null}
+                          </Stack>
+                        </Box>
+                      ) : null}
                     </Stack>
                   </Paper>
                 );

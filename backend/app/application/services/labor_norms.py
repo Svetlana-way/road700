@@ -85,12 +85,27 @@ MATCH_STOPWORDS = {
     "установить",
     "проверка",
     "регулировка",
+    "датчик",
+    "датчика",
     "дисковые",
     "дисковый",
     "дисковая",
     "одна",
     "ось",
     "сборе",
+}
+
+
+def _normalize_match_token(value: str) -> str:
+    normalized_value = str(value).strip().translate(MATCH_TEXT_REPLACEMENTS).lower()
+    normalized_value = re.sub(r"[^a-zа-я0-9]+", "", normalized_value)
+    return normalized_value
+
+
+NORMALIZED_MATCH_STOPWORDS = {
+    normalized
+    for normalized in (_normalize_match_token(value) for value in MATCH_STOPWORDS)
+    if normalized
 }
 KNOWN_NON_CATALOG_SERVICE_KEYWORDS = (
     "мойка",
@@ -99,7 +114,6 @@ KNOWN_NON_CATALOG_SERVICE_KEYWORDS = (
     "то 1",
     "to 1",
     "сварочн",
-    "поиск неисправности",
     "параметры проверка",
     "подсоединение отсоединение диагностического прибора",
     "подсоединение-отсоединение диагностического прибора",
@@ -109,11 +123,6 @@ KNOWN_NON_CATALOG_SERVICE_KEYWORDS = (
     "перекидка воздушная",
     "перекидка электрическая",
     "палм",
-    "разьем",
-    "разъем",
-    "электропроводка",
-    "электрооборудован",
-    "ремонт электропроводки",
     "компьютерная диагностика",
     "диагностика abs прицепа",
     "диагностика полуприцепа tebs g2",
@@ -124,6 +133,7 @@ KNOWN_NON_CATALOG_SERVICE_KEYWORDS = (
 KNOWN_NON_CATALOG_HIGH_CONFIDENCE_CODES = {
     "0101",
     "17010-2",
+    "137102-3",
     "32300",
     "60108-2",
     "60131-3",
@@ -188,6 +198,55 @@ def normalize_labor_norm_code(value: Optional[str]) -> Optional[str]:
     return normalized_value or None
 
 
+def normalize_known_work_name(
+    work_name: Optional[str],
+    *,
+    work_code: Optional[str] = None,
+) -> str:
+    raw_name = re.sub(r"\s+", " ", str(work_name or "").strip())
+    if not raw_name:
+        return ""
+
+    normalized_name = normalize_vehicle_match_text(raw_name)
+    normalized_name = re.sub(r"[^a-zа-я0-9]+", " ", normalized_name).strip()
+    normalized_code = normalize_labor_norm_code(work_code)
+
+    if "калибровка кпп" in normalized_name and "диагностического прибора" in normalized_name:
+        return "Калибровка КПП и сцепления с использованием диагностического прибора"
+
+    if normalized_code == "17010-2" and "диагностического прибора" in normalized_name:
+        return "Подсоединение/отсоединение диагностического прибора"
+
+    if normalized_code == "700700" and "прицеп" in normalized_name and (
+        re.search(r"\bто\b", normalized_name) or "техническ" in normalized_name
+    ):
+        return "ТО прицепа"
+
+    if normalized_code == "137102-3" and "провод" in normalized_name and (
+        "разъем" in normalized_name or "разьем" in normalized_name
+    ):
+        return "Электрические провода и разъемы, проверка, очистка"
+
+    if re.match(r"^(?:no|n0|nº|№)\s+", raw_name, re.IGNORECASE) and (
+        re.search(r"\btebs\s*g2\b", normalized_name) and "диагност" in normalized_name
+    ):
+        return "Диагностика TEBS G2"
+
+    if re.search(r"(?:поиск|рабок)\s+неисправност\w*\s+в\s+электрооборуд", normalized_name):
+        return "Поиск неисправности в электрооборудовании"
+
+    if re.search(r"(?:поиск|рабок)\s+неисправност\w*\s+в\s+пневмосистем", normalized_name):
+        return "Поиск неисправности в пневмосистеме"
+
+    if normalized_name.startswith("палм замена"):
+        return "Палм замена"
+
+    if "dongfeng" in normalized_name and ("нагностика" in normalized_name or "диагностика" in normalized_name):
+        return "Диагностика с использованием ПС DongFeng"
+
+    return raw_name
+
+
 def tokenize_match_text(value: Optional[str]) -> list[str]:
     if not value:
         return []
@@ -197,7 +256,7 @@ def tokenize_match_text(value: Optional[str]) -> list[str]:
     for token in normalized_value.split():
         if len(token) <= 1:
             continue
-        if token in MATCH_STOPWORDS:
+        if token in NORMALIZED_MATCH_STOPWORDS:
             continue
         tokens.append(token)
     return tokens
@@ -220,6 +279,13 @@ def work_name_conflicts_with_norm_name(work_name: Optional[str], norm_name: Opti
     if not norm_tokens:
         return False
     return not bool(work_tokens & norm_tokens)
+
+
+def work_name_conflicts_with_norm(work_name: Optional[str], norm: LaborNorm) -> bool:
+    variant_names = iter_labor_norm_match_variants(norm)
+    if not variant_names:
+        return work_name_conflicts_with_norm_name(work_name, norm.name_ru)
+    return all(work_name_conflicts_with_norm_name(work_name, variant_name) for variant_name in variant_names)
 
 
 def build_normalized_name(*values: Optional[str]) -> str:
@@ -256,7 +322,7 @@ def classify_known_non_catalog_operation(
     work_code: Optional[str],
     work_name: Optional[str],
 ) -> tuple[bool, Optional[str]]:
-    normalized_name = normalize_vehicle_match_text(work_name)
+    normalized_name = normalize_vehicle_match_text(normalize_known_work_name(work_name, work_code=work_code))
     normalized_name = re.sub(r"[^a-zа-я0-9]+", " ", normalized_name).strip()
     normalized_code = normalize_labor_norm_code(work_code)
     keyword_match = any(keyword in normalized_name for keyword in KNOWN_NON_CATALOG_SERVICE_KEYWORDS)
@@ -271,6 +337,152 @@ def classify_known_non_catalog_operation(
         return True, "Операция похожа на локальную сервисную услугу вне каталога нормо-часов производителя"
 
     return False, None
+
+
+def infer_labor_norm_catalog_gap_reason_code(work_name: Optional[str]) -> Optional[str]:
+    raw_name = normalize_vehicle_match_text(work_name)
+    if not raw_name:
+        return None
+
+    if re.search(r"\babs\b", raw_name) and "датчик" in raw_name:
+        return "catalog_gap_missing_abs_position"
+
+    if "тормозн" in raw_name and "шланг" in raw_name:
+        return "catalog_gap_missing_brake_hose_context"
+
+    if "запасное колесо" in raw_name:
+        return "catalog_gap_no_spare_wheel_norm"
+
+    if "амортизатор" in raw_name and ("болт" in raw_name or "креплен" in raw_name):
+        return "catalog_gap_missing_shock_absorber_position"
+
+    if (
+        "электропровод" in raw_name
+        or ("провода" in raw_name and "разъем" in raw_name)
+        or ("провода" in raw_name and "разьем" in raw_name)
+        or (("разъем" in raw_name or "разьем" in raw_name) and "кабел" in raw_name)
+    ):
+        return "catalog_gap_missing_wiring_context"
+
+    return None
+
+
+def infer_labor_norm_catalog_gap_reason(work_name: Optional[str]) -> Optional[str]:
+    reason_code = infer_labor_norm_catalog_gap_reason_code(work_name)
+    if reason_code == "catalog_gap_missing_abs_position":
+        return "работа выглядит осмысленной, но для датчика ABS не указана ось или сторона, поэтому выбрать норму из каталога нельзя"
+    if reason_code == "catalog_gap_missing_brake_hose_context":
+        return "работа выглядит осмысленной, но для тормозного шланга не указан контур, ось или тип магистрали"
+    if reason_code == "catalog_gap_no_spare_wheel_norm":
+        return "работа выглядит осмысленной, но в каталоге не найден отдельный норматив на снятие запасного колеса"
+    if reason_code == "catalog_gap_missing_shock_absorber_position":
+        return "работа выглядит осмысленной, но указан только крепеж амортизатора без оси или позиции узла"
+    if reason_code == "catalog_gap_missing_wiring_context":
+        return "работа выглядит осмысленной, но описана слишком общо: в каталоге есть только нормы для конкретных жгутов, разъемов и зон автомобиля"
+    return None
+
+
+def build_labor_norm_resolution_hint(
+    *,
+    work_name: str,
+    reference_status: Optional[str],
+) -> Optional[str]:
+    if reference_status == "ocr_noise":
+        return "Проверить исходный скан или OCR-слой: строка не подходит для автоматической сверки."
+
+    if reference_status == "outside_catalog_service":
+        return "Оставлять вне каталога нормо-часов и показывать как локальную сервисную операцию."
+
+    if reference_status != "catalog_gap":
+        return None
+
+    reason_code = infer_labor_norm_catalog_gap_reason_code(work_name)
+    if reason_code == "catalog_gap_missing_abs_position":
+        return "Чтобы подобрать норму, в заказ-наряде нужно указать ось или сторону датчика ABS."
+    if reason_code == "catalog_gap_missing_brake_hose_context":
+        return "Чтобы подобрать норму, нужно указать контур, ось или тип тормозной магистрали."
+    if reason_code == "catalog_gap_no_spare_wheel_norm":
+        return "Оставить ручную проверку: отдельной нормы на снятие запасного колеса в каталоге не найдено."
+    if reason_code == "catalog_gap_missing_shock_absorber_position":
+        return "Для подбора нормы нужно указать ось и точку крепления амортизатора."
+    if reason_code == "catalog_gap_missing_wiring_context":
+        return "Для подбора нормы нужно указать конкретный жгут, разъем и зону автомобиля."
+    return "Нужна ручная проверка. Если формулировка повторяется, решать через alias или отдельное правило классификации."
+
+
+def build_labor_norm_rewrite_draft(
+    *,
+    work_name: str,
+    reference_status: Optional[str],
+    document_text: Optional[str] = None,
+) -> Optional[str]:
+    if reference_status != "catalog_gap":
+        return None
+
+    raw_work_name = str(work_name or "").strip()
+    normalized_document_text = re.sub(r"\s+", " ", document_text or "").strip().lower()
+
+    if raw_work_name in {"Ремонт электропроводки", "Разьем, замена (1-8 кабелей)"} and (
+        "заднего фонаря" in normalized_document_text or "разъема" in normalized_document_text
+    ):
+        return (
+            "Черновик для ручной проверки: `Электропроводка заднего фонаря, ремонт/замена разъема`. "
+            "Перед подбором нормы подтвердить по первичке, что это одна работа, а не несколько отдельных операций."
+        )
+
+    if raw_work_name == "Электропроводка" and (
+        "правой стороны п/п" in normalized_document_text
+        or "платы заднего фонаря" in normalized_document_text
+        or "разъема фонаря" in normalized_document_text
+        or "разъёма фонаря" in normalized_document_text
+    ):
+        return (
+            "Черновик для ручной проверки: `Ремонт электропроводки правой стороны п/п, фонарь/разъем`. "
+            "Если в документе одновременно есть проводка, плата фонаря и разъем, их нужно разделить на отдельные строки."
+        )
+
+    if raw_work_name in {"Датчик ABS, замена", "Диагностика/проверка датчика ABS"} and (
+        "удлинителя датчика абс" in normalized_document_text or "удлинитель датчика абс" in normalized_document_text
+    ):
+        return (
+            "Черновик для ручной проверки: `Провод/удлинитель датчика АБС, ремонт или замена, [ось/сторона]`. "
+            "Не подставлять норму автоматически, пока не подтверждено, что менялся датчик, проводка или удлинитель."
+        )
+
+    if raw_work_name in {"Ремонт электропроводки", "Электропроводка"} and (
+        "удлинителя датчика абс" in normalized_document_text or "удлинитель датчика абс" in normalized_document_text
+    ):
+        return (
+            "Черновик для ручной проверки: `Проводка/удлинитель датчика АБС, ремонт или замена, [ось/сторона]`. "
+            "Нужно подтвердить по первичке, что речь именно о проводке ABS, а не о другой электрической работе."
+        )
+
+    if raw_work_name == "Тормозной шланг, замена" and "левый тормозной шланг" in normalized_document_text:
+        return (
+            "Черновик для ручной проверки: `Левый тормозной шланг, замена, [контур/ось]`. "
+            "Каталожный подбор возможен только после явного уточнения контура или оси."
+        )
+
+    if raw_work_name == "Запасное колесо, снятие" and "креплению запасного колеса" in normalized_document_text:
+        return (
+            "Не переписывать как снятие запасного колеса: по тексту больше похоже на "
+            "`Слесарно-сварочные работы по креплению запасного колеса`, то есть ручную локальную работу."
+        )
+
+    reason_code = infer_labor_norm_catalog_gap_reason_code(raw_work_name)
+    if reason_code == "catalog_gap_missing_abs_position":
+        return "Черновик для ручной проверки: `Датчик ABS, замена/проверка, [ось/сторона]`."
+    if reason_code == "catalog_gap_missing_brake_hose_context":
+        return "Черновик для ручной проверки: `Тормозной шланг, замена, [контур/ось/сторона]`."
+    if reason_code == "catalog_gap_missing_shock_absorber_position":
+        return (
+            "Черновик для ручной проверки: `Болт крепления амортизатора, установка/замена, [верх/низ], [ось/сторона]`. "
+            "Без этих уточнений строку нельзя объективно связать с нормой производителя."
+        )
+    if reason_code == "catalog_gap_missing_wiring_context":
+        return "Черновик невозможен без первички: нужно добавить конкретный жгут, разъем и зону автомобиля."
+
+    return None
 
 
 @dataclass
@@ -584,7 +796,7 @@ def score_labor_norm_match(
 ) -> Optional[LaborNormMatch]:
     normalized_work_code = normalize_labor_norm_code(work_code)
     if normalized_work_code and normalized_work_code == norm.code:
-        if work_name_conflicts_with_norm_name(work_name, norm.name_ru):
+        if work_name_conflicts_with_norm(work_name, norm):
             return None
         return LaborNormMatch(norm=norm, score=1.0, matched_by="code")
 
@@ -597,6 +809,10 @@ def score_labor_norm_match(
         return None
 
     variant_names = iter_labor_norm_match_variants(norm)
+    normalized_work_name = " ".join(sorted(work_tokens))
+    if len(work_tokens) < 2 and normalized_work_name and not any(normalized_work_name == variant for variant in variant_names):
+        return None
+
     variant_scores: list[tuple[float, set[str], str]] = []
     for variant_name in variant_names:
         variant_tokens = set(variant_name.split())
@@ -617,7 +833,6 @@ def score_labor_norm_match(
         key=lambda item: (item[0], len(work_tokens & item[1]), -len(item[1])),
     )
 
-    normalized_work_name = " ".join(sorted(work_tokens))
     matched_by = "name_tokens"
     if normalized_work_name and any(normalized_work_name == variant for variant in variant_names):
         score = max(score, 0.94)

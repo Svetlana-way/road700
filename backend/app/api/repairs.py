@@ -40,6 +40,12 @@ from app.services.document_metadata import (
     add_manual_review_reason,
     remove_manual_review_reason,
 )
+from app.services.labor_norms import (
+    build_labor_norm_rewrite_draft,
+    build_labor_norm_resolution_hint,
+    infer_labor_norm_catalog_gap_reason,
+    infer_labor_norm_catalog_gap_reason_code,
+)
 from app.services.document_repair_relations import (
     ensure_repair_vehicle_relation,
     get_repair_source_document,
@@ -88,6 +94,75 @@ MANUAL_REVIEW_REASON_FIELD_CODES = {
 
 def coerce_json_object(value: object) -> dict:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def serialize_repair_document_work_item(item: object) -> dict:
+    payload = dict(item) if isinstance(item, dict) else {}
+    work_name = str(payload.get("work_name") or "").strip()
+    reference_payload = coerce_json_object(payload.get("reference_payload")) if payload.get("reference_payload") is not None else None
+    normalized_reference_payload = reference_payload or {}
+    reference_status = str(normalized_reference_payload.get("labor_norm_reference_status") or "").strip() or None
+    reference_reason_code = (
+        str(normalized_reference_payload.get("labor_norm_item_reason_code") or "").strip() or None
+    )
+    if reference_status == "catalog_gap" and (not reference_reason_code or reference_reason_code == "catalog_gap"):
+        reference_reason_code = infer_labor_norm_catalog_gap_reason_code(work_name) or reference_reason_code
+    reference_reason = str(normalized_reference_payload.get("labor_norm_item_reason") or "").strip() or None
+    if reference_status == "catalog_gap" and not reference_reason:
+        reference_reason = (
+            infer_labor_norm_catalog_gap_reason(work_name)
+            or "работа выглядит осмысленной, но не находится в каталоге нормо-часов"
+        )
+    reference_next_step = str(normalized_reference_payload.get("labor_norm_next_step") or "").strip() or None
+    if reference_status and not reference_next_step:
+        reference_next_step = build_labor_norm_resolution_hint(
+            work_name=work_name,
+            reference_status=reference_status,
+        )
+    reference_rewrite_draft = str(normalized_reference_payload.get("labor_norm_rewrite_draft") or "").strip() or None
+    if reference_status == "catalog_gap" and not reference_rewrite_draft:
+        reference_rewrite_draft = build_labor_norm_rewrite_draft(
+            work_name=work_name,
+            reference_status=reference_status,
+        )
+    payload["reference_payload"] = reference_payload
+    payload["reference_status"] = reference_status
+    payload["reference_reason_code"] = reference_reason_code
+    payload["reference_reason"] = reference_reason
+    payload["reference_next_step"] = reference_next_step
+    payload["reference_rewrite_draft"] = reference_rewrite_draft
+    payload["reference_match_code"] = (
+        str(normalized_reference_payload.get("labor_norm_code") or "").strip() or None
+    )
+    payload["reference_match_name"] = (
+        str(normalized_reference_payload.get("labor_norm_name") or "").strip() or None
+    )
+    payload["reference_matched_by"] = (
+        str(normalized_reference_payload.get("labor_norm_matched_by") or "").strip() or None
+    )
+    payload["reference_match_score"] = (
+        float(normalized_reference_payload["labor_norm_match_score"])
+        if normalized_reference_payload.get("labor_norm_match_score") is not None
+        else None
+    )
+    return payload
+
+
+def normalize_repair_document_parsed_payload(value: object) -> dict:
+    parsed_payload = coerce_json_object(value)
+    extracted_items = parsed_payload.get("extracted_items")
+    if not isinstance(extracted_items, dict):
+        return parsed_payload
+
+    works = extracted_items.get("works")
+    if not isinstance(works, list):
+        return parsed_payload
+
+    normalized_payload = dict(parsed_payload)
+    normalized_items = dict(extracted_items)
+    normalized_items["works"] = [serialize_repair_document_work_item(item) for item in works]
+    normalized_payload["extracted_items"] = normalized_items
+    return normalized_payload
 
 
 def build_repair_snapshot(repair: Repair) -> dict:
@@ -304,6 +379,32 @@ def serialize_document_history_entry(entry: AuditLog, documents_by_id: dict[str,
 
 
 def serialize_repair_work(item: RepairWork) -> dict:
+    reference_payload = coerce_json_object(item.reference_payload) if item.reference_payload is not None else None
+    normalized_reference_payload = reference_payload or {}
+    reference_status = str(normalized_reference_payload.get("labor_norm_reference_status") or "").strip() or None
+    reference_reason_code = (
+        str(normalized_reference_payload.get("labor_norm_item_reason_code") or "").strip() or None
+    )
+    if reference_status == "catalog_gap" and (not reference_reason_code or reference_reason_code == "catalog_gap"):
+        reference_reason_code = infer_labor_norm_catalog_gap_reason_code(item.work_name) or reference_reason_code
+    reference_reason = str(normalized_reference_payload.get("labor_norm_item_reason") or "").strip() or None
+    if reference_status == "catalog_gap" and not reference_reason:
+        reference_reason = (
+            infer_labor_norm_catalog_gap_reason(item.work_name)
+            or "работа выглядит осмысленной, но не находится в каталоге нормо-часов"
+        )
+    reference_next_step = str(normalized_reference_payload.get("labor_norm_next_step") or "").strip() or None
+    if reference_status and not reference_next_step:
+        reference_next_step = build_labor_norm_resolution_hint(
+            work_name=item.work_name,
+            reference_status=reference_status,
+        )
+    reference_rewrite_draft = str(normalized_reference_payload.get("labor_norm_rewrite_draft") or "").strip() or None
+    if reference_status == "catalog_gap" and not reference_rewrite_draft:
+        reference_rewrite_draft = build_labor_norm_rewrite_draft(
+            work_name=item.work_name,
+            reference_status=reference_status,
+        )
     return {
         "id": item.id,
         "work_code": item.work_code,
@@ -314,7 +415,26 @@ def serialize_repair_work(item: RepairWork) -> dict:
         "price": float(item.price),
         "line_total": float(item.line_total),
         "status": item.status,
-        "reference_payload": coerce_json_object(item.reference_payload) if item.reference_payload is not None else None,
+        "reference_payload": reference_payload,
+        "reference_status": reference_status,
+        "reference_reason_code": reference_reason_code,
+        "reference_reason": reference_reason,
+        "reference_next_step": reference_next_step,
+        "reference_rewrite_draft": reference_rewrite_draft,
+        "reference_match_code": (
+            str(normalized_reference_payload.get("labor_norm_code") or "").strip() or None
+        ),
+        "reference_match_name": (
+            str(normalized_reference_payload.get("labor_norm_name") or "").strip() or None
+        ),
+        "reference_matched_by": (
+            str(normalized_reference_payload.get("labor_norm_matched_by") or "").strip() or None
+        ),
+        "reference_match_score": (
+            float(normalized_reference_payload["labor_norm_match_score"])
+            if normalized_reference_payload.get("labor_norm_match_score") is not None
+            else None
+        ),
     }
 
 
@@ -337,7 +457,11 @@ def serialize_repair_document_version(version) -> dict:
         "version_number": version.version_number,
         "created_at": version.created_at,
         "change_summary": version.change_summary,
-        "parsed_payload": coerce_json_object(version.parsed_payload) if version.parsed_payload is not None else None,
+        "parsed_payload": (
+            normalize_repair_document_parsed_payload(version.parsed_payload)
+            if version.parsed_payload is not None
+            else None
+        ),
         "field_confidence_map": (
             coerce_json_object(version.field_confidence_map) if version.field_confidence_map is not None else None
         ),
@@ -603,6 +727,8 @@ def get_report_source_payload(
 
 
 def get_check_report_section_key(check_type: str) -> str:
+    if "labor_norm" in check_type:
+        return "labor_norms"
     if "vehicle" in check_type or "service" in check_type:
         return "catalogs"
     if "standard_hours" in check_type:
@@ -729,6 +855,24 @@ def build_report_executive_sections(
         if normalized_items:
             sections.append((title, normalized_items))
     return sections
+
+
+def _extract_customer_summary_items(executive_sections: list[tuple[str, list[str]]]) -> list[str]:
+    for title, items in executive_sections:
+        if title == "0. Краткая сводка для заказчика":
+            return [str(item) for item in items if str(item)]
+    return []
+
+
+def _build_customer_summary_sheet_rows(executive_sections: list[tuple[str, list[str]]]) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for item in _extract_customer_summary_items(executive_sections):
+        if ": " in item:
+            label, value = item.split(": ", 1)
+            rows.append((label, value))
+        else:
+            rows.append(("Сводка для заказчика", item))
+    return rows
 
 
 def build_export_warning_rows(
@@ -912,6 +1056,12 @@ def build_repair_pdf_sections(
                 f"Открытых предупреждений: {len(warning_rows)}",
                 f"Создан: {repair.created_at.isoformat()}",
                 f"Обновлён: {repair.updated_at.isoformat()}",
+                *(
+                    ["Сводка для заказчика:"]
+                    + _extract_customer_summary_items(executive_sections)
+                    if _extract_customer_summary_items(executive_sections)
+                    else []
+                ),
             ],
         ),
         *executive_sections,
@@ -1064,6 +1214,7 @@ def build_repair_export_workbook(
                 ", ".join(MANUAL_REVIEW_REASON_LABELS.get(item, item) for item in manual_review_reasons),
             ),
             ("Открытых предупреждений", len(warning_rows)),
+            *_build_customer_summary_sheet_rows(executive_sections),
             ("Создан", repair.created_at.isoformat()),
             ("Обновлен", repair.updated_at.isoformat()),
         ],
@@ -1565,7 +1716,7 @@ def restore_repair(
     return serialize_repair(refreshed, history_entries, document_history_entries)
 
 
-@router.get("/{repair_id}/export")
+@router.api_route("/{repair_id}/export", methods=["GET", "HEAD"])
 def export_repair(
     repair_id: int,
     db: Session = Depends(get_db),
@@ -1590,7 +1741,7 @@ def export_repair(
     )
 
 
-@router.get("/{repair_id}/export.pdf")
+@router.api_route("/{repair_id}/export.pdf", methods=["GET", "HEAD"])
 def export_repair_pdf(
     repair_id: int,
     db: Session = Depends(get_db),

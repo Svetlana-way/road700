@@ -68,6 +68,7 @@ def apply_parsed_document_state(
         db,
         extracted_items["works"],
         labor_norm_applicability,
+        text,
     )
     normalization_notes.extend(labor_norm_notes)
 

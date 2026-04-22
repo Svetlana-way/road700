@@ -84,6 +84,12 @@ from app.services.document_repair_relations import (
 from app.services.document_versions import get_latest_document_version, get_latest_parsed_payload
 from app.services.document_parsers.field_extractors import normalize_compare_token, normalize_plate_compare_token
 from app.services.exporting import safe_filename
+from app.services.labor_norms import (
+    build_labor_norm_rewrite_draft,
+    build_labor_norm_resolution_hint,
+    infer_labor_norm_catalog_gap_reason,
+    infer_labor_norm_catalog_gap_reason_code,
+)
 from app.services.pdf_tools import merge_images_to_pdf, render_text_report_pdf
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -103,6 +109,75 @@ VEHICLE_CHECK_TYPES = {"ocr_vehicle_missing", "ocr_vehicle_not_found"}
 
 def coerce_json_object(value: object) -> dict:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def serialize_document_work_item(item: object) -> dict:
+    payload = dict(item) if isinstance(item, dict) else {}
+    work_name = str(payload.get("work_name") or "").strip()
+    reference_payload = coerce_json_object(payload.get("reference_payload")) if payload.get("reference_payload") is not None else None
+    normalized_reference_payload = reference_payload or {}
+    reference_status = str(normalized_reference_payload.get("labor_norm_reference_status") or "").strip() or None
+    reference_reason_code = (
+        str(normalized_reference_payload.get("labor_norm_item_reason_code") or "").strip() or None
+    )
+    if reference_status == "catalog_gap" and (not reference_reason_code or reference_reason_code == "catalog_gap"):
+        reference_reason_code = infer_labor_norm_catalog_gap_reason_code(work_name) or reference_reason_code
+    reference_reason = str(normalized_reference_payload.get("labor_norm_item_reason") or "").strip() or None
+    if reference_status == "catalog_gap" and not reference_reason:
+        reference_reason = (
+            infer_labor_norm_catalog_gap_reason(work_name)
+            or "работа выглядит осмысленной, но не находится в каталоге нормо-часов"
+        )
+    reference_next_step = str(normalized_reference_payload.get("labor_norm_next_step") or "").strip() or None
+    if reference_status and not reference_next_step:
+        reference_next_step = build_labor_norm_resolution_hint(
+            work_name=work_name,
+            reference_status=reference_status,
+        )
+    reference_rewrite_draft = str(normalized_reference_payload.get("labor_norm_rewrite_draft") or "").strip() or None
+    if reference_status == "catalog_gap" and not reference_rewrite_draft:
+        reference_rewrite_draft = build_labor_norm_rewrite_draft(
+            work_name=work_name,
+            reference_status=reference_status,
+        )
+    payload["reference_payload"] = reference_payload
+    payload["reference_status"] = reference_status
+    payload["reference_reason_code"] = reference_reason_code
+    payload["reference_reason"] = reference_reason
+    payload["reference_next_step"] = reference_next_step
+    payload["reference_rewrite_draft"] = reference_rewrite_draft
+    payload["reference_match_code"] = (
+        str(normalized_reference_payload.get("labor_norm_code") or "").strip() or None
+    )
+    payload["reference_match_name"] = (
+        str(normalized_reference_payload.get("labor_norm_name") or "").strip() or None
+    )
+    payload["reference_matched_by"] = (
+        str(normalized_reference_payload.get("labor_norm_matched_by") or "").strip() or None
+    )
+    payload["reference_match_score"] = (
+        float(normalized_reference_payload["labor_norm_match_score"])
+        if normalized_reference_payload.get("labor_norm_match_score") is not None
+        else None
+    )
+    return payload
+
+
+def normalize_document_parsed_payload(value: object) -> dict:
+    parsed_payload = coerce_json_object(value)
+    extracted_items = parsed_payload.get("extracted_items")
+    if not isinstance(extracted_items, dict):
+        return parsed_payload
+
+    works = extracted_items.get("works")
+    if not isinstance(works, list):
+        return parsed_payload
+
+    normalized_payload = dict(parsed_payload)
+    normalized_items = dict(extracted_items)
+    normalized_items["works"] = [serialize_document_work_item(item) for item in works]
+    normalized_payload["extracted_items"] = normalized_items
+    return normalized_payload
 
 
 def queue_document_processing(
@@ -152,7 +227,7 @@ def serialize_document(document: Document) -> DocumentRead:
         review_queue_priority=document.review_queue_priority,
         notes=document.notes,
         created_at=document.created_at,
-        parsed_payload=coerce_json_object(latest_version.parsed_payload) if latest_version and latest_version.parsed_payload is not None else None,
+        parsed_payload=normalize_document_parsed_payload(latest_version.parsed_payload) if latest_version and latest_version.parsed_payload is not None else None,
         repair=DocumentRepairRead.model_validate(document.repair),
         vehicle=DocumentVehicleRead.model_validate(document.repair.vehicle),
         latest_import_job=DocumentImportJobRead.model_validate(latest_import_job) if latest_import_job is not None else None,
@@ -1279,7 +1354,7 @@ def process_single_document(
     )
 
 
-@router.get("/{document_id}/download")
+@router.api_route("/{document_id}/download", methods=["GET", "HEAD"])
 def download_document(
     document_id: int,
     db: Session = Depends(get_db),
@@ -1310,7 +1385,7 @@ def get_document_report(
     )
 
 
-@router.get("/{document_id}/export")
+@router.api_route("/{document_id}/export", methods=["GET", "HEAD"])
 def export_document_report(
     document_id: int,
     db: Session = Depends(get_db),
@@ -1339,7 +1414,7 @@ def export_document_report(
     )
 
 
-@router.get("/{document_id}/export.pdf")
+@router.api_route("/{document_id}/export.pdf", methods=["GET", "HEAD"])
 def export_document_report_pdf(
     document_id: int,
     db: Session = Depends(get_db),

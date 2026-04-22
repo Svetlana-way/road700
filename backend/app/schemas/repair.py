@@ -20,6 +20,15 @@ class RepairWorkRead(BaseModel):
     line_total: float
     status: CatalogStatus
     reference_payload: Optional[dict]
+    reference_status: Optional[str] = None
+    reference_reason_code: Optional[str] = None
+    reference_reason: Optional[str] = None
+    reference_next_step: Optional[str] = None
+    reference_rewrite_draft: Optional[str] = None
+    reference_match_code: Optional[str] = None
+    reference_match_name: Optional[str] = None
+    reference_matched_by: Optional[str] = None
+    reference_match_score: Optional[float] = None
 
 
 class RepairPartRead(BaseModel):

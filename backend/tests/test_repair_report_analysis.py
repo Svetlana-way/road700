@@ -186,6 +186,146 @@ class RepairReportAnalysisTestCase(unittest.TestCase):
         self.assertEqual(finding["severity"], "high")
         self.assertEqual(finding["category"], "Документ и OCR")
 
+    def test_report_surfaces_catalog_gap_from_work_reference_payload(self) -> None:
+        repair = self._build_repair(
+            works=[
+                RepairWork(
+                    work_code=None,
+                    work_name="Датчик ABS, замена",
+                    quantity=1,
+                    standard_hours=None,
+                    actual_hours=None,
+                    price=1377.5,
+                    line_total=1377.5,
+                    status=CatalogStatus.PRELIMINARY,
+                    reference_payload={
+                        "labor_norm_reference_status": "catalog_gap",
+                        "labor_norm_item_reason_code": "catalog_gap_missing_abs_position",
+                        "labor_norm_item_reason": "работа выглядит осмысленной, но для датчика ABS не указана ось или сторона, поэтому выбрать норму из каталога нельзя",
+                        "labor_norm_next_step": "Чтобы подобрать норму, в заказ-наряде нужно указать ось или сторону датчика ABS.",
+                        "labor_norm_rewrite_draft": "Черновик для ручной проверки: `Датчик ABS, замена/проверка, [ось/сторона]`.",
+                    },
+                ),
+                RepairWork(
+                    work_code="11090111",
+                    work_name="Воздушный фильтр - замена",
+                    quantity=1,
+                    standard_hours=0.5,
+                    actual_hours=None,
+                    price=1710.0,
+                    line_total=1710.0,
+                    status=CatalogStatus.CONFIRMED,
+                    reference_payload={
+                        "labor_norm_reference_status": "matched",
+                        "labor_norm_code": "11090111",
+                    },
+                ),
+            ],
+            parts=[],
+        )
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={},
+            manual_review_reason_labels={},
+        )
+
+        finding = next((item for item in report["findings"] if item["title"] == "Часть работ не подтверждена каталогом нормо-часов"), None)
+        self.assertIsNotNone(finding)
+        assert finding is not None
+        self.assertEqual(finding["category"], "Нормо-часы")
+        self.assertTrue(any("ручной сверки требуют 1" in evidence for evidence in finding["evidence"]))
+        self.assertTrue(any("датчика ABS" in evidence for evidence in finding["evidence"]))
+        self.assertTrue(any("Черновик для ручной проверки" in evidence for evidence in finding["evidence"]))
+
+        norm_hours_section = next((item for item in report["full_report_sections"] if item["key"] == "norm_hours"), None)
+        self.assertIsNotNone(norm_hours_section)
+        assert norm_hours_section is not None
+        self.assertTrue(any("ручной сверки требуют 1" in line for line in norm_hours_section["items"]))
+        self.assertTrue(any("датчика ABS" in line for line in norm_hours_section["items"]))
+        self.assertTrue(any("Датчик ABS, замена/проверка" in line for line in norm_hours_section["items"]))
+
+    def test_report_builds_customer_facing_summary_with_business_statuses(self) -> None:
+        repair = self._build_repair(
+            works=[
+                RepairWork(
+                    work_code=None,
+                    work_name="Датчик ABS, замена",
+                    quantity=1,
+                    standard_hours=None,
+                    actual_hours=None,
+                    price=1377.5,
+                    line_total=1377.5,
+                    status=CatalogStatus.PRELIMINARY,
+                    reference_payload={
+                        "labor_norm_reference_status": "catalog_gap",
+                        "labor_norm_next_step": "Чтобы подобрать норму, в заказ-наряде нужно указать ось или сторону датчика ABS.",
+                    },
+                ),
+                RepairWork(
+                    work_code="11090111",
+                    work_name="Воздушный фильтр - замена",
+                    quantity=1,
+                    standard_hours=0.5,
+                    actual_hours=None,
+                    price=1710.0,
+                    line_total=1710.0,
+                    status=CatalogStatus.CONFIRMED,
+                    reference_payload={
+                        "labor_norm_reference_status": "matched",
+                    },
+                ),
+                RepairWork(
+                    work_code="0101",
+                    work_name="Мойка технологическая седельного тягача",
+                    quantity=1,
+                    standard_hours=None,
+                    actual_hours=None,
+                    price=1000.0,
+                    line_total=1000.0,
+                    status=CatalogStatus.PRELIMINARY,
+                    reference_payload={
+                        "labor_norm_reference_status": "outside_catalog_service",
+                    },
+                ),
+            ],
+            parts=[],
+        )
+        repair.checks = [
+            RepairCheck(
+                repair_id=1,
+                check_type="ocr_total_mismatch",
+                severity=CheckSeverity.SUSPICIOUS,
+                title="Сумма строк не совпадает с итоговой суммой",
+                details="Нужна ручная проверка итогов заказ-наряда",
+                calculation_payload={},
+                is_resolved=False,
+            )
+        ]
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={},
+            manual_review_reason_labels={},
+        )
+
+        customer_section = next((item for item in report["full_report_sections"] if item["key"] == "customer_summary"), None)
+        self.assertIsNotNone(customer_section)
+        assert customer_section is not None
+        joined_items = " ".join(customer_section["items"])
+        self.assertIn("Подтверждено по каталогу: 1", joined_items)
+        self.assertIn("Вне каталога: 1", joined_items)
+        self.assertIn("Нужна ручная проверка: 1", joined_items)
+        self.assertIn("OCR-риск: 1", joined_items)
+        self.assertNotIn("catalog_gap", joined_items)
+
+        self.assertTrue(
+            any(
+                line.startswith("По работам: подтверждено по каталогу 1, вне каталога 1, ручная проверка 1")
+                for line in report["highlights"]
+            )
+        )
+
     def test_report_keeps_multiple_distinct_findings_with_same_title(self) -> None:
         repair = self._build_repair(works=[], parts=[])
         repair.checks = [
@@ -750,6 +890,26 @@ class RepairReportAnalysisTestCase(unittest.TestCase):
         self.assertIn("Работы без НДС: 32 035,83 ₽.", finance_section["items"])
         self.assertIn("Запчасти и материалы без НДС: 37 990,84 ₽.", finance_section["items"])
         self.assertIn("Итого по заказ-наряду с НДС: 84 032,00 ₽.", finance_section["items"])
+
+    def test_report_uses_cautious_wording_when_automatic_check_finds_no_signals(self) -> None:
+        repair = self._build_repair(works=[], parts=[])
+
+        report = build_repair_executive_report(
+            repair,
+            source_payload={},
+            manual_review_reason_labels={},
+        )
+
+        self.assertEqual(report["headline"], "Автоматическая проверка не показала явных критичных сигналов")
+        self.assertIn("не заменяет выборочную ручную сверку", report["summary"])
+
+        findings_section = next((item for item in report["full_report_sections"] if item["key"] == "critical_findings"), None)
+        self.assertIsNotNone(findings_section)
+        self.assertIn("остаточный риск", findings_section["items"][0])
+
+        recommendations_section = next((item for item in report["full_report_sections"] if item["key"] == "recommendations"), None)
+        self.assertIsNotNone(recommendations_section)
+        self.assertIn("выборочная ручная сверка", recommendations_section["items"][0])
 
 
 if __name__ == "__main__":

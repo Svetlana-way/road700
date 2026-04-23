@@ -102,6 +102,7 @@ The repository includes a dedicated server stack:
 - `scripts/collect-signoff-baseline.sh` collects backend/frontend/predeploy logs into a sign-off run
 - `scripts/check-signoff-run.sh` checks that the expected screen/PDF/XLSX artifacts were collected
 - `scripts/deploy-server.sh` safely syncs the project to the server without overwriting or deleting `.env.server` and without deleting `storage/`
+- `scripts/deploy-systemd-server.sh` updates the current non-Docker systemd server layout and always restarts the API and OCR worker after checkout/build/migrations
 - `scripts/smoke-test-ocr-runtime.sh` validates OCR runtime after deploy
 - if the production admin password was rotated after bootstrap, set `SMOKE_TEST_ADMIN_LOGIN` and `SMOKE_TEST_ADMIN_PASSWORD` in `.env.server` so authenticated smoke checks use current credentials
 
@@ -152,6 +153,23 @@ Typical update deploy from the local workstation:
    - prints `docker compose ps`
    - runs `scripts/smoke-test-ocr-runtime.sh` on the server
    - runs the extra direct `http://DEPLOY_HOST/api/health` smoke only when `DEPLOY_HOST` is an IP address
+
+Non-Docker systemd update deploy:
+
+The `749455.cloud4box.ru` server currently uses a non-Docker layout because nginx and PostgreSQL are already installed on the host and Docker is not required:
+
+- app checkout: `/opt/road700/app`
+- Python venv: `/opt/road700/venv`
+- env file: `/opt/road700/.env.server`
+- storage: `/opt/road700/shared/storage`
+- systemd units: `road700-app.service`, `road700-worker.service`
+- nginx proxies `749455.cloud4box.ru` to `127.0.0.1:3240`
+
+For this layout, deploy with:
+
+- `DEPLOY_HOST=homeoffice DEPLOY_PUBLIC_HEALTH_URL=https://749455.cloud4box.ru/api/health ./scripts/deploy-systemd-server.sh`
+
+The systemd deploy script fetches `origin/main`, checks out the target ref, installs backend dependencies, cleans stale frontend build dependencies/cache, verifies there is enough free disk space, rebuilds the frontend, runs Alembic migrations, restarts both `road700-app.service` and `road700-worker.service`, waits for local `/api/health`, and then checks the optional public `/api/health`.
 
 Password recovery email:
 

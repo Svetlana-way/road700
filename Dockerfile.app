@@ -1,3 +1,14 @@
+FROM node:20-bookworm-slim AS frontend-build
+
+WORKDIR /frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+
 FROM python:3.11-slim AS app
 
 WORKDIR /app
@@ -23,7 +34,7 @@ COPY deploy/server/app-entrypoint.sh /app/app-entrypoint.sh
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir .
 
-COPY frontend/dist /app/frontend/dist
+COPY --from=frontend-build /frontend/dist /app/frontend/dist
 
 RUN chmod +x /app/app-entrypoint.sh \
     && mkdir -p /app/storage

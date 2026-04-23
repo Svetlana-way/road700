@@ -3040,6 +3040,52 @@ FH13A42T, гос. номер: 879КВА716, шасси: YV2RT40A7LA856012, пр�
         self.assertIn('.pdf"', vehicle_response.headers["content-disposition"])
         self.assertTrue(vehicle_response.content.startswith(b"%PDF"))
 
+    def test_document_vehicle_and_repair_download_endpoints_support_head_requests(self) -> None:
+        headers = self._get_auth_headers()
+        payload = self._upload_order_document(headers)
+        document_id = payload["document"]["id"]
+        repair_id = payload["document"]["repair"]["id"]
+        vehicle_id = payload["document"]["vehicle"]["id"]
+
+        document_download_response = self.client.head(f"/api/documents/{document_id}/download", headers=headers)
+        self.assertEqual(document_download_response.status_code, 200, document_download_response.text)
+        self.assertIn("application/pdf", document_download_response.headers["content-type"])
+        self.assertIn('.pdf"', document_download_response.headers["content-disposition"])
+
+        document_xlsx_response = self.client.head(f"/api/documents/{document_id}/export", headers=headers)
+        self.assertEqual(document_xlsx_response.status_code, 200, document_xlsx_response.text)
+        self.assertIn(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            document_xlsx_response.headers["content-type"],
+        )
+        self.assertIn('.xlsx"', document_xlsx_response.headers["content-disposition"])
+
+        document_pdf_response = self.client.head(f"/api/documents/{document_id}/export.pdf", headers=headers)
+        self.assertEqual(document_pdf_response.status_code, 200, document_pdf_response.text)
+        self.assertIn("application/pdf", document_pdf_response.headers["content-type"])
+        self.assertIn('.pdf"', document_pdf_response.headers["content-disposition"])
+
+        repair_xlsx_response = self.client.head(f"/api/repairs/{repair_id}/export", headers=headers)
+        self.assertEqual(repair_xlsx_response.status_code, 200, repair_xlsx_response.text)
+        self.assertIn(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            repair_xlsx_response.headers["content-type"],
+        )
+        self.assertIn('.xlsx"', repair_xlsx_response.headers["content-disposition"])
+
+        vehicle_xlsx_response = self.client.head(f"/api/vehicles/{vehicle_id}/export", headers=headers)
+        self.assertEqual(vehicle_xlsx_response.status_code, 200, vehicle_xlsx_response.text)
+        self.assertIn(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            vehicle_xlsx_response.headers["content-type"],
+        )
+        self.assertIn('.xlsx"', vehicle_xlsx_response.headers["content-disposition"])
+
+        vehicle_pdf_response = self.client.head(f"/api/vehicles/{vehicle_id}/export.pdf", headers=headers)
+        self.assertEqual(vehicle_pdf_response.status_code, 200, vehicle_pdf_response.text)
+        self.assertIn("application/pdf", vehicle_pdf_response.headers["content-type"])
+        self.assertIn('.pdf"', vehicle_pdf_response.headers["content-disposition"])
+
     def test_document_report_and_exports_use_selected_document_context(self) -> None:
         headers = self._get_auth_headers()
         initial_payload = self._upload_order_document(headers)

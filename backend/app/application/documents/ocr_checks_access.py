@@ -4,6 +4,7 @@ from app.application.documents.document_checks import (
     build_duplicate_line_checks as build_duplicate_line_checks_default,
     build_dynamic_work_reference_checks as build_dynamic_work_reference_checks_default,
     build_expected_total_checks as build_expected_total_checks_default,
+    build_labor_norm_reference_checks as build_labor_norm_reference_checks_default,
     build_repeat_repair_checks as build_repeat_repair_checks_default,
     build_standard_hours_checks as build_standard_hours_checks_default,
 )
@@ -58,5 +59,13 @@ def build_dynamic_work_reference_checks(db, repair, works_payload):
         build_dynamic_work_reference_checks_default,
         db,
         repair,
+        works_payload,
+    )
+
+
+def build_labor_norm_reference_checks(works_payload):
+    return call_document_processing_override(
+        "build_labor_norm_reference_checks",
+        build_labor_norm_reference_checks_default,
         works_payload,
     )

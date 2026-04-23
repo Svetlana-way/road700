@@ -7,6 +7,8 @@ from pathlib import Path
 from app.compat.document_processing import get_document_processing_attr
 from app.infrastructure.documents import text_extraction_runtime
 from app.services.ocr_runtime import (
+    is_tesseract_ocr_available as is_tesseract_ocr_available_default,
+    is_vision_ocr_available as is_vision_ocr_available_default,
     get_available_ocr_backend as get_available_ocr_backend_default,
     is_pdftoppm_available,
     is_sips_available,
@@ -32,7 +34,7 @@ def extract_pdf_text(path: Path) -> str:
 def run_vision_ocr(image_paths: list[Path]) -> dict[str, str]:
     return text_extraction_runtime.run_vision_ocr(
         image_paths,
-        is_vision_available=get_document_processing_value("is_vision_ocr_available", lambda: False),
+        is_vision_available=get_document_processing_value("is_vision_ocr_available", is_vision_ocr_available_default),
         run_subprocess=get_document_processing_value("subprocess", subprocess).run,
     )
 
@@ -45,7 +47,10 @@ def run_tesseract_ocr_with_modes(
     return text_extraction_runtime.run_tesseract_ocr_with_modes(
         image_paths,
         page_segmentation_modes=page_segmentation_modes,
-        is_tesseract_available=get_document_processing_value("is_tesseract_ocr_available", lambda: False),
+        is_tesseract_available=get_document_processing_value(
+            "is_tesseract_ocr_available",
+            is_tesseract_ocr_available_default,
+        ),
         run_subprocess=get_document_processing_value("subprocess", subprocess).run,
     )
 

@@ -185,6 +185,24 @@ def build_report_executive_sections(
     return sections
 
 
+def _extract_customer_summary_items(executive_sections: list[tuple[str, list[str]]]) -> list[str]:
+    for title, items in executive_sections:
+        if title == "0. Краткая сводка для заказчика":
+            return [str(item) for item in items if str(item)]
+    return []
+
+
+def _build_customer_summary_sheet_rows(executive_sections: list[tuple[str, list[str]]]) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for item in _extract_customer_summary_items(executive_sections):
+        if ": " in item:
+            label, value = item.split(": ", 1)
+            rows.append((label, value))
+        else:
+            rows.append(("Сводка для заказчика", item))
+    return rows
+
+
 def build_export_warning_rows(
     repair: Repair,
     *,
@@ -366,6 +384,12 @@ def build_repair_pdf_sections(
                 f"Открытых предупреждений: {len(warning_rows)}",
                 f"Создан: {repair.created_at.isoformat()}",
                 f"Обновлён: {repair.updated_at.isoformat()}",
+                *(
+                    ["Сводка для заказчика:"]
+                    + _extract_customer_summary_items(executive_sections)
+                    if _extract_customer_summary_items(executive_sections)
+                    else []
+                ),
             ],
         ),
         *executive_sections,
@@ -518,6 +542,7 @@ def build_repair_export_workbook(
                 ", ".join(MANUAL_REVIEW_REASON_LABELS.get(item, item) for item in manual_review_reasons),
             ),
             ("Открытых предупреждений", len(warning_rows)),
+            *_build_customer_summary_sheet_rows(executive_sections),
             ("Создан", repair.created_at.isoformat()),
             ("Обновлен", repair.updated_at.isoformat()),
         ],

@@ -58,7 +58,7 @@ def create_backup(
     )
 
 
-@router.get("/{backup_id}/download")
+@router.api_route("/{backup_id}/download", methods=["GET", "HEAD"])
 def download_backup(
     backup_id: str,
     current_admin: User = Depends(get_current_admin),

@@ -92,6 +92,7 @@ The repository now includes:
 The repository includes a dedicated server stack:
 
 - `Dockerfile.app` builds the frontend and backend into one application image
+- `Dockerfile.app` now builds the frontend inside Docker from source, so server deploy does not depend on syncing a local `frontend/dist`
 - `docker-compose.server.yml` runs `postgres`, `app`, `worker`, and `caddy`
 - `deploy/server/Caddyfile` serves the application over HTTPS
 - `deploy/server/.env.example` contains the required production variables

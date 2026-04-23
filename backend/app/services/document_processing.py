@@ -311,6 +311,7 @@ _LAZY_MODULE_EXPORTS: dict[str, tuple[str, ...]] = {
         "build_duplicate_line_checks",
         "build_dynamic_work_reference_checks",
         "build_expected_total_checks",
+        "build_labor_norm_reference_checks",
         "build_manual_review_check",
         "build_repeat_repair_checks",
         "build_standard_hours_checks",

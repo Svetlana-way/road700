@@ -488,7 +488,7 @@ def update_vehicle(
     return VehicleDetailResponse.model_validate(build_vehicle_detail_payload(db, vehicle))
 
 
-@router.get("/{vehicle_id}/export")
+@router.api_route("/{vehicle_id}/export", methods=["GET", "HEAD"])
 def export_vehicle(
     vehicle_id: int,
     db: Session = Depends(get_db),
@@ -622,7 +622,7 @@ def export_vehicle(
     )
 
 
-@router.get("/{vehicle_id}/export.pdf")
+@router.api_route("/{vehicle_id}/export.pdf", methods=["GET", "HEAD"])
 def export_vehicle_pdf(
     vehicle_id: int,
     db: Session = Depends(get_db),

@@ -14,6 +14,7 @@ def build_document_ocr_checks(
 ) -> list[dict]:
     checks = []
     checks.extend(ocr_checks_access.build_dynamic_work_reference_checks(db, repair, extracted_items["works"]))
+    checks.extend(ocr_checks_access.build_labor_norm_reference_checks(extracted_items["works"]))
 
     if "plate_number" in extracted_fields and repair.vehicle.plate_number:
         extracted_plate_compare = ocr_checks_access.normalize_plate_compare_token(str(extracted_fields["plate_number"]))

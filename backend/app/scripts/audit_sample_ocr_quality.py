@@ -20,16 +20,23 @@ from app.application.documents.support import amounts_match
 from app.core.paths import PROJECT_ROOT
 from app.db.base import Base
 from app.db.sqlite import create_sqlite_in_memory_engine
+from app.scripts.audit_labor_norm_coverage import (
+    build_audit_session as build_labor_norm_audit_session,
+    classify_unmatched_row,
+    resolve_catalog_path,
+)
 from app.services.document_parsers.field_extractors import (
     has_explicit_missing_mileage as has_explicit_missing_mileage_default,
     has_logistics_blank_mileage_field as has_logistics_blank_mileage_field_default,
     is_gruzovye_rezervy_invoice_only_document as is_gruzovye_rezervy_invoice_only_document_default,
     is_logistics_trailer_vehicle_context as is_logistics_trailer_vehicle_context_default,
 )
+from app.services.labor_norms import find_best_labor_norm_match
 from app.scripts.import_vehicles import import_vehicles_with_session
 
 DEFAULT_SOURCE_DIR = PROJECT_ROOT / "Заказ-наряды"
 DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "OCR_QUALITY_REPORT.md"
+DEFAULT_LABOR_SCOPE_BY_PROFILE = {"axb": "dongfeng_2025"}
 SUPPORTED_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".tif", ".tiff"}
 FOLDER_NAME_CHAR_TRANSLATION = str.maketrans(
     {
@@ -79,6 +86,9 @@ class AuditRow:
     parts_sum: float | None = None
     work_total_matches_lines: bool | None = None
     parts_total_matches_lines: bool | None = None
+    labor_norm_matched_rows: int | None = None
+    labor_norm_total_rows: int | None = None
+    labor_norm_reference_ready_rows: int | None = None
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -168,26 +178,43 @@ def pct(part: int, total: int) -> str:
 def build_doc_flags(row: AuditRow) -> dict[str, bool]:
     fields = row.extracted_fields
     order_number_ok = bool(fields.get("order_number")) or row.invoice_only
+    repair_date_ok = bool(fields.get("repair_date"))
+    identity_ok = bool(fields.get("plate_number")) or bool(fields.get("vin")) or bool(fields.get("chassis_number"))
     mileage_ok = fields.get("mileage") is not None or row.invoice_only or row.mileage_not_required
     work_total_ok = fields.get("work_total") is not None or row.invoice_only
+    parts_total_ok = fields.get("parts_total") is not None
+    grand_total_ok = fields.get("grand_total") is not None
     works_lines_ok = row.works_count > 0 or row.invoice_only
+    parts_lines_ok = row.parts_count > 0
     work_sum_ok = row.invoice_only or row.work_total_matches_lines is not False
     parts_sum_ok = row.parts_total_matches_lines is not False
-    manual_review_free = len(row.manual_review_reasons) == 0 and work_sum_ok and parts_sum_ok and row.extract_failure_reason is None
+    header_ok = order_number_ok and repair_date_ok and mileage_ok
+    financials_ok = work_total_ok and parts_total_ok and grand_total_ok
+    lines_ok = works_lines_ok and parts_lines_ok
+    manual_review_free = (
+        len(row.manual_review_reasons) == 0
+        and row.extract_failure_reason is None
+        and header_ok
+        and identity_ok
+        and financials_ok
+        and lines_ok
+        and work_sum_ok
+        and parts_sum_ok
+    )
     return {
         "order_number": order_number_ok,
-        "repair_date": bool(fields.get("repair_date")),
+        "repair_date": repair_date_ok,
         "service_name": bool(fields.get("service_name")),
         "plate_number": bool(fields.get("plate_number")),
         "vin": bool(fields.get("vin")),
         "chassis_number": bool(fields.get("chassis_number")),
         "mileage": mileage_ok,
         "work_total": work_total_ok,
-        "parts_total": fields.get("parts_total") is not None,
-        "grand_total": fields.get("grand_total") is not None,
+        "parts_total": parts_total_ok,
+        "grand_total": grand_total_ok,
         "vat_total": fields.get("vat_total") is not None,
         "works_lines": works_lines_ok,
-        "parts_lines": row.parts_count > 0,
+        "parts_lines": parts_lines_ok,
         "work_sum_reconciled": work_sum_ok,
         "parts_sum_reconciled": parts_sum_ok,
         "manual_review_free": manual_review_free,
@@ -237,6 +264,68 @@ def build_registry_audit_session() -> Iterable[Session | None]:
 @contextmanager
 def null_audit_session() -> Iterable[Session | None]:
     yield None
+
+
+@contextmanager
+def build_labor_norm_sessions() -> Iterable[dict[str, Session]]:
+    sessions: dict[str, Session] = {}
+    managers: list[object] = []
+    try:
+        for profile_scope, labor_scope in DEFAULT_LABOR_SCOPE_BY_PROFILE.items():
+            catalog_path = resolve_catalog_path(labor_scope, None)
+            if not catalog_path.exists():
+                continue
+            manager = build_labor_norm_audit_session(labor_scope=labor_scope, catalog_path=catalog_path)
+            session = manager.__enter__()
+            managers.append(manager)
+            sessions[profile_scope] = session
+        yield sessions
+    finally:
+        for manager in reversed(managers):
+            manager.__exit__(None, None, None)
+
+
+def summarize_labor_norm_coverage(
+    works: list[dict[str, object]],
+    *,
+    labor_db: Session | None,
+    labor_scope: str,
+) -> tuple[int, int, int] | None:
+    if labor_db is None:
+        return None
+
+    matched = 0
+    total = 0
+    reference_ready = 0
+    for item in works:
+        work_name = str(item.get("work_name") or "").strip()
+        if not work_name:
+            continue
+
+        total += 1
+        standard_hours = float(item["standard_hours"]) if item.get("standard_hours") is not None else None
+        work_code = str(item.get("work_code")) if item.get("work_code") else None
+        unmatched_category, _unmatched_reason = classify_unmatched_row(
+            work_name=work_name,
+            work_code=work_code,
+            standard_hours=standard_hours,
+        )
+        if unmatched_category != "ocr_noise":
+            reference_ready += 1
+        match = (
+            find_best_labor_norm_match(
+                labor_db,
+                work_code=work_code,
+                work_name=work_name,
+                scope=labor_scope,
+            )
+            if unmatched_category != "ocr_noise"
+            else None
+        )
+        if match is not None:
+            matched += 1
+
+    return matched, total, reference_ready
 
 
 def has_explicit_missing_mileage(text: str) -> bool:
@@ -289,56 +378,65 @@ def audit_documents(
     session_factory = build_registry_audit_session if use_registry_enrichment else null_audit_session
     with override_ocr_backend(ocr_backend):
         with session_factory() as db:
-            for path in iter_source_files(source_dir):
-                source_type = detect_source_type(path)
-                text, extract_source, extract_failure_reason = extract_document_text(path, source_type)
-                profile_scope = infer_profile_scope(path, text or "")
-                parsed = parse_document_text(text, db=db, profile_scope=profile_scope) if text else {
-                    "extracted_fields": {},
-                    "manual_review_reasons": ["text_missing"],
-                    "extracted_items": {"works": [], "parts": []},
-                }
-                extracted_fields = parsed.get("extracted_fields") if isinstance(parsed.get("extracted_fields"), dict) else {}
-                extracted_items = parsed.get("extracted_items") if isinstance(parsed.get("extracted_items"), dict) else {}
-                works = extracted_items.get("works") if isinstance(extracted_items.get("works"), list) else []
-                parts = extracted_items.get("parts") if isinstance(extracted_items.get("parts"), list) else []
-                works_sum = get_line_items_total(works) if works else None
-                parts_sum = get_line_items_total(parts) if parts else None
-                work_total_matches_lines = None
-                parts_total_matches_lines = None
-                if extracted_fields.get("work_total") is not None:
-                    work_total_matches_lines = bool(
-                        works and amounts_match(works_sum, float(extracted_fields["work_total"]), tolerance=0.2)
+            with build_labor_norm_sessions() as labor_sessions:
+                for path in iter_source_files(source_dir):
+                    source_type = detect_source_type(path)
+                    text, extract_source, extract_failure_reason = extract_document_text(path, source_type)
+                    profile_scope = infer_profile_scope(path, text or "")
+                    parsed = parse_document_text(text, db=db, profile_scope=profile_scope) if text else {
+                        "extracted_fields": {},
+                        "manual_review_reasons": ["text_missing"],
+                        "extracted_items": {"works": [], "parts": []},
+                    }
+                    extracted_fields = parsed.get("extracted_fields") if isinstance(parsed.get("extracted_fields"), dict) else {}
+                    extracted_items = parsed.get("extracted_items") if isinstance(parsed.get("extracted_items"), dict) else {}
+                    works = extracted_items.get("works") if isinstance(extracted_items.get("works"), list) else []
+                    parts = extracted_items.get("parts") if isinstance(extracted_items.get("parts"), list) else []
+                    works_sum = get_line_items_total(works) if works else None
+                    parts_sum = get_line_items_total(parts) if parts else None
+                    work_total_matches_lines = None
+                    parts_total_matches_lines = None
+                    if extracted_fields.get("work_total") is not None:
+                        work_total_matches_lines = bool(
+                            works and amounts_match(works_sum, float(extracted_fields["work_total"]), tolerance=0.2)
+                        )
+                    if extracted_fields.get("parts_total") is not None:
+                        parts_total_matches_lines = bool(
+                            parts and amounts_match(parts_sum, float(extracted_fields["parts_total"]), tolerance=0.2)
+                        )
+                    invoice_only = profile_scope == "gruzovye_rezervy" and is_gruzovye_rezervy_invoice_only_document(text or "")
+                    mileage_not_required = has_explicit_missing_mileage(text or "") or (
+                        profile_scope == "logistics"
+                        and (has_logistics_blank_mileage_field(text or "") or is_logistics_trailer_vehicle_context(text or ""))
                     )
-                if extracted_fields.get("parts_total") is not None:
-                    parts_total_matches_lines = bool(
-                        parts and amounts_match(parts_sum, float(extracted_fields["parts_total"]), tolerance=0.2)
+                    labor_coverage = summarize_labor_norm_coverage(
+                        works,
+                        labor_db=labor_sessions.get(profile_scope),
+                        labor_scope=DEFAULT_LABOR_SCOPE_BY_PROFILE.get(profile_scope, ""),
                     )
-                invoice_only = profile_scope == "gruzovye_rezervy" and is_gruzovye_rezervy_invoice_only_document(text or "")
-                mileage_not_required = has_explicit_missing_mileage(text or "") or (
-                    profile_scope == "logistics"
-                    and (has_logistics_blank_mileage_field(text or "") or is_logistics_trailer_vehicle_context(text or ""))
-                )
-                rows.append(
-                    AuditRow(
-                        service_label=infer_service_label(path),
-                        profile_scope=profile_scope,
-                        relative_path=format_project_path(path),
-                        source_type=source_type,
-                        extract_source=extract_source,
-                        extract_failure_reason=extract_failure_reason,
-                        extracted_fields=extracted_fields,
-                        manual_review_reasons=[str(item) for item in parsed.get("manual_review_reasons", [])],
-                        works_count=len(works),
-                        parts_count=len(parts),
-                        invoice_only=invoice_only,
-                        mileage_not_required=mileage_not_required,
-                        works_sum=works_sum,
-                        parts_sum=parts_sum,
-                        work_total_matches_lines=work_total_matches_lines,
-                        parts_total_matches_lines=parts_total_matches_lines,
+                    rows.append(
+                        AuditRow(
+                            service_label=infer_service_label(path),
+                            profile_scope=profile_scope,
+                            relative_path=format_project_path(path),
+                            source_type=source_type,
+                            extract_source=extract_source,
+                            extract_failure_reason=extract_failure_reason,
+                            extracted_fields=extracted_fields,
+                            manual_review_reasons=[str(item) for item in parsed.get("manual_review_reasons", [])],
+                            works_count=len(works),
+                            parts_count=len(parts),
+                            invoice_only=invoice_only,
+                            mileage_not_required=mileage_not_required,
+                            works_sum=works_sum,
+                            parts_sum=parts_sum,
+                            work_total_matches_lines=work_total_matches_lines,
+                            parts_total_matches_lines=parts_total_matches_lines,
+                            labor_norm_matched_rows=labor_coverage[0] if labor_coverage is not None else None,
+                            labor_norm_total_rows=labor_coverage[1] if labor_coverage is not None else None,
+                            labor_norm_reference_ready_rows=labor_coverage[2] if labor_coverage is not None else None,
+                        )
                     )
-                )
     return rows
 
 
@@ -401,15 +499,30 @@ def build_priority_section(rows: list[AuditRow]) -> list[str]:
         manual_review_docs = total - sum(flag["manual_review_free"] for flag in flags)
         missing_financial_docs = total - sum(flag["grand_total"] and flag["work_total"] and flag["parts_total"] for flag in flags)
         unreconciled_docs = total - sum(flag["work_sum_reconciled"] and flag["parts_sum_reconciled"] for flag in flags)
-        score = missing_line_docs * 3 + manual_review_docs * 2 + missing_financial_docs + unreconciled_docs * 3
+        labor_gap_docs = sum(
+            1
+            for row in group_rows
+            if row.labor_norm_reference_ready_rows
+            and row.labor_norm_matched_rows is not None
+            and row.labor_norm_matched_rows < row.labor_norm_reference_ready_rows
+        )
+        score = missing_line_docs * 3 + manual_review_docs * 2 + missing_financial_docs + unreconciled_docs * 3 + labor_gap_docs * 2
 
         reason_counter: Counter[str] = Counter()
         for row in group_rows:
+            if row.extract_failure_reason:
+                reason_counter.update([row.extract_failure_reason])
             reason_counter.update(row.manual_review_reasons)
             if row.work_total_matches_lines is False:
                 reason_counter.update(["work_total_mismatch"])
             if row.parts_total_matches_lines is False:
                 reason_counter.update(["parts_total_mismatch"])
+            if (
+                row.labor_norm_reference_ready_rows
+                and row.labor_norm_matched_rows is not None
+                and row.labor_norm_matched_rows < row.labor_norm_reference_ready_rows
+            ):
+                reason_counter.update(["labor_norm_coverage_gap"])
         top_reasons = [reason for reason, _count in reason_counter.most_common(3)]
         scored_rows.append((score, service_label, profile_scope, total, top_reasons))
 
@@ -422,6 +535,76 @@ def build_priority_section(rows: list[AuditRow]) -> list[str]:
         lines.append(f"- `{service_label}` / `{profile_scope}`: score {score} on {total} docs. Main issues: {reasons_text}.")
     if len(lines) == 3:
         lines.append("- No obvious problem clusters found in the current sample set.")
+    return lines
+
+
+def build_downstream_validation_section(rows: list[AuditRow]) -> list[str]:
+    flagged_rows = [
+        row
+        for row in rows
+        if row.labor_norm_reference_ready_rows
+        and row.labor_norm_matched_rows is not None
+        and row.labor_norm_matched_rows < row.labor_norm_reference_ready_rows
+    ]
+
+    if not flagged_rows:
+        return []
+
+    flagged_rows.sort(
+        key=lambda row: (
+            row.labor_norm_matched_rows / row.labor_norm_reference_ready_rows
+            if row.labor_norm_reference_ready_rows
+            else 1.0,
+            row.relative_path,
+        )
+    )
+    lines = ["", "## Downstream Validation Signals", ""]
+    for row in flagged_rows:
+        lines.append(
+            f"- `{row.relative_path}`: labor norm coverage `{row.labor_norm_matched_rows}/{row.labor_norm_total_rows}`"
+            + (
+                f", without OCR noise `{row.labor_norm_matched_rows}/{row.labor_norm_reference_ready_rows}`."
+                if row.labor_norm_reference_ready_rows != row.labor_norm_total_rows
+                else "."
+            )
+        )
+    return lines
+
+
+def build_environment_blockers_section(rows: list[AuditRow]) -> list[str]:
+    blocker_counter: Counter[str] = Counter()
+    for row in rows:
+        if row.extract_failure_reason in {
+            "pdf_renderer_unavailable",
+            "pdf_ocr_unavailable",
+            "image_ocr_unavailable",
+        }:
+            blocker_counter.update([row.extract_failure_reason])
+
+    if not blocker_counter:
+        return []
+
+    lines = ["", "## Environment Blockers", ""]
+    for reason, count in blocker_counter.most_common():
+        if reason == "pdf_renderer_unavailable":
+            lines.append(
+                f"- `{reason}`: {count} docs. В этом окружении не удалось отрендерить PDF-страницы для OCR, "
+                "поэтому метрики по таким документам не отражают фактическое качество разбора."
+            )
+            continue
+        if reason == "pdf_ocr_unavailable":
+            lines.append(
+                f"- `{reason}`: {count} docs. В этом окружении недоступен OCR backend для PDF-сканов, "
+                "поэтому часть качества зависит от окружения, а не от шаблонов документов."
+            )
+            continue
+        if reason == "image_ocr_unavailable":
+            lines.append(
+                f"- `{reason}`: {count} docs. В этом окружении недоступен OCR backend для изображений, "
+                "поэтому результаты по image-only документам неполны."
+            )
+            continue
+        lines.append(f"- `{reason}`: {count} docs.")
     return lines
 
 
@@ -442,6 +625,17 @@ def build_document_details(rows: list[AuditRow]) -> list[str]:
                 f"- Totals: work `{fields.get('work_total', '-')}`, parts `{fields.get('parts_total', '-')}`, vat `{fields.get('vat_total', '-')}`, grand `{fields.get('grand_total', '-')}`",
                 f"- Line items: works `{row.works_count}` (sum `{row.works_sum if row.works_sum is not None else '-'}`, match `{row.work_total_matches_lines if row.work_total_matches_lines is not None else '-'}`), parts `{row.parts_count}` (sum `{row.parts_sum if row.parts_sum is not None else '-'}`, match `{row.parts_total_matches_lines if row.parts_total_matches_lines is not None else '-'}`)",
                 f"- Manual review: `{reasons}`",
+                (
+                    f"- Labor norm coverage: `{row.labor_norm_matched_rows}/{row.labor_norm_total_rows}`"
+                    + (
+                        f", without OCR noise `{row.labor_norm_matched_rows}/{row.labor_norm_reference_ready_rows}`"
+                        if row.labor_norm_reference_ready_rows is not None
+                        and row.labor_norm_reference_ready_rows != row.labor_norm_total_rows
+                        else ""
+                    )
+                    if row.labor_norm_total_rows is not None
+                    else ""
+                ),
                 "",
             ]
         )
@@ -452,8 +646,10 @@ def render_report(rows: list[AuditRow], *, source_dir: Path = DEFAULT_SOURCE_DIR
     sections: list[str] = []
     sections.extend(build_summary_section(rows, source_dir=source_dir, ocr_backend=ocr_backend))
     sections.extend(build_priority_section(rows))
+    sections.extend(build_downstream_validation_section(rows))
+    sections.extend(build_environment_blockers_section(rows))
     sections.extend(build_document_details(rows))
-    return "\n".join(sections).strip() + "\n"
+    return "\n".join(section for section in sections if section).strip() + "\n"
 
 
 def main() -> None:

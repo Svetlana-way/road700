@@ -140,6 +140,23 @@ checks: list[tuple[str, list[str]]] = [
             "Ниже они сгруппированы по типам проверки.",
         ],
     ),
+    (
+        "Dockerfile.app",
+        [
+            "FROM node:20-bookworm-slim AS frontend-build",
+            "RUN npm ci",
+            "RUN npm run build",
+            "COPY --from=frontend-build /frontend/dist /app/frontend/dist",
+        ],
+    ),
+    (
+        ".github/workflows/ci.yml",
+        [
+            "server-image:",
+            "docker/setup-buildx-action@v3",
+            "docker build -f Dockerfile.app .",
+        ],
+    ),
 ]
 
 errors: list[str] = []

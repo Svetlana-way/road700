@@ -196,6 +196,24 @@ class DocumentOcrRuntimeTestCase(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Vision OCR returned an invalid response payload"):
                 document_processing.run_vision_ocr([Path(image_file.name)])
 
+    def test_run_vision_ocr_uses_runtime_default_when_override_module_is_not_loaded(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as image_file, patch(
+            "app.compat.document_processing.sys.modules",
+            {},
+        ), patch(
+            "app.infrastructure.documents.text_extraction_service.is_vision_ocr_available_default",
+            return_value=True,
+        ), patch("app.infrastructure.documents.text_extraction_service.subprocess.run") as subprocess_run:
+            subprocess_run.return_value = unittest.mock.Mock(
+                returncode=0,
+                stdout=f'{{"results":[{{"path":"{image_file.name}","text":"Распознанный текст"}}]}}',
+                stderr="",
+            )
+
+            payload = document_processing.run_vision_ocr([Path(image_file.name)])
+
+        self.assertEqual(payload[image_file.name], "Распознанный текст")
+
     def test_extract_axb_compact_work_items_accepts_no_marker_variant(self) -> None:
         text = """
 Выполненные работы no заказ-наряду № 0000021658 от 02.07.2025

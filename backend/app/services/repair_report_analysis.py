@@ -1186,6 +1186,8 @@ def _recommendation_for_check(check_type: str) -> Optional[str]:
         return "Проверить привязку техники и убедиться, что документ относится к нужной карточке ТС."
     if "service" in check_type:
         return "Подтвердить сервис по справочнику и снять предупреждение только после ручной проверки."
+    if "labor_norm" in check_type:
+        return "Уточнить формулировку работы или подтвердить ручную сверку по каталогу нормо-часов."
     if "standard_hours" in check_type:
         return "Сверить работу с каталогом нормо-часов и подтвердить допустимость отклонения."
     if "duplicate" in check_type:
@@ -1198,6 +1200,8 @@ def _recommendation_for_check(check_type: str) -> Optional[str]:
 
 
 def _get_check_zone_key(check_type: str) -> str:
+    if "labor_norm" in check_type:
+        return "labor_norms"
     if "vehicle" in check_type or "service" in check_type:
         return "catalogs"
     if "standard_hours" in check_type:

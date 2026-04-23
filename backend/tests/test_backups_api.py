@@ -234,6 +234,18 @@ class BackupsApiTestCase(unittest.TestCase):
         fresh_session_response = self.client.get("/api/auth/me", headers=fresh_headers)
         self.assertEqual(fresh_session_response.status_code, 200, fresh_session_response.text)
 
+    def test_backup_download_supports_head_requests(self) -> None:
+        headers = self._get_auth_headers()
+
+        create_response = self.client.post("/api/backups", headers=headers)
+        self.assertEqual(create_response.status_code, 200, create_response.text)
+        backup_id = create_response.json()["backup"]["backup_id"]
+
+        download_response = self.client.head(f"/api/backups/{backup_id}/download", headers=headers)
+        self.assertEqual(download_response.status_code, 200, download_response.text)
+        self.assertIn("application/zip", download_response.headers["content-type"])
+        self.assertIn('.zip"', download_response.headers["content-disposition"])
+
     def test_restore_backup_restores_previous_storage_if_database_restore_fails(self) -> None:
         file_path = self.storage_root / "documents" / "sample.txt"
         file_path.parent.mkdir(parents=True, exist_ok=True)

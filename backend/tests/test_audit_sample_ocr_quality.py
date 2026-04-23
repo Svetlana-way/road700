@@ -5,7 +5,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from app.scripts.audit_sample_ocr_quality import AuditRow, audit_documents, build_doc_flags, format_project_path, render_report
+from app.scripts.audit_sample_ocr_quality import (
+    AuditRow,
+    audit_documents,
+    build_doc_flags,
+    build_downstream_validation_section,
+    build_environment_blockers_section,
+    format_project_path,
+    render_report,
+)
 
 
 class AuditSampleOcrQualityTestCase(unittest.TestCase):
@@ -151,6 +159,122 @@ class AuditSampleOcrQualityTestCase(unittest.TestCase):
         self.assertIn("Источник: `/tmp/ocr-audit-test`", report)
         self.assertIn("Режим OCR для аудита: `auto`", report)
 
+    def test_render_report_surfaces_environment_blockers_separately(self) -> None:
+        row = AuditRow(
+            service_label="AXB",
+            profile_scope="axb",
+            relative_path="sample.pdf",
+            source_type="pdf",
+            extract_source="pdf_text",
+            extract_failure_reason="pdf_renderer_unavailable",
+            extracted_fields={},
+            manual_review_reasons=["text_missing"],
+            works_count=0,
+            parts_count=0,
+            invoice_only=False,
+        )
+
+        report = render_report([row])
+
+        self.assertIn("## Environment Blockers", report)
+        self.assertIn("`pdf_renderer_unavailable`: 1 docs.", report)
+
+    def test_build_environment_blockers_section_is_empty_without_backend_failures(self) -> None:
+        row = AuditRow(
+            service_label="Test",
+            profile_scope="default",
+            relative_path="sample.pdf",
+            source_type="pdf",
+            extract_source="pdf_text",
+            extract_failure_reason=None,
+            extracted_fields={},
+            manual_review_reasons=[],
+            works_count=0,
+            parts_count=0,
+            invoice_only=False,
+        )
+
+        section = build_environment_blockers_section([row])
+
+        self.assertEqual(section, [])
+
+    def test_build_downstream_validation_section_lists_labor_norm_gaps(self) -> None:
+        row = AuditRow(
+            service_label="AXB",
+            profile_scope="axb",
+            relative_path="Заказ-наряды/Заказ наряды АXB/вв044416.pdf",
+            source_type="pdf",
+            extract_source="pdf_vision_ocr",
+            extract_failure_reason=None,
+            extracted_fields={},
+            manual_review_reasons=[],
+            works_count=7,
+            parts_count=1,
+            labor_norm_matched_rows=0,
+            labor_norm_total_rows=7,
+            labor_norm_reference_ready_rows=5,
+        )
+
+        section = build_downstream_validation_section([row])
+
+        self.assertIn("## Downstream Validation Signals", section)
+        self.assertTrue(any("0/7" in line for line in section))
+        self.assertTrue(any("0/5" in line for line in section))
+
+    def test_render_report_includes_labor_norm_coverage_in_document_details(self) -> None:
+        row = AuditRow(
+            service_label="AXB",
+            profile_scope="axb",
+            relative_path="sample.pdf",
+            source_type="pdf",
+            extract_source="pdf_vision_ocr",
+            extract_failure_reason=None,
+            extracted_fields={},
+            manual_review_reasons=[],
+            works_count=3,
+            parts_count=1,
+            labor_norm_matched_rows=1,
+            labor_norm_total_rows=3,
+            labor_norm_reference_ready_rows=2,
+        )
+
+        report = render_report([row])
+
+        self.assertIn("Labor norm coverage: `1/3`, without OCR noise `1/2`", report)
+
+    def test_render_report_uses_labor_norm_gap_in_priority_queue(self) -> None:
+        row = AuditRow(
+            service_label="AXB",
+            profile_scope="axb",
+            relative_path="sample.pdf",
+            source_type="pdf",
+            extract_source="pdf_vision_ocr",
+            extract_failure_reason=None,
+            extracted_fields={
+                "order_number": "0001",
+                "repair_date": "2026-01-01",
+                "plate_number": "A123AA",
+                "vin": "VIN123",
+                "mileage": 1000,
+                "work_total": 100.0,
+                "parts_total": 50.0,
+                "grand_total": 150.0,
+            },
+            manual_review_reasons=[],
+            works_count=3,
+            parts_count=1,
+            work_total_matches_lines=True,
+            parts_total_matches_lines=True,
+            labor_norm_matched_rows=1,
+            labor_norm_total_rows=3,
+            labor_norm_reference_ready_rows=3,
+        )
+
+        report = render_report([row])
+
+        self.assertIn("labor_norm_coverage_gap", report)
+        self.assertNotIn("No obvious problem clusters found", report)
+
     def test_audit_documents_parses_without_registry_enrichment(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             sample_path = Path(tmp_dir) / "sample.pdf"
@@ -269,6 +393,32 @@ class AuditSampleOcrQualityTestCase(unittest.TestCase):
 
         flags = build_doc_flags(row)
 
+        self.assertFalse(flags["manual_review_free"])
+
+    def test_build_doc_flags_requires_core_header_identity_and_lines_for_manual_review_free(self) -> None:
+        row = AuditRow(
+            service_label="AXB",
+            profile_scope="axb",
+            relative_path="sample.pdf",
+            source_type="pdf",
+            extract_source="pdf_vision_ocr",
+            extract_failure_reason=None,
+            extracted_fields={
+                "order_number": "0001",
+                "parts_total": 50.0,
+                "grand_total": 150.0,
+            },
+            manual_review_reasons=[],
+            works_count=0,
+            parts_count=2,
+            work_total_matches_lines=True,
+            parts_total_matches_lines=True,
+        )
+
+        flags = build_doc_flags(row)
+
+        self.assertFalse(flags["repair_date"])
+        self.assertFalse(flags["works_lines"])
         self.assertFalse(flags["manual_review_free"])
 
 

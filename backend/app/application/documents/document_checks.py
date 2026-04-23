@@ -26,7 +26,7 @@ from app.application.documents.config import (
     WORK_REFERENCE_WARNING_LOWER_MULTIPLIER,
     WORK_REFERENCE_WARNING_MULTIPLIER,
 )
-from app.application.services.labor_norms import build_normalized_name
+from app.application.services.labor_norms import build_normalized_name, infer_labor_norm_catalog_gap_reason_code
 from app.models.enums import CheckSeverity, RepairStatus, ServiceStatus, VehicleStatus
 from app.models.repair import Repair, RepairWork
 from app.models.service import Service
@@ -492,7 +492,66 @@ def describe_work_reference_source(source: str) -> str:
         return "по этой же технике"
     if source == "same_service":
         return "по этому же сервису"
+    if source == "manual_review_required":
+        return "нужна ручная проверка по каталогу нормо-часов"
+    if source == "not_applicable":
+        return "работа не относится к каталогу нормо-часов"
     return "по типу техники"
+
+
+def build_labor_norm_reference_checks(
+    works_payload: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    checks: list[dict[str, object]] = []
+    for item in works_payload:
+        work_name = str(item.get("work_name") or "").strip()
+        if not work_name:
+            continue
+
+        reference_payload = item.get("reference_payload")
+        if not isinstance(reference_payload, dict):
+            continue
+
+        reference_status = str(reference_payload.get("labor_norm_reference_status") or "").strip()
+        if reference_status != "catalog_gap":
+            continue
+
+        reason_code = str(reference_payload.get("labor_norm_item_reason_code") or "").strip()
+        if not reason_code or reason_code == "catalog_gap":
+            reason_code = infer_labor_norm_catalog_gap_reason_code(work_name) or "catalog_gap"
+
+        title = "Работа требует ручной проверки по нормо-часам"
+        if reason_code == "catalog_gap_missing_abs_position":
+            title = "Для сверки датчика ABS нужна ось или сторона"
+        elif reason_code == "catalog_gap_missing_brake_hose_context":
+            title = "Для сверки тормозного шланга нужна детализация"
+        elif reason_code == "catalog_gap_missing_wiring_context":
+            title = "Для сверки электрики нужна детализация"
+        elif reason_code == "catalog_gap_missing_shock_absorber_position":
+            title = "Для сверки амортизатора нужна позиция узла"
+        elif reason_code == "catalog_gap_no_spare_wheel_norm":
+            title = "Для снятия запасного колеса нет отдельной нормы"
+
+        details = (
+            f"{work_name} · {reference_payload.get('labor_norm_next_step') or reference_payload.get('labor_norm_item_reason') or 'Нужна ручная проверка по каталогу нормо-часов.'}"
+        )
+        checks.append(
+            {
+                "check_type": f"ocr_labor_norm_{reason_code}",
+                "severity": CheckSeverity.WARNING,
+                "title": title,
+                "details": details,
+                "payload": {
+                    "work_code": item.get("work_code"),
+                    "work_name": work_name,
+                    "reference_status": reference_status,
+                    "reason_code": reason_code,
+                    "reason": reference_payload.get("labor_norm_item_reason"),
+                    "next_step": reference_payload.get("labor_norm_next_step"),
+                },
+            }
+        )
+    return checks
 
 
 def build_dynamic_work_reference_checks(
@@ -536,9 +595,6 @@ def build_dynamic_work_reference_checks(
         )
     ).all()
 
-    if not historical_rows:
-        return []
-
     indexed_rows: dict[tuple[Optional[str], str], list[object]] = {}
     for row in historical_rows:
         work_name = str(row.work_name or "").strip()
@@ -576,6 +632,19 @@ def build_dynamic_work_reference_checks(
                 "comparison_source": "not_applicable",
                 "reason_code": labor_norm_item_reason_code,
                 "reason": reference_payload.get("labor_norm_item_reason"),
+                "sample_lines": 0,
+                "historical_sample_lines": 0,
+                "operational_sample_lines": 0,
+            }
+            continue
+
+        labor_norm_reference_status = str(reference_payload.get("labor_norm_reference_status") or "").strip()
+        if labor_norm_reference_status == "catalog_gap":
+            reference_payload["dynamic_work_reference"] = {
+                "comparison_source": "manual_review_required",
+                "reason_code": labor_norm_item_reason_code or "catalog_gap",
+                "reason": reference_payload.get("labor_norm_item_reason"),
+                "next_step": reference_payload.get("labor_norm_next_step"),
                 "sample_lines": 0,
                 "historical_sample_lines": 0,
                 "operational_sample_lines": 0,

@@ -164,6 +164,8 @@ The `749455.cloud4box.ru` server currently uses a non-Docker layout because ngin
 - storage: `/opt/road700/shared/storage`
 - systemd units: `road700-app.service`, `road700-worker.service`
 - nginx proxies `749455.cloud4box.ru` to `127.0.0.1:3240`
+- nginx returns `404` for dotfile probes such as `/.env`, `/public/.env`, and `/.git/...` while keeping `/.well-known/acme-challenge/` available
+- journald is limited by `/etc/systemd/journald.conf.d/road700-disk-limit.conf` to prevent logs from filling the disk
 
 For this layout, deploy with:
 
